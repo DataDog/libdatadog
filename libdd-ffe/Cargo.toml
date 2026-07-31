@@ -17,7 +17,7 @@ libdd-remote-config = { version = "2.0.0", path = "../libdd-remote-config", defa
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
-chrono = { version = "0.4.38", default-features = false, features = ["now", "serde"] }
+chrono = { workspace = true, features = ["now", "serde"] }
 derive_more = { version = "2.0.0", default-features = false, features = ["from", "into"] }
 log = { version = "0.4.21", default-features = false, features = ["kv", "kv_serde"] }
 md5 = { version = "0.7.0", default-features = false }

@@ -62,6 +62,8 @@ pub fn main() {
         f.push("ddtelemetry-ffi".to_string());
         #[cfg(feature = "data-pipeline")]
         f.push("data-pipeline-ffi".to_string());
+        #[cfg(feature = "data-pipeline-compression")]
+        f.push("data-pipeline-compression".to_string());
         #[cfg(feature = "crashtracker")]
         f.push("crashtracker-ffi".to_string());
         #[cfg(feature = "symbolizer")]

@@ -91,6 +91,10 @@ mod native {
             }
         }
 
+        fn new_without_connection_pooling() -> Self {
+            NativeHttpClient::new_without_connection_pooling()
+        }
+
         #[allow(clippy::manual_async_fn)]
         fn request(
             &self,
