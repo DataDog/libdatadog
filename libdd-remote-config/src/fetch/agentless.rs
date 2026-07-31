@@ -942,6 +942,10 @@ fn verify_director_against_config(
         .trusted_targets()
         .ok_or_else(|| format_err!("director client has no trusted targets"))?;
 
+    // This operations is O(target * delegations)
+    // The path match is not that expensive, but this could be made faster by first building 
+    // a perfix tree of the delegations, since the first segment of the paths are disjoints in
+    // the delegrations we receive from RC
     for (path, dir_desc) in director_targets.targets() {
         let cfg_desc = lookup_config_target(path, top_config_targets, trusted_delegations)
             .ok_or_else(|| {
@@ -968,6 +972,11 @@ fn verify_director_against_config(
 /// Resolve `path` against the (flat) config delegation tree, returning the
 /// target description from the first matching delegation that lists it.
 /// Returns `None` if no delegation authorizes the path.
+/// 
+/// TODO: make it compliant with Go-TUF & recursive delegations.
+///     This currently only support "flat" delegations, as this is 
+///     the only thing we need for RC, but the TUF supports delegates
+///     of delegates.s
 fn lookup_config_target<'a>(
     path: &TargetPath,
     top: &'a tuf::verify::Verified<tuf::metadata::TargetsMetadata>,
