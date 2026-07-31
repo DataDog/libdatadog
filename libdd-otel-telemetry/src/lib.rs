@@ -41,7 +41,7 @@ mod instrument;
 mod resource;
 
 pub use aggregator::{ExportCounters, OtelMetricsAggregator, OtelMetricsAggregatorBuilder};
-pub use config::{OtlpExporterConfig, OtlpProtocol, Temporality};
+pub use config::{parse_otlp_headers, OtlpExporterConfig, OtlpProtocol, Temporality};
 pub use error::{BuildWarning, OtelMetricsError};
 pub use instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
 pub use resource::ResourceBuilder;
