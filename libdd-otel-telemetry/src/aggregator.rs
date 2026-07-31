@@ -172,16 +172,29 @@ pub(crate) async fn build_metric_exporter(
             ))
         }
         #[cfg(feature = "http")]
-        OtlpProtocol::HttpProtobuf => opentelemetry_otlp::MetricExporter::builder()
-            .with_http()
-            .with_endpoint(&config.endpoint)
-            .with_timeout(config.timeout)
-            .with_temporality(temporality.into())
-            .build(),
+        OtlpProtocol::HttpProtobuf => {
+            // reqwest+rustls 0.23 has no process-default crypto provider under feature
+            // unification and panics ("no process-level CryptoProvider available") when it
+            // builds a TLS client. libdatadog standardizes on ring, so best-effort install it
+            // before the exporter constructs its client. Ignoring the result is intentional:
+            // it errors only if a provider is already set, which is fine.
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            opentelemetry_otlp::MetricExporter::builder()
+                .with_http()
+                .with_endpoint(&config.endpoint)
+                .with_timeout(config.timeout)
+                .with_temporality(temporality.into())
+                .build()
+        }
         #[cfg(not(feature = "http"))]
         OtlpProtocol::HttpProtobuf => {
             return Err(BuildWarning::UnsupportedProtocol(
                 "http/protobuf protocol requires the 'http' feature".to_string(),
+            ))
+        }
+        OtlpProtocol::HttpJson => {
+            return Err(BuildWarning::UnsupportedProtocol(
+                "http/json protocol is not supported for OTLP metrics export".to_string(),
             ))
         }
     };

@@ -20,11 +20,14 @@ opentelemetry-otlp = { version = "0.32", default-features = false, features = [
 ] }
 tracing.workspace = true
 libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
+# Only needed for the `http` exporter: reqwest+rustls needs a process-default crypto provider
+# installed. libdatadog standardizes on ring (aws-lc-rs is FIPS-only), so pin the ring provider.
+rustls = { version = "0.23", default-features = false, features = ["ring"], optional = true }
 
 [features]
 default = ["grpc"]
 grpc = ["opentelemetry-otlp/grpc-tonic"]
-http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-client"]
+http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-client", "dep:rustls"]
 test-utils = []
 
 [dev-dependencies]

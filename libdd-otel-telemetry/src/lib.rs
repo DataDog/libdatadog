@@ -43,7 +43,7 @@ mod instrument;
 mod resource;
 
 pub use aggregator::{ExportCounters, OtelMetricsAggregator, OtelMetricsAggregatorBuilder};
-pub use config::{OtlpExporterConfig, OtlpProtocol, Temporality};
+pub use config::{parse_otlp_headers, OtlpExporterConfig, OtlpProtocol, Temporality};
 pub use error::{BuildWarning, OtelMetricsError};
 #[cfg(any(feature = "grpc", feature = "http"))]
 pub use exporter::{build_datadog_metric_exporter, DatadogMetricExporter};

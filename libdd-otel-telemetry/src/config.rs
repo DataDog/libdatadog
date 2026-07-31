@@ -12,6 +12,26 @@ use std::time::Duration;
 pub enum OtlpProtocol {
     Grpc,
     HttpProtobuf,
+    /// HTTP with JSON encoding. Recognized for config-parsing parity with the OTel spec and
+    /// dd-trace-rs, but not exportable today — the exporter build reports it as unsupported.
+    HttpJson,
+}
+
+impl OtlpProtocol {
+    /// Parse an `OTEL_EXPORTER_OTLP_*_PROTOCOL` value case-insensitively.
+    ///
+    /// Accepts `grpc`, `http/protobuf`, and `http/json` (any case, surrounding whitespace
+    /// trimmed). Returns `None` for empty or unrecognized values so the caller decides how to
+    /// surface the error.
+    pub fn from_config_str(s: &str) -> Option<OtlpProtocol> {
+        let s = s.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "grpc" => Some(OtlpProtocol::Grpc),
+            "http/protobuf" => Some(OtlpProtocol::HttpProtobuf),
+            "http/json" => Some(OtlpProtocol::HttpJson),
+            _ => None,
+        }
+    }
 }
 
 /// Aggregation temporality preference for metrics export.
@@ -24,6 +44,35 @@ pub enum Temporality {
     #[default]
     Delta,
     Cumulative,
+}
+
+impl Temporality {
+    /// Parse an `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` value case-insensitively.
+    ///
+    /// Accepts `delta` and `cumulative` (any case, surrounding whitespace trimmed). Empty or
+    /// unrecognized values default to [`Temporality::Delta`], matching Datadog's preference.
+    pub fn from_config_str(s: &str) -> Temporality {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "cumulative" => Temporality::Cumulative,
+            _ => Temporality::Delta,
+        }
+    }
+}
+
+/// Parse an `OTEL_EXPORTER_OTLP_*_HEADERS` string (`k1=v1,k2=v2`) into key/value pairs.
+///
+/// Entries without an `=` (or with an empty key) are skipped; keys and values are trimmed.
+pub fn parse_otlp_headers(s: &str) -> Vec<(String, String)> {
+    s.split(',')
+        .filter_map(|item| {
+            let (key, value) = item.split_once('=')?;
+            let key = key.trim();
+            if key.is_empty() {
+                return None;
+            }
+            Some((key.to_string(), value.trim().to_string()))
+        })
+        .collect()
 }
 
 impl From<Temporality> for opentelemetry_sdk::metrics::Temporality {
