@@ -104,9 +104,14 @@ jobs:
       pull-requests: write
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-    - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+    - name: Cache [rust]
+      id: rust-cache
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
+        shared-key: default
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
     - uses: dtolnay/rust-toolchain@stable
     - name: Check missing docs
       id: missing-docs
@@ -275,9 +280,14 @@ jobs:
       pull-requests: write
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-    - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+    - name: Cache [rust]
+      id: rust-cache
+      uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
+        shared-key: default
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+    - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
     - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
       with:
