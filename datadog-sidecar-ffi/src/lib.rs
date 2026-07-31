@@ -456,7 +456,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     let seq_id = seq_id.to_std();
     let config_entry = TelemetryActions::AddConfig(data::Configuration {
         name: config_key.to_utf8_lossy().into_owned(),
-        value: config_value.to_utf8_lossy().into_owned(),
+        value: Some(config_value.to_utf8_lossy().into_owned()),
         origin,
         config_id,
         seq_id,
