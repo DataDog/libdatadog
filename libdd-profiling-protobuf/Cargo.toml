@@ -20,8 +20,8 @@ prost_impls = ["dep:prost"]
 
 [dependencies]
 prost = { version = "0.14", optional = true }
-bolero = { version = "0.13", default-features = false, optional = true }
+bolero = { workspace = true, optional = true }
 
 [dev-dependencies]
-bolero = "0.13"
+bolero = { workspace = true, features = ["std"] }
 libdd-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }

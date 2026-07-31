@@ -19,7 +19,7 @@ prost-build = { workspace = true, features = ["format"], optional = true }
 protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion.workspace = true
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 
