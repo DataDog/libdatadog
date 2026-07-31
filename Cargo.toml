@@ -7,7 +7,7 @@ members = [
   "libdd-alloc",
   "libdd-profiling-heap-sampler",
   "libdd-profiling-heap-allocator",
-  "libdd-got-hook",
+  "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",

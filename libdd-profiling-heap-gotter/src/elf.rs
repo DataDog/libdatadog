@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub use libdd_got_hook::lookup_symbol;
-use libdd_got_hook::{elf64_r_sym, iterate_libraries, DynamicInfo, PageProtGuard};
+pub use libdd_gotter::lookup_symbol;
+use libdd_gotter::{elf64_r_sym, iterate_libraries, DynamicInfo, PageProtGuard};
 
 /// Per-library bookkeeping for the GOT re-scan. We never un-patch (see
 /// the crate docs on why un-installing can't be done safely), so this
@@ -298,26 +298,5 @@ impl SymbolOverrides {
         // Re-patching an already-hooked entry with the same hook address is
         // idempotent, so no per-entry dedup is needed.
         guard.override_entry(addr, ov.new_symbol);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn can_lookup_malloc() {
-        let r = lookup_symbol("malloc", 0);
-        assert!(r.is_some(), "expected to find malloc in loaded libraries");
-        let r = r.unwrap();
-        assert!(r.address != 0);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)] // miri doesn't support dl_iterate_phdr
-    fn unknown_symbol_lookup_returns_none() {
-        let r = lookup_symbol("definitely_not_a_real_libc_symbol_xyzzy", 0);
-        assert!(r.is_none());
     }
 }

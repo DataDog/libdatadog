@@ -253,6 +253,9 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
 
     let buckets = core::slice::from_raw_parts(hashtab.add(buckets_start), nbuckets as usize);
     let mut idx = *buckets.iter().max()?;
+    // All buckets empty: hash covers zero defined symbols, but the
+    // symtab may still have undefined imports. Signal the caller to
+    // use a fallback.
     if idx == STN_UNDEF {
         return None;
     }
@@ -379,6 +382,7 @@ pub fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) 
         }));
 
         // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
+        // Treat patching as best-effort and stop iteration on panic.
         result.map(i32::from).unwrap_or(1)
     }
 
@@ -504,9 +508,13 @@ impl Default for PageProtGuard {
 }
 
 impl Drop for PageProtGuard {
-    /// Restore every touched page to its original protection.
+    // Restore every touched page to its original protection. Runs on
+    /// scope exit - including panic or early return - so page protections
+    /// are never left weakened even if a patching pass bails out midway.
     fn drop(&mut self) {
         for (aligned, orig) in self.touched.drain() {
+            // Best-effort: nothing sensible to do on failure other than
+            // leave the page RW, which is the pre-fix behavior.
             unsafe { mprotect(aligned as *mut c_void, self.page_size, orig) };
         }
     }
@@ -585,15 +593,15 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_can_lookup_malloc() {
-        let r = lookup_symbol("malloc", 0);
+    #[cfg_attr(miri, ignore)] // miri doesn't support dl_iterate_phdr
+    fn test_can_lookup_known_symbol() {
+        let r = lookup_symbol("malloc", 0); // malloc is definitely known
         assert!(r.is_some(), "expected to find malloc in loaded libraries");
         assert!(r.unwrap().address != 0);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // miri doesn't support dl_iterate_phdr
     fn test_unknown_symbol_lookup_returns_none() {
         let r = lookup_symbol("definitely_not_a_real_libc_symbol_xyzzy", 0);
         assert!(r.is_none());
