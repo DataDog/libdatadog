@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod http_client;
+pub mod metric_ring;
 mod scheduler;
 pub mod store;
 
@@ -13,6 +14,8 @@ use crate::{
     },
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
+
+use crate::worker::metric_ring::MetricRing;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -160,6 +163,9 @@ pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend
     data: TelemetryWorkerData,
     next_action: Option<TelemetryActions>,
     stopped: bool,
+    /// Shared with the handle: producers publish metric points here instead of the mailbox, and
+    /// this worker batch-drains them into `data.metric_buckets` (see `metric_ring`).
+    metric_ring: Arc<MetricRing>,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
@@ -241,6 +247,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
         self.data.metric_buckets = MetricBuckets::default();
+        // Discard points published to the ring buffer before the fork (single-threaded here).
+        self.metric_ring.drain(|_, _, _| {});
         self.data.dependencies.clear();
         self.data.integrations.clear();
         self.data.configurations.clear();
@@ -332,37 +340,65 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
 
+    /// Drain all metric points published to the ring buffer into the aggregation buckets.
+    fn drain_metric_ring(&mut self) {
+        // Clone the Arc so the drain closure can mutably borrow `data.metric_buckets` without also
+        // borrowing `self.metric_ring`.
+        let ring = self.metric_ring.clone();
+        let buckets = &mut self.data.metric_buckets;
+        ring.drain(|value, key, extra_tags| buckets.add_point(key, value, extra_tags));
+    }
+
+    /// Drain any ring-buffered points, then roll the aggregation buckets into series/distributions.
+    fn flush_metric_aggregates(&mut self) {
+        self.drain_metric_ring();
+        self.data.metric_buckets.flush_aggregates();
+    }
+
     async fn recv_next_action(&mut self) -> TelemetryActions {
-        let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
-            let deadline_action = *deadline_action;
-            // If deadline passed, service any already-queued mailbox action first, then
-            // return the associated action.
-            // This avoids pathological cases with a very short heartbeat, which would hang a
-            // synchronous flush()/stop() (whose FlushData/CollectStats never get processed) then.
-            let Some(remaining) = deadline.checked_duration_since(time::Instant::now()) else {
-                if let Ok(mailbox_action) = self.mailbox.try_recv() {
-                    return mailbox_action;
+        loop {
+            // Fold any points published to the ring buffer into the aggregates before we wait.
+            self.drain_metric_ring();
+
+            let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+                let deadline_action = *deadline_action;
+                // If deadline passed, service any already-queued mailbox action first, then
+                // return the associated action.
+                // This avoids pathological cases with a very short heartbeat, which would hang a
+                // synchronous flush()/stop() (whose FlushData/CollectStats never get processed).
+                let Some(remaining) = deadline.checked_duration_since(time::Instant::now()) else {
+                    if let Ok(mailbox_action) = self.mailbox.try_recv() {
+                        return mailbox_action;
+                    }
+                    return TelemetryActions::Lifecycle(deadline_action);
+                };
+
+                let sleeper = <C as SleepCapability>::new();
+                let ring = self.metric_ring.clone();
+                tokio::select! {
+                    biased;
+                    mailbox_action = self.mailbox.recv() => mailbox_action,
+                    _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
+                    // The ring buffer has points to drain: loop back to fold them in.
+                    _ = ring.notified() => continue,
                 }
-                return TelemetryActions::Lifecycle(deadline_action);
+            } else {
+                let ring = self.metric_ring.clone();
+                tokio::select! {
+                    biased;
+                    mailbox_action = self.mailbox.recv() => mailbox_action,
+                    _ = ring.notified() => continue,
+                }
             };
 
-            let sleeper = <C as SleepCapability>::new();
-            tokio::select! {
-                biased;
-                mailbox_action = self.mailbox.recv() => mailbox_action,
-                _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
-            }
-        } else {
-            self.mailbox.recv().await
-        };
-
-        // if no action is received, then it means the channel is stopped
-        action.unwrap_or_else(|| {
-            // the worker handle no longer lives - we must remove restartable here to avoid leaks
-            self.config.restartable = false;
-            self.stopped = true;
-            TelemetryActions::Lifecycle(LifecycleAction::Stop)
-        })
+            // if no action is received, then it means the channel is stopped
+            return action.unwrap_or_else(|| {
+                // the worker handle no longer lives - remove restartable here to avoid leaks
+                self.config.restartable = false;
+                self.stopped = true;
+                TelemetryActions::Lifecycle(LifecycleAction::Stop)
+            });
+        }
     }
 
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -394,7 +430,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -430,7 +466,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 let batch = self.build_observability_batch();
                 if !batch.is_empty() {
@@ -512,7 +548,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -589,7 +625,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 let mut app_events = self.build_app_events_batch();
                 if self.config.emit_app_lifecycle {
@@ -1068,6 +1104,8 @@ pub struct TelemetryWorkerHandle<
     #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<runtime::Handle>,
     contexts: MetricContexts,
+    /// Shared with the worker: `add_point` publishes here (see `metric_ring`).
+    metric_ring: Arc<MetricRing>,
     _phantom: PhantomData<fn() -> C>,
 }
 
@@ -1083,6 +1121,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clo
             #[cfg(not(target_arch = "wasm32"))]
             runtime: self.runtime.clone(),
             contexts: self.contexts.clone(),
+            metric_ring: self.metric_ring.clone(),
             _phantom: PhantomData,
         }
     }
@@ -1270,8 +1309,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         context: &ContextKey,
         extra_tags: Vec<Tag>,
     ) -> anyhow::Result<()> {
-        self.sender
-            .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;
+        // Points are the highest-frequency action; publish to the lock-free ring buffer rather
+        // than boxing a message + waking the receiver per point. The worker batch-drains it.
+        self.metric_ring.push(value, *context, extra_tags);
         Ok(())
     }
 
@@ -1381,6 +1421,7 @@ impl TelemetryWorkerBuilder {
             condvar: Condvar::new(),
         });
         let contexts = MetricContexts::default();
+        let metric_ring = Arc::new(MetricRing::new());
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
@@ -1426,6 +1467,7 @@ impl TelemetryWorkerBuilder {
             cancellation_token: token.clone(),
             next_action: None,
             stopped: false,
+            metric_ring: metric_ring.clone(),
         };
 
         (
@@ -1437,6 +1479,7 @@ impl TelemetryWorkerBuilder {
                 #[cfg(not(target_arch = "wasm32"))]
                 runtime: tokio_runtime,
                 contexts,
+                metric_ring,
                 _phantom: PhantomData,
             },
             worker,
