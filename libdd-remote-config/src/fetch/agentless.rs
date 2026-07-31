@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::FileStorage;
+use crate::RemoteConfigPath;
 
 use std::{fmt, ops::RangeInclusive, time::Duration};
 
@@ -19,7 +20,7 @@ use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
-use tracing::{debug, warn};
+use tracing::debug;
 use tuf::repository::RepositoryStorage;
 use tuf::{
     metadata::{
@@ -228,7 +229,7 @@ struct OrgUuidBinding {
 
 #[derive(Debug)]
 pub struct ClientTargetRef {
-    pub path: String,
+    pub path: RemoteConfigPath,
     pub version: u64,
     pub primary_hash: String,
     pub length: u64,
@@ -259,6 +260,7 @@ pub struct ClientResponse {
 /// still re-verifies the downloaded bytes against `length` and `all_hashes`.
 struct TrustedTarget<'a> {
     path: &'a tuf::metadata::TargetPath,
+    parsed_path: RemoteConfigPath,
     length: u64,
     version: u64,
     all_hashes: Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
@@ -270,6 +272,8 @@ const CUSTOM_METADATA_EXPIRY_PATH: &str = "expires";
 
 impl<'a> TrustedTarget<'a> {
     fn try_create(path: &'a TargetPath, desc: &'a TargetDescription) -> anyhow::Result<Self> {
+        let parsed_path = RemoteConfigPath::parse(path.as_str())?;
+
         if let Some(expiry) = desc.custom().get(CUSTOM_METADATA_EXPIRY_PATH) {
             let expiry_ts = expiry
                 .as_u64()
@@ -295,6 +299,7 @@ impl<'a> TrustedTarget<'a> {
 
         Ok(Self {
             path,
+            parsed_path,
             length: desc.length(),
             version,
             all_hashes,
@@ -766,33 +771,22 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         verify_director_against_config(&self.config_client, &self.director_client)?;
         self.verify_org_uuid(prefetched_org_uuid).await?;
 
-        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?
-            .filter(|t| {
-                let parseable = cache.is_parseable_path(t.path.as_str());
-                if !parseable {
-                    warn!(
-                        "Skipping unparseable/unknown-product remote config path: {}",
-                        t.path.as_str()
-                    );
-                }
-                parseable
-            })
-            .collect();
+        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
 
-        let cached_paths: hashbrown::HashSet<&str> = cache.is_cached_batch(
+        let cached_paths: HashSet<&RemoteConfigPath> = cache.is_cached_batch(
             targets
                 .iter()
-                .map(|t| (t.path.as_str(), t.primary_hash.as_str(), t.length)),
+                .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
         );
 
         let mut new_targets: Vec<NewTarget> = Vec::new();
         for t in &targets {
-            if cached_paths.contains(t.path.as_str()) {
+            if cached_paths.contains(&t.parsed_path) {
                 continue;
             }
             let content = self.fetch_target(t).await?;
             new_targets.push(NewTarget {
-                path: t.path.as_str().to_owned(),
+                path: t.parsed_path.clone(),
                 version: t.version,
                 primary_hash: t.primary_hash.clone(),
                 hashes: t
@@ -805,14 +799,14 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         }
         cache.store_batch(new_targets)?;
 
-        let active_path_strs: hashbrown::HashSet<&str> =
-            targets.iter().map(|t| t.path.as_str()).collect();
-        cache.retain_only(&active_path_strs);
+        let active_paths: HashSet<&RemoteConfigPath> =
+            targets.iter().map(|t| &t.parsed_path).collect();
+        cache.retain_only(&active_paths);
 
         let active_targets: Vec<ClientTargetRef> = targets
             .iter()
             .map(|t| ClientTargetRef {
-                path: t.path.as_str().to_owned(),
+                path: t.parsed_path.clone(),
                 version: t.version,
                 primary_hash: t.primary_hash.clone(),
                 length: t.length,
@@ -1142,7 +1136,7 @@ fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
 }
 
 pub(crate) struct NewTarget {
-    pub path: String,
+    pub path: crate::RemoteConfigPath,
     pub version: u64,
     /// Lowercase hex of the primary hash.
     pub primary_hash: String,
@@ -1165,7 +1159,6 @@ mod cache {
     use libdd_common::MutexExt as _;
     use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
     use std::sync::Mutex;
-    use tracing::warn;
 
     use crate::{
         fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
@@ -1190,23 +1183,22 @@ mod cache {
             }
         }
 
-        /// Returns the TUF path strings whose `(primary_hash, len)` already matches the cache.
+        /// Returns the set of paths whose `(primary_hash, len)` already matches the cache.
         pub(crate) fn is_cached_batch<'b>(
             &self,
-            candidates: impl IntoIterator<Item = (&'b str, &'b str, u64)>,
-        ) -> hashbrown::HashSet<&'b str> {
+            candidates: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
+        ) -> hashbrown::HashSet<&'b RemoteConfigPath> {
             let files = self.files.lock_or_panic();
             candidates
                 .into_iter()
-                .filter_map(|(path, primary_hash, len)| {
-                    let parsed = RemoteConfigPath::try_parse(path).ok()?;
-                    let stored = files.get(&parsed)?;
+                .filter_map(|(parsed_path, primary_hash, len)| {
+                    let stored = files.get(parsed_path)?;
                     // `stored.meta.length` is an `i64` coming from protobuf. A
                     // negative value should never appear, but if it does treat the
                     // entry as "not cached" so the caller re-fetches instead of
                     // matching a wrapped u64.
                     let stored_len = u64::try_from(stored.meta.length).ok()?;
-                    (stored.hash == primary_hash && stored_len == len).then_some(path)
+                    (stored.hash == primary_hash && stored_len == len).then_some(parsed_path)
                 })
                 .collect()
         }
@@ -1224,63 +1216,55 @@ mod cache {
                 content,
             } in targets
             {
-                let parsed_path = match RemoteConfigPath::try_parse(&path) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        warn!("store_batch: failed to parse remote config path {path}: {e:?}");
-                        continue;
-                    }
-                };
-                let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
                 let length = i64::try_from(content.len()).map_err(|_| {
                     anyhow::format_err!(
-                        "content length {} for path {path} does not fit in i64",
+                        "content length {} for path {} does not fit in i64",
                         content.len(),
+                        path,
                     )
                 })?;
-                let new_handle = if let Some(existing) = files.get(&parsed_path) {
+                let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
+                let new_handle = if let Some(existing) = files.get(&path) {
                     self.storage
                         .update(&existing.handle, version, content)
                         .map(|()| existing.handle.clone())?
                 } else {
-                    self.storage.store(version, parsed_path.clone(), content)?
+                    self.storage.store(version, path.clone(), content)?
                 };
-                files.insert(
-                    parsed_path.clone(),
-                    StoredTargetFile {
-                        hash: primary_hash,
-                        state: ConfigState {
-                            id: parsed_path.config_id.to_string(),
-                            version,
-                            product: parsed_path.product.to_string(),
-                            apply_state: 2, // Acknowledged
-                            apply_error: String::new(),
-                        },
-                        meta: TargetFileMeta {
-                            path,
-                            length,
-                            hashes: hashes
-                                .into_iter()
-                                .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
-                                .collect(),
-                        },
-                        handle: new_handle,
-                        expiring: false,
+                let file = StoredTargetFile {
+                    hash: primary_hash,
+                    state: ConfigState {
+                        id: path.config_id().to_string(),
+                        version,
+                        product: path.product().to_string(),
+                        apply_state: 2, // Acknowledged
+                        apply_error: String::new(),
                     },
-                );
+                    meta: TargetFileMeta {
+                        path: path.to_string(),
+                        length,
+                        hashes: hashes
+                            .into_iter()
+                            .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
+                            .collect(),
+                    },
+                    handle: new_handle,
+                    expiring: false,
+                };
+                files.insert(path, file);
             }
             Ok(())
         }
 
-        /// Evict every entry whose TUF path is not in `active_paths`. No-op when
+        /// Evict every entry whose parsed TUF path is not in `active_paths`. No-op when
         /// `expire_unused_files` is `false`.
-        pub(crate) fn retain_only(&self, active_paths: &hashbrown::HashSet<&str>) {
+        pub(crate) fn retain_only(&self, active_paths: &hashbrown::HashSet<&RemoteConfigPath>) {
             if !self.expire_unused_files {
                 return;
             }
             self.files
                 .lock_or_panic()
-                .retain(|_, stored| active_paths.contains(stored.meta.path.as_str()));
+                .retain(|path, _| active_paths.contains(&**path));
         }
 
         /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
@@ -1292,10 +1276,7 @@ mod cache {
             let mut files = self.files.lock_or_panic();
             let mut handles = Vec::with_capacity(targets.len());
             for target in targets {
-                let parsed = RemoteConfigPath::try_parse(&target.path).map_err(|e| {
-                    anyhow::format_err!("collect_handles: bad path {}: {e:?}", target.path)
-                })?;
-                let stored = files.get_mut(&parsed).ok_or_else(|| {
+                let stored = files.get_mut(&target.path).ok_or_else(|| {
                     anyhow::format_err!(
                         "collect_handles: path {} not found in cache after fetch",
                         target.path
@@ -1310,19 +1291,19 @@ mod cache {
                 })?;
                 if stored.hash != target.primary_hash || stored_len != target.length {
                     anyhow::bail!(
-                    "collect_handles: cache mismatch for {}: stored hash={} len={}, expected hash={} len={}",
-                    target.path, stored.hash, stored.meta.length,
-                    target.primary_hash, target.length
-                );
+                        "collect_handles: cache mismatch for {}: stored hash={} len={}, \
+                         expected hash={} len={}",
+                        target.path,
+                        stored.hash,
+                        stored.meta.length,
+                        target.primary_hash,
+                        target.length,
+                    );
                 }
                 stored.expiring = false;
                 handles.push(stored.handle.clone());
             }
             Ok(handles)
-        }
-
-        pub(crate) fn is_parseable_path(&self, path: &str) -> bool {
-            RemoteConfigPath::try_parse(path).is_ok()
         }
     }
 }

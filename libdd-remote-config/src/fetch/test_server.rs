@@ -93,8 +93,8 @@ impl RemoteConfigServer {
                 && applied_files.len() == states.len()
                 && states.iter().all(|s| {
                     for (p, (_, v, _)) in applied_files.iter() {
-                        if p.product.to_string() == s.product
-                            && p.config_id == s.id
+                        if p.product().to_string() == s.product
+                            && p.config_id() == s.id
                             && *v == s.version
                         {
                             return true;

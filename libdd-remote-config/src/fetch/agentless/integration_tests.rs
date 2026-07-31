@@ -621,16 +621,10 @@ async fn test_unknown_product_target_is_not_stuck_known_targets() {
         .await
         .expect("a config-authorized unknown-product target must not stuck the fetch");
 
-    // The cache knows it cannot serve the unknown-product path.
-    assert!(cache.is_parseable_path(known_path));
-    assert!(!cache.is_parseable_path(unknown_path));
-
-    // `apply()` filtered it out, so only the known target is active — the unknown
-    // product never reaches `active_targets`/`collect_handles`.
-    let returned: Vec<&str> = res.targets.iter().map(|t| t.path.as_str()).collect();
+    let returned: Vec<String> = res.targets.iter().map(|t| t.path.to_string()).collect();
     assert_eq!(
         returned,
-        vec![known_path],
+        vec![known_path.to_string()],
         "only the known-product target should be active"
     );
 

@@ -577,9 +577,9 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 StoredTargetFile {
                     hash: computed_hash,
                     state: ConfigState {
-                        id: parsed_path.config_id.to_string(),
+                        id: parsed_path.config_id().to_string(),
                         version,
-                        product: parsed_path.product.to_string(),
+                        product: parsed_path.product().to_string(),
                         apply_state: 2, // Acknowledged
                         apply_error: "".to_string(),
                     },
@@ -683,11 +683,7 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 let config_paths: HashSet<RemoteConfigPath> = res
                     .targets
                     .iter()
-                    .filter_map(|target_ref| {
-                        RemoteConfigPath::try_parse(&target_ref.path)
-                            .ok()
-                            .map(Into::into)
-                    })
+                    .map(|target_ref| target_ref.path.clone())
                     .collect();
 
                 let configs = cache.collect_handles(&res.targets)?;
@@ -716,27 +712,21 @@ fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
 pub mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
-    use crate::RemoteConfigSource;
     use http::Response;
     use libdd_capabilities_impl::NativeHttpClient;
     use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 
-    pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "1234".to_string(),
-        name: "config".to_string(),
+    pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/1234/config")
+            .expect("PATH_FIRST is a valid remote config path")
     });
 
-    pub(crate) static PATH_SECOND: LazyLock<RemoteConfigPath> =
-        LazyLock::new(|| RemoteConfigPath {
-            source: RemoteConfigSource::Employee,
-            product: RemoteConfigProduct::ApmTracing,
-            config_id: "9876".to_string(),
-            name: "config".to_string(),
-        });
+    pub(crate) static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/9876/config")
+            .expect("PATH_SECOND is a valid remote config path")
+    });
 
     pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
         Arc::new(Target::new(
