@@ -139,11 +139,10 @@ impl OtelMetricsAggregatorBuilder {
             provider_builder = provider_builder.with_reader(reader);
         }
         let provider = provider_builder.build();
-        let meter = provider.meter("libdd-otel-telemetry");
 
         let aggregator = OtelMetricsAggregator {
             provider,
-            meter,
+            meters: Mutex::new(HashMap::new()),
             instruments: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             counters: Arc::new(Counters::default()),
@@ -190,6 +189,9 @@ pub(crate) async fn build_metric_exporter(
     result.map_err(|e| BuildWarning::ExporterInitFailed(e.to_string()))
 }
 
+/// Identifies an OpenTelemetry instrumentation scope: (meter name, version, schema_url).
+type MeterScope = (String, Option<String>, Option<String>);
+
 /// Aggregates primitive metric observations from a host tracer and exports them via OTLP.
 ///
 /// This is the entire public surface a host language binds to: register an instrument once, then
@@ -198,7 +200,7 @@ pub(crate) async fn build_metric_exporter(
 /// callback — both are just "a value for this instrument id."
 pub struct OtelMetricsAggregator {
     provider: SdkMeterProvider,
-    meter: opentelemetry::metrics::Meter,
+    meters: Mutex<HashMap<MeterScope, opentelemetry::metrics::Meter>>,
     instruments: Mutex<HashMap<InstrumentId, InstrumentHandle>>,
     next_id: AtomicU64,
     counters: Arc<Counters>,
@@ -215,11 +217,36 @@ impl OtelMetricsAggregator {
         id
     }
 
+    /// Returns the SDK `Meter` for the descriptor's instrumentation scope, creating and caching it
+    /// on first use so every exported metric carries the host's `get_meter` identity.
+    fn meter_for(&self, descriptor: &InstrumentDescriptor) -> opentelemetry::metrics::Meter {
+        let key: MeterScope = (
+            descriptor.meter_name.clone(),
+            descriptor.meter_version.clone(),
+            descriptor.meter_schema_url.clone(),
+        );
+        let mut meters = self.meters.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(meter) = meters.get(&key) {
+            return meter.clone();
+        }
+        let mut scope = opentelemetry::InstrumentationScope::builder(descriptor.meter_name.clone());
+        if let Some(version) = &descriptor.meter_version {
+            scope = scope.with_version(version.clone());
+        }
+        if let Some(schema_url) = &descriptor.meter_schema_url {
+            scope = scope.with_schema_url(schema_url.clone());
+        }
+        let meter = self.provider.meter_with_scope(scope.build());
+        meters.insert(key, meter.clone());
+        meter
+    }
+
     fn create_instrument(&self, descriptor: &InstrumentDescriptor) -> InstrumentHandle {
+        let meter = self.meter_for(descriptor);
         let name = descriptor.name.clone();
         match descriptor.kind {
             InstrumentKind::Counter | InstrumentKind::ObservableCounter => {
-                let mut builder = self.meter.f64_counter(name);
+                let mut builder = meter.f64_counter(name);
                 if let Some(unit) = &descriptor.unit {
                     builder = builder.with_unit(unit.clone());
                 }
@@ -229,7 +256,7 @@ impl OtelMetricsAggregator {
                 InstrumentHandle::Counter(builder.build())
             }
             InstrumentKind::UpDownCounter | InstrumentKind::ObservableUpDownCounter => {
-                let mut builder = self.meter.f64_up_down_counter(name);
+                let mut builder = meter.f64_up_down_counter(name);
                 if let Some(unit) = &descriptor.unit {
                     builder = builder.with_unit(unit.clone());
                 }
@@ -239,7 +266,7 @@ impl OtelMetricsAggregator {
                 InstrumentHandle::UpDownCounter(builder.build())
             }
             InstrumentKind::Histogram => {
-                let mut builder = self.meter.f64_histogram(name);
+                let mut builder = meter.f64_histogram(name);
                 if let Some(unit) = &descriptor.unit {
                     builder = builder.with_unit(unit.clone());
                 }
@@ -249,7 +276,7 @@ impl OtelMetricsAggregator {
                 InstrumentHandle::Histogram(builder.build())
             }
             InstrumentKind::ObservableGauge => {
-                let mut builder = self.meter.f64_gauge(name);
+                let mut builder = meter.f64_gauge(name);
                 if let Some(unit) = &descriptor.unit {
                     builder = builder.with_unit(unit.clone());
                 }
