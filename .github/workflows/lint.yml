@@ -112,10 +112,14 @@ jobs:
           rustup install ${{ needs.setup.outputs.nightly-version }}
           rustup component add rustfmt --toolchain ${{ needs.setup.outputs.nightly-version }}
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
@@ -159,10 +163,14 @@ jobs:
           rustup component add clippy --toolchain "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: all-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         env:
