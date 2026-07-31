@@ -826,6 +826,16 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
     }
 }
 
+impl<'a> From<&'a TracerHeaderTags<'a>> for libdd_trace_utils::trace_utils::TracerGenericTags {
+    fn from(tags: &'a TracerHeaderTags<'a>) -> Self {
+        libdd_trace_utils::trace_utils::TracerGenericTags {
+            client_computed_top_level: tags.client_computed_top_level,
+            client_computed_stats: tags.client_computed_stats,
+            ..Default::default()
+        }
+    }
+}
+
 /// Enqueues a telemetry log action to be processed internally.
 /// Non-blocking. Logs might be dropped if the internal queue is full.
 ///
@@ -1159,14 +1169,14 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let generic_tags = tracer_header_tags.into();
 
     try_c!(blocking::send_trace_v1_shm(
         transport,
         instance_id,
         *shm_handle,
         len,
-        tracer_header_tags,
+        generic_tags,
     ));
 
     MaybeError::None
@@ -1183,13 +1193,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let generic_tags = tracer_header_tags.into();
 
     try_c!(blocking::send_trace_v1_bytes(
         transport,
         instance_id,
         data.as_bytes().to_vec(),
-        tracer_header_tags,
+        generic_tags,
     ));
 
     MaybeError::None
