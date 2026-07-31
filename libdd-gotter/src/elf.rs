@@ -197,19 +197,38 @@ impl DynamicInfo {
         self.base_address
     }
 
-    /// Access to REL relocations (pointer, count).
-    pub fn rels(&self) -> (*const Elf64_Rel, usize) {
-        (self.rels, self.rels_count)
+    /// REL relocations for this object, or empty if none.
+    ///
+    /// Safe because `from_phdr` validated the pointer and count from the
+    /// `PT_DYNAMIC` segment of a currently-loaded ELF object.
+    pub fn rels(&self) -> &[Elf64_Rel] {
+        if self.rels.is_null() || self.rels_count == 0 {
+            &[]
+        } else {
+            // SAFETY: from_phdr set rels/rels_count from the DT_REL/DT_RELSZ
+            // entries of a mapped ELF object; the array is valid for the
+            // object's lifetime (held by dl_iterate_phdr's loader lock or by
+            // the caller's dlopen handle).
+            unsafe { core::slice::from_raw_parts(self.rels, self.rels_count) }
+        }
     }
 
-    /// Access to RELA relocations (pointer, count).
-    pub fn relas(&self) -> (*const Elf64_Rela, usize) {
-        (self.relas, self.relas_count)
+    /// RELA relocations for this object, or empty if none.
+    pub fn relas(&self) -> &[Elf64_Rela] {
+        if self.relas.is_null() || self.relas_count == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.relas, self.relas_count) }
+        }
     }
 
-    /// Access to JMPREL (PLT) relocations (pointer, count).
-    pub fn jmprels(&self) -> (*const Elf64_Rela, usize) {
-        (self.jmprels, self.jmprels_count)
+    /// JMPREL (PLT) relocations for this object, or empty if none.
+    pub fn jmprels(&self) -> &[Elf64_Rela] {
+        if self.jmprels.is_null() || self.jmprels_count == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(self.jmprels, self.jmprels_count) }
+        }
     }
 }
 

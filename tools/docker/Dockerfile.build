@@ -131,7 +131,7 @@ COPY "libdd-otel-thread-ctx/Cargo.toml" "libdd-otel-thread-ctx/"
 COPY "libdd-otel-thread-ctx-ffi/Cargo.toml" "libdd-otel-thread-ctx-ffi/"
 COPY "libdd-profiling-heap-sampler/Cargo.toml" "libdd-profiling-heap-sampler/"
 COPY "libdd-profiling-heap-allocator/Cargo.toml" "libdd-profiling-heap-allocator/"
-COPY "libdd-got-hook/Cargo.toml" "libdd-got-hook/"
+COPY "libdd-gotter/Cargo.toml" "libdd-gotter/"
 COPY "libdd-profiling-heap-gotter/Cargo.toml" "libdd-profiling-heap-gotter/"
 COPY "libdd-profiling-heap-gotter-ffi/Cargo.toml" "libdd-profiling-heap-gotter-ffi/"
 RUN find -name "Cargo.toml" | sed -e s#Cargo.toml#src/lib.rs#g | xargs -n 1 sh -c 'mkdir -p $(dirname $1); touch $1; echo $1' create_stubs

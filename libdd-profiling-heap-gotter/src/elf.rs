@@ -222,24 +222,16 @@ impl SymbolOverrides {
             return;
         }
 
-        let (rels_ptr, rels_count) = dyn_info.rels();
-        if !rels_ptr.is_null() {
-            let relocs = core::slice::from_raw_parts(rels_ptr, rels_count);
-            for reloc in relocs {
-                Self::process_relocation(
-                    &self.overrides,
-                    dyn_info,
-                    elf64_r_sym(reloc.r_info) as u32,
-                    reloc.r_offset as usize,
-                    guard,
-                );
-            }
+        for reloc in dyn_info.rels() {
+            Self::process_relocation(
+                &self.overrides,
+                dyn_info,
+                elf64_r_sym(reloc.r_info) as u32,
+                reloc.r_offset as usize,
+                guard,
+            );
         }
-        for (ptr, count) in [dyn_info.relas(), dyn_info.jmprels()] {
-            if ptr.is_null() {
-                continue;
-            }
-            let relocs = core::slice::from_raw_parts(ptr, count);
+        for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
             for reloc in relocs {
                 Self::process_relocation(
                     &self.overrides,

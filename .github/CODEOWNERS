@@ -51,7 +51,7 @@ libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
-libdd-got-hook/                      @DataDog/libdatadog @DataDog/libdatadog-profiling
+libdd-gotter/                      @DataDog/libdatadog @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
