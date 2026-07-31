@@ -6,7 +6,32 @@
 //! `LatestConfigsResponse` to the client), but drives libdatadog's
 //! `fetch_config`/`apply` path through a mock HTTP capability.
 //!
-//! Test root rotation, and different input shapes
+//! These tests exercise root rotation, various input shapes, and
+//! target-integrity failure modes.
+//!
+//! # Scenarios intentionally NOT covered here
+//!
+//! Some failure modes exercised by the agent's uptane test suite cannot be
+//! reproduced meaningfully in this in-memory harness and are therefore left
+//! out on purpose. If the underlying assumptions change (e.g. we move to a
+//! persistent TUF backend, or expose mutation APIs on the trusted database),
+//! these must be revisited:
+//!
+//! * **On-disk or trusted-database tampering**: the rust-tuf `Database` used by the fetcher is
+//!   in-memory and offers no public mutation API, so we cannot flip a byte inside an
+//!   already-verified snapshot/targets record and observe how `apply()` reacts. Any regression here
+//!   would have to be caught inside rust-tuf itself.
+//! * **Persisted-cache tampering across restarts**: the fetcher does not own a persistent cache.
+//!   The on-disk representation belongs to the embedding host (`FileStorage` implementation).
+//!   Tests here use `NoopStorage`, so anything a hostile filesystem could do between two process
+//!   lifetimes (swap files, roll back versions, corrupt bytes) is out of scope and must be covered
+//!   by the storage implementation's own tests.
+//! * **Transport-level integrity and MITM**: TLS and endpoint authentication are provided by the
+//!   `HttpClientCapability` implementation. The mock HTTP capability short-circuits the wire, so
+//!   replay, downgrade or certificate-swap attacks are not exercised here.
+//! * **Signature forgery or weak-key acceptance**: signing keys are generated fresh in each test,
+//!   so we cannot meaningfully test "attacker with the old key" scenarios. Those are the
+//!   responsibility of rust-tuf's own test suite.
 #![allow(clippy::unwrap_used)]
 
 use super::*;
@@ -730,6 +755,318 @@ async fn test_director_hash_superset_is_rejected() {
         "expected a hash-set mismatch error, got: {msg}"
     );
 }
+
+// ---- target-file integrity tests -----------------------------------------
+//
+// These tests confirm that byte- and metadata-level divergences between the
+// wire response, the director metadata, and the config-repo delegations are
+// all rejected before any target reaches the cache. They complement the
+// hash-set superset test above.
+
+/// Convenience: build a matched (config, director) pair for a single
+/// APM_TRACING target and return the pieces the tests below tweak.
+async fn matched_pair(
+    path: &'static str,
+    content: &'static [u8],
+) -> (RawSignedMetadataSet<Json>, Vec<u8>, RawSignedMetadataSet<Json>) {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    let entries: &[(&str, &[u8])] = &[(path, content)];
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        entries,
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    let dir = build_director_with_targets(&director_key, entries, &[HashAlgorithm::Sha256]).await;
+
+    (cfg, raw_delegated, dir)
+}
+
+/// Feed a `LatestConfigsResponse` in which the raw bytes served for a target
+/// no longer hash to what the director signed. Same length — so the length
+/// check passes and the hash check is the one that fires.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_tampered_target_bytes_are_rejected() {
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    let content: &[u8] = b"apm config payload";
+    let (cfg, raw_delegated, dir) = matched_pair(path, content).await;
+
+    let entries: &[(&str, &[u8])] = &[(path, content)];
+    let mut resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+    // Same length, different bytes: the director metadata signed the SHA-256
+    // of `content`, so any equal-length flip fails the hash check.
+    // (`content` must be non-empty, otherwise the XOR flip below is a no-op.)
+    let tampered: Vec<u8> = content.iter().map(|b| b ^ 0x01).collect();
+    assert_eq!(tampered.len(), content.len());
+    resp.target_files[0].raw = tampered;
+
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("tampered target bytes must be rejected");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("hash did not match"),
+        "expected a hash-mismatch error on tampered bytes, got: {msg}"
+    );
+
+    // Nothing must have been stored.
+    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+}
+
+/// Feed a response whose raw bytes for a target have the wrong length.
+/// Because the length check runs before the hash check in `fetch_target`,
+/// this is the specific error we expect — not a hash mismatch.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_target_length_mismatch_is_rejected() {
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    let content: &[u8] = b"apm config payload";
+    let (cfg, raw_delegated, dir) = matched_pair(path, content).await;
+
+    let entries: &[(&str, &[u8])] = &[(path, content)];
+    let mut resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+    // Extend the bytes so the length no longer matches the director metadata.
+    let mut too_long = content.to_vec();
+    too_long.extend_from_slice(b" extra trailing bytes");
+    resp.target_files[0].raw = too_long;
+
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("target with mismatching length must be rejected");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("bad length for file"),
+        "expected a length-mismatch error, got: {msg}"
+    );
+    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+}
+
+/// The director publishes a target whose path is not covered by any config
+/// delegation. `verify_director_against_config` must reject the whole apply
+/// before we ever hit the byte-level checks.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_director_target_not_in_config_delegations_is_rejected() {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    // Config only delegates APM_TRACING...
+    let authorized_path = "datadog/2/APM_TRACING/cfgid/config";
+    let authorized_content: &[u8] = b"apm payload";
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        &[(authorized_path, authorized_content)],
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+
+    // ...but the director signs BOTH the authorized APM_TRACING target and an
+    // ASM target that no delegation ever authorized.
+    let unauthorized_path = "datadog/2/ASM/cfgid/config";
+    let unauthorized_content: &[u8] = b"asm payload";
+    let dir_entries: &[(&str, &[u8])] = &[
+        (authorized_path, authorized_content),
+        (unauthorized_path, unauthorized_content),
+    ];
+    let dir =
+        build_director_with_targets(&director_key, dir_entries, &[HashAlgorithm::Sha256]).await;
+
+    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, dir_entries);
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("unauthorized director target must be rejected");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("not authorized by config delegations"),
+        "expected an unauthorized-target error, got: {msg}"
+    );
+    // The authorized sibling must NOT have been cached: apply() is all-or-nothing.
+    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+}
+
+/// Director and config both authorize the same path, but their signed
+/// metadata disagrees on the target's length (different content per builder,
+/// with different sizes). `verify_director_against_config` compares length
+/// first, so this is the error we expect — not a hash mismatch.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_director_config_length_disagreement_is_rejected() {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    let config_content: &[u8] = b"short";
+    let director_content: &[u8] = b"a distinctly longer payload";
+    assert_ne!(config_content.len(), director_content.len());
+
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        &[(path, config_content)],
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    let dir = build_director_with_targets(
+        &director_key,
+        &[(path, director_content)],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+
+    // The wire bytes match the director (that is what the fetcher would try
+    // to verify against downstream), but apply() must fail earlier during
+    // director/config cross-check.
+    let resp = delegated_response(
+        &cfg,
+        raw_delegated,
+        "APM_TRACING",
+        &dir,
+        &[(path, director_content)],
+    );
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("director/config length disagreement must be rejected");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("length mismatch between director and config"),
+        "expected a director/config length-mismatch error, got: {msg}"
+    );
+    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+}
+
+/// Director and config agree on hash algorithms and content length but the
+/// hash *values* differ (they signed different bytes of the same length).
+/// The existing `test_director_hash_superset_is_rejected` covers the case
+/// where the algorithm SET differs; this one exercises the equal-cardinality
+/// value-disagreement path.
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn test_director_config_hash_value_disagreement_is_rejected() {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    // Same length, different bytes: same-size hash sets but different values.
+    let config_content: &[u8] = b"config-side-payload"; // 19 bytes
+    let director_content: &[u8] = b"director-sd-payload"; // 19 bytes
+    assert_eq!(config_content.len(), director_content.len());
+    assert_ne!(config_content, director_content);
+
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        &[(path, config_content)],
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    let dir = build_director_with_targets(
+        &director_key,
+        &[(path, director_content)],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+
+    let resp = delegated_response(
+        &cfg,
+        raw_delegated,
+        "APM_TRACING",
+        &dir,
+        &[(path, director_content)],
+    );
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("director/config hash-value disagreement must be rejected");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("hash set mismatch"),
+        "expected a director/config hash-value mismatch error, got: {msg}"
+    );
+    assert!(state.target_files_by_path.lock().unwrap().is_empty());
+}
+
+// ---- org UUID tests -----------------------------------------------------
 
 /// Build a config snapshot + timestamp pair whose signed snapshot carries
 /// `custom.org_uuid = uuid`. Reuses the (version, expires, meta) already
