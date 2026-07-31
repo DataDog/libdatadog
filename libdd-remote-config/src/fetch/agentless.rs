@@ -8,7 +8,6 @@ use std::{fmt, ops::RangeInclusive, time::Duration};
 
 use anyhow::{bail, format_err};
 use base64::Engine;
-use futures::AsyncReadExt as _;
 use hashbrown::{HashMap, HashSet};
 use http::{
     header,
@@ -21,13 +20,10 @@ use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
 use tracing::debug;
-use tuf::repository::RepositoryStorage;
-use tuf::{
-    metadata::{
-        Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetDescription, TargetPath,
-    },
-    repository::RepositoryProvider as _,
+use tuf::metadata::{
+    Metadata, MetadataPath, MetadataVersion, RawSignedMetadata, TargetDescription, TargetPath,
 };
+use tuf::repository::RepositoryStorage;
 
 /// Embedded TUF trust roots, per site
 ///
@@ -436,26 +432,12 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         Ok(())
     }
 
-    async fn fetch_target(&self, target: &TrustedTarget<'_>) -> anyhow::Result<Vec<u8>> {
+    fn fetch_target<'a>(&'a self, target: &TrustedTarget<'_>) -> anyhow::Result<&'a [u8]> {
         let target_path = target.path;
 
         // Fetch from the remote __unverified__ repo.
         // This is fine because we compare the hash+len against TUF-validated metadata.
-        let mut read = self
-            .director_client
-            .remote_repo()
-            .fetch_target(target_path)
-            .await?;
-        let mut buf = vec![
-            0;
-            usize::try_from(target.length).map_err(|_| {
-                let length = target.length;
-                format_err!(
-                    "target length overflows usize for path: {target_path} (got {length} bytes)"
-                )
-            })?
-        ];
-        read.read_exact(&mut buf).await?;
+        let buf = self.director_client.remote_repo().get_target(target_path)?;
 
         let actual_len = u64::try_from(buf.len()).map_err(|_| {
             let got = buf.len();
@@ -470,7 +452,7 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .iter()
             .map(|(alg, _val)| (*alg).clone())
             .collect::<Vec<_>>();
-        let actual_hashes = tuf::crypto::calculate_hashes_from_slice(&buf, hash_algs.as_slice())?;
+        let actual_hashes = tuf::crypto::calculate_hashes_from_slice(buf, hash_algs.as_slice())?;
         let expected: HashMap<_, _> = target
             .all_hashes
             .iter()
@@ -773,7 +755,13 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
 
         let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
 
-        let cached_paths: HashSet<&RemoteConfigPath> = cache.is_cached_batch(
+        // Hold the cache lock for the entire fetch/verify/store cycle.
+        // Prevents another agentless fetcher sharing the same
+        // `ConfigFetcherState` from interleaving between `is_cached_batch`
+        // and `store_batch`
+        let mut files_guard = cache.lock();
+
+        let cached_paths: HashSet<&RemoteConfigPath> = files_guard.is_cached_batch(
             targets
                 .iter()
                 .map(|t| (&t.parsed_path, t.primary_hash.as_str(), t.length)),
@@ -784,7 +772,7 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             if cached_paths.contains(&t.parsed_path) {
                 continue;
             }
-            let content = self.fetch_target(t).await?;
+            let content = self.fetch_target(t)?;
             new_targets.push(NewTarget {
                 path: t.parsed_path.clone(),
                 version: t.version,
@@ -794,14 +782,14 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
                     .iter()
                     .map(|(alg, hash)| (hash_algorithm_to_str(alg).to_owned(), hash.to_string()))
                     .collect(),
-                content,
+                content: content.to_owned(),
             });
         }
-        cache.store_batch(new_targets)?;
+        files_guard.store_batch(new_targets)?;
 
         let active_paths: HashSet<&RemoteConfigPath> =
             targets.iter().map(|t| &t.parsed_path).collect();
-        cache.retain_only(&active_paths);
+        files_guard.retain_only(&active_paths);
 
         let active_targets: Vec<ClientTargetRef> = targets
             .iter()
@@ -1153,20 +1141,37 @@ pub(crate) use cache::TargetCache;
 /// * Being able to isolate the agentless logic in it's own crate eventually so that we can reuse it
 ///   in bottlecap/ obs-pipeline without the rest of the code
 mod cache {
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, MutexGuard};
 
     use hashbrown::HashMap;
     use libdd_common::MutexExt as _;
     use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
-    use std::sync::Mutex;
 
     use crate::{
         fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
         RemoteConfigPath,
     };
 
+    /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
+    /// map giving `AgentlessFetcher::apply` a set of small, self-contained
+    /// cache operations. Callers must first acquire the mutex via
+    /// [`Self::lock`] and then invoke the batch methods on the returned
+    /// guard, so the whole read cycle happens under a single lock scope.
     pub(crate) struct TargetCache<'a, Storage: FileStorage> {
         files: &'a Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<Storage::StoredFile>>>,
+        storage: &'a Storage,
+        expire_unused_files: bool,
+    }
+
+    /// Locked view of the [`TargetCache`] — holds the mutex guard so
+    /// every method below runs under the same critical section, atomic
+    /// w.r.t. concurrent agentless fetchers sharing the same state.
+    ///
+    /// SAFETY / INVARIANT: never `.await` while this guard is alive — it
+    /// wraps a `std::sync::MutexGuard` and would block the runtime thread.
+    pub(crate) struct LockedTargetCache<'a, Storage: FileStorage> {
+        files:
+            MutexGuard<'a, HashMap<Arc<RemoteConfigPath>, StoredTargetFile<Storage::StoredFile>>>,
         storage: &'a Storage,
         expire_unused_files: bool,
     }
@@ -1183,16 +1188,28 @@ mod cache {
             }
         }
 
+        /// Acquire the cache lock. Hold the returned guard for the whole
+        /// read cycle so `is_cached_batch`, `store_batch`, `retain_only`
+        /// and `collect_handles` all run under one critical section.
+        pub(crate) fn lock(&self) -> LockedTargetCache<'a, S> {
+            LockedTargetCache {
+                files: self.files.lock_or_panic(),
+                storage: self.storage,
+                expire_unused_files: self.expire_unused_files,
+            }
+        }
+    }
+
+    impl<'a, S: FileStorage> LockedTargetCache<'a, S> {
         /// Returns the set of paths whose `(primary_hash, len)` already matches the cache.
         pub(crate) fn is_cached_batch<'b>(
             &self,
             candidates: impl IntoIterator<Item = (&'b RemoteConfigPath, &'b str, u64)>,
         ) -> hashbrown::HashSet<&'b RemoteConfigPath> {
-            let files = self.files.lock_or_panic();
             candidates
                 .into_iter()
                 .filter_map(|(parsed_path, primary_hash, len)| {
-                    let stored = files.get(parsed_path)?;
+                    let stored = self.files.get(parsed_path)?;
                     // `stored.meta.length` is an `i64` coming from protobuf. A
                     // negative value should never appear, but if it does treat the
                     // entry as "not cached" so the caller re-fetches instead of
@@ -1204,10 +1221,9 @@ mod cache {
         }
 
         pub(crate) fn store_batch(
-            &self,
+            &mut self,
             targets: impl IntoIterator<Item = NewTarget>,
         ) -> anyhow::Result<()> {
-            let mut files = self.files.lock_or_panic();
             for NewTarget {
                 path,
                 version,
@@ -1224,7 +1240,7 @@ mod cache {
                     )
                 })?;
                 let path: Arc<crate::RemoteConfigPath> = Arc::new(path);
-                let new_handle = if let Some(existing) = files.get(&path) {
+                let new_handle = if let Some(existing) = self.files.get(&path) {
                     self.storage
                         .update(&existing.handle, version, content)
                         .map(|()| existing.handle.clone())?
@@ -1251,32 +1267,29 @@ mod cache {
                     handle: new_handle,
                     expiring: false,
                 };
-                files.insert(path, file);
+                self.files.insert(path, file);
             }
             Ok(())
         }
 
         /// Evict every entry whose parsed TUF path is not in `active_paths`. No-op when
         /// `expire_unused_files` is `false`.
-        pub(crate) fn retain_only(&self, active_paths: &hashbrown::HashSet<&RemoteConfigPath>) {
+        pub(crate) fn retain_only(&mut self, active_paths: &hashbrown::HashSet<&RemoteConfigPath>) {
             if !self.expire_unused_files {
                 return;
             }
-            self.files
-                .lock_or_panic()
-                .retain(|path, _| active_paths.contains(&**path));
+            self.files.retain(|path, _| active_paths.contains(&**path));
         }
 
         /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
         /// stored hash and length match, and marking each entry as non-expiring.
         pub(crate) fn collect_handles(
-            &self,
+            &mut self,
             targets: &[ClientTargetRef],
         ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
-            let mut files = self.files.lock_or_panic();
             let mut handles = Vec::with_capacity(targets.len());
             for target in targets {
-                let stored = files.get_mut(&target.path).ok_or_else(|| {
+                let stored = self.files.get_mut(&target.path).ok_or_else(|| {
                     anyhow::format_err!(
                         "collect_handles: path {} not found in cache after fetch",
                         target.path

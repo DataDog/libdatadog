@@ -686,7 +686,7 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                     .map(|target_ref| target_ref.path.clone())
                     .collect();
 
-                let configs = cache.collect_handles(&res.targets)?;
+                let configs = cache.lock().collect_handles(&res.targets)?;
 
                 client_state.last_config_paths = config_paths;
                 Ok(Some(configs))
