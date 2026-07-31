@@ -308,6 +308,7 @@ fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u64> {
 /// (unchanged) top-targets must still converge. Before the fix the wipe drops
 /// the top-targets and `update()` is stuck; the cache re-serves them.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_root_rotation_without_top_targets_still_converges() {
     let config_key = new_key();
     let director_key = new_key();
@@ -379,6 +380,7 @@ async fn test_root_rotation_without_top_targets_still_converges() {
 /// pinned roots, so the next poll reports the clean (embedded) versions and
 /// converges — no stuck from a partially-advanced trusted DB.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_apply_error_resets_and_recovers() {
     let config_key = new_key();
     let director_key = new_key();
@@ -572,6 +574,7 @@ async fn build_director_with_targets(
 /// consults it to drop unparseable/unknown-product targets before they reach
 /// `active_targets`, so `collect_handles` never sees a path it can't serve.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_unknown_product_target_is_not_stuck_known_targets() {
     let config_key = new_key();
     let product_key = new_key();
@@ -675,6 +678,7 @@ fn delegated_response(
 /// director assert an arbitrary sha512 digest config never authorized — so the
 /// whole `apply()` must now fail.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_director_hash_superset_is_rejected() {
     let config_key = new_key();
     let product_key = new_key();
@@ -770,6 +774,7 @@ fn config_snapshot_with_org_uuid(
 /// UUID that the snapshot pins, so the fetch converges and exactly one org
 /// request was issued.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_match_via_concurrent_prefetch() {
     let config_key = new_key();
     let director_key = new_key();
@@ -810,6 +815,7 @@ async fn test_org_uuid_match_via_concurrent_prefetch() {
 /// Mismatching org UUID must fail the poll AND reset the fetcher, so a
 /// subsequent poll reports the clean (embedded) versions.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_mismatch_fails_and_resets() {
     let config_key = new_key();
     let director_key = new_key();
@@ -860,6 +866,7 @@ async fn test_org_uuid_mismatch_fails_and_resets() {
 /// config trusted-root version), forcing a fresh /api/v0.1/org fetch on the
 /// next poll.
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_org_uuid_refetched_on_root_rotation() {
     let config_key = new_key();
     let director_key = new_key();

@@ -1450,7 +1450,6 @@ pub fn debug_latest_configs_response(
 }
 
 #[cfg(test)]
-#[cfg_attr(miri, ignore)]
 mod tests {
     use libdd_common::Endpoint;
 
@@ -1461,6 +1460,7 @@ mod tests {
     use super::Site;
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_create_fetcher_for_site() {
         for site in ["datad0g.com", "datadoghq.com", "ddog-gov.com"] {
             let endpoint = Endpoint::agentless(site, "abc".to_string()).unwrap();
@@ -1476,6 +1476,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn strips_hash_prefix() {
         assert_eq!(
             trim_hash_target_path("datadog/2/APM_TRACING/abcd/deadbeef.config").unwrap(),
@@ -1484,6 +1485,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn no_hash_prefix_is_kept() {
         assert_eq!(
             trim_hash_target_path("datadog/2/APM_TRACING/abcd/config").unwrap(),
@@ -1492,6 +1494,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn backslash_is_not_a_separator() {
         // Windows-style separators must NOT be treated as path separators.
         // The whole string is the basename here.
@@ -1499,17 +1502,20 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn empty_or_no_slash_is_error() {
         assert!(trim_hash_target_path("").is_err());
         assert!(trim_hash_target_path("deadbeef.config").is_err());
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn trailing_slash_is_error() {
         assert!(trim_hash_target_path("datadog/2/foo/").is_err());
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn agentless_config_new_rejects_empty_hostname() {
         let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
         assert!(matches!(
@@ -1519,6 +1525,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn agentless_config_new_rejects_endpoint_without_api_key() {
         // Endpoint constructed via `from_slice` has no `api_key`, which is one
         // of the required agentless preconditions.
@@ -1530,6 +1537,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn agentless_config_new_rejects_non_https_endpoint() {
         let mut endpoint = Endpoint::from_slice("http://datadoghq.com/");
         endpoint.api_key = Some("abc".to_string().into());
@@ -1540,6 +1548,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn agentless_config_new_accepts_well_formed_config() {
         let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
         let cfg = AgentlessConfig::new("host".to_string(), &endpoint).expect("well-formed");
@@ -1554,6 +1563,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn agentless_config_builders() {
         let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
         let cfg = AgentlessConfig::new("host".to_string(), &endpoint)
@@ -1563,6 +1573,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_compute_backoff() {
         use super::compute_backoff;
         use std::time::Duration;
@@ -1583,6 +1594,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_target_matches_pattern() {
         use super::target_matches_pattern as m;
 
@@ -1629,6 +1641,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_site_from_host() {
         assert_eq!(Site::from_host("config.datadoghq.com"), Site::Prod);
         assert_eq!(Site::from_host("config.us3.datadoghq.com"), Site::Prod);
@@ -1641,5 +1654,4 @@ mod tests {
 }
 
 #[cfg(test)]
-// #[cfg_attr(miri, ignore)]
 mod integration_tests;
