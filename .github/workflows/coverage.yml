@@ -46,6 +46,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate code coverage (including doc tests)
         env:
           # Override rust-toolchain.toml so cargo-llvm-cov runs on the dated

@@ -32,6 +32,8 @@ jobs:
         with:
           cache-targets: true
           cache-bin: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Regenerate bindings
         # `LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1` rewrites `src/generated/*`
         # in-place via bindgen. If the committed files were stale the
