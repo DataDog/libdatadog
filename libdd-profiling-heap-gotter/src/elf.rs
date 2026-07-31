@@ -229,7 +229,7 @@ impl SymbolOverrides {
             Self::process_relocation(
                 &self.overrides,
                 dyn_info,
-                elf64_r_sym(reloc.r_info) as u32,
+                elf64_r_sym(reloc.r_info),
                 reloc.r_offset as usize,
                 guard,
             );
@@ -242,7 +242,7 @@ impl SymbolOverrides {
                 Self::process_relocation(
                     &self.overrides,
                     dyn_info,
-                    elf64_r_sym(reloc.r_info) as u32,
+                    elf64_r_sym(reloc.r_info),
                     reloc.r_offset as usize,
                     guard,
                 );
