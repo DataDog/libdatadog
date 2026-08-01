@@ -1275,6 +1275,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         version: Option<String>,
         compatible: Option<bool>,
         auto_enabled: Option<bool>,
+        error: Option<String>,
     ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddIntegration(Integration {
@@ -1283,6 +1284,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
                 compatible,
                 enabled,
                 auto_enabled,
+                error,
             }))?;
         Ok(())
     }
@@ -1951,6 +1953,7 @@ mod tests {
                 enabled: true,
                 compatible: None,
                 auto_enabled: None,
+                ..Default::default()
             });
             worker.data.configurations.insert(Configuration {
                 name: "cfg".to_string(),

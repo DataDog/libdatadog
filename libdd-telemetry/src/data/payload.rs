@@ -155,6 +155,7 @@ mod tests {
                     version: Some("0.19.0".to_string()),
                     compatible: Some(true),
                     auto_enabled: Some(false),
+                    ..Default::default()
                 },
                 Integration {
                     name: "redis".to_string(),
@@ -162,6 +163,7 @@ mod tests {
                     version: None,
                     compatible: None,
                     auto_enabled: None,
+                    error: Some("patch failed: boom".to_string()),
                 },
             ],
         });
@@ -177,14 +179,16 @@ mod tests {
                         "enabled": true,
                         "version": "0.19.0",
                         "compatible": true,
-                        "auto_enabled": false
+                        "auto_enabled": false,
+                        "error": null
                     },
                     {
                         "name": "redis",
                         "enabled": false,
                         "version": null,
                         "compatible": null,
-                        "auto_enabled": null
+                        "auto_enabled": null,
+                        "error": "patch failed: boom"
                     }
                 ]
             }
@@ -250,7 +254,7 @@ mod tests {
         let expected = json!({
             "request_type": "app-endpoints",
             "payload": {
-                "is-first": true,
+                "is_first": true,
                 "endpoints": [
                     {
                         "method": "GET",

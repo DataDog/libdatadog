@@ -49,12 +49,14 @@ pub struct Integration {
     pub version: Option<String>,
     pub compatible: Option<bool>,
     pub auto_enabled: Option<bool>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Configuration {
     pub name: String,
-    pub value: Option<String>,  // distinguish `null` from ""
+    pub value: Option<String>, // distinguish `null` from ""
     pub origin: ConfigurationOrigin,
     pub config_id: Option<String>,
     pub seq_id: Option<u64>,
@@ -145,7 +147,13 @@ pub struct AppClientConfigurationChange {
 
 #[derive(Debug, Serialize)]
 pub struct AppEndpoints {
-    #[serde(rename = "is-first")]
+    /// Flags the first app-endpoints payload of the process.
+    ///
+    /// Serialized as `is_first`: that is what every tracer actually puts on the wire (dd-trace-py
+    /// shipped `{"is_first": ...}` from its Python implementation) and what system-tests asserts
+    /// on. The backend's `AppEndpointsPayload` struct tags this `json:"is-first"`, but no producer
+    /// sends the hyphenated form, so that tag matches nothing today - do not "fix" this to match it
+    /// without changing the producers too, or the flag silently stops arriving.
     pub is_first: bool,
     pub endpoints: Vec<serde_json::Value>,
 }

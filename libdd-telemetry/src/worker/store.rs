@@ -178,7 +178,7 @@ pub struct Store<T, K = T> {
 
 impl<T, K> Store<T, K>
 where
-    T: Keyed<K>,
+    T: Keyed<K> + PartialEq,
     K: PartialEq + Eq + Hash + Clone,
 {
     pub fn new(max_items: usize) -> Self {
@@ -191,8 +191,17 @@ where
 
     pub fn insert(&mut self, item: T) {
         let key = item.key();
-        if let Some(existing) = self.items.get_mut(&key) {
-            *existing = item;
+        if let Some(existing) = self.items.get(&key) {
+            if *existing == item {
+                // Exact duplicate: already stored, and already sent or queued.
+                return;
+            }
+            // The entry was refreshed rather than duplicated (e.g. SCA attaching CVE reachability
+            // metadata to a dependency that was already reported). Re-queue it to actually deliver.
+            let (idx, _) = self.items.insert(key, item);
+            if !self.unflushed.contains(&idx) {
+                self.unflushed.push_back(idx);
+            }
             return;
         }
         if self.items.len() == self.max_items {
@@ -247,7 +256,7 @@ where
 
 impl<T, K> Extend<T> for Store<T, K>
 where
-    T: Keyed<K>,
+    T: Keyed<K> + PartialEq,
     K: PartialEq + Eq + Hash + Clone,
 {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
@@ -282,6 +291,51 @@ mod tests {
 
         store.insert("hello");
         assert!(store.unflushed().next().is_none());
+    }
+
+    /// A keyed item whose value can change while its key stays the same, mirroring a Dependency
+    /// that gets SCA reachability metadata attached after it was first reported.
+    #[derive(Debug, PartialEq, Clone)]
+    struct Keyish(&'static str, u32);
+
+    impl Keyed<&'static str> for Keyish {
+        fn key(&self) -> &'static str {
+            self.0
+        }
+    }
+
+    #[test]
+    fn test_updated_item_is_requeued_for_flush() {
+        let mut store: Store<Keyish, &'static str> = Store::new(10);
+        store.insert(Keyish("requests", 0));
+        store.removed_flushed(1);
+        assert!(store.unflushed().next().is_none(), "initial send drains");
+
+        // Same key, unchanged value: deduplicated, nothing to re-send.
+        store.insert(Keyish("requests", 0));
+        assert!(
+            store.unflushed().next().is_none(),
+            "identical re-insert must not re-queue"
+        );
+
+        // Same key, updated value: must be re-queued so the update is actually delivered.
+        store.insert(Keyish("requests", 1));
+        assert_eq!(
+            store.items.len(),
+            1,
+            "update refreshes in place, no duplicate entry"
+        );
+        assert_eq!(
+            store.unflushed().collect::<Vec<_>>(),
+            &[&Keyish("requests", 1)]
+        );
+
+        // Updating again while still queued must not enqueue it twice.
+        store.insert(Keyish("requests", 2));
+        assert_eq!(
+            store.unflushed().collect::<Vec<_>>(),
+            &[&Keyish("requests", 2)]
+        );
     }
 
     #[test]

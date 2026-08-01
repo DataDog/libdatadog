@@ -47,6 +47,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
         version,
         compatible.into(),
         auto_enabled.into(),
+        None,
     ));
     MaybeError::None
 }
