@@ -241,6 +241,8 @@ pub struct Endpoint {
     pub operation_name: String,
     pub resource_name: String,
     #[serde(default)]
+    pub request_body_type: Option<Vec<String>>,
+    #[serde(default)]
     pub response_body_type: Option<Vec<String>>,
     #[serde(default)]
     pub response_code: Option<Vec<u32>>,
