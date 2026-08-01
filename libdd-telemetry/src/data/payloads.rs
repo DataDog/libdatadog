@@ -232,6 +232,10 @@ pub struct Endpoint {
     pub path: Option<String>,
     pub operation_name: String,
     pub resource_name: String,
+    #[serde(default)]
+    pub response_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_code: Option<Vec<u32>>,
 }
 
 impl PartialEq for Endpoint {

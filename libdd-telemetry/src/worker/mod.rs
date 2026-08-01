@@ -587,6 +587,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 }
             }
             Lifecycle(ExtendedHeartbeat) => {
+                // Flush the data before submitting a heartbeat to ensure completeness.
+                let delta = self.build_app_events_batch();
+                if !delta.is_empty() {
+                    let payload = data::Payload::MessageBatch(delta);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => self.payload_sent_success(&payload),
+                        Err(err) => self.log_err(&err),
+                    }
+                }
+
                 self.data.dependencies.unflush_stored();
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();

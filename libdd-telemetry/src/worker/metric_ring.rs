@@ -212,7 +212,10 @@ mod tests {
         ] {
             let k = key(idx, t);
             let e = encode_key(k);
-            assert_ne!(e, 0, "encoded key must never collide with the empty sentinel");
+            assert_ne!(
+                e, 0,
+                "encoded key must never collide with the empty sentinel"
+            );
             assert_eq!(decode_key(e), k);
         }
     }
@@ -285,7 +288,11 @@ mod tests {
         consumer.join().unwrap();
 
         let total = (producers * per_producer) as u64;
-        assert_eq!(consumed.load(Ordering::Relaxed), total, "no points lost or duplicated");
+        assert_eq!(
+            consumed.load(Ordering::Relaxed),
+            total,
+            "no points lost or duplicated"
+        );
         let expected_sum = producers as u64 * (0..per_producer as u64).sum::<u64>();
         assert_eq!(value_sum.load(Ordering::Relaxed), expected_sum);
     }
