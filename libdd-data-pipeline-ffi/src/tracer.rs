@@ -705,6 +705,20 @@ mod tests {
         }
     }
 
+    // An empty key is valid UTF-8 and is technically accepted.
+    #[test]
+    fn set_meta_struct_blob_accepts_empty_key() {
+        unsafe {
+            let mut span = make_minimal_span();
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs(""), bs(b"value"));
+            assert!(err.is_none());
+            assert_eq!(span.0.meta_struct.get("").unwrap().as_ref(), b"value");
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
     #[test]
     fn set_meta_null_value_returns_error() {
         unsafe {
