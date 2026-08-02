@@ -141,10 +141,13 @@ pub unsafe extern "C" fn ddog_tracer_span_free(handle: Box<TracerSpan>) {
 ///
 /// Both `key` and `value` are copied into the span.
 ///
+/// Returns an error if `handle` is null, if `key` or `value` is not valid UTF-8, or if either
+/// slice is malformed.
+///
 /// # Safety
 ///
-/// `handle` must be a valid pointer to a `TracerSpan`.
-/// `key` and `value` must point to valid UTF-8 memory.
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` and `value` must point to valid
+/// memory for their stated lengths.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_set_meta(
     handle: Option<&mut TracerSpan>,
@@ -174,10 +177,13 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta(
 ///
 /// The `key` is copied into the span.
 ///
+/// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if the slice is
+/// malformed.
+///
 /// # Safety
 ///
-/// `handle` must be a valid pointer to a `TracerSpan`.
-/// `key` must point to valid UTF-8 memory.
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to valid memory for its
+/// stated length.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_set_metric(
     handle: Option<&mut TracerSpan>,
@@ -205,7 +211,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
 /// not interpreted or validated as MessagePack.
 ///
 /// Repeating a `key` appends a new entry rather than replacing the previous one. The last value
-/// written for a key is the one read back and the one serialized
+/// written for a key is the one read back and the one serialized.
 ///
 /// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if either slice is
 /// malformed.
