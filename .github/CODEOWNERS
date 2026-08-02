@@ -79,6 +79,7 @@ rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
+scripts/check_ffi_panic_containment.sh @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
 scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/libdatadog-core
