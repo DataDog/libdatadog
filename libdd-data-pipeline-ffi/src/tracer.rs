@@ -199,10 +199,13 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
     )
 }
 
-/// Add or overwrite a structured metadata entry (`meta_struct`) on the span.
+/// Add a structured metadata entry (`meta_struct`) to the span.
 ///
 /// The `key` and opaque binary `value` are copied into the span. The value is
 /// not interpreted or validated as MessagePack.
+///
+/// Repeating a `key` appends a new entry rather than replacing the previous one. The last value
+/// written for a key is the one read back and the one serialized
 ///
 /// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if either slice is
 /// malformed.
@@ -594,8 +597,10 @@ mod tests {
         }
     }
 
+    // Repeated keys are appended, not replaced: `VecMap` defers deduplication to encode time,
+    // so both entries are retained and the last one wins on read.
     #[test]
-    fn set_meta_struct_blob_overwrites_existing_key() {
+    fn set_meta_struct_blob_last_write_wins() {
         unsafe {
             let mut span = make_minimal_span();
 
@@ -603,6 +608,7 @@ mod tests {
             ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b"second"));
 
             assert_eq!(span.0.meta_struct.get("k").unwrap().as_ref(), b"second");
+            assert_eq!(span.0.meta_struct.len(), 2);
 
             ddog_tracer_span_free(span);
         }
