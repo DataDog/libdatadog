@@ -114,18 +114,15 @@ where
     let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
 
     #[cfg(unix)]
-    let appsec = config.appsec_config.as_ref().and_then(|appsec_config| {
-        crate::appsec::AppSec::start(appsec_config, in_process_telemetry.clone())
-    });
+    let server = server.with_appsec_telemetry(in_process_telemetry.clone());
+
+    #[cfg(unix)]
+    if let Some(appsec_config) = config.appsec_config.as_ref() {
+        server.ensure_appsec_started(appsec_config).await;
+    }
 
     #[cfg(not(unix))]
     drop(in_process_telemetry);
-
-    #[cfg(unix)]
-    let server = match appsec.as_ref() {
-        Some(appsec) => server.with_appsec_backend(appsec.backend()),
-        None => server,
-    };
 
     if let Some(rx) = telemetry_rx {
         tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
@@ -170,9 +167,7 @@ where
     server.shutdown();
     _ = server.trace_flusher.join().await;
     #[cfg(unix)]
-    if let Some(appsec) = appsec {
-        appsec.shutdown().await;
-    }
+    server.shutdown_appsec().await;
 
     Ok(())
 }

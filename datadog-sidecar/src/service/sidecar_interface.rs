@@ -245,6 +245,12 @@ pub trait SidecarInterface {
         span: datadog_ipc::shm_stats::OwnedShmSpanInput,
     );
 
+    /// Starts the AppSec backend if it has not already been initialized.
+    ///
+    /// Returns only after initialization finishes, so subsequent AppSec messages
+    /// cannot overtake initialization.
+    async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
+
     /// Forwards an AppSec message from the PHP extension to the registered helper.
     ///
     /// Returns the response bytes from the helper and a flag indicating whether

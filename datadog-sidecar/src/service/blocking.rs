@@ -470,6 +470,20 @@ pub fn add_span_to_concentrator(
     Ok(())
 }
 
+/// Starts the AppSec backend in the sidecar and waits for initialization to
+/// complete before returning.
+pub fn ensure_appsec_started(
+    transport: &mut SidecarTransport,
+    log_file_path: Vec<u8>,
+    log_level: String,
+) -> io::Result<bool> {
+    transport.with_retry(|sender| {
+        sender
+            .ensure_appsec_started(log_file_path.clone(), log_level.clone())
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
+}
+
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))

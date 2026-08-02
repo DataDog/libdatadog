@@ -485,6 +485,15 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
+    pub fn ensure_appsec_started(
+        &mut self,
+        log_file_path: Vec<u8>,
+        log_level: String,
+    ) -> Result<bool, datadog_ipc::codec::DecodeError> {
+        self.channel
+            .call_ensure_appsec_started(log_file_path, log_level)
+    }
+
     pub fn send_appsec_message(
         &mut self,
         request: &SidecarInterfaceClientRequest<'_>,

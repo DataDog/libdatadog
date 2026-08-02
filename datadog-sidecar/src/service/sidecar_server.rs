@@ -23,14 +23,18 @@ use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
 #[cfg(unix)]
-use crate::appsec::AppSecBackendCallbacks;
+use crate::appsec::AppSecManager;
 use crate::config::get_product_endpoint;
+#[cfg(unix)]
+use crate::config::AppSecConfig;
 use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
@@ -43,6 +47,8 @@ use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
     SpanConcentratorState, StatsConfig,
 };
+#[cfg(unix)]
+use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_ipc::ipc_server::OwnedServerConn;
@@ -119,9 +125,9 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
-    /// AppSec message backend supplied by the embedding application.
+    /// AppSec lifecycle and active backend, when supplied by the embedding application.
     #[cfg(unix)]
-    appsec_backend: Option<AppSecBackendCallbacks>,
+    appsec: Option<Arc<AppSecManager>>,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -176,7 +182,7 @@ impl ConnectionSidecarHandler {
         {
             let client_id_opt = *self.appsec_client_id.lock_or_panic();
             if let (Some(session_id), Some(client_id)) = (self.session_id.get(), client_id_opt) {
-                if let Some(appsec) = self.server.appsec_backend.as_ref() {
+                if let Some(appsec) = self.server.appsec.as_ref() {
                     appsec.disconnect(session_id, client_id);
                 }
             }
@@ -217,9 +223,28 @@ impl ConnectionSidecarHandler {
 
 impl SidecarServer {
     #[cfg(unix)]
-    pub(crate) fn with_appsec_backend(mut self, backend: AppSecBackendCallbacks) -> Self {
-        self.appsec_backend = Some(backend);
+    pub(crate) fn with_appsec_telemetry(
+        mut self,
+        telemetry: InProcessTelemetryClientFactory,
+    ) -> Self {
+        self.appsec = Some(Arc::new(AppSecManager::new(telemetry)));
         self
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn ensure_appsec_started(&self, config: &AppSecConfig) -> bool {
+        let Some(appsec) = self.appsec.as_ref() else {
+            error!("AppSec is unavailable: no lifecycle manager was configured");
+            return false;
+        };
+        appsec.ensure_started(config).await
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn shutdown_appsec(&self) {
+        if let Some(appsec) = self.appsec.as_ref() {
+            appsec.shutdown().await;
+        }
     }
 
     /// Accepts a new connection and starts processing requests.
@@ -288,7 +313,7 @@ impl SidecarServer {
         // is a no-op. client_id == 0 signals a session-wide sweep.
         #[cfg(unix)]
         {
-            if let Some(appsec) = self.appsec_backend.as_ref() {
+            if let Some(appsec) = self.appsec.as_ref() {
                 appsec.disconnect(session_id, 0);
             }
         }
@@ -1220,6 +1245,22 @@ impl SidecarInterface for ConnectionSidecarHandler {
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
 
+    async fn ensure_appsec_started(&self, log_file_path: Vec<u8>, log_level: String) -> bool {
+        #[cfg(unix)]
+        {
+            let config = AppSecConfig {
+                log_file_path: std::ffi::OsString::from_vec(log_file_path),
+                log_level,
+            };
+            self.server.ensure_appsec_started(&config).await
+        }
+        #[cfg(not(unix))]
+        {
+            _ = (log_file_path, log_level);
+            false
+        }
+    }
+
     async fn send_appsec_message(
         &self,
         session_id: String,
@@ -1228,7 +1269,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) -> (Vec<u8>, bool) {
         #[cfg(unix)]
         {
-            let Some(appsec) = self.server.appsec_backend.as_ref() else {
+            let Some(appsec) = self.server.appsec.as_ref() else {
                 warn!("appsec: no backend is available");
                 return (vec![], true /* disconnect */);
             };
@@ -1281,7 +1322,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             }
 
-            let response = appsec.send_message(&session_id, client_id, data).await;
+            let Some(response) = appsec.send_message(&session_id, client_id, data).await else {
+                info!("appsec: not in running phase anymore");
+                return (vec![], true /* disconnect */);
+            };
             if response.client_id != client_id {
                 *self.appsec_client_id.lock_or_panic() = Some(response.client_id);
             }
