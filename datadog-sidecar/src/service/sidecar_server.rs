@@ -28,6 +28,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
+#[cfg(unix)]
+use crate::appsec::AppSecBackendCallbacks;
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
@@ -117,6 +119,9 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// AppSec message backend supplied by the embedding application.
+    #[cfg(unix)]
+    appsec_backend: Option<AppSecBackendCallbacks>,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -132,6 +137,10 @@ struct ConnectionSidecarHandler {
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
     /// The connection this handler serves.
     connection: OwnedServerConn,
+    /// The client_id of the currently active appsec logical client on this connection, if any.
+    /// Updated by send_appsec_message; read by cleanup to fire on_disconnect.
+    #[cfg(unix)]
+    appsec_client_id: Mutex<Option<u64>>,
 }
 
 impl ConnectionSidecarHandler {
@@ -148,6 +157,8 @@ impl ConnectionSidecarHandler {
             instances: Default::default(),
             metric_registrations: Default::default(),
             connection,
+            #[cfg(unix)]
+            appsec_client_id: Mutex::new(None),
         }
     }
 
@@ -157,6 +168,19 @@ impl ConnectionSidecarHandler {
 
     async fn cleanup(&self) {
         let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
+
+        // Notify the appsec helper of the per-client disconnect before session
+        // teardown. This lets it evict the exact ClientKey for this connection
+        // without touching sibling workers that share the same session_id.
+        #[cfg(unix)]
+        {
+            let client_id_opt = *self.appsec_client_id.lock_or_panic();
+            if let (Some(session_id), Some(client_id)) = (self.session_id.get(), client_id_opt) {
+                if let Some(appsec) = self.server.appsec_backend.as_ref() {
+                    appsec.disconnect(session_id, client_id);
+                }
+            }
+        }
 
         if let Some(session_id) = self.session_id.get() {
             let stop = {
@@ -192,6 +216,12 @@ impl ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    #[cfg(unix)]
+    pub(crate) fn with_appsec_backend(mut self, backend: AppSecBackendCallbacks) -> Self {
+        self.appsec_backend = Some(backend);
+        self
+    }
+
     /// Accepts a new connection and starts processing requests.
     ///
     /// This function creates a per-connection `ConnectionSidecarHandler` and serves the connection,
@@ -251,6 +281,17 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+
+        // Failsafe: evict any remaining appsec clients for this session.
+        // cleanup() already fires per-client notifications (client_id != 0)
+        // before decrementing the session counter, so in the normal path this
+        // is a no-op. client_id == 0 signals a session-wide sweep.
+        #[cfg(unix)]
+        {
+            if let Some(appsec) = self.appsec_backend.as_ref() {
+                appsec.disconnect(session_id, 0);
+            }
+        }
     }
 
     fn send_trace_v04(
@@ -1177,6 +1218,79 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let stats = self.server.compute_stats().await;
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
+    }
+
+    async fn send_appsec_message(
+        &self,
+        session_id: String,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> (Vec<u8>, bool) {
+        #[cfg(unix)]
+        {
+            let Some(appsec) = self.server.appsec_backend.as_ref() else {
+                warn!("appsec: no backend is available");
+                return (vec![], true /* disconnect */);
+            };
+
+            // Update the tracked active client and determine whether an old
+            // client_id must be eagerly evicted before dispatching the message.
+            //
+            // Cases:
+            //  stored=None,    incoming=0  → no-op (waiting for first real id)
+            //  stored=None,    incoming=N  → reject: tell client to reconnect;
+            //                                sidecar could have restarted and this id
+            //                                belong to a separate php
+            //  stored=Some(N), incoming=N  → steady state, no-op
+            //  stored=Some(P), incoming=0  → extension abandons client: evict P, clear
+            //  stored=Some(P), incoming=N≠P → bug: log, evict P, tell client to reconnect
+            let (evict, reject) = match (*self.appsec_client_id.lock_or_panic(), client_id) {
+                (None, 0) => (None, false),
+                (None, _) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} without this \
+                        connection having memory of it (sidecar restarted?)"
+                    );
+                    (Some(client_id), true)
+                }
+                (Some(prev), 0) => {
+                    warn!(
+                        "appsec: extension abandoned client associated with \
+                        this connection (client_id {prev})"
+                    );
+                    (Some(prev), false)
+                }
+                // normal case: extension resumes associated client
+                (Some(prev), client_id) if prev == client_id => (None, false),
+                // bug: extension sends a different client_id on the same connection
+                (Some(prev), client_id) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} on \
+                         connection associated with a different client (client_id {prev})"
+                    );
+                    (Some(prev), true)
+                }
+            };
+
+            if let Some(prev) = evict {
+                appsec.disconnect(&session_id, prev);
+            }
+
+            if reject {
+                // tell extension to forget client_id and redo client_init
+                return (vec![], true /* disconnect */);
+            }
+
+            let response = appsec.send_message(&session_id, client_id, data).await;
+            if response.client_id != client_id {
+                *self.appsec_client_id.lock_or_panic() = Some(response.client_id);
+            }
+            (response.data, response.disconnect)
+        }
+        #[cfg(not(unix))]
+        {
+            (vec![], false)
+        }
     }
 }
 

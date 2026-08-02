@@ -3,8 +3,6 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
-use std::ffi::CString;
-
 use crate::config::Config;
 use crate::enter_listener_loop;
 use datadog_ipc::{SeqpacketConn, SeqpacketListener};
@@ -60,8 +58,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
     let now = Instant::now();
 
-    let appsec_started = maybe_start_appsec();
-
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
         info!("Starting sidecar, pid: {}", getpid());
@@ -84,10 +80,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
         }
-    }
-
-    if appsec_started {
-        shutdown_appsec();
     }
 
     info!(
@@ -167,55 +159,6 @@ pub fn primary_sidecar_identifier() -> u32 {
 /// No-op: retained for FFI compatibility.
 /// The master PID is now tracked by MasterListener::start() directly.
 pub fn set_sidecar_master_pid(_pid: u32) {}
-
-fn maybe_start_appsec() -> bool {
-    let cfg = &Config::get().appsec_config;
-    if cfg.is_none() {
-        return false;
-    }
-
-    info!("Starting appsec helper");
-    #[allow(clippy::unwrap_used)]
-    let entrypoint_sym_name = CString::new("appsec_helper_main").unwrap();
-
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, entrypoint_sym_name.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_main'");
-        return false;
-    }
-
-    let appsec_entry_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    let res = appsec_entry_fn();
-    if res != 0 {
-        error!("Appsec helper failed to start");
-        return false;
-    }
-
-    info!("Appsec helper started");
-    true
-}
-
-fn shutdown_appsec() -> bool {
-    info!("Shutting down appsec helper");
-
-    #[allow(clippy::unwrap_used)]
-    let shutdown_sym_name = CString::new("appsec_helper_shutdown").unwrap();
-
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, shutdown_sym_name.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_shutdown'");
-        return false;
-    }
-    let appsec_shutdown_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    let res = appsec_shutdown_fn();
-    if res != 0 {
-        error!("Appsec helper failed to shutdown");
-        return false;
-    }
-
-    info!("Appsec helper shutdown");
-    true
-}
 
 /// Allow initializing crashtracker independently for thread-mode sidecar.
 #[cfg(target_os = "linux")]
