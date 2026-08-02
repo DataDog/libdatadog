@@ -8,17 +8,19 @@ use libdd_common::MutexExt;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::hash::Hash;
 use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
+use tracing::field::{Field, Visit};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
 use tracing::{Event, Id, Level, Metadata, Subscriber};
-use tracing_log::LogTracer;
+use tracing_log::{LogTracer, NormalizeEvent};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
@@ -325,6 +327,59 @@ where
     }
 }
 
+struct AppSecMessageVisitor<'writer> {
+    writer: Writer<'writer>,
+    result: core::fmt::Result,
+}
+
+impl Visit for AppSecMessageVisitor<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn core::fmt::Debug) {
+        if field.name() == "message" && self.result.is_ok() {
+            self.result = write!(self.writer, "{value:?}");
+        }
+    }
+}
+
+struct AppSecLogFormatter;
+
+impl<S, N> FormatEvent<S, N> for AppSecLogFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> core::fmt::Result {
+        let normalized = event.normalized_metadata();
+        let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
+        let target = metadata.target();
+        if target != "ddappsec_helper" && !target.starts_with("ddappsec_helper::") {
+            return Ok(());
+        }
+
+        write!(
+            writer,
+            "{} {} ",
+            DateTime::<Utc>::from(SystemTime::now()).format("%Y-%m-%dT%H:%M:%SZ"),
+            metadata.level()
+        )?;
+
+        let mut visitor = AppSecMessageVisitor {
+            writer: writer.by_ref(),
+            result: Ok(()),
+        };
+        event.record(&mut visitor);
+        visitor.result?;
+
+        let module = metadata.module_path().unwrap_or(target);
+        let module = module.strip_prefix("ddappsec_helper::").unwrap_or(module);
+        writeln!(writer, " at mod {module}")
+    }
+}
+
 /// A single log output target, writable through a shared reference:
 /// We trivially rely on O_APPEND log-files to be mostly atomic (log lines small enough).
 pub enum LogWriter {
@@ -413,7 +468,6 @@ impl AppSecLogWriter {
 struct AppSecEventWriter {
     writer: Arc<LogWriter>,
     buffer: Vec<u8>,
-    enabled: bool,
 }
 
 impl io::Write for AppSecEventWriter {
@@ -430,7 +484,7 @@ impl io::Write for AppSecEventWriter {
 
 impl Drop for AppSecEventWriter {
     fn drop(&mut self) {
-        if self.enabled {
+        if !self.buffer.is_empty() {
             self.writer.write_line(&self.buffer);
         }
     }
@@ -443,16 +497,6 @@ impl<'writer> MakeWriter<'writer> for AppSecLogWriter {
         AppSecEventWriter {
             writer: self.writer.clone(),
             buffer: Vec::new(),
-            enabled: false,
-        }
-    }
-
-    fn make_writer_for(&'writer self, metadata: &Metadata<'_>) -> Self::Writer {
-        let target = metadata.target();
-        AppSecEventWriter {
-            writer: self.writer.clone(),
-            buffer: Vec::new(),
-            enabled: target == "ddappsec_helper" || target.starts_with("ddappsec_helper::"),
         }
     }
 }
@@ -463,15 +507,24 @@ pub(crate) static MULTI_LOG_WRITER: LazyLock<MultiWriter> = LazyLock::new(MultiW
 
 static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, EnvFilter>> =
     OnceLock::new();
+const APPSEC_SIDECAR_LOG_PATH: &str = "<sidecar log>";
+
+fn is_sidecar_log_path(path: &OsStr) -> bool {
+    path == OsStr::new(APPSEC_SIDECAR_LOG_PATH)
+}
 
 pub(crate) fn enable_logging() -> anyhow::Result<()> {
     let config = config::Config::get();
-    let appsec_layer = config.appsec_config.as_ref().map(|appsec| {
-        tracing_subscriber::fmt::Layer::new()
-            .event_format(LogFormatter::default())
-            .with_writer(AppSecLogWriter::new(appsec.log_file_path.clone().into()))
-            .with_filter(EnvFilter::builder().parse_lossy(&appsec.log_level))
-    });
+    let appsec_layer = config
+        .appsec_config
+        .as_ref()
+        .filter(|appsec| !is_sidecar_log_path(&appsec.log_file_path))
+        .map(|appsec| {
+            tracing_subscriber::fmt::Layer::new()
+                .event_format(AppSecLogFormatter)
+                .with_writer(AppSecLogWriter::new(appsec.log_file_path.clone().into()))
+                .with_filter(EnvFilter::builder().parse_lossy(&appsec.log_level))
+        });
 
     tracing_subscriber::registry()
         .with(
@@ -503,8 +556,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, AppSecLogWriter, TemporarilyRetainedKeyParser, TemporarilyRetainedMap,
-        MULTI_LOG_FILTER,
+        enable_logging, is_sidecar_log_path, AppSecLogFormatter, AppSecLogWriter,
+        TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
     };
     use crate::log::MultiEnvFilter;
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -516,6 +569,13 @@ mod tests {
 
     static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
     static DISABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
+
+    #[test]
+    fn test_appsec_sidecar_log_path() {
+        assert!(is_sidecar_log_path("<sidecar log>".as_ref()));
+        assert!(!is_sidecar_log_path("<sidecar log>/helper.log".as_ref()));
+        assert!(!is_sidecar_log_path("helper.log".as_ref()));
+    }
 
     impl TemporarilyRetainedKeyParser<i32> for String {
         fn parse(&self) -> i32 {
@@ -532,22 +592,46 @@ mod tests {
     }
 
     #[test]
-    fn test_appsec_log_writer_uses_event_target() {
+    fn test_appsec_log_writer_uses_normalized_log_target() {
+        use tracing_log::log::Log;
+
         let temp_dir = tempfile::tempdir().unwrap();
         let log_path = temp_dir.path().join("appsec.log");
         let subscriber = tracing_subscriber::fmt()
-            .without_time()
+            .event_format(AppSecLogFormatter)
             .with_writer(AppSecLogWriter::new(log_path.clone()))
             .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            tracing::info!(target: "ddappsec_helper::test", "helper message");
-            tracing::info!(target: "datadog_sidecar::test", "sidecar message");
-            tracing::info!(target: "ddappsec_helperish::test", "similar target message");
+            let logger = tracing_log::LogTracer::new();
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("helper message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("ddappsec_helper::test")
+                    .module_path(Some("ddappsec_helper::client"))
+                    .build(),
+            );
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("sidecar message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("datadog_sidecar::test")
+                    .build(),
+            );
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("similar target message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("ddappsec_helperish::test")
+                    .build(),
+            );
         });
 
         let contents = std::fs::read_to_string(log_path).unwrap();
-        assert!(contents.contains("helper message"));
+        assert!(contents.contains(" INFO helper message at mod client\n"));
+        assert!(!contents.contains("log.target"));
+        assert!(!contents.contains("[sidecar]"));
         assert!(!contents.contains("sidecar message"));
         assert!(!contents.contains("similar target message"));
     }
