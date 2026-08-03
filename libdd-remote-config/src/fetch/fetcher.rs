@@ -19,6 +19,7 @@ use libdd_trace_protobuf::remoteconfig::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -238,7 +239,7 @@ impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
 
 #[allow(clippy::large_enum_variant)]
 enum FetcherMode<C: HttpClientCapability> {
-    Agent,
+    Agent(PhantomData<C>),
     #[cfg(feature = "agentless")]
     Agentless(agentless::AgentlessFetcher<C>),
 }
@@ -304,10 +305,10 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 )
                 .await?,
             ),
-            None => FetcherMode::Agent,
+            None => FetcherMode::Agent(PhantomData),
         };
         #[cfg(not(feature = "agentless"))]
-        let mode: FetcherMode = FetcherMode::Agent;
+        let mode: FetcherMode<C> = FetcherMode::Agent(PhantomData);
 
         Ok(ConfigFetcher {
             file_storage,
@@ -648,7 +649,7 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
             &*client_state,
         );
         match &mut self.mode {
-            FetcherMode::Agent => self.fetch_agent(config_req, target, client_state).await,
+            FetcherMode::Agent(_) => self.fetch_agent(config_req, target, client_state).await,
             #[cfg(feature = "agentless")]
             FetcherMode::Agentless(agentless_fetcher) => {
                 #[allow(clippy::expect_used)]

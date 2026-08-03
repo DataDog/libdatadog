@@ -22,8 +22,8 @@
 //!   already-verified snapshot/targets record and observe how `apply()` reacts. Any regression here
 //!   would have to be caught inside rust-tuf itself.
 //! * **Persisted-cache tampering across restarts**: the fetcher does not own a persistent cache.
-//!   The on-disk representation belongs to the embedding host (`FileStorage` implementation).
-//!   Tests here use `NoopStorage`, so anything a hostile filesystem could do between two process
+//!   The on-disk representation belongs to the embedding host (`FileStorage` implementation). Tests
+//!   here use `NoopStorage`, so anything a hostile filesystem could do between two process
 //!   lifetimes (swap files, roll back versions, corrupt bytes) is out of scope and must be covered
 //!   by the storage implementation's own tests.
 //! * **Transport-level integrity and MITM**: TLS and endpoint authentication are provided by the
@@ -768,7 +768,11 @@ async fn test_director_hash_superset_is_rejected() {
 async fn matched_pair(
     path: &'static str,
     content: &'static [u8],
-) -> (RawSignedMetadataSet<Json>, Vec<u8>, RawSignedMetadataSet<Json>) {
+) -> (
+    RawSignedMetadataSet<Json>,
+    Vec<u8>,
+    RawSignedMetadataSet<Json>,
+) {
     let config_key = new_key();
     let product_key = new_key();
     let director_key = new_key();
