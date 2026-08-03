@@ -12,7 +12,12 @@ use std::ptr::{null, NonNull};
 
 /// ProfileStatus uses `err` being null to encode OK, so we only need
 /// one bit in flags to distinguish between STATIC and ALLOCATED errors.
-const IS_ALLOCATED_MASK: usize = 1;
+const IS_ALLOCATED_MASK: usize = 0x1;
+
+/// Set when the status was produced by `catch_unwind` catching a panic in the
+/// FFI body. Independent of `IS_ALLOCATED_MASK` — a panic status may carry
+/// either a heap-allocated formatted message or the static fallback.
+const IS_PANIC_MASK: usize = 0x2;
 
 /// Represents the result of an operation that either succeeds with no value, or fails with an
 /// error message. This is like `Result<(), Cow<'static, CStr>` except its representation is
@@ -129,7 +134,7 @@ impl From<ProfileStatus> for Result<(), Cow<'static, CStr>> {
         let flags = status.flags;
         if status.err.is_null() {
             status.verify_flags()
-        } else if flags == IS_ALLOCATED_MASK {
+        } else if flags & IS_ALLOCATED_MASK != 0 {
             Err(Cow::Owned(unsafe {
                 CString::from_raw(status.err.cast_mut())
             }))
@@ -267,6 +272,56 @@ impl ProfileStatus {
     pub fn from_error<E: Display>(err: E) -> Self {
         ProfileStatus::from(ProfileError::from_display(err))
     }
+
+    /// True if this status was produced by a caught panic in the FFI body.
+    /// Callers can use this to distinguish a recoverable error from a
+    /// catastrophic one (handle is likely corrupt and should be dropped).
+    pub fn is_panic(&self) -> bool {
+        self.flags & IS_PANIC_MASK != 0
+    }
+
+    /// Builds a `ProfileStatus` from a `catch_unwind` panic payload.
+    ///
+    /// The message-formatting path is itself wrapped in a nested `catch_unwind`
+    /// so that an allocation failure while formatting the panic message
+    /// gracefully falls back to a static C string. The returned status always
+    /// has the panic bit set.
+    pub fn from_panic(
+        payload: Box<dyn std::any::Any + Send + 'static>,
+        function_name: &str,
+    ) -> Self {
+        let formatted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let msg = if let Some(s) = payload.downcast_ref::<String>() {
+                format!("{function_name} panicked: {s}")
+            } else if let Some(s) = payload.downcast_ref::<&'static str>() {
+                format!("{function_name} panicked: {s}")
+            } else {
+                format!("{function_name} panicked: <opaque payload>")
+            };
+            CString::new(msg).ok()
+        }));
+
+        let mut s = match formatted {
+            Ok(Some(cstring)) => ProfileStatus::from(cstring),
+            _ => ProfileStatus {
+                flags: 0,
+                err: c"libdatadog panicked".as_ptr(),
+            },
+        };
+        s.flags |= IS_PANIC_MASK;
+        s
+    }
+}
+
+/// True if this status was produced by a caught panic in the FFI body.
+/// Returns false for null or OK statuses.
+///
+/// # Safety
+///
+/// The pointer, if non-null, must point at a valid `ProfileStatus`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Status_is_panic(status: Option<&ProfileStatus>) -> bool {
+    status.is_some_and(ProfileStatus::is_panic)
 }
 
 /// Frees any error associated with the status, and replaces it with an OK.
