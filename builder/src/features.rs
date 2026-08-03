@@ -92,7 +92,7 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
         features.push("ddsketch-ffi");
     }
     if selection.ffe {
-        features.push("datadog-ffe-ffi");
+        features.push("libdd-ffe-ffi");
     }
     if selection.shared_runtime {
         features.push("shared-runtime");
@@ -199,7 +199,7 @@ mod tests {
                 "datadog-library-config-ffi",
                 "datadog-log-ffi",
                 "ddsketch-ffi",
-                "datadog-ffe-ffi",
+                "libdd-ffe-ffi",
                 "shared-runtime",
                 "otel-thread-ctx-ffi",
             ]
