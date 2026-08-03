@@ -143,6 +143,9 @@ impl SamplingMechanism {
 
     /// Returns whether this mechanism is a probability (rate-based) sampling
     /// decision, for OTel consistent-probability tracestate (`ot.th`).
+    ///
+    /// `OTLP_INGEST_PROBABILISTIC_SAMPLING` is excluded: it's the sender's own OTel
+    /// decision, with no rate or trace-id-hash contract available here to derive `th`.
     pub fn is_probability(&self) -> bool {
         matches!(
             *self,

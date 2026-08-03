@@ -183,6 +183,7 @@ impl DatadogSampler {
                 mechanism,
                 rate: sample_rate,
                 rl_effective_rate,
+                is_keep,
             }),
         }
     }
@@ -211,8 +212,7 @@ fn format_sampling_rate(rate: f64) -> Option<String> {
     Some(s.trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
-/// OTel consistent-probability tracestate values (`ot.rv`, `ot.th`), each a
-/// 56-bit value. See system-tests #7372 / APMAPI-2170.
+/// OTel consistent-probability tracestate values (`ot.rv`, `ot.th`), 56 bits each.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OtelConsistentSampling {
     /// 56-bit random value derived from the trace id.
@@ -225,18 +225,37 @@ pub struct TraceRootSamplingInfo {
     mechanism: SamplingMechanism,
     rate: f64,
     rl_effective_rate: Option<f64>,
+    is_keep: bool,
+}
+
+/// Derives the 56-bit OTel `rv` from the low 64 bits of a trace id.
+fn derive_rv<T: TraceIdLike>(trace_id: &T) -> u64 {
+    let low64 = trace_id.to_u128() as u64;
+    (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8
+}
+
+/// Derives the 56-bit OTel `th` (rejection threshold) from a DD sample rate.
+fn derive_th(rate: f64) -> u64 {
+    const U56_MOD: u64 = 1u64 << 56;
+    const U56_MAX: u64 = U56_MOD - 1;
+    (((1.0 - rate) * U56_MOD as f64).round() as u64).clamp(0, U56_MAX)
+}
+
+/// Nudges `rv` across `th` when compressing to 56 bits flipped the `rv >= th`
+/// comparison relative to `kept`.
+fn reconcile_rv(rv: u64, th: u64, kept: bool) -> u64 {
+    if kept && rv < th {
+        th
+    } else if !kept && rv >= th {
+        th.saturating_sub(1)
+    } else {
+        rv
+    }
 }
 
 impl TraceRootSamplingInfo {
-    /// Derives the OTel consistent-probability `rv`/`th` pair for a
-    /// probability sampling decision. Returns `None` when the decision is not a
-    /// probability one and its `th` must be erased on the wire rather than
-    /// derived, namely:
-    /// * a non-probability mechanism (manual keep, ASM, single-span, ...), or
-    /// * a probability mechanism whose keep was overturned by the trace rate limiter
-    ///   (`rl_effective_rate.is_some()`): the limiter, not the rate, is what dropped the trace, so
-    ///   per the RFC the threshold is erased while an inherited `rv` is still forwarded by the
-    ///   caller.
+    /// Derives the reconciled OTel `rv`/`th` pair, or `None` for a
+    /// non-probability mechanism or a rate-limiter-overturned keep.
     pub fn otel_consistent_sampling<T: TraceIdLike>(
         &self,
         trace_id: &T,
@@ -244,9 +263,9 @@ impl TraceRootSamplingInfo {
         if !self.mechanism.is_probability() || self.rl_effective_rate.is_some() {
             return None;
         }
-        let low64 = trace_id.to_u128() as u64;
-        let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        let th = ((1.0 - self.rate) * (1u64 << 56) as f64).round() as u64;
+        let rv = derive_rv(trace_id);
+        let th = derive_th(self.rate);
+        let rv = reconcile_rv(rv, th, self.is_keep);
         Some(OtelConsistentSampling { rv, th })
     }
 
@@ -353,7 +372,7 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn test_otel_consistent_sampling_golden() {
+    fn test_otel_consistent_sampling() {
         use crate::dd_sampling::mechanism;
         // rv depends only on trace id
         let cases = [
@@ -366,15 +385,11 @@ mod tests {
             (18444899399302180863, 0xef284ace7a91e1),
         ];
         for (tid, want_rv) in cases {
-            let info = TraceRootSamplingInfo {
-                mechanism: mechanism::DEFAULT,
-                rate: 0.1,
-                rl_effective_rate: None,
-            };
-            let got = info.otel_consistent_sampling(&tid).expect("probability");
-            assert_eq!(got.rv, want_rv, "rv for {tid}");
+            // Raw derivation only, independent of the keep/drop reconciliation
+            // step exercised separately below.
+            assert_eq!(derive_rv(&tid), want_rv, "rv for {tid}");
         }
-        // th depends only on rate. See the RFC's worked example / system-tests #7372.
+        // th depends only on rate. See system-tests #7372.
         let th_cases = [
             (0.01f64, 0xfd70a3d70a3d70u64),
             (0.1, 0xe6666666666668),
@@ -384,16 +399,7 @@ mod tests {
             (1.0, 0x0),
         ];
         for (rate, want_th) in th_cases {
-            let info = TraceRootSamplingInfo {
-                mechanism: mechanism::DEFAULT,
-                rate,
-                rl_effective_rate: None,
-            };
-            assert_eq!(
-                info.otel_consistent_sampling(&1u128).unwrap().th,
-                want_th,
-                "th for rate {rate}"
-            );
+            assert_eq!(derive_th(rate), want_th, "th for rate {rate}");
         }
 
         // non-probability mechanism -> None
@@ -401,17 +407,78 @@ mod tests {
             mechanism: mechanism::MANUAL,
             rate: 1.0,
             rl_effective_rate: None,
+            is_keep: true,
         };
         assert!(manual.otel_consistent_sampling(&1u128).is_none());
 
         // probability mechanism, but the rate limiter overturned the keep ->
-        // None (th erased per RFC; caller still forwards an inherited rv).
+        // None (th erased; caller still forwards an inherited rv).
         let rate_limited = TraceRootSamplingInfo {
             mechanism: mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
             rate: 0.5,
             rl_effective_rate: Some(0.25),
+            is_keep: false,
         };
         assert!(rate_limited.otel_consistent_sampling(&1u128).is_none());
+    }
+
+    #[test]
+    fn test_reconcile_rv_nudges_only_on_disagreement() {
+        // Worked example (rate 0.1): DD keeps, but rv < th, so a downstream
+        // re-derivation of `rv >= th` would disagree (drop).
+        assert_eq!(
+            reconcile_rv(0xe6666666666666, 0xe6666666666668, true),
+            0xe6666666666668
+        );
+        // Symmetric case: DD drops, but rv >= th, so a re-derivation would
+        // disagree (keep).
+        assert_eq!(
+            reconcile_rv(0xe6666666666668, 0xe6666666666668, false),
+            0xe6666666666667
+        );
+        // Already agrees (kept, rv >= th) -> untouched.
+        assert_eq!(
+            reconcile_rv(0xef284ace7a91e1, 0xe6666666666666, true),
+            0xef284ace7a91e1
+        );
+        // Already agrees (dropped, rv < th) -> untouched.
+        assert_eq!(
+            reconcile_rv(0x1000000000000, 0xe6666666666666, false),
+            0x1000000000000
+        );
+        // th == 0 (rate 1.0, keep-all): a drop decision here is inconsistent
+        // with th, but the saturating subtraction must not underflow.
+        assert_eq!(reconcile_rv(0, 0, false), 0);
+    }
+
+    #[test]
+    fn test_otel_consistent_sampling_reconciles_disagreement() {
+        // rate 0.1 -> th = 0xe6666666666668. Pick a trace id whose raw rv
+        // lands just under th, then check that a DD keep nudges rv up to
+        // agree, while a DD drop leaves it alone (already agrees).
+        let trace_id = 18446744073709551615u128; // rv = 0x0f6b75ab2bc471 (see golden cases)
+        let raw_rv = derive_rv(&trace_id);
+        let th = derive_th(0.1);
+        assert!(raw_rv < th, "test assumes a naturally-disagreeing pair");
+
+        let kept = TraceRootSamplingInfo {
+            mechanism: mechanism::DEFAULT,
+            rate: 0.1,
+            rl_effective_rate: None,
+            is_keep: true,
+        };
+        let got = kept.otel_consistent_sampling(&trace_id).unwrap();
+        assert_eq!(got.th, th);
+        assert_eq!(got.rv, th, "kept but rv < th must be nudged up to th");
+
+        let dropped = TraceRootSamplingInfo {
+            mechanism: mechanism::DEFAULT,
+            rate: 0.1,
+            rl_effective_rate: None,
+            is_keep: false,
+        };
+        let got = dropped.otel_consistent_sampling(&trace_id).unwrap();
+        assert_eq!(got.rv, raw_rv, "dropped and rv < th already agree");
     }
 
     // Test-only semantic convention constants
@@ -1083,6 +1150,7 @@ mod tests {
                 mechanism,
                 rate: 0.5,
                 rl_effective_rate: None,
+                is_keep: is_sampled,
             }),
         };
 
@@ -1155,6 +1223,7 @@ mod tests {
                 mechanism,
                 rate: 0.5,
                 rl_effective_rate: Some(rate_limit),
+                is_keep: is_sampled,
             }),
         };
         let attrs_with_limit = sampling_result
@@ -1191,6 +1260,7 @@ mod tests {
                 mechanism,
                 rate: agent_rate,
                 rl_effective_rate: None,
+                is_keep: is_sampled,
             }),
         };
 
