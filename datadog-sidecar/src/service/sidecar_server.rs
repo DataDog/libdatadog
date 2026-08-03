@@ -1274,6 +1274,24 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             };
 
+            match self.session_id.get() {
+                Some(known) if known == &session_id => {}
+                Some(known) => {
+                    warn!(
+                        "appsec: extension has sent an appsec message for session {session_id} \
+                         on a connection with a different session id ({known})"
+                    );
+                    return (vec![], true /* disconnect */);
+                }
+                None => {
+                    warn!(
+                        "appsec: extension has sent an appsec message for session {session_id} \
+                         on a connection without a session id"
+                    );
+                    return (vec![], true /* disconnect */);
+                }
+            }
+
             // Update the tracked active client and determine whether an old
             // client_id must be eagerly evicted before dispatching the message.
             //
