@@ -1,18 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Mapping from `builder`'s own Cargo features onto the `libdd-profiling-ffi` feature
-//! list used to produce the combined artifact.
+//! Maps `builder`'s own Cargo features onto the `libdd-profiling-ffi` feature list used to
+//! produce the combined artifact.
 //!
-//! Expressed as data plus a pure function rather than a wall of `#[cfg]` attributes so
-//! that every combination — including the ones no CI job ever builds — can be asserted
-//! in unit tests (RFC 0016, option E). `builder/src/bin/release.rs` was one of the
-//! `#[cfg]` hot spots that RFC calls out.
+//! Data plus a pure function rather than `#[cfg]` attributes, so that combinations no CI job
+//! builds can still be asserted in unit tests.
 
-/// What a release build should contain.
-///
-/// Downstream projects select these through `builder`'s Cargo features; see
-/// `builder/Cargo.toml`.
+/// What a release build should contain. Selected through `builder`'s Cargo features.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Selection {
     pub telemetry: bool,
@@ -26,10 +21,8 @@ pub struct Selection {
     pub ffe: bool,
     pub shared_runtime: bool,
     pub otel_thread_ctx: bool,
-    /// Contain panics at the FFI boundary, returning them to the caller as errors instead
-    /// of aborting the process. A `builder` default, so our own release artifacts get it;
-    /// a project that turns off `builder`'s default features and wants it back asks for
-    /// `catch_panic` like any other feature.
+    /// Return panics at the FFI boundary as errors instead of aborting the process. A
+    /// `builder` default; projects opting out of those defaults must ask for it explicitly.
     pub catch_panic: bool,
 }
 
@@ -53,21 +46,18 @@ impl Selection {
     }
 }
 
-/// `libdd-profiling-ffi` features the combined artifact always needs, whatever else is
-/// selected. `ddcommon-ffi` is one of them: it is a *default* feature of that crate, and
-/// [`profiling_features`] is passed alongside `--no-default-features`.
+/// Needed whatever else is selected. `ddcommon-ffi` is here because it is a *default* of
+/// `libdd-profiling-ffi`, which `--no-default-features` discards.
 const ALWAYS: &[&str] = &["cbindgen", "ddcommon-ffi"];
 
 /// The complete `--features` list for `cargo rustc -p libdd-profiling-ffi`.
 ///
-/// Callers **must** also pass `--no-default-features`. The list is exhaustive by design:
-/// the artifact's feature set is exactly what this function returns, with nothing
-/// inherited implicitly. Relying on inherited defaults is what let `catch_panic` go
-/// missing from the shipped artifact in APMSP-3830 without any build failing.
+/// Callers **must** also pass `--no-default-features`: the returned list is exhaustive, so
+/// nothing is inherited. Inheriting defaults is how `catch_panic` went missing from the
+/// shipped artifact in APMSP-3830 without any build failing.
 pub fn profiling_features(selection: &Selection) -> Vec<String> {
     let mut features: Vec<&str> = ALWAYS.to_vec();
 
-    // Kept first so a reader of any emitted command line sees the panic policy immediately.
     if selection.catch_panic {
         features.push("catch_panic");
     }
@@ -147,9 +137,8 @@ mod tests {
         selection
     }
 
-    /// Containment must reach libdd-profiling-ffi for every module combination a project can
-    /// ask for, not just the one our own release happens to build. This is the APMSP-3830
-    /// regression: the feature was there for some builds and quietly absent for others.
+    /// APMSP-3830 was the feature being present for some builds and absent for others, so
+    /// cover every combination a project can ask for, not just the one we release.
     #[test]
     fn catch_panic_survives_every_module_combination() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -174,10 +163,8 @@ mod tests {
         }
     }
 
-    /// Exhaustive struct literal on purpose: no `..Default::default()`. Adding a field to
-    /// [`Selection`] stops this compiling, which is the prompt to also give it a branch in
-    /// [`profiling_features`] and an entry in `MODULE_SETTERS`. Without this, a new field
-    /// could be silently ignored by the mapping and every other test here would still pass.
+    /// Exhaustive struct literal on purpose, no `..Default::default()`: adding a field to
+    /// [`Selection`] breaks this until it also gets a branch and a `MODULE_SETTERS` entry.
     #[test]
     fn all_fields_set_emits_every_module_feature() {
         let everything = Selection {
@@ -219,8 +206,8 @@ mod tests {
         );
     }
 
-    /// `--no-default-features` means nothing is inherited, so the defaults the artifact
-    /// still needs have to be listed explicitly.
+    /// Nothing is inherited under `--no-default-features`, so still-needed defaults must be
+    /// listed explicitly.
     #[test]
     fn always_lists_features_that_no_longer_come_from_defaults() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
