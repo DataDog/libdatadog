@@ -218,6 +218,8 @@ impl DynamicInfo {
         if self.relas.is_null() || self.relas_count == 0 {
             &[]
         } else {
+            // SAFETY: same as rels(); from_phdr set relas/relas_count
+            // from DT_RELA/DT_RELASZ of a mapped ELF object.
             unsafe { core::slice::from_raw_parts(self.relas, self.relas_count) }
         }
     }
@@ -227,6 +229,8 @@ impl DynamicInfo {
         if self.jmprels.is_null() || self.jmprels_count == 0 {
             &[]
         } else {
+            // SAFETY: same as rels(); from_phdr set jmprels/jmprels_count
+            // from DT_JMPREL/DT_PLTRELSZ of a mapped ELF object.
             unsafe { core::slice::from_raw_parts(self.jmprels, self.jmprels_count) }
         }
     }
@@ -308,6 +312,14 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
     if hashtab.is_null() || info.gnu_hash_words < 4 {
         return None;
     }
+
+    // offset 0: nbuckets     (u32)
+    // offset 1: symbias      (u32)  first symbol index covered by the hash
+    // offset 2: bloom_size   (u32)  number of u64 bloom filter words
+    // offset 3: bloom_shift  (u32)  secondary bloom bit shift
+    // offset 4: bloom[bloom_size]   (u64 each, so bloom_size * 2 u32 words)
+    //           buckets[nbuckets]   (u32 each)
+    //           chains[...]         (u32 each, one per symbol starting at symbias)
 
     let nbuckets = *hashtab;
     let symbias = *hashtab.add(1);
@@ -474,8 +486,9 @@ pub struct PageProtGuard {
 
 impl PageProtGuard {
     pub fn new() -> Self {
-        // sysconf can return -1 on error; fall back to a conservative
-        // 4 KiB default if the query fails.
+        // SAFETY: sysconf(_SC_PAGESIZE) is safe to call; it
+        // reads a cached kernel value with no side effects. Returns -1
+        // on error; we fall back to 4 KiB in that case.
         let raw = unsafe { sysconf(_SC_PAGESIZE) };
         let page_size = usize::try_from(raw).unwrap_or(4096);
         Self {
@@ -624,5 +637,38 @@ mod tests {
     fn test_unknown_symbol_lookup_returns_none() {
         let r = lookup_symbol("definitely_not_a_real_libc_symbol_xyzzy", 0);
         assert!(r.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_read_proc_maps_returns_entries() {
+        let maps = read_proc_maps();
+        // Every running Linux process has at least a few mappings
+        assert!(!maps.is_empty(), "read_proc_maps should return entries");
+
+        for entry in &maps {
+            // Every mapping has a non-zero size.
+            assert!(
+                entry.end > entry.start,
+                "mapping {:#x}-{:#x} has zero or negative size",
+                entry.start,
+                entry.end,
+            );
+            // Prot flags should only contain the bits we parse.
+            let valid_bits = PROT_READ | PROT_WRITE | PROT_EXEC;
+            assert!(
+                entry.prot & !valid_bits == 0,
+                "unexpected prot bits {:#x} in mapping {:#x}-{:#x}",
+                entry.prot,
+                entry.start,
+                entry.end,
+            );
+        }
+
+        // At least one mapping should be readable (the executable itself).
+        assert!(
+            maps.iter().any(|e| e.prot & PROT_READ != 0),
+            "expected at least one readable mapping"
+        );
     }
 }

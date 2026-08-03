@@ -25,6 +25,8 @@ let mut orig_addr: usize = 0;
 unsafe {
     hook_symbol(c"__assert_fail", my_hook as *const () as usize, &mut orig_addr);
 }
+// Release pairs with the Acquire load in my_hook, ensuring the GOT
+// patches from hook_symbol are visible before the hook reads orig_addr.
 ORIG_FN.store(orig_addr, Ordering::Release);
 ```
 
@@ -32,8 +34,8 @@ ORIG_FN.store(orig_addr, Ordering::Release);
 
 See [`libdd-profiling-heap-gotter`](../libdd-profiling-heap-gotter) which builds a `SymbolOverrides` registry on top of the primitives exported by this crate.
 
-## Platform support
-
-- **64-bit Linux (glibc)**: Full support.
-- **64-bit Linux (musl)**: Works for dynamically linked symbols. Statically linked symbols have no GOT entries and cannot be patched.
-- **Other platforms**: The crate compiles but exports nothing — all types and functions are `cfg`-gated to `target_os = "linux"`.
+## Support
+This library can be used on ARM64 and AMD64 Linux in processes using glibc or musl runtimes.
+Only symbols that have been dynamically linked can be intercept.
+For instance, if you want to intercept the `malloc` of your C runtime,
+you _cannot_ do so if the application has been statically linked against musl.
