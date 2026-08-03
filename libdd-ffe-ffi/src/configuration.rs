@@ -4,8 +4,8 @@
 use anyhow::ensure;
 use function_name::named;
 
-use datadog_ffe::rules_based::{Configuration, UniversalFlagConfig};
 use libdd_common_ffi::{wrap_with_ffi_result, Result};
+use libdd_ffe::rules_based::{Configuration, UniversalFlagConfig};
 
 use crate::{BorrowedStr, Handle};
 

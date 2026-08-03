@@ -1368,53 +1368,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
-name = "datadog-ffe"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "derive_more",
- "faststr",
- "libdd-common",
- "libdd-remote-config",
- "libdd-trace-protobuf",
- "log",
- "lru",
- "md5",
- "prost",
- "pyo3",
- "semver",
- "serde",
- "serde-bool",
- "serde_json",
- "serde_with",
- "thiserror 2.0.17",
- "url",
-]
-
-[[package]]
-name = "datadog-ffe-ffi"
-version = "1.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "datadog-ffe",
- "function_name",
- "libdd-common-ffi",
-]
-
-[[package]]
-name = "datadog-ffe-test-suite"
-version = "38.0.0"
-dependencies = [
- "chrono",
- "criterion",
- "datadog-ffe",
- "env_logger",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1521,7 +1474,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-ffe",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
@@ -1539,6 +1491,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-ffe",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -3112,6 +3065,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-ffe"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "derive_more",
+ "faststr",
+ "libdd-common",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
+ "log",
+ "lru",
+ "md5",
+ "prost",
+ "pyo3",
+ "semver",
+ "serde",
+ "serde-bool",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+ "url",
+]
+
+[[package]]
+name = "libdd-ffe-ffi"
+version = "1.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libdd-common-ffi",
+ "libdd-ffe",
+]
+
+[[package]]
+name = "libdd-ffe-test-suite"
+version = "38.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "env_logger",
+ "libdd-ffe",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-http-client"
 version = "0.1.0"
 dependencies = [
@@ -3263,7 +3263,6 @@ dependencies = [
  "allocator-api2",
  "anyhow",
  "build_common",
- "datadog-ffe-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -3274,6 +3273,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
+ "libdd-ffe-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-otel-thread-ctx-ffi",

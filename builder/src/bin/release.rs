@@ -75,7 +75,7 @@ pub fn main() {
         #[cfg(feature = "ddsketch")]
         f.push("ddsketch-ffi".to_string());
         #[cfg(feature = "ffe")]
-        f.push("datadog-ffe-ffi".to_string());
+        f.push("libdd-ffe-ffi".to_string());
         #[cfg(feature = "shared-runtime")]
         f.push("shared-runtime".to_string());
         #[cfg(feature = "otel-thread-ctx")]
