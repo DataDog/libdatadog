@@ -26,12 +26,12 @@ name = "main"
 harness = false
 
 [dependencies]
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
+allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
 bytes = "1.11.1"
-chrono = {version = "0.4", default-features = false, features = ["std", "clock"]}
+chrono = { workspace = true, features = ["std", "clock"] }
 crossbeam-channel = "0.5.15"
 crossbeam-utils = { version = "0.8.21" }
 cxx = { version = "1.0", optional = true }
@@ -70,13 +70,13 @@ zstd = { version = "0.13", default-features = false }
 rustls = { workspace = true, features = ["ring"] }
 
 [dev-dependencies]
-bolero = "0.13"
-criterion = "0.5.1"
+bolero = { workspace = true, features = ["std"] }
+criterion.workspace = true
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 libdd-profiling = { path = ".", features = ["test-utils"] }
 proptest = "1"
 strum = { version = "0.26", features = ["derive"] }
-tempfile = "3"
+tempfile.workspace = true
 
 [build-dependencies]
-cxx-build = { version = "1.0", optional = true }
+cxx-build = { workspace = true, optional = true }

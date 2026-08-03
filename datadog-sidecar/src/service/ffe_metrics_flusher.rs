@@ -5,10 +5,10 @@
 //! events to a user-configured OTLP HTTP metrics intake.
 
 use crate::service::{FfeEvaluationMetric, FfeTelemetryContext};
-use datadog_ffe::telemetry::evaluation_metrics::encode_metrics_payload;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_ffe::telemetry::evaluation_metrics::encode_metrics_payload;
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -192,6 +192,10 @@ mod tests {
 
     impl HttpClientCapability for HangingCapabilities {
         fn new_client() -> Self {
+            Self
+        }
+
+        fn new_without_connection_pooling() -> Self {
             Self
         }
 

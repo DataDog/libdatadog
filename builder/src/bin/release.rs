@@ -62,6 +62,8 @@ pub fn main() {
         f.push("ddtelemetry-ffi".to_string());
         #[cfg(feature = "data-pipeline")]
         f.push("data-pipeline-ffi".to_string());
+        #[cfg(feature = "data-pipeline-compression")]
+        f.push("data-pipeline-compression".to_string());
         #[cfg(feature = "crashtracker")]
         f.push("crashtracker-ffi".to_string());
         #[cfg(feature = "symbolizer")]
@@ -73,7 +75,7 @@ pub fn main() {
         #[cfg(feature = "ddsketch")]
         f.push("ddsketch-ffi".to_string());
         #[cfg(feature = "ffe")]
-        f.push("datadog-ffe-ffi".to_string());
+        f.push("libdd-ffe-ffi".to_string());
         #[cfg(feature = "shared-runtime")]
         f.push("shared-runtime".to_string());
         #[cfg(feature = "otel-thread-ctx")]

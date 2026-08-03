@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "4.3.21", features = ["cargo", "color", "derive"] }
+clap = { workspace = true, default-features = true, features = ["cargo", "derive"] }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-profiling-protobuf = { path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 prost = "0.14.1"

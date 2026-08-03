@@ -23,6 +23,8 @@ ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+# Enable zstd compression for the agentless trace intake sender.
+data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
@@ -32,7 +34,7 @@ demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
-datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
+libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
 shared-runtime = ["dep:libdd-shared-runtime-ffi", "libdd-shared-runtime-ffi/catch_panic"]
 otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
@@ -41,7 +43,7 @@ regex-lite = ["libdd-common/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
+allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
@@ -61,6 +63,6 @@ serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 thiserror = "2"
 tokio-util = "0.7.1"
-datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
+libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
