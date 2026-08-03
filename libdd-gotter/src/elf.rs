@@ -858,39 +858,34 @@ unsafe fn patch_got_entries(
     guard: &mut PageProtGuard,
     patched: &mut bool,
 ) {
-    // NOTE: the SysV x86-64 ABI specifies that only RELA entries are
-    // used on AMD64 (spec page 64). ARM64 appears similar. REL
-    // processing is kept for defensive completeness but may be
-    // dead code on both architectures. We should revisit this.
-    for reloc in dyn_info.rels() {
-        if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
-            continue;
+    // Both REL and RELA relocations carry r_info (symbol + type) and
+    // r_offset (GOT slot address). RELA has an additional r_addend we
+    // don't use. This helper processes one relocation by those two fields.
+    let mut try_patch = |r_info: u64, r_offset: u64| {
+        if !is_got_pointer_reloc(elf64_r_type(r_info)) {
+            return;
         }
-        let sym_idx = elf64_r_sym(reloc.r_info);
+        let sym_idx = elf64_r_sym(r_info);
         if let Some(cstr) = dyn_info.sym_name(sym_idx) {
             if cstr.to_bytes() == symbol_name {
-                let addr = reloc.r_offset as usize + dyn_info.base_address();
+                let addr = r_offset as usize + dyn_info.base_address();
                 if guard.override_entry(addr, hook_fn) {
                     *patched = true;
                 }
             }
         }
-    }
+    };
 
+    // NOTE: the SysV x86-64 ABI specifies that only RELA entries are
+    // used on AMD64 (spec page 64). ARM64 appears similar. REL
+    // processing is kept for defensive completeness but may be
+    // dead code on both architectures. We should revisit this.
+    for reloc in dyn_info.rels() {
+        try_patch(reloc.r_info, reloc.r_offset);
+    }
     for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
         for reloc in relocs {
-            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
-                continue;
-            }
-            let sym_idx = elf64_r_sym(reloc.r_info);
-            if let Some(cstr) = dyn_info.sym_name(sym_idx) {
-                if cstr.to_bytes() == symbol_name {
-                    let addr = reloc.r_offset as usize + dyn_info.base_address();
-                    if guard.override_entry(addr, hook_fn) {
-                        *patched = true;
-                    }
-                }
-            }
+            try_patch(reloc.r_info, reloc.r_offset);
         }
     }
 }
