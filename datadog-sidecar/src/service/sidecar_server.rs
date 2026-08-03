@@ -1333,6 +1333,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
         #[cfg(not(unix))]
         {
+            _ = (session_id, client_id, data);
             (vec![], false)
         }
     }
