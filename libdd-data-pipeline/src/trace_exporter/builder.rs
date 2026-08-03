@@ -26,6 +26,7 @@ use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,6 +93,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     agentless_endpoint: Option<String>,
     agentless_api_key: Option<String>,
     agentless_timeout: Option<Duration>,
+    agentless_stats_endpoint: Option<String>,
     otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
@@ -169,6 +171,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
+            agentless_stats_endpoint: None,
             output_to_log: false,
             log_max_line_size: None,
             restart_after_fork: true,
@@ -484,6 +487,27 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// return [`BuilderErrorKind::InvalidConfiguration`].
     pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.agentless_timeout = Some(timeout);
+        self
+    }
+
+    /// Enables agentless stats export to the Datadog intake and sets the exact
+    /// stats endpoint URL.
+    ///
+    /// When both this and stats computation ([`Self::enable_stats`]) are set,
+    /// the computed stats are sent directly to the intake at `url` (e.g.
+    /// `https://trace.agent.{DD_SITE}/api/v0.2/stats`) instead of to the local
+    /// Agent's `/v0.6/stats`. The URL must be the full stats endpoint URL.
+    ///
+    /// **Constraints** (enforced in [`Self::build`]/[`Self::build_async`]):
+    /// - [`Self::set_agentless_endpoint`] must also be called. Agentless stats cannot be enabled
+    ///   without agentless trace export.
+    /// - [`Self::set_otlp_metrics_endpoint`] must not be set. OTLP stats and agentless stats cannot
+    ///   both be enabled.
+    ///
+    /// Authentication reuses the agentless API key configured via
+    /// [`Self::set_agentless_endpoint`].
+    pub fn set_agentless_stats_endpoint(&mut self, url: &str) -> &mut Self {
+        self.agentless_stats_endpoint = Some(url.to_owned());
         self
     }
 
@@ -815,6 +839,118 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_stats_enabled = true;
         }
 
+        // Agentless stats: when a stats intake endpoint and stats computation are both
+        // configured, start the concentrator unconditionally (bypass the agent gate, which is
+        // never reached in agentless mode) and send the top-level `StatsPayload` directly to the
+        // intake. Mutually exclusive with OTLP stats above (both set `stats` to `Enabled`).
+        if let (Some(stats_url), Some(bucket_size)) = (
+            self.agentless_stats_endpoint.as_ref(),
+            self.stats_bucket_size,
+        ) {
+            use libdd_trace_stats::span_concentrator::SpanConcentrator;
+            use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+            use std::sync::Mutex;
+
+            // Agentless stats authenticate with the agentless API key (from
+            // `set_agentless_endpoint`).
+            let api_key = agentless_config
+                .as_ref()
+                .map(|c| c.api_key.clone())
+                .ok_or_else(|| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        "Agentless stats export requires an API key; call set_agentless_endpoint \
+                         before set_agentless_stats_endpoint"
+                            .to_string(),
+                    ))
+                })?;
+
+            let stats_uri = parse_uri(stats_url).map_err(|e: anyhow::Error| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+            })?;
+            let stats_endpoint = Endpoint {
+                url: stats_uri,
+                api_key: Some(api_key.into()),
+                timeout_ms: self
+                    .agentless_timeout
+                    .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
+                    .as_millis() as u64,
+                ..Endpoint::default()
+            };
+            let target = AgentlessStatsTarget {
+                endpoint: stats_endpoint,
+                version: crate::agentless::stats::agentless_stats_version().to_owned(),
+            };
+
+            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            // Shortcutting the Agent means nothing downstream obfuscates the stats, so
+            // client-side obfuscation must always be on for the agentless intake (matching
+            // what the Agent does before sending stats to the backend).
+            #[cfg(feature = "stats-obfuscation")]
+            let obfuscation_config = Some(Arc::new(ArcSwap::from_pointee(
+                StatsComputationObfuscationConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+            )));
+            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                web_time::SystemTime::now(),
+                span_kinds,
+                self.peer_tags.clone(),
+                self.stats_cardinality_limits,
+                vec![],
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_config,
+            )));
+
+            let meta = StatsMetadata {
+                hostname: self.hostname.clone(),
+                env: self.env.clone(),
+                app_version: self.app_version.clone(),
+                runtime_id: runtime_id.clone(),
+                language: self.language.clone(),
+                lang_version: self.language_version.clone(),
+                lang_interpreter: self.language_interpreter.clone(),
+                lang_vendor: self.language_interpreter_vendor.clone(),
+                tracer_version: self.tracer_version.clone(),
+                git_commit_sha: self.git_commit_sha.clone(),
+                process_tags: self.process_tags.clone(),
+                service: self.service.clone(),
+            };
+
+            // TODO(agentless-stats): the Datadog Agent's stats writer emits the following
+            // `datadog.trace_agent.stats_writer.*` metrics via statsd/dogstatsd (not
+            // instrumentation-telemetry) in `pkg/trace/writer/stats.go`; port them through the
+            // exporter's DogStatsDClient: `client_payloads`, `payloads`, `stats_buckets`,
+            // `stats_entries`, `bytes`, `retries`, `splits`, `errors` (counts); `encode_ms`,
+            // `flush_duration` (timings); `connection_fill`, `queue_fill` (histograms);
+            // `dropped`, `dropped_bytes` (queue-full counts).
+            let stats_exporter = StatsExporter::<C, _>::new_agentless(
+                bucket_size,
+                concentrator.clone(),
+                meta,
+                target,
+                capabilities.clone(),
+                #[cfg(feature = "telemetry")]
+                None,
+                dogstatsd.clone(),
+            );
+            let worker_handle = shared_runtime
+                .spawn_worker(stats_exporter, self.restart_after_fork)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
+            stats = StatsComputationStatus::Enabled {
+                stats_concentrator: concentrator,
+                worker_handle,
+            };
+        }
+
         let log_output = self
             .output_to_log
             .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
@@ -900,6 +1036,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// - Agentless cannot be combined with a caller-supplied agent URL.
     /// - Log output cannot be combined with OTLP or agentless trace export.
     /// - [`Self::set_agentless_timeout`] requires [`Self::set_agentless_endpoint`].
+    /// - [`Self::set_agentless_stats_endpoint`] requires agentless trace export
+    ///   ([`Self::set_agentless_endpoint`]) and is incompatible with OTLP stats
+    ///   ([`Self::set_otlp_metrics_endpoint`]).
     ///
     /// OTLP and an agent URL may coexist: the agent URL is still useful for auxiliary
     /// agent endpoints (info, stats) even when trace payloads are routed to OTLP.
@@ -946,6 +1085,25 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
                     "agentless timeout was set but no agentless trace endpoint is configured"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        if self.agentless_stats_endpoint.is_some() && !agentless_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export requires agentless trace export; \
+                     call set_agentless_endpoint before set_agentless_stats_endpoint"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        if self.agentless_stats_endpoint.is_some() && self.otlp_metrics_endpoint.is_some() {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export and OTLP stats export cannot both be enabled"
                         .to_string(),
                 ),
             ));
@@ -1227,6 +1385,36 @@ mod tests {
         assert!(exporter.telemetry.is_none());
         // Sanity: the agentless transport is actually configured.
         assert!(exporter.agentless_config.is_some());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_agentless_stats_without_agentless_traces_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats");
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agentless stats") && msg.contains("agentless trace"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_agentless_stats_with_otlp_stats_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            )
+            .set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats")
+            .set_otlp_metrics_endpoint("http://localhost:4318/v1/metrics");
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agentless stats") && msg.contains("OTLP"),
+            "unexpected error message: {msg}"
+        );
     }
 
     #[cfg_attr(miri, ignore)]
