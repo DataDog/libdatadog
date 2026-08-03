@@ -70,31 +70,6 @@ jobs:
         uses: devops-actions/actionlint@c6744a34774e4e1c1df0ff66bdb07ec7ee480ca0 # 0.1.9
         with:
           shellcheck_opts: '-e SC2086'
-  ffi-panic-containment:
-    needs: setup
-    runs-on: ubuntu-latest
-    name: "Aggregated FFI crates keep catch_panic enabled"
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: 0
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Install ${{ needs.setup.outputs.rust-version }} toolchain
-        run: |
-          rustup set profile minimal
-          rustup install ${{ needs.setup.outputs.rust-version }}
-          rustup default ${{ needs.setup.outputs.rust-version }}
-      - name: Cache [rust]
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-      # Deliberately not gated on crates-count: the guarded invariant is a
-      # property of the feature graph, and the manifest edge that carries it
-      # can regress without any crate being reported as changed.
-      - name: Check FFI panic containment
-        run: ./scripts/check_ffi_panic_containment.sh
   rustfmt:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'

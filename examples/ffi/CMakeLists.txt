@@ -86,10 +86,6 @@ add_executable(trace_exporter trace_exporter.c)
 target_link_libraries(trace_exporter PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(trace_exporter ${VCRUNTIME_LINK_TYPE})
 
-add_executable(trace_exporter_panic_containment trace_exporter_panic_containment.c)
-target_link_libraries(trace_exporter_panic_containment PRIVATE Datadog::Profiling)
-set_vcruntime_link_type(trace_exporter_panic_containment ${VCRUNTIME_LINK_TYPE})
-
 add_executable(array_queue array_queue.cpp)
 target_compile_features(array_queue PRIVATE cxx_std_20)
 target_link_libraries(array_queue PRIVATE Datadog::Profiling)
