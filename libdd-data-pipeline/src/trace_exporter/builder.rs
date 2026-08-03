@@ -6,7 +6,7 @@ use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
-use crate::telemetry::{TelemetryClient, TelemetryClientBuilder};
+use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
@@ -18,15 +18,13 @@ use crate::trace_exporter::{
     TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
     TracerMetadata, INFO_ENDPOINT,
 };
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
-#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
@@ -50,12 +48,6 @@ fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
     }
     out
 }
-
-/// Externally-owned telemetry worker to consolidate through; Boxed to avoid depending on C.
-#[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
-type BoxedTelemetryHandle = Box<dyn ::std::any::Any + Sync + Send>;
-#[cfg(all(feature = "telemetry", target_arch = "wasm32"))]
-type BoxedTelemetryHandle = Box<dyn ::std::any::Any>;
 
 #[allow(missing_docs)]
 #[derive(Debug)]
@@ -89,8 +81,6 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
-    #[cfg(feature = "telemetry")]
-    telemetry_handle: Option<BoxedTelemetryHandle>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
@@ -164,7 +154,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             #[cfg(feature = "telemetry")]
             telemetry: None,
             #[cfg(feature = "telemetry")]
-            telemetry_handle: None,
             telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
             shared_runtime: None,
             health_metrics_enabled: false,
@@ -391,17 +380,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Enables sending telemetry metrics.
     pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
         self.telemetry = Some(cfg);
-        self
-    }
-
-    #[cfg(feature = "telemetry")]
-    pub fn set_telemetry_handle<
-        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-    >(
-        &mut self,
-        handle: TelemetryWorkerHandle<C>,
-    ) -> &mut Self {
-        self.telemetry_handle = Some(Box::new(handle));
         self
     }
 
@@ -684,67 +662,59 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         }
 
         #[cfg(feature = "telemetry")]
-        let (telemetry_client, telemetry_handle) =
-            // Consolidated path: report health metrics through the externally-owned worker.
-            // We do not own it (no spawn, no start, no shutdown handle).
-            if let Some(shared_handle) = self
-                .telemetry_handle
-                .and_then(|h| h.downcast::<TelemetryWorkerHandle<C>>().ok())
-            {
-                (Some(TelemetryClient::with_handle(*shared_handle)), None)
-            } else {
-                let sessions = self.telemetry_instrumentation_sessions;
-                // Telemetry talks to the agent; disable it in agentless and log-export modes.
-                let telemetry = self
-                    .telemetry
-                    .filter(|_| !(agentless_enabled || self.output_to_log))
-                    .map(|telemetry_config| -> Result<_, TraceExporterError> {
-                        let mut tb = TelemetryClientBuilder::default()
-                            .set_language(&self.language)
-                            .set_language_version(&self.language_version)
-                            .set_service_name(&self.service)
-                            .set_service_version(&self.app_version)
-                            .set_env(&self.env)
-                            .set_tracer_version(&self.tracer_version)
-                            .set_heartbeat(telemetry_config.heartbeat)
-                            .set_url(base_url)
-                            .set_debug_enabled(telemetry_config.debug_enabled);
-                        if let Some(id) = telemetry_config.runtime_id {
-                            tb = tb.set_runtime_id(&id);
-                        }
-                        if let Some(ref id) = sessions.session_id {
-                            tb = tb.set_session_id(id);
-                        }
-                        if let Some(ref id) = sessions.root_session_id {
-                            tb = tb.set_root_session_id(id);
-                        }
-                        if let Some(ref id) = sessions.parent_session_id {
-                            tb = tb.set_parent_session_id(id);
-                        }
-                        tb.build::<C>().map_err(|e| {
-                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
-                            ))
-                        })
+        let (telemetry_client, telemetry_handle) = {
+            let sessions = self.telemetry_instrumentation_sessions;
+            // Telemetry talks to the agent; disable it in agentless and log-export modes.
+            let telemetry = self
+                .telemetry
+                .filter(|_| !(agentless_enabled || self.output_to_log))
+                .map(|telemetry_config| -> Result<_, TraceExporterError> {
+                    let mut tb = TelemetryClientBuilder::default()
+                        .set_language(&self.language)
+                        .set_language_version(&self.language_version)
+                        .set_service_name(&self.service)
+                        .set_service_version(&self.app_version)
+                        .set_env(&self.env)
+                        .set_tracer_version(&self.tracer_version)
+                        .set_heartbeat(telemetry_config.heartbeat)
+                        .set_url(base_url)
+                        .set_debug_enabled(telemetry_config.debug_enabled);
+                    if let Some(id) = telemetry_config.runtime_id {
+                        tb = tb.set_runtime_id(&id);
+                    }
+                    if let Some(ref id) = sessions.session_id {
+                        tb = tb.set_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.root_session_id {
+                        tb = tb.set_root_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.parent_session_id {
+                        tb = tb.set_parent_session_id(id);
+                    }
+                    tb.build::<C>().map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
                     })
-                    .transpose()?;
-                match telemetry {
-                    Some((client_tel, worker)) => {
-                        let handle = shared_runtime
-                            .spawn_worker(worker, self.restart_after_fork)
-                            .map_err(|e| {
+                })
+                .transpose()?;
+            match telemetry {
+                Some((client_tel, worker)) => {
+                    let handle = shared_runtime
+                        .spawn_worker(worker, self.restart_after_fork)
+                        .map_err(|e| {
                             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                                 e.to_string(),
                             ))
                         })?;
-                        if let Err(e) = client_tel.start() {
-                            tracing::warn!("Failed to start telemetry: {e}");
-                        }
-                        (Some(client_tel), Some(handle))
+                    if let Err(e) = client_tel.start() {
+                        tracing::warn!("Failed to start telemetry: {e}");
                     }
-                    None => (None, None),
+                    (Some(client_tel), Some(handle))
                 }
-            };
+                None => (None, None),
+            }
+        };
 
         // Transport selection: agentless is mutually exclusive with both OTLP and a
         // user-supplied agent URL; OTLP and the agent URL may coexist. All exclusion
@@ -898,7 +868,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,
             #[cfg(feature = "telemetry")]
-            telemetry: telemetry_client,
+            telemetry: ArcSwapOption::from(telemetry_client.map(Arc::new)),
             health_metrics_enabled: self.health_metrics_enabled,
             capabilities,
             workers: TraceExporterWorkers {
@@ -1086,7 +1056,7 @@ mod tests {
         assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
         assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
-        assert!(exporter.telemetry.is_some());
+        assert!(exporter.telemetry.load().is_some());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1110,7 +1080,7 @@ mod tests {
         assert!(!exporter.metadata.client_computed_stats);
         assert!(exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
-        assert!(exporter.telemetry.is_none());
+        assert!(exporter.telemetry.load().is_none());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1255,7 +1225,7 @@ mod tests {
         assert!(exporter.workers.info_fetcher.is_none());
         // Telemetry talks to the agent base URL and is also skipped.
         assert!(exporter.workers.telemetry.is_none());
-        assert!(exporter.telemetry.is_none());
+        assert!(exporter.telemetry.load().is_none());
         // Sanity: the agentless transport is actually configured.
         assert!(exporter.agentless_config.is_some());
     }

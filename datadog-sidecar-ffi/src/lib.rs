@@ -487,6 +487,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
+        request_body_type: None,
         response_body_type: None,
         response_code: None,
     });
