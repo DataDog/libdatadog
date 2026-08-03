@@ -117,6 +117,9 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use toml::Value;
 
     /// Every module-selecting flag, so the exhaustive test below cannot silently stop
     /// covering a field that someone adds to [`Selection`].
@@ -142,20 +145,6 @@ mod tests {
             }
         }
         selection
-    }
-
-    #[test]
-    fn selecting_catch_panic_emits_the_feature() {
-        let selection = Selection {
-            catch_panic: true,
-            ..Default::default()
-        };
-        assert!(profiling_features(&selection).contains(&"catch_panic".to_string()));
-    }
-
-    #[test]
-    fn not_selecting_catch_panic_omits_the_feature() {
-        assert!(!profiling_features(&Selection::default()).contains(&"catch_panic".to_string()));
     }
 
     /// Containment must reach libdd-profiling-ffi for every module combination a project can
@@ -277,5 +266,93 @@ mod tests {
             sorted.dedup();
             assert_eq!(sorted.len(), features.len(), "duplicates for {bits:#b}");
         }
+    }
+
+    // The tests above only see a hand-built `Selection`. These two cover the ends of the
+    // chain: `catch_panic` in builder's `default`, and the fan-out in libdd-profiling-ffi.
+    // Neither is reachable from examples/ffi/trace_exporter.c.
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("builder/ has a parent")
+            .to_path_buf()
+    }
+
+    fn manifest(path: &Path) -> Value {
+        fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+            .parse()
+            .unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
+    }
+
+    fn declares_feature(manifest: &Value, name: &str) -> bool {
+        manifest
+            .get("features")
+            .and_then(Value::as_table)
+            .is_some_and(|features| features.contains_key(name))
+    }
+
+    /// Entries of a `[features]` list, empty when the feature is absent or has none.
+    fn feature<'a>(manifest: &'a Value, name: &str) -> Vec<&'a str> {
+        manifest
+            .get("features")
+            .and_then(Value::as_table)
+            .and_then(|features| features.get(name))
+            .and_then(Value::as_array)
+            .map(|entries| entries.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn builder_defaults_to_panic_containment() {
+        let builder = manifest(&workspace_root().join("builder/Cargo.toml"));
+
+        assert!(
+            feature(&builder, "default").contains(&"catch_panic"),
+            "builder's default must include catch_panic, or the artifact aborts the host \
+             process on a Rust panic"
+        );
+    }
+
+    #[test]
+    fn every_containment_capable_sub_crate_is_fanned_out() {
+        let root = workspace_root();
+        let aggregator_dir = root.join("libdd-profiling-ffi");
+        let aggregator = manifest(&aggregator_dir.join("Cargo.toml"));
+        let fan_out = feature(&aggregator, "catch_panic");
+
+        let dependencies = aggregator
+            .get("dependencies")
+            .and_then(Value::as_table)
+            .expect("libdd-profiling-ffi declares [dependencies]");
+
+        let mut found = 0;
+        for (name, spec) in dependencies {
+            if spec.get("optional").and_then(Value::as_bool) != Some(true) {
+                continue;
+            }
+            let Some(path) = spec.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let sub_crate = manifest(&aggregator_dir.join(path).join("Cargo.toml"));
+            if !declares_feature(&sub_crate, "catch_panic") {
+                continue;
+            }
+
+            found += 1;
+            let entry = format!("{name}?/catch_panic");
+            assert!(
+                fan_out.contains(&entry.as_str()),
+                "{name} has a catch_panic feature that libdd-profiling-ffi's catch_panic does \
+                 not enable; add \"{entry}\""
+            );
+        }
+
+        assert!(
+            found > 0,
+            "no containment-capable optional dependency found, so this test is no longer \
+             checking anything"
+        );
     }
 }
