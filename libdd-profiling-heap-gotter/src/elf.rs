@@ -225,7 +225,15 @@ impl SymbolOverrides {
             return;
         }
 
+        // NOTE: the SysV x86-64 ABI:
+        // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
+        // specifies that only RELA entries are used on AMD64 (spec page 64).
+        // ARM64 appears similar. REL processing is kept for defensive completeness
+        // but may be dead code on both architectures. We should revisit this.
         for reloc in dyn_info.rels() {
+            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                continue;
+            }
             Self::process_relocation(
                 &self.overrides,
                 dyn_info,

@@ -822,6 +822,10 @@ unsafe fn patch_got_entries(
     guard: &mut PageProtGuard,
     patched: &mut bool,
 ) {
+    // NOTE: the SysV x86-64 ABI specifies that only RELA entries are
+    // used on AMD64 (spec page 64). ARM64 appears similar. REL
+    // processing is kept for defensive completeness but may be
+    // dead code on both architectures. We should revisit this.
     for reloc in dyn_info.rels() {
         if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
             continue;
