@@ -20,6 +20,8 @@ default = ["cbindgen", "catch_panic"]
 catch_panic = []
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-data-pipeline/regex-lite"]
+# Enable zstd compression for the agentless trace intake sender.
+compression = ["libdd-data-pipeline/compression"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

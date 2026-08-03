@@ -25,6 +25,9 @@ crashtracker = []
 profiling = []
 telemetry = []
 data-pipeline = []
+# Enable zstd compression for the agentless trace intake sender (opt-in: links a C
+# library and increases artifact size).
+data-pipeline-compression = ["data-pipeline"]
 symbolizer = []
 library-config = []
 log = []
