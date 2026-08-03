@@ -52,9 +52,10 @@ pub struct DynamicInfo {
     /// Used by [`gnu_hash_lookup`] for symbol resolution.
     gnu_hash: *const u32,
     gnu_hash_words: usize,
-    /// Pointer to the `DT_HASH` (sysv) table, if present.
+    /// Pointer and word-count for the `DT_HASH` (sysv) table, if present.
     /// Used by [`sysv_hash_lookup`] as a fallback when `DT_GNU_HASH` is absent.
     sysv_hash: *const u32,
+    sysv_hash_words: usize,
     rels: *const Elf64_Rel,
     rels_count: usize,
     relas: *const Elf64_Rela,
@@ -148,6 +149,17 @@ impl DynamicInfo {
             return None;
         }
 
+        // Compute sysv_hash_words from the containing load segment.
+        let sysv_hash_words = if !sysv_hash.is_null() {
+            let addr = sysv_hash as usize;
+            containing_load_segment_end(addr)
+                .and_then(|end| end.checked_sub(addr))
+                .map(|bytes| bytes / core::mem::size_of::<u32>())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         // Determine sym_count and gnu_hash metadata.
         let (sym_count, gnu_hash_words) = if !gnu_hash.is_null() {
             let gnu_hash_addr = gnu_hash as usize;
@@ -174,6 +186,7 @@ impl DynamicInfo {
             gnu_hash,
             gnu_hash_words,
             sysv_hash,
+            sysv_hash_words,
             rels,
             rels_count: rels_size / core::mem::size_of::<Elf64_Rel>(),
             relas,
@@ -301,6 +314,15 @@ pub fn sysv_hash(name: &[u8]) -> u32 {
 
 /// Look up a symbol by name in an object's `DT_HASH` (sysv) table.
 ///
+/// [nbucket] [nchain] [bucket[0..nbucket]] [chain[0..nchain]]
+///
+/// Each bucket holds the index of the first symbol in that bucket's
+/// chain (or `STN_UNDEF` if empty). Each chain entry at position `i`
+/// holds the index of the next symbol after symbol `i` in the same
+/// bucket (or `STN_UNDEF` to end the chain). `nchain` equals the
+/// total number of dynamic symbols, so chain indices double as
+/// symbol indices into `.dynsym`.
+///
 /// Returns the `Elf64_Sym` entry if found and valid (per [`check_sym`]).
 ///
 /// # Safety
@@ -308,26 +330,40 @@ pub fn sysv_hash(name: &[u8]) -> u32 {
 /// currently-loaded ELF object.
 pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
     let hashtab = info.sysv_hash;
-    if hashtab.is_null() {
+    if hashtab.is_null() || info.sysv_hash_words < 2 {
         return None;
     }
 
+    // Read the header: nbucket and nchain.
     let nbucket = *hashtab;
-    // nchain at hashtab[1] == sym_count, already validated by from_phdr
+    let nchain = *hashtab.add(1);
     if nbucket == 0 {
         return None;
     }
 
-    let buckets = hashtab.add(2);
-    let chains = buckets.add(nbucket as usize);
+    // Validate the table fits within the mapped region before computing
+    // any pointers into the bucket/chain arrays.
+    let buckets_start: usize = 2;
+    let chains_start = buckets_start.checked_add(nbucket as usize)?;
+    let table_end = chains_start.checked_add(nchain as usize)?;
+    if table_end > info.sysv_hash_words {
+        return None;
+    }
+
+    let buckets = hashtab.add(buckets_start);
+    let chains = hashtab.add(chains_start);
 
     let h = sysv_hash(name);
     let mut idx = *buckets.add((h % nbucket) as usize);
 
-    // Walk the chain. Guard with sym_count to avoid infinite loops on
-    // malformed tables
+    // Follow the chain from the bucket's head symbol, comparing names
+    // at each step. The chain terminates at STN_UNDEF (0). We also
+    // cap iterations at nchain to guard against malformed cycles.
     let mut steps = 0u32;
-    while idx != STN_UNDEF && steps < info.sym_count {
+    while idx != STN_UNDEF && steps < nchain {
+        if (idx as usize) >= nchain as usize {
+            break;
+        }
         if let Some(sname) = info.sym_name(idx) {
             let sym = &*info.symtab.add(idx as usize);
             if sname.to_bytes() == name && check_sym(sym) {
