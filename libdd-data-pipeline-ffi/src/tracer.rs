@@ -74,9 +74,12 @@ pub struct TracerSpanFields<'a> {
 
 /// Create a new span with all scalar fields set.
 ///
-/// String fields are copied from the provided slices.  The `meta` and
-/// `metrics` maps start empty; use [`ddog_tracer_span_set_meta`] and
-/// [`ddog_tracer_span_set_metric`] to populate them.
+/// String fields are copied from the provided slices. The `meta`, `metrics` and `meta_struct`
+/// maps start empty; use [`ddog_tracer_span_set_meta`], [`ddog_tracer_span_set_metric`] and
+/// [`ddog_tracer_span_set_meta_struct_blob`] to populate them.
+///
+/// Returns an error if `fields` is null, if any string field is not valid UTF-8, or if any of
+/// its slices is malformed.
 ///
 /// # Safety
 ///
@@ -205,13 +208,10 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
     )
 }
 
-/// Add a structured metadata entry (`meta_struct`) to the span.
+/// Add or overwrite a structured metadata entry (`meta_struct`) on the span.
 ///
 /// The `key` and opaque binary `value` are copied into the span. The value is
 /// not interpreted or validated as MessagePack.
-///
-/// Repeating a `key` appends a new entry rather than replacing the previous one. The last value
-/// written for a key is the one read back and the one serialized.
 ///
 /// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if either slice is
 /// malformed.
@@ -367,17 +367,14 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellatio
 
 /// Cancel a cancellation token.
 ///
-/// All clones of the same token observe the cancellation. If a
-/// [`ddog_trace_exporter_send_trace_chunks`] call is using this token at the
-/// time of cancellation, that send stops waiting for the agent at its next
-/// await point and returns an error; the trace chunks it was sending may be
-/// lost.
+/// All clones of the same token observe the cancellation. Cancellation is cooperative and only
+/// affects a [`ddog_trace_exporter_send_trace_chunks`] call that is in flight: that send stops
+/// waiting for the agent at its next await point and fails with
+/// [`ExporterErrorCode::IoError`], and the chunks it was sending may be lost.
 ///
-/// Cancellation only affects a send that is in progress. If no send is using
-/// the token, cancelling it has no immediate effect: a send started afterwards
-/// with an already-cancelled token returns an error without contacting the
-/// agent, and a token cancelled after its send has already finished does
-/// nothing.
+/// Cancelling while no send is using the token has no immediate effect. A send started later with
+/// an already-cancelled token fails the same way without contacting the agent, and cancelling
+/// after a send has finished does nothing.
 #[no_mangle]
 pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
     if let Some(token) = token {
@@ -401,19 +398,11 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 
 /// Send trace chunks through a [`TraceExporter`], consuming the chunks.
 ///
-/// This calls `TraceExporter::send_trace_chunks` which processes stats,
-/// serializes in the configured output format, and sends to the agent
-/// with retry logic.
+/// Computes stats, serializes in the configured output format, and sends to the agent with
+/// retries.
 ///
-/// When `cancel` is non-null, cancelling that token (via
-/// [`ddog_trace_exporter_cancel_token_cancel`]) while the send is in progress
-/// aborts the in-flight request and returns an error with code
-/// [`ExporterErrorCode::IoError`]. Cancellation is cooperative: it only takes
-/// effect while a request is actually in flight. A token that is already
-/// cancelled when the send starts makes this function return that error
-/// immediately, and cancelling after the send has finished has no effect.
-/// Cancelling an in-flight send may cause the trace chunks being sent to be
-/// lost.
+/// When `cancel` is non-null, cancelling that token aborts the in-flight request; see
+/// [`ddog_trace_exporter_cancel_token_cancel`].
 ///
 /// On success, if `response_out` is non-null, a heap-allocated
 /// [`ExporterResponse`] is written there.  The caller owns it and must
