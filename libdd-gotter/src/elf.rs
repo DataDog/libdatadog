@@ -78,7 +78,8 @@ impl DynamicInfo {
     /// # Safety
     /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
     pub unsafe fn from_phdr(info: &dl_phdr_info) -> Option<Self> {
-        let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
+        // SAFETY: info is valid for the lifetime of the program.
+        let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
         let dyn_begin = (info.dlpi_addr as usize + dyn_phdr.p_vaddr as usize) as *const Elf64_Dyn;
         let base = info.dlpi_addr as usize;
@@ -229,7 +230,7 @@ impl DynamicInfo {
         } else {
             // SAFETY: same as rels(); from_phdr set relas/relas_count
             // from DT_RELA/DT_RELASZ of a mapped ELF object.
-            unsafe { core::slice::from_raw_parts(self.relas, self.relas_count) }
+            unsafe { slice::from_raw_parts(self.relas, self.relas_count) }
         }
     }
 
@@ -240,7 +241,7 @@ impl DynamicInfo {
         } else {
             // SAFETY: same as rels(); from_phdr set jmprels/jmprels_count
             // from DT_JMPREL/DT_PLTRELSZ of a mapped ELF object.
-            unsafe { core::slice::from_raw_parts(self.jmprels, self.jmprels_count) }
+            unsafe { slice::from_raw_parts(self.jmprels, self.jmprels_count) }
         }
     }
 
