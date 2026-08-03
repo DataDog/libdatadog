@@ -1310,7 +1310,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                         "appsec: extension sends client_id {client_id} without this \
                         connection having memory of it (sidecar restarted?)"
                     );
-                    (Some(client_id), true)
+                    // do not evict: after a restart another client may have claimed this id
+                    (None, true)
                 }
                 (Some(prev), 0) => {
                     warn!(
