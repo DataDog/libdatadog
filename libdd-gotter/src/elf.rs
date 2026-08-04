@@ -875,7 +875,7 @@ pub enum HookError {
 }
 
 /// Hook a single symbol across all loaded ELF objects by patching their
-/// GOT entries.
+/// GOT entries, including the library that contains the hook function.
 ///
 /// This is a one-shot API: it patches every library that is loaded at
 /// call time. Libraries `dlopen`'d after this call will **not** be
@@ -898,13 +898,58 @@ pub enum HookError {
 ///
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
-pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> {
+pub unsafe fn hook_symbol(
+    symbol_name: &CStr,
+    hook_fn: usize,
+) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, None)
+}
+
+/// Like [`hook_symbol`], but skips the library that contains `hook_fn`.
+///
+/// Use this when the hook function forwards calls to the original via
+/// normal linkage (e.g. `libc::read(fd, buf, len)`) rather than through
+/// the stored `orig_addr`. By skipping the hook's own library during
+/// patching, its GOT entries remain pointed at the real symbol, so
+/// normal calls from within the hook don't recurse.
+///
+/// This also excludes the hook's library during symbol resolution, so
+/// even if it exports the hooked symbol under the same name, `orig_addr`
+/// will point to the external definition rather than the hook library's
+/// own export.
+///
+/// # Safety
+/// Same as [`hook_symbol`].
+pub unsafe fn hook_symbol_excluding_self(
+    symbol_name: &CStr,
+    hook_fn: usize,
+) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn))
+}
+
+/// `skip_addr`: if `Some(addr)`, skip the library whose PT_LOAD segments
+/// contain `addr`. Used by `hook_symbol_excluding_self` to identify the
+/// hook's own library regardless of PIE vs non-PIE (where `dlpi_addr`
+/// may be 0 for the main executable).
+unsafe fn hook_symbol_impl(
+    symbol_name: &CStr,
+    hook_fn: usize,
+    skip_addr: Option<usize>,
+) -> Result<HookResult, HookError> {
     let symbol_name_bytes = symbol_name.to_bytes();
     let name_str = symbol_name
         .to_str()
         .map_err(|_| HookError::InvalidSymbolName)?;
 
-    let result = lookup_symbol(name_str, hook_fn).ok_or(HookError::SymbolNotFound)?;
+    // Resolve the original symbol, excluding both the hook_fn address
+    // and (if excluding self) the entire hook library so we don't
+    // accidentally resolve to a different export from the same object.
+    let result = if let Some(addr) = skip_addr {
+        lookup_symbol_excluding_addr(name_str, hook_fn, addr)
+    } else {
+        lookup_symbol(name_str, hook_fn)
+    }
+    .ok_or(HookError::SymbolNotFound)?;
 
     let mut entries_patched: usize = 0;
     let mut entries_failed: usize = 0;
@@ -927,6 +972,14 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResu
         if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
             return false;
         }
+
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
+                return false;
+            }
+        }
+
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
         // `dl_iterate_phdr`; the library is mapped for the callback's
         // duration.
