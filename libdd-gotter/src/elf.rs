@@ -893,7 +893,7 @@ unsafe fn patch_got_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use tempfile::TempDir;
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
         let guard = PageProtGuard {
@@ -1070,10 +1070,9 @@ mod tests {
         use std::io::Write;
         use std::process::Command;
 
-        let dir = std::env::temp_dir().join("libdd_got_hook_test_sysv");
-        let _ = std::fs::create_dir_all(&dir);
-        let c_path = dir.join("sysv_test.c");
-        let so_path = dir.join("libsysv_test.so");
+        let dir = TempDir::new().expect("create temp dir");
+        let c_path = dir.path().join("sysv_test.c");
+        let so_path = dir.path().join("libsysv_test.so");
 
         {
             let mut f = std::fs::File::create(&c_path).expect("create .c");
@@ -1089,19 +1088,11 @@ mod tests {
             .arg(&c_path)
             .status();
 
-        let status = match status {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("note: cc not available ({e}), skipping sysv hash test");
-                let _ = std::fs::remove_dir_all(&dir);
-                return;
-            }
-        };
-        if !status.success() {
-            eprintln!("note: cc --hash-style=sysv failed, skipping");
-            let _ = std::fs::remove_dir_all(&dir);
-            return;
-        }
+        let status = status.expect("cc should be available");
+        assert!(
+            status.success(),
+            "cc --hash-style=sysv compilation failed: {status}"
+        );
 
         // dlopen the library.
         let so_cstr =
