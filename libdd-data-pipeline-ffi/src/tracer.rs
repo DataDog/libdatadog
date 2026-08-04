@@ -13,9 +13,9 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice};
 use libdd_common_ffi::{CharSlice, Slice};
-use libdd_tinybytes::BytesString;
+use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::v04::{SpanBytes, SpanLinkBytes};
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -28,10 +28,17 @@ type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
 /// Convert a [`CharSlice`] to a [`BytesString`], copying the bytes.
 ///
-/// Returns an error if the slice is not valid UTF-8.
+/// Returns [`ErrorCode::InvalidArgument`] if the slice is malformed and [`ErrorCode::InvalidInput`]
+/// if the bytes are not valid UTF-8.
 #[inline]
 fn charslice_to_bytesstring(s: CharSlice) -> Result<BytesString, Box<ExporterError>> {
-    BytesString::from_slice(s.as_bytes()).map_err(|_| {
+    let bytes = s.try_as_bytes().map_err(|_| {
+        Box::new(ExporterError::new(
+            ErrorCode::InvalidArgument,
+            &ErrorCode::InvalidArgument.to_string(),
+        ))
+    })?;
+    BytesString::from_slice(bytes).map_err(|_| {
         Box::new(ExporterError::new(
             ErrorCode::InvalidInput,
             &ErrorCode::InvalidInput.to_string(),
@@ -88,9 +95,12 @@ pub struct TracerSpanLink<'a> {
 
 /// Create a new span with all scalar fields set.
 ///
-/// String fields are copied from the provided slices.  The `meta` and
-/// `metrics` maps start empty; use [`ddog_tracer_span_set_meta`] and
-/// [`ddog_tracer_span_set_metric`] to populate them.
+/// String fields are copied from the provided slices. The `meta`, `metrics` and `meta_struct`
+/// maps start empty; use [`ddog_tracer_span_set_meta`], [`ddog_tracer_span_set_metric`] and
+/// [`ddog_tracer_span_set_meta_struct_blob`] to populate them.
+///
+/// Returns an error if `fields` is null, if any string field is not valid UTF-8, or if any of
+/// its slices is malformed.
 ///
 /// # Safety
 ///
@@ -155,10 +165,13 @@ pub unsafe extern "C" fn ddog_tracer_span_free(handle: Box<TracerSpan>) {
 ///
 /// Both `key` and `value` are copied into the span.
 ///
+/// Returns an error if `handle` is null, if `key` or `value` is not valid UTF-8, or if either
+/// slice is malformed.
+///
 /// # Safety
 ///
-/// `handle` must be a valid pointer to a `TracerSpan`.
-/// `key` and `value` must point to valid UTF-8 memory.
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` and `value` must point to valid
+/// memory for their stated lengths.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_set_meta(
     handle: Option<&mut TracerSpan>,
@@ -188,10 +201,13 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta(
 ///
 /// The `key` is copied into the span.
 ///
+/// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if the slice is
+/// malformed.
+///
 /// # Safety
 ///
-/// `handle` must be a valid pointer to a `TracerSpan`.
-/// `key` must point to valid UTF-8 memory.
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to valid memory for its
+/// stated length.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_set_metric(
     handle: Option<&mut TracerSpan>,
@@ -205,6 +221,45 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
                 Err(e) => return Some(e),
             };
             span.0.metrics.insert(key, value);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a structured metadata entry (`meta_struct`) on the span.
+///
+/// The `key` and opaque binary `value` are copied into the span. The value is
+/// not interpreted or validated as MessagePack.
+///
+/// Returns an error if `handle` is null, if `key` is not valid UTF-8, or if either slice is
+/// malformed.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` and `value` must point to valid
+/// memory for their stated lengths.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
+    handle: Option<&mut TracerSpan>,
+    key: CharSlice,
+    value: ByteSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(span) = handle {
+            let key = match charslice_to_bytesstring(key) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            let value = match value.try_as_bytes() {
+                Ok(v) => v,
+                Err(_) => return gen_error!(ErrorCode::InvalidArgument),
+            };
+            span.0
+                .meta_struct
+                .insert(key, Bytes::copy_from_slice(value));
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -397,17 +452,14 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellatio
 
 /// Cancel a cancellation token.
 ///
-/// All clones of the same token observe the cancellation. If a
-/// [`ddog_trace_exporter_send_trace_chunks`] call is using this token at the
-/// time of cancellation, that send stops waiting for the agent at its next
-/// await point and returns an error; the trace chunks it was sending may be
-/// lost.
+/// All clones of the same token observe the cancellation. Cancellation is cooperative and only
+/// affects a [`ddog_trace_exporter_send_trace_chunks`] call that is in flight: that send stops
+/// waiting for the agent at its next await point and fails with
+/// [`ExporterErrorCode::IoError`], and the chunks it was sending may be lost.
 ///
-/// Cancellation only affects a send that is in progress. If no send is using
-/// the token, cancelling it has no immediate effect: a send started afterwards
-/// with an already-cancelled token returns an error without contacting the
-/// agent, and a token cancelled after its send has already finished does
-/// nothing.
+/// Cancelling while no send is using the token has no immediate effect. A send started later with
+/// an already-cancelled token fails the same way without contacting the agent, and cancelling
+/// after a send has finished does nothing.
 #[no_mangle]
 pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
     if let Some(token) = token {
@@ -431,19 +483,11 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 
 /// Send trace chunks through a [`TraceExporter`], consuming the chunks.
 ///
-/// This calls `TraceExporter::send_trace_chunks` which processes stats,
-/// serializes in the configured output format, and sends to the agent
-/// with retry logic.
+/// Computes stats, serializes in the configured output format, and sends to the agent with
+/// retries.
 ///
-/// When `cancel` is non-null, cancelling that token (via
-/// [`ddog_trace_exporter_cancel_token_cancel`]) while the send is in progress
-/// aborts the in-flight request and returns an error with code
-/// [`ExporterErrorCode::IoError`]. Cancellation is cooperative: it only takes
-/// effect while a request is actually in flight. A token that is already
-/// cancelled when the send starts makes this function return that error
-/// immediately, and cancelling after the send has finished has no effect.
-/// Cancelling an in-flight send may cause the trace chunks being sent to be
-/// lost.
+/// When `cancel` is non-null, cancelling that token aborts the in-flight request; see
+/// [`ddog_trace_exporter_cancel_token_cancel`].
 ///
 /// On success, if `response_out` is non-null, a heap-allocated
 /// [`ExporterResponse`] is written there.  The caller owns it and must
@@ -490,6 +534,10 @@ mod tests {
 
     fn cs(s: &str) -> CharSlice<'_> {
         CharSlice::from_bytes(s.as_bytes())
+    }
+
+    fn bs(bytes: &[u8]) -> ByteSlice<'_> {
+        ByteSlice::from(bytes)
     }
 
     fn make_minimal_span() -> Box<TracerSpan> {
@@ -550,6 +598,7 @@ mod tests {
             assert_eq!(span.0.error, 0);
             assert!(span.0.meta.is_empty());
             assert!(span.0.metrics.is_empty());
+            assert!(span.0.meta_struct.is_empty());
             assert!(span.0.span_links.is_empty());
             assert!(span.0.span_events.is_empty());
 
@@ -607,6 +656,39 @@ mod tests {
             assert_eq!(span.0.metrics.len(), 2);
             assert_eq!(*span.0.metrics.get("_dd.measured").unwrap(), 1.0);
             assert_eq!(*span.0.metrics.get("_sampling_priority_v1").unwrap(), 2.0);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_inserts_binary_entries() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let value = b"\x82\xa6nested\x92\xc3\xc0\xa3raw\xc4\x03\x00\xff\x80";
+
+            let err =
+                ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("_dd.stack"), bs(value));
+            assert!(err.is_none());
+
+            assert_eq!(span.0.meta_struct.get("_dd.stack").unwrap().as_ref(), value);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    // Repeated keys are appended, not replaced: `VecMap` defers deduplication to encode time,
+    // so both entries are retained and the last one wins on read.
+    #[test]
+    fn set_meta_struct_blob_last_write_wins() {
+        unsafe {
+            let mut span = make_minimal_span();
+
+            ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b"first"));
+            ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b"second"));
+
+            assert_eq!(span.0.meta_struct.get("k").unwrap().as_ref(), b"second");
+            assert_eq!(span.0.meta_struct.len(), 2);
 
             ddog_tracer_span_free(span);
         }
@@ -866,6 +948,102 @@ mod tests {
             let err = ddog_tracer_span_set_metric(None, cs("k"), 1.0);
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_null_handle_returns_error() {
+        unsafe {
+            let err = ddog_tracer_span_set_meta_struct_blob(None, cs("k"), bs(b"value"));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_invalid_key_returns_error() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let key = CharSlice::from_bytes(&[0xff]);
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), key, bs(b"value"));
+            assert!(err.is_some());
+            assert!(span.0.meta_struct.is_empty());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_null_value_returns_error() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let value = ByteSlice::from_raw_parts(std::ptr::null(), 5);
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), value);
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            assert!(span.0.meta_struct.is_empty());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_null_key_returns_error() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let key = CharSlice::from_raw_parts(std::ptr::null(), 5);
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), key, bs(b"value"));
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            assert!(span.0.meta_struct.is_empty());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_accepts_empty_value() {
+        unsafe {
+            let mut span = make_minimal_span();
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b""));
+            assert!(err.is_none());
+            assert_eq!(span.0.meta_struct.get("k").unwrap().as_ref(), b"");
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    // An empty key is valid UTF-8 and is technically accepted.
+    #[test]
+    fn set_meta_struct_blob_accepts_empty_key() {
+        unsafe {
+            let mut span = make_minimal_span();
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs(""), bs(b"value"));
+            assert!(err.is_none());
+            assert_eq!(span.0.meta_struct.get("").unwrap().as_ref(), b"value");
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_null_value_returns_error() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let value = CharSlice::from_raw_parts(std::ptr::null(), 5);
+
+            let err = ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), value);
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            assert!(span.0.meta.is_empty());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_span_free(span);
         }
     }
 

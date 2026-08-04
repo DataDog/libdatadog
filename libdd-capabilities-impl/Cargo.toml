@@ -27,7 +27,7 @@ tokio = { workspace = true, features = ["fs", "time"] }
 http-body-util = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 tokio = { version = "1", features = ["fs", "macros", "rt", "time"] }
 
 [features]
