@@ -43,7 +43,7 @@ fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
             (Ok(n), Ok(vv)) => {
                 out.insert(n, vv);
             }
-            _ => tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", k, v),
+            _ => tracing::warn!("Skipping invalid OTLP header"),
         }
     }
     out
