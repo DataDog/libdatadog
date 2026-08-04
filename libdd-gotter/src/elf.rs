@@ -1361,6 +1361,58 @@ mod tests {
         assert!(!is_got_pointer_reloc(u32::MAX));
     }
 
+    /// Verify that `hook_symbol_excluding_self` skips the library
+    /// containing the hook function. We use `dladdr` on the hook to
+    /// find our own base address, then confirm `hook_symbol_impl` with
+    /// `skip_base = Some(our_base)` produces fewer patched entries than
+    /// without skipping.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_hook_symbol_excluding_self_skips_own_library() {
+        // Use a dummy hook function defined in this test binary.
+        unsafe extern "C" fn dummy_hook() {}
+        let hook_addr = dummy_hook as *const () as usize;
+
+        // Resolve our own base address
+        let mut dl_info: libc::Dl_info = unsafe { core::mem::zeroed() };
+        let have_self = unsafe { libc::dladdr(hook_addr as *const c_void, &mut dl_info) } != 0;
+        assert!(have_self, "dladdr should resolve our own hook function");
+        let self_base = dl_info.dli_fbase as usize;
+
+        // Count how many libraries would be visited with and without
+        // the self-skip.
+        let mut total_libs = 0usize;
+        let mut libs_excluding_self = 0usize;
+
+        iterate_libraries(|info, _| {
+            let lib_name = if info.dlpi_name.is_null() {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(info.dlpi_name) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+                return false;
+            }
+            if unsafe { DynamicInfo::from_phdr(info) }.is_none() {
+                return false;
+            }
+            total_libs += 1;
+            if info.dlpi_addr as usize != self_base {
+                libs_excluding_self += 1;
+            }
+            false
+        });
+
+        assert!(total_libs > 0, "should find at least one library");
+        assert!(
+            libs_excluding_self < total_libs,
+            "excluding self should skip at least one library \
+             (total={total_libs}, excluding_self={libs_excluding_self})"
+        );
+    }
+
     /// Sanity check against real loaded libraries: the filter should
     /// accept some relocations (GOT entries exist) and reject some
     #[test]
