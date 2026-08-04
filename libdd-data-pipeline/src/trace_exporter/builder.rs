@@ -81,6 +81,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
+    #[cfg(feature = "telemetry")]
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
@@ -383,6 +384,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
+    #[cfg(feature = "telemetry")]
     /// Sets optional instrumentation session headers on telemetry requests (`dd-session-id`, etc.).
     pub fn set_telemetry_instrumentation_sessions(
         &mut self,

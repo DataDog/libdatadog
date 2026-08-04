@@ -9,8 +9,8 @@
 //! This is primarily used for testing to validate the exact bytes sent over the wire.
 
 use anyhow::Context;
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Monotonic counter for directory-mode dump filenames, so each captured request lands in
