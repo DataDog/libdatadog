@@ -281,6 +281,8 @@ impl<T> Batch<T> {
 /// * The time since the last flush is greater than [`TraceBufferConfig::max_flush_interval`]
 /// * [`TraceBuffer::force_flush`] is called. This method triggers a flush, but do not wait for the
 ///   flush to be done before returning
+/// * [`TraceBuffer::flush_and_wait`] is called. This method triggers a flush and waits for the
+///   flush to be done before returning
 ///
 /// # Synchronous mode
 ///
@@ -346,17 +348,44 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         self.tx.trigger_flush().map(|_flush_gen| ())
     }
 
+    /// Flush the current batch and wait, up to `timeout`, for the exporter to export it.
+    ///
+    /// [`TraceBuffer::force_flush`] only waits for the flush request to reach the queue.
+    /// `flush_and_wait` leaves the buffer usable, so a caller that exposes a blocking
+    /// `flush()` to its own users can send more chunks after `flush_and_wait` returns. Use
+    /// [`TraceBuffer::flush_and_shutdown`] instead to also close the buffer.
+    ///
+    /// An idle buffer has nothing to wait for, so `flush_and_wait` returns immediately.
+    ///
+    /// A `timeout` of `None` blocks the calling thread until the exporter acks the export or
+    /// until the buffer shuts down. Neither event is guaranteed: a paused worker never acks and
+    /// never shuts down, and a hung agent request holds the export open. Pass a timeout unless
+    /// the caller can tolerate an unbounded block.
+    ///
+    /// # Errors
+    ///
+    /// * `TimedOut` when the exporter does not ack the export within `timeout`. The buffer stays
+    ///   usable, and a later call can wait for the same data again.
+    /// * `AlreadyShutdown` when the buffer refuses chunks, or when a concurrent shutdown ends the
+    ///   wait before the ack arrives. In the second case the outcome of the flush is unknown,
+    ///   because the shutdown drain can still export the data.
+    pub fn flush_and_wait(&self, timeout: Option<Duration>) -> Result<(), TraceBufferError> {
+        self.tx.flush_and_wait(timeout)
+    }
+
     /// Flush the current batch, wait for the exporter to export it, then shut down the
     /// buffer so no further chunks are accepted.
     ///
-    /// [`TraceBuffer::force_flush`] only waits for the flush request to reach the queue.
-    /// `flush_and_shutdown` waits for the exporter to export the batch that exists at call
-    /// time. [`TraceBuffer::wait_shutdown_done`] waits on a shutdown that another caller
-    /// starts. `flush_and_shutdown` starts the shutdown itself.
+    /// [`TraceBuffer::flush_and_wait`] waits for the same export without closing the buffer.
+    /// [`TraceBuffer::wait_shutdown_done`] waits on a shutdown that another caller starts.
+    /// `flush_and_shutdown` starts the shutdown itself.
     ///
     /// `flush_and_shutdown` shuts down the buffer even when the flush times out. If the call
     /// returns `Err(TimedOut)`, the exporter may not have exported the flush, but no caller
     /// can queue further chunks after the call returns.
+    ///
+    /// The error cases of [`TraceBuffer::flush_and_wait`] apply here too, including the
+    /// unbounded block on a `timeout` of `None`.
     pub fn flush_and_shutdown(&self, timeout: Option<Duration>) -> Result<(), TraceBufferError> {
         self.tx.flush_and_shutdown(timeout)
     }
@@ -406,6 +435,7 @@ fn channel<T>(
         state: Mutex::new(SharedState {
             flush_needed: false,
             last_flush_generation: BatchGeneration::default(),
+            accepting_chunks: true,
             has_shutdown: false,
             batch: Batch::new(max_buffered_bytes),
             metrics: QueueMetrics::default(),
@@ -439,12 +469,17 @@ impl<T> Sender<T> {
             state.last_flush_generation < flush_gen && !state.has_shutdown
         };
 
-        if let Some(timeout) = timeout {
+        let state = if let Some(timeout) = timeout {
+            let state = self.lock_state()?;
+            // A caller that passes a zero timeout asks for a poll, not for a wait. The
+            // generation can already be reached, so check it before the timeout wins.
+            if state.last_flush_generation >= flush_gen {
+                return Ok(());
+            }
             if timeout.is_zero() {
                 return Err(TraceBufferError::TimedOut(Duration::ZERO));
             }
-            let state = self.lock_state()?;
-            let (_state, res) = self
+            let (state, res) = self
                 .waiter
                 .sender_notifier
                 .wait_timeout_while(state, timeout, cond)
@@ -452,13 +487,21 @@ impl<T> Sender<T> {
             if res.timed_out() {
                 return Err(TraceBufferError::TimedOut(timeout));
             }
+            state
         } else {
             let state = self.lock_state()?;
-            let _state = self
-                .waiter
+            self.waiter
                 .sender_notifier
                 .wait_while(state, cond)
-                .map_err(|_| TraceBufferError::MutexPoisoned)?;
+                .map_err(|_| TraceBufferError::MutexPoisoned)?
+        };
+
+        // A shutdown also ends the wait, so the generation can still be unreached here. An
+        // unreached generation is an error, not a successful flush of data that no exporter took.
+        // The error says that the outcome of the flush is unknown. A concurrent shutdown can
+        // still export the data during its own drain.
+        if state.last_flush_generation < flush_gen {
+            return Err(TraceBufferError::AlreadyShutdown);
         }
         Ok(())
     }
@@ -472,7 +515,7 @@ impl<T> Sender<T> {
 
     fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
         let state = self.lock_state()?;
-        if state.has_shutdown {
+        if !state.accepting_chunks {
             return Err(TraceBufferError::AlreadyShutdown);
         }
         Ok(state)
@@ -507,16 +550,29 @@ impl<T> Sender<T> {
         Ok(gen)
     }
 
-    /// Trigger a flush of the current batch and wait, up to `timeout`, for the exporter to
-    /// export that exact batch generation. Then mark the channel as shut down so no further
-    /// chunks are accepted.
+    /// Flush the current batch and wait, up to `timeout`, for the exporter to export the data
+    /// in the buffer at call time.
+    fn flush_and_wait(&self, timeout: Option<Duration>) -> Result<(), TraceBufferError> {
+        let mut state = self.get_running_state()?;
+        // When no generation is pending, the receiver has nothing to take. A flush request would
+        // only wake the receiver for an empty export and reset the auto-flush timer.
+        let Some(flush_gen) = state.pending_flush_target() else {
+            return Ok(());
+        };
+        state.flush_needed = true;
+        self.waiter.notify_receiver(state);
+
+        self.wait_flush_done(flush_gen, timeout)
+    }
+
+    /// Flush and wait as [`Sender::flush_and_wait`] does, then mark the channel as shut down so
+    /// that the channel refuses further chunks.
     ///
     /// `flush_and_shutdown` marks the channel as shut down even when the flush times out. A
     /// caller that tears down the runtime before a fork needs the guarantee that no chunk can
     /// be queued after this call returns, whether or not the flush finished in time.
     fn flush_and_shutdown(&self, timeout: Option<Duration>) -> Result<(), TraceBufferError> {
-        let flush_gen = self.trigger_flush()?;
-        let flush_result = self.wait_flush_done(flush_gen, timeout);
+        let flush_result = self.flush_and_wait(timeout);
 
         let state = self.lock_state()?;
         self.waiter.mark_shutdown(state);
@@ -561,12 +617,14 @@ impl<T> Receiver<T> {
         let SharedState {
             flush_needed,
             last_flush_generation,
+            accepting_chunks,
             has_shutdown,
             batch,
             metrics,
         } = state.deref_mut();
         *flush_needed = false;
         *last_flush_generation = BatchGeneration::default();
+        *accepting_chunks = true;
         *has_shutdown = false;
         batch.reset();
         *metrics = QueueMetrics::default();
@@ -611,14 +669,20 @@ impl<T> Receiver<T> {
         state.batch.export()
     }
 
-    /// Take the chunks currently in the batch, regardless of `flush_needed`.
+    /// Refuse further chunks and take the chunks currently in the batch, regardless of
+    /// `flush_needed`.
     ///
     /// `Worker::shutdown` calls this method because `PausableWorker::pause`'s biased
     /// `select!` cancels the trigger and run loop outright. The loop never hands the batch to
     /// one more `run()` call. Without this drain, `Worker::shutdown` would silently drop the
     /// pending chunks.
-    fn drain_pending(&self) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
+    ///
+    /// The method refuses chunks and drains under one lock so that this drain is the last one.
+    /// A chunk that arrives after the drain but before the export ends would otherwise stay in
+    /// a batch that no exporter takes again.
+    fn close_and_drain(&self) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         let mut state = self.lock_state()?;
+        state.accepting_chunks = false;
         if state.batch.chunks.is_empty() {
             return Ok(Vec::new());
         }
@@ -640,14 +704,39 @@ impl BatchGeneration {
     fn incr(&mut self) {
         self.0 = self.0.wrapping_add(1);
     }
+
+    fn decr(&mut self) {
+        self.0 = self.0.wrapping_sub(1);
+    }
 }
 
 struct SharedState<T> {
     flush_needed: bool,
     last_flush_generation: BatchGeneration,
+    accepting_chunks: bool,
     has_shutdown: bool,
     batch: Batch<T>,
     metrics: QueueMetrics,
+}
+
+impl<T> SharedState<T> {
+    /// Return the generation that a caller waits for to confirm that the exporter exported the
+    /// data in the buffer now. Return `None` when nothing is left to export.
+    ///
+    /// The batch increments its generation only for a non-empty export, and the receiver acks
+    /// only a non-empty export. A caller that waits on the generation of an empty batch
+    /// therefore waits for an ack that never arrives.
+    ///
+    /// An empty batch means that the receiver already took the chunks, so the export that the
+    /// receiver has not acked yet carries the previous generation. The single receiver runs
+    /// take, export, and ack in order, so at most one export is ever unacked.
+    fn pending_flush_target(&self) -> Option<BatchGeneration> {
+        let mut target = self.batch.batch_gen;
+        if self.batch.chunks.is_empty() {
+            target.decr();
+        }
+        (self.last_flush_generation < target).then_some(target)
+    }
 }
 
 struct Waiter<T> {
@@ -669,6 +758,7 @@ impl<T> Waiter<T> {
     }
 
     fn mark_shutdown(&self, mut state: MutexGuard<'_, SharedState<T>>) {
+        state.accepting_chunks = false;
         state.has_shutdown = true;
         self.notify_sender(state);
     }
@@ -838,7 +928,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     }
 
     async fn shutdown(&mut self) {
-        if let Ok(trace_chunks) = self.rx.drain_pending() {
+        if let Ok(trace_chunks) = self.rx.close_and_drain() {
             self.export_and_ack(trace_chunks).await;
         }
         let _ = self.rx.shutdown_done();
@@ -851,8 +941,9 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
 
@@ -894,6 +985,46 @@ mod tests {
             (self.0)(trace_chunks);
             self.1.add_permits(1);
             Box::pin(async { Ok(AgentResponse::Unchanged) })
+        }
+    }
+
+    /// Park the export future on `gate`. A test holds the worker inside an in-flight export and
+    /// acts on the buffer while the export waits on the gate.
+    struct GateExporter {
+        chunks_handed_to_export: Arc<AtomicUsize>,
+        /// A test thread blocks on the receiving end, so an `mpsc::Sender` is the right signal.
+        /// `mpsc::Sender` is not `Sync`, and the `Export` trait requires `Send + Sync`.
+        export_started: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
+        gate: Arc<tokio::sync::Semaphore>,
+    }
+
+    impl std::fmt::Debug for GateExporter {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("GateExporter").finish()
+        }
+    }
+
+    impl Export<()> for GateExporter {
+        fn export_trace_chunks(
+            &mut self,
+            trace_chunks: Vec<super::TraceChunk<()>>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>>
+                    + Send
+                    + '_,
+            >,
+        > {
+            self.chunks_handed_to_export
+                .fetch_add(trace_chunks.len(), Ordering::SeqCst);
+            if let Ok(tx) = self.export_started.lock() {
+                let _ = tx.send(());
+            }
+            let gate = self.gate.clone();
+            Box::pin(async move {
+                let _ = gate.acquire().await;
+                Ok(AgentResponse::Unchanged)
+            })
         }
     }
 
@@ -1166,6 +1297,222 @@ mod tests {
             sender.flush_and_shutdown(Some(Duration::from_secs(10))),
             Err(TraceBufferError::AlreadyShutdown)
         ));
+
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_flush_and_shutdown_on_idle_buffer_returns_ok_promptly() {
+        let (rt, _sem, sender) = make_buffer(
+            Box::new(|_| panic!("an idle buffer has nothing to export")),
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+        );
+
+        let timeout = Duration::from_millis(200);
+        let start = Instant::now();
+        let res = sender.flush_and_shutdown(Some(timeout));
+        let elapsed = start.elapsed();
+
+        assert!(res.is_ok(), "expected Ok on an idle buffer, got {res:?}");
+        assert!(
+            elapsed < timeout / 2,
+            "flush_and_shutdown blocked for {elapsed:?} with nothing to flush"
+        );
+
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_wait_flush_done_does_not_report_ok_for_unexported_data_on_concurrent_shutdown() {
+        // Pause the worker so that no exporter ever acks the triggered generation.
+        let (rt, _sem, sender) = make_buffer_with_pending_chunk();
+        rt.before_fork();
+
+        let flush_gen = sender.tx.trigger_flush().unwrap();
+
+        let res = std::thread::scope(|s| {
+            let waiter = s.spawn(|| {
+                sender
+                    .tx
+                    .wait_flush_done(flush_gen, Some(Duration::from_secs(10)))
+            });
+            std::thread::sleep(Duration::from_millis(50));
+            let state = sender.tx.lock_state().unwrap();
+            sender.tx.waiter.mark_shutdown(state);
+            waiter.join().unwrap()
+        });
+
+        assert!(
+            res.is_err(),
+            "wait_flush_done reported success for a generation that was never exported"
+        );
+
+        rt.after_fork_parent().expect("error unpausing");
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_worker_shutdown_does_not_drop_chunks_sent_during_drain_export() {
+        let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (export_started_tx, export_started) = std::sync::mpsc::channel();
+
+        let rt = Arc::new(ForkSafeRuntime::new().unwrap());
+        let (sender, worker) = TraceBuffer::new(
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+            Box::new(|_r: Result<AgentResponse, TraceExporterError>| {}),
+            Box::new(GateExporter {
+                chunks_handed_to_export: chunks_handed_to_export.clone(),
+                export_started: std::sync::Mutex::new(export_started_tx),
+                gate: gate.clone(),
+            }),
+        );
+        let _ = rt.spawn_worker(worker, true).unwrap();
+
+        sender.send_chunk(vec![()]).unwrap();
+
+        let shutdown_rt = rt.clone();
+        let shutdown = std::thread::spawn(move || shutdown_rt.shutdown(None).unwrap());
+
+        // Land inside Worker::shutdown's drain-then-export window.
+        export_started.recv().unwrap();
+        let send_during_drain = sender.send_chunk(vec![()]);
+
+        gate.add_permits(1);
+        shutdown.join().unwrap();
+        sender.wait_shutdown_done(Duration::from_secs(10)).unwrap();
+
+        assert!(
+            matches!(send_during_drain, Err(TraceBufferError::AlreadyShutdown)),
+            "close_and_drain must refuse a chunk sent during the drain export, got \
+             {send_during_drain:?}"
+        );
+        assert_eq!(
+            chunks_handed_to_export.load(Ordering::SeqCst),
+            1,
+            "the drain must export the chunk buffered before the shutdown"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_flush_and_wait_flushes_without_shutting_down() {
+        let (rt, sem, sender) = make_buffer_with_pending_chunk();
+
+        sender
+            .flush_and_wait(Some(Duration::from_secs(10)))
+            .unwrap();
+        assert_eq!(sem.available_permits(), 1);
+
+        // A tracer that calls flush() keeps sending traces afterwards.
+        sender.send_chunk(vec![()]).unwrap();
+
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_flush_and_wait_waits_for_an_in_flight_export() {
+        let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (export_started_tx, export_started) = std::sync::mpsc::channel();
+
+        let rt = Arc::new(ForkSafeRuntime::new().unwrap());
+        let (sender, worker) = TraceBuffer::new(
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(0)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+            Box::new(|_r: Result<AgentResponse, TraceExporterError>| {}),
+            Box::new(GateExporter {
+                chunks_handed_to_export: chunks_handed_to_export.clone(),
+                export_started: std::sync::Mutex::new(export_started_tx),
+                gate: gate.clone(),
+            }),
+        );
+        let _ = rt.spawn_worker(worker, true).unwrap();
+
+        // The threshold of zero bytes makes the receiver take the batch at once, so the batch is
+        // empty while the export is in flight. flush_and_wait must wait for the ack of that
+        // export instead of reporting an empty buffer.
+        sender.send_chunk(vec![()]).unwrap();
+        export_started.recv().unwrap();
+
+        std::thread::scope(|s| {
+            let waiter = s.spawn(|| sender.flush_and_wait(Some(Duration::from_secs(10))));
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(
+                !waiter.is_finished(),
+                "flush_and_wait returned while the export was still in flight"
+            );
+            gate.add_permits(1);
+            waiter.join().unwrap().unwrap();
+        });
+
+        assert_eq!(chunks_handed_to_export.load(Ordering::SeqCst), 1);
+
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_flush_and_wait_leaves_the_buffer_usable_after_a_timeout() {
+        let (rt, sem, sender) = make_buffer(
+            Box::new(|_| {}),
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+        );
+        sender.send_chunk(vec![()]).unwrap();
+
+        // Pause the worker so that no exporter acks the flush before the timeout.
+        rt.before_fork();
+        assert!(matches!(
+            sender.flush_and_wait(Some(Duration::from_millis(50))),
+            Err(TraceBufferError::TimedOut(_))
+        ));
+
+        // A timed-out flush_and_wait keeps the buffer open, unlike flush_and_shutdown.
+        sender.send_chunk(vec![()]).unwrap();
+
+        rt.after_fork_parent().expect("error unpausing");
+        sender
+            .flush_and_wait(Some(Duration::from_secs(10)))
+            .unwrap();
+        assert!(sem.available_permits() >= 1);
+
+        // Nothing is left to export, so a repeated call returns without a wait.
+        sender.flush_and_wait(Some(Duration::ZERO)).unwrap();
+
+        rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_wait_flush_done_polls_an_acked_generation_with_a_zero_timeout() {
+        let (rt, sem, sender) = make_buffer_with_pending_chunk();
+
+        let flush_gen = sender.tx.trigger_flush().unwrap();
+        sender
+            .tx
+            .wait_flush_done(flush_gen, Some(Duration::from_secs(10)))
+            .unwrap();
+        assert_eq!(sem.available_permits(), 1);
+
+        sender
+            .tx
+            .wait_flush_done(flush_gen, Some(Duration::ZERO))
+            .unwrap();
 
         rt.shutdown(None).unwrap();
     }
