@@ -1283,7 +1283,7 @@ mod tests {
             assert_eq!(chunks.0[0].len(), 2);
             assert_eq!(chunks.0[1].len(), 1);
 
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
@@ -1307,7 +1307,7 @@ mod tests {
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
 
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
@@ -1322,7 +1322,7 @@ mod tests {
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
 
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
@@ -1341,7 +1341,7 @@ mod tests {
         unsafe {
             let chunks = make_chunks(0);
             assert_eq!(chunks.0.len(), 0);
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
@@ -1355,7 +1355,7 @@ mod tests {
             assert_eq!(chunks.0.len(), 1);
             assert_eq!(chunks.0[0].len(), 0);
 
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
@@ -1408,7 +1408,7 @@ mod tests {
             assert!(err.is_some());
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
             ddog_trace_exporter_error_free(err);
-            ddog_tracer_trace_chunks_free(chunks);
+            ddog_tracer_trace_chunks_free(Some(chunks));
         }
     }
 
