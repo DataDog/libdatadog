@@ -281,7 +281,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 /// Used by the trace exporter when the agent has not advertised `/v1.0/traces` via `/info`.
 /// The output is byte-compatible with [`to_vec_from_v04`] for equivalent data — chunk-level fields
 /// are propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
-/// `metrics` / `meta_struct` maps per [`span_v1`]'s mapping table.
+/// `metrics` / `meta_struct` maps per `span_v1`'s mapping table.
 pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_with_capacity_from_v1(payload, 0)
 }

@@ -611,7 +611,7 @@ impl ShmSpanConcentrator {
 
     /// Drain the inactive (or both, if `force`) bucket(s) and return raw stat buckets.
     ///
-    /// This is the low-level building block used by both [`flush`] and the
+    /// This is the low-level building block used by both [`Self::flush`] and the
     /// [`FlushableConcentrator`] impl.
     pub fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
         let hdr = self.header();

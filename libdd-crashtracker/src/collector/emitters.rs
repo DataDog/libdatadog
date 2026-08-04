@@ -746,7 +746,7 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
 /// The file will be emitted in the format
 ///
 /// DD_CRASHTRACK_BEGIN_FILE
-/// <FILE BYTES>
+/// `<FILE BYTES>`
 /// DD_CRASHTRACK_END_FILE
 ///
 /// PRECONDITIONS:

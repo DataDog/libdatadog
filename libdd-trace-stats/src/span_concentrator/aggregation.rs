@@ -42,7 +42,7 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
 /// **except** peer tags.
 ///
 /// `T` is the string representation:
-/// * `&'a str`   — borrowed references used in [`BorrowedAggregationKey`]
+/// * `&'a str`   — borrowed references used in `BorrowedAggregationKey`
 /// * `String`    — owned values used in `OwnedAggregationKey`
 /// * `StringRef` — offset+len into a SHM string pool, used in `ShmKeyHeader`
 #[derive(

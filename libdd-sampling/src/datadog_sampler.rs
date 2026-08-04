@@ -115,7 +115,7 @@ impl DatadogSampler {
     /// Sample an incoming span based on the parent context and attributes.
     ///
     /// If a parent sampling decision is present it is inherited; otherwise the root-span
-    /// sampling pipeline is run via [`Self::sample_root`].
+    /// sampling pipeline is run via `Self::sample_root`.
     pub fn sample(&self, data: &impl SamplingData) -> DdSamplingResult {
         if let Some(is_parent_sampled) = data.is_parent_sampled() {
             let priority = match is_parent_sampled {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Taken from the source of
-/// https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary
+/// <https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary>
 /// TODO remove when str::floor_char_boundary is stable
 #[inline]
 pub(crate) fn floor_char_boundary(s: &str, index: usize) -> usize {

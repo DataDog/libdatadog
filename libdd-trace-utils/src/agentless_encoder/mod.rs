@@ -57,7 +57,7 @@ const TRUNCATION_SUFFIX: &str = "...";
 ///
 /// The shape of the input of the macro is made to look like a closure
 /// Contrary to a closure, the names of the types have to be named in full
-/// ```ignore
+/// ```text
 ///        Optional generic| serializer|
 ///            parameter   |.  |               Captured variables from env       
 ///         --------------  --- ---------------------------------------------------------

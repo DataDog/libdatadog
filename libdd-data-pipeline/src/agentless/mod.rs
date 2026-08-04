@@ -19,8 +19,9 @@
 //! - **Retries**: up to 2 retries with exponential backoff starting at 1 s and no cap (the agent
 //!   path uses its own strategy).
 //! - **Mutually exclusive transport**: agentless cannot be combined with OTLP
-//!   ([`set_otlp_endpoint`]), a caller-supplied agent URL ([`set_url`]), or log output; configuring
-//!   any of them together causes `build`/`build_async` to return
+//!   ([`crate::trace_exporter::TraceExporterBuilder::set_otlp_endpoint`]), a caller-supplied agent
+//!   URL ([`crate::trace_exporter::TraceExporterBuilder::set_url`]), or log output; configuring any
+//!   of them together causes `build`/`build_async` to return
 //!   `BuilderErrorKind::InvalidConfiguration`.
 
 pub(crate) mod config;

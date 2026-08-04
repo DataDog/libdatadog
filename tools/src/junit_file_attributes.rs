@@ -203,7 +203,7 @@ fn load_setup_scripts(workspace_root: &Path, lookup: &mut TargetLookup) {
 }
 
 /// Parse a cargo run command to extract package and binary names.
-/// Expected format: "cargo run -p <package> --bin <binary>" (flags can be in any order)
+/// Expected format: "cargo run -p `<package>` --bin `<binary>`" (flags can be in any order)
 fn parse_cargo_run_command(command: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = command.split_whitespace().collect();
 

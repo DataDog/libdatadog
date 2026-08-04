@@ -353,7 +353,7 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 /// When `cancel` is non-null, cancelling that token (via
 /// [`ddog_trace_exporter_cancel_token_cancel`]) while the send is in progress
 /// aborts the in-flight request and returns an error with code
-/// [`ExporterErrorCode::IoError`]. Cancellation is cooperative: it only takes
+/// [`ErrorCode::IoError`]. Cancellation is cooperative: it only takes
 /// effect while a request is actually in flight. A token that is already
 /// cancelled when the send starts makes this function return that error
 /// immediately, and cancelling after the send has finished has no effect.
