@@ -1174,4 +1174,62 @@ mod tests {
         unsafe { libc::dlclose(handle) };
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn test_is_got_pointer_reloc_accepts_pointer_width_types() {
+        // x86_64
+        assert!(is_got_pointer_reloc(1)); // R_X86_64_64
+        assert!(is_got_pointer_reloc(6)); // R_X86_64_GLOB_DAT
+        assert!(is_got_pointer_reloc(7)); // R_X86_64_JUMP_SLOT
+                                          // aarch64
+        assert!(is_got_pointer_reloc(257)); // R_AARCH64_ABS64
+        assert!(is_got_pointer_reloc(1025)); // R_AARCH64_GLOB_DAT
+        assert!(is_got_pointer_reloc(1026)); // R_AARCH64_JUMP_SLOT
+    }
+
+    #[test]
+    fn test_is_got_pointer_reloc_rejects_non_pointer_types() {
+        assert!(!is_got_pointer_reloc(0)); // R_*_NONE
+        assert!(!is_got_pointer_reloc(2)); // R_X86_64_PC32
+        assert!(!is_got_pointer_reloc(10)); // R_X86_64_32
+        assert!(!is_got_pointer_reloc(11)); // R_X86_64_32S
+        assert!(!is_got_pointer_reloc(258)); // R_AARCH64_ABS32
+        assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLSDESC
+        assert!(!is_got_pointer_reloc(u32::MAX));
+    }
+
+    /// Sanity check against real loaded libraries: the filter should
+    /// accept some relocations (GOT entries exist) and reject some
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_is_got_pointer_reloc_filters_real_relocations() {
+        let mut accepted = 0usize;
+        let mut rejected = 0usize;
+
+        iterate_libraries(|info, _| {
+            // SAFETY: `info` is a valid `dl_phdr_info` from `dl_iterate_phdr`.
+            let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
+                return false;
+            };
+            for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
+                for reloc in relocs {
+                    if is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                        accepted += 1;
+                    } else {
+                        rejected += 1;
+                    }
+                }
+            }
+            false
+        });
+
+        assert!(
+            accepted > 0,
+            "expected at least one GOT relocation across loaded libraries"
+        );
+        assert!(
+            rejected > 0,
+            "expected at least one non-GOT relocation to be filtered out"
+        );
+    }
 }
