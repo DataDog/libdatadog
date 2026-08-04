@@ -21,14 +21,16 @@ use std::{fmt, ptr};
 
 /// A `SpanLink`'s `flags` field reserves bit 31 to mean "a value was explicitly set", separate
 /// from the sampling decision carried in the low bits. The sentinel bit distinguishes
-/// `flags == 0` (never set) from an explicit decision of `0`, for example a dropped context,
-/// which would otherwise look identical on the wire.
+/// `flags == 0` (never set) from an explicit decision of `0`, for example a dropped context.
+/// Without the sentinel, both cases look identical on the wire.
 ///
-/// Only the native v0.4 msgpack wire format (`msgpack_encoder::v04::span_v04`) carries this bit
-/// on the wire, matching the encoding datadog-agent and other tracers already expect. Every
-/// other encoder must mask off this bit before it emits `flags`. These encoders include the
-/// v0.5 JSON dictionary, OTLP protobuf, agentless JSON, and structured JSON logging. Each of
-/// them treats `flags` as the real W3C trace-flags value.
+/// Every non-JSON wire format keeps this bit raw, except OTLP. The native v0.4 msgpack format
+/// (`msgpack_encoder::v04::span_v04`), the v1 msgpack format, and the native protobuf format
+/// (`libdd_trace_protobuf::pb::SpanLink`) all keep the sentinel raw in `flags`. Tracers already
+/// send the bit set in these formats. JSON formats and OTLP protobuf must mask this bit before
+/// they emit `flags`, because those consumers treat `flags` as the real W3C trace-flags value.
+/// The JSON formats are the v0.5 `_dd.span_links` dictionary, agentless JSON, and structured
+/// JSON logging.
 pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
