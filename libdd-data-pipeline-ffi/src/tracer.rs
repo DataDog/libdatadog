@@ -82,7 +82,6 @@ pub struct TracerSpanLink<'a> {
     pub trace_id_high: u64,
     pub span_id: u64,
     pub attributes: Slice<'a, TracerSpanLinkAttribute<'a>>,
-    pub dropped_attributes_count: u32,
     pub tracestate: CharSlice<'a>,
     pub flags: u32,
 }
@@ -264,7 +263,6 @@ pub unsafe extern "C" fn ddog_tracer_span_set_links(
                     trace_id_high: link.trace_id_high,
                     span_id: link.span_id,
                     attributes: converted_attributes,
-                    dropped_attributes_count: link.dropped_attributes_count,
                     tracestate,
                     flags: link.flags,
                 });
@@ -628,7 +626,6 @@ mod tests {
                     trace_id_high: 0x4567,
                     span_id: 0x89ab,
                     attributes: Slice::from(&first_attributes[..]),
-                    dropped_attributes_count: 7,
                     tracestate: cs("vendor=value"),
                     flags: 0x8000_0001,
                 },
@@ -637,7 +634,6 @@ mod tests {
                     trace_id_high: 0,
                     span_id: 3,
                     attributes: Slice::default(),
-                    dropped_attributes_count: 0,
                     tracestate: cs(""),
                     flags: 0,
                 },
@@ -650,7 +646,6 @@ mod tests {
             assert_eq!(span.0.span_links[0].trace_id, 0x0123);
             assert_eq!(span.0.span_links[0].trace_id_high, 0x4567);
             assert_eq!(span.0.span_links[0].span_id, 0x89ab);
-            assert_eq!(span.0.span_links[0].dropped_attributes_count, 7);
             assert_eq!(span.0.span_links[0].flags, 0x8000_0001);
             assert_eq!(span.0.span_links[0].tracestate.as_ref(), "vendor=value");
             assert_eq!(
@@ -676,7 +671,6 @@ mod tests {
                 trace_id_high: 0,
                 span_id: 2,
                 attributes: Slice::default(),
-                dropped_attributes_count: 0,
                 tracestate: cs(""),
                 flags: 0,
             }];
@@ -687,7 +681,6 @@ mod tests {
                 trace_id_high: 4,
                 span_id: 5,
                 attributes: Slice::default(),
-                dropped_attributes_count: 0,
                 tracestate: cs("state=value"),
                 flags: 6,
             }];
@@ -719,7 +712,6 @@ mod tests {
                     trace_id_high: 2,
                     span_id: 3,
                     attributes: Slice::default(),
-                    dropped_attributes_count: 0,
                     tracestate: cs("valid=value"),
                     flags: 4,
                 },
@@ -728,7 +720,6 @@ mod tests {
                     trace_id_high: 6,
                     span_id: 7,
                     attributes: Slice::default(),
-                    dropped_attributes_count: 0,
                     tracestate: CharSlice::from_bytes(&invalid),
                     flags: 8,
                 },
@@ -763,7 +754,6 @@ mod tests {
                 trace_id_high: 2,
                 span_id: 3,
                 attributes: Slice::from(&attributes[..]),
-                dropped_attributes_count: 0,
                 tracestate: cs(""),
                 flags: 4,
             }];

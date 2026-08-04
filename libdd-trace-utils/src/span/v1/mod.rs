@@ -115,7 +115,6 @@ pub struct SpanLink<T: TraceData> {
     pub trace_id: [u8; 16],
     pub span_id: u64,
     pub attributes: VecMap<T::Text, AttributeValue<T>>,
-    pub dropped_attributes_count: u32,
     pub tracestate: T::Text,
     pub flags: u32,
 }

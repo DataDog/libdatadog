@@ -141,7 +141,6 @@ fn span_links_serialised_into_meta_as_json_string() {
         trace_id_high: 0x0011_2233_4455_6677,
         span_id: 0xfeed_face_dead_beef,
         attributes: HashMap::from([(bs("link.name"), bs("scheduled_by"))]),
-        dropped_attributes_count: 0,
         flags: 1,
         tracestate: bs("dd=s:1"),
     };

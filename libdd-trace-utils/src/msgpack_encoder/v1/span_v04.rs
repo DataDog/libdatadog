@@ -45,7 +45,6 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
         let link_len = 1 // trace_id (always)
             + (link.span_id != 0) as u32
             + (!link.attributes.is_empty()) as u32
-            + (link.dropped_attributes_count != 0) as u32
             + (!link.tracestate.borrow().is_empty()) as u32
             + (link.flags != 0) as u32;
 
@@ -67,11 +66,6 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
                 write_uint8(writer, AnyValueKey::String as u8)?;
                 table.write_interned(writer, v.borrow())?;
             }
-        }
-
-        if link.dropped_attributes_count != 0 {
-            write_uint8(writer, SpanLinkKey::DroppedAttributesCount as u8)?;
-            write_uint(writer, link.dropped_attributes_count as u64)?;
         }
 
         if !link.tracestate.borrow().is_empty() {

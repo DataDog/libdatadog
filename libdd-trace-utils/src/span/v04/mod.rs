@@ -143,8 +143,6 @@ pub struct SpanLink<T: TraceData> {
     pub span_id: u64,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub attributes: HashMap<T::Text, T::Text>,
-    #[serde(skip_serializing_if = "is_default")]
-    pub dropped_attributes_count: u32,
     #[serde(skip_serializing_if = "is_empty_str")]
     pub tracestate: T::Text,
     #[serde(skip_serializing_if = "is_default")]
@@ -161,7 +159,6 @@ where
             trace_id_high: self.trace_id_high,
             span_id: self.span_id,
             attributes: self.attributes.clone(),
-            dropped_attributes_count: self.dropped_attributes_count,
             tracestate: self.tracestate.clone(),
             flags: self.flags,
         }
@@ -360,7 +357,6 @@ mod tests {
             span_links: vec![SpanLink {
                 trace_id: 42,
                 attributes: HashMap::from([("span", "link")]),
-                dropped_attributes_count: 7,
                 tracestate: "running",
                 ..Default::default()
             }],
@@ -412,10 +408,6 @@ mod tests {
         assert_eq!(
             span.span_links[0].tracestate,
             deserialized.span_links[0].tracestate
-        );
-        assert_eq!(
-            span.span_links[0].dropped_attributes_count,
-            deserialized.span_links[0].dropped_attributes_count
         );
         assert_eq!(span.span_events[0].name, deserialized.span_events[0].name);
         assert_eq!(

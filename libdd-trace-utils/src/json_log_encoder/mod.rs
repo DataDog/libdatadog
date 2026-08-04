@@ -421,7 +421,6 @@ mod tests {
             span_links: vec![SpanLink {
                 trace_id: 7,
                 span_id: 8,
-                dropped_attributes_count: 3,
                 ..Default::default()
             }],
             span_events: vec![SpanEvent {
@@ -440,7 +439,6 @@ mod tests {
         // Lock the inner wire shape (field names/values), not just presence.
         assert_eq!(span_json["span_links"][0]["trace_id"], 7);
         assert_eq!(span_json["span_links"][0]["span_id"], 8);
-        assert_eq!(span_json["span_links"][0]["dropped_attributes_count"], 3);
         assert_eq!(span_json["span_events"][0]["name"], "evt");
         assert_eq!(span_json["span_events"][0]["time_unix_nano"], 123);
     }

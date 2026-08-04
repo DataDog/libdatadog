@@ -72,7 +72,6 @@ pub(super) enum SpanLinkKey {
     Attributes = 3,
     TraceState = 4,
     Flags = 5,
-    DroppedAttributesCount = 6,
 }
 
 /// Integer keys for V1 span event fields.

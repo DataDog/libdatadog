@@ -276,18 +276,6 @@ where
                     DecodeError::InvalidFormat(format!("V1 span_link flags {v} exceeds u32::MAX"))
                 })?;
             }
-            span_link_key::DROPPED_ATTRIBUTES_COUNT => {
-                let v: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
-                    DecodeError::InvalidFormat(
-                        "V1 span_link dropped_attributes_count read failure".to_owned(),
-                    )
-                })?;
-                link.dropped_attributes_count = u32::try_from(v).map_err(|_| {
-                    DecodeError::InvalidFormat(format!(
-                        "V1 span_link dropped_attributes_count {v} exceeds u32::MAX"
-                    ))
-                })?;
-            }
             _unknown => skip_unknown_value(buf)?,
         }
     }
