@@ -1,5 +1,5 @@
 [package]
-name = "datadog-ffe-test-suite"
+name = "libdd-ffe-test-suite"
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
@@ -11,9 +11,9 @@ publish = false
 bench = false
 
 [dev-dependencies]
-datadog-ffe = { path = "../datadog-ffe" }
-chrono = { version = "0.4.38", default-features = false, features = ["now", "serde"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+libdd-ffe = { path = "../libdd-ffe" }
+chrono = { workspace = true, features = ["now", "serde"] }
+criterion = { workspace = true, features = ["html_reports"] }
 env_logger = "0.10"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }

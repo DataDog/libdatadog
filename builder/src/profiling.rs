@@ -8,7 +8,6 @@ use anyhow::Result;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
-use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -132,17 +131,14 @@ impl Profiling {
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
-        let features = self.features.to_string() + "," + "cbindgen";
-        #[cfg(feature = "crashtracker")]
-        let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
-
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![
             "rustc",
             "-p",
             CRATE_FOLDER,
+            "--no-default-features",
             "--features",
-            &features,
+            &self.features,
             "--target",
             &self.arch,
         ];

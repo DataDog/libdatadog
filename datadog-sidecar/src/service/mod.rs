@@ -3,11 +3,11 @@
 
 // imports for structs defined in this file
 use crate::config;
-pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
-pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
-pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
+pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
+pub use libdd_ffe::telemetry::FfeTelemetryContext;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
