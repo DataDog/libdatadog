@@ -19,6 +19,18 @@ use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
 
+/// A `SpanLink`'s `flags` field reserves bit 31 to mean "a value was explicitly set", separate
+/// from the sampling decision carried in the low bits. The sentinel bit distinguishes
+/// `flags == 0` (never set) from an explicit decision of `0`, for example a dropped context,
+/// which would otherwise look identical on the wire.
+///
+/// Only the native v0.4 msgpack wire format (`msgpack_encoder::v04::span_v04`) carries this bit
+/// on the wire, matching the encoding datadog-agent and other tracers already expect. Every
+/// other encoder must mask off this bit before it emits `flags`. These encoders include the
+/// v0.5 JSON dictionary, OTLP protobuf, agentless JSON, and structured JSON logging. Each of
+/// them treats `flags` as the real W3C trace-flags value.
+pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.

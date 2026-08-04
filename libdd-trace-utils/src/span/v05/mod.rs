@@ -4,7 +4,7 @@
 pub mod dict;
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
-use crate::span::{SharedDictBytes, SpanText, TraceData};
+use crate::span::{SharedDictBytes, SpanText, TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use anyhow::Result;
 use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
@@ -32,12 +32,6 @@ pub struct Span {
     pub metrics: HashMap<u32, f64>,
     pub r#type: u32,
 }
-
-/// A `SpanLink`'s `flags` reserves bit 31 to mean "a value was explicitly set", separate
-/// from the sampling decision carried in the low bits. This lets `flags == 0` (never set) be
-/// told apart from an explicit decision of `0` (e.g. dropped), which would otherwise look
-/// identical on the wire.
-const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
 
 /// Serializes a slice of [`SpanLink`]s into the JSON array the Datadog agent and backend
 /// expect under the `_dd.span_links` meta key.

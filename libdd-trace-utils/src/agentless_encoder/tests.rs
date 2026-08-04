@@ -180,6 +180,51 @@ fn span_links_serialised_into_meta_as_json_string() {
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
+fn span_link_flags_sentinel_bit_masked() {
+    // The internal "explicitly set" sentinel (bit 31) must never appear in the
+    // `_dd.span_links` JSON, which downstream consumers treat as the real W3C trace-flags value.
+    // Covers both sentinel states: kept (0x8000_0001) and explicitly dropped (0x8000_0000).
+    fn encoded_flags(flags: u32) -> serde_json::Value {
+        let link = SpanLink::<BytesData> {
+            trace_id: 0x11,
+            span_id: 0x22,
+            flags,
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            service: bs("svc"),
+            name: bs("op"),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 0,
+            duration: 1,
+            span_links: vec![link],
+            ..Default::default()
+        };
+        let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+        let s = &v["traces"][0]["spans"][0];
+        let raw = s["meta"]["_dd.span_links"]
+            .as_str()
+            .expect("meta[_dd.span_links] must be a string");
+        let links: serde_json::Value = serde_json::from_str(raw).expect("must be valid JSON");
+        links[0]["flags"].clone()
+    }
+
+    assert_eq!(
+        encoded_flags(0x8000_0001),
+        1,
+        "the sentinel bit must not leak into the _dd.span_links JSON"
+    );
+    assert_eq!(
+        encoded_flags(0x8000_0000),
+        0,
+        "an explicit drop decision must still emit flags: 0, not omit the field"
+    );
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
 fn span_events_serialised_into_meta_as_json_string() {
     // Span events are JSON-stringified and stored in meta["events"];
     // no top-level `span_events` field is emitted.
