@@ -2787,9 +2787,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.178"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdd-agent-client"
@@ -3112,6 +3112,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-gotter"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "libdd-http-client"
 version = "0.1.0"
 dependencies = [
@@ -3299,6 +3306,7 @@ name = "libdd-profiling-heap-gotter"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "libdd-gotter",
  "libdd-profiling-heap-sampler",
  "serial_test",
 ]
