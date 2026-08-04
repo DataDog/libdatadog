@@ -271,6 +271,10 @@ impl DynamicInfo {
 
 /// Fallback sym_count determination: try sysv DT_HASH, then
 /// symtab/strtab distance heuristic.
+///
+/// # Safety
+/// All non-null pointers must point into the `PT_DYNAMIC` segment of a
+/// currently-loaded ELF object (as produced by [`DynamicInfo::from_phdr`]).
 unsafe fn sym_count_fallback(
     symtab: *const Elf64_Sym,
     strtab: *const c_char,
@@ -557,6 +561,10 @@ pub fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) 
         result.map(i32::from).unwrap_or(1)
     }
 
+    // SAFETY: `trampoline` has the correct signature for dl_iterate_phdr.
+    // `ctx` is live for the duration of the call; the trampoline casts
+    // `data` back to `&mut Ctx` and catches panics to prevent unwinding
+    // through C frames.
     unsafe {
         dl_iterate_phdr(Some(trampoline), &mut ctx as *mut _ as *mut c_void);
     }
@@ -620,6 +628,7 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 pub struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
+    // Aligned page base -> original prot flags read from /proc/self/maps.
     touched: HashMap<usize, i32>,
 }
 
@@ -684,8 +693,9 @@ impl Drop for PageProtGuard {
     /// are never left weakened even if a patching pass bails out midway.
     fn drop(&mut self) {
         for (aligned, orig) in self.touched.drain() {
-            // Best-effort: nothing sensible to do on failure other than
-            // leave the page RW, which is the pre-fix behavior.
+            // SAFETY: `aligned` was a page-aligned address we successfully
+            // mprotect'd earlier; restoring its original protection is safe.
+            // Best-effort: nothing sensible to do on failure.
             unsafe { mprotect(aligned as *mut c_void, self.page_size, orig) };
         }
     }
@@ -734,6 +744,7 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 
 /// Look up a symbol across loaded objects, returning the first
 /// non-zero-sized definition whose address is not `not_this_symbol`.
+/// Null-sized symbols are ignored so hooks resolve to callable definitions.
 ///
 /// Uses `gnu_hash_lookup` for objects with `DT_GNU_HASH`, and falls
 /// back to a bounded linear dynsym scan for objects that only have
@@ -741,6 +752,10 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
+    // SAFETY: the callback runs synchronously inside dl_iterate_phdr;
+    // `info` points to a valid dl_phdr_info for a currently-loaded
+    // library. CStr::from_ptr, DynamicInfo::from_phdr, and the hash
+    // lookups all operate on pointers from the mapped ELF object.
     iterate_libraries(|info, _is_exe| unsafe {
         let lib_name = if info.dlpi_name.is_null() {
             ""
@@ -814,6 +829,8 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize, orig_out: &mut usi
         let lib_name = if info.dlpi_name.is_null() {
             ""
         } else {
+            // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
+            // NUL-terminated C string for the callback's duration.
             unsafe { CStr::from_ptr(info.dlpi_name) }
                 .to_str()
                 .unwrap_or("")
@@ -822,10 +839,14 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize, orig_out: &mut usi
             return false;
         }
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`
+        // `dl_iterate_phdr`; the library is mapped for the callback's
+        // duration.
         let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
             return false;
         };
+        // SAFETY: dyn_info was just produced from a currently-loaded
+        // library. guard_ptr/patched_ptr are valid for the duration of
+        // iterate_libraries (they point to locals in the enclosing fn).
         unsafe {
             patch_got_entries(
                 &dyn_info,
