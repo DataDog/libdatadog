@@ -401,7 +401,9 @@ pub unsafe extern "C" fn ddog_tracer_span_event_set_double_array(
 
 /// Atomically attach a completed event to a span, consuming the event.
 ///
-/// If either handle is null, the event is dropped and the span is unchanged.
+/// A non-null `event` is always consumed — moved into the span on success, or
+/// dropped on any error (a null `span`, or an internal panic). Callers must not
+/// use or free the event after this call. On error the span is unchanged.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_add_event(
     span: Option<&mut TracerSpan>,
