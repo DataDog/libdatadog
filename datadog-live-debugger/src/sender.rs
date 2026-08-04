@@ -322,7 +322,7 @@ pub struct PayloadSender {
 }
 
 const BOUNDARY: &str = "------------------------44617461646f67";
-const BOUNDARY_LINE: &str = concat!("--", BOUNDARY, "\r\n");
+const BOUNDARY_LINE: &str = concat!("--", BOUNDARY);
 
 impl PayloadSender {
     pub fn new(
@@ -426,10 +426,11 @@ impl PayloadSender {
             SenderFuture::Outstanding(future) => {
                 if self.needs_boundary {
                     let header = concat!(
-                        BOUNDARY_LINE,
-                        "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
-                        "Content-Type: application/json\r\n",
-                        "\r\n",
+                    BOUNDARY_LINE,
+                    "\r\n",
+                    "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
+                    "Content-Type: application/json\r\n",
+                    "\r\n",
                     );
                     self.sender.send_chunk(header.into()).await?;
                 }
@@ -463,7 +464,7 @@ impl PayloadSender {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
-                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE, "--\r\n").into())
                     .await?;
             } else {
                 self.sender.send_chunk(Bytes::from_static(b"]")).await?;
