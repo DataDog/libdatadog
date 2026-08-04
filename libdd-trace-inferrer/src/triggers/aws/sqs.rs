@@ -180,10 +180,21 @@ impl Trigger for SqsRecord {
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
-        // Check messageAttributes._datadog
         if let Some(ma) = self.message_attributes.get(DATADOG_CARRIER_KEY) {
+            // Direct SQS injection uses stringValue.
             if let Some(string_value) = &ma.string_value {
                 return serde_json::from_str(string_value).unwrap_or_default();
+            }
+
+            // Raw SNS -> SQS delivery carries SNS Binary message attributes as SQS binaryValue.
+            if let Some(binary_value) = &ma.binary_value {
+                use base64::{engine::general_purpose::STANDARD, Engine};
+
+                return STANDARD
+                    .decode(binary_value)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                    .unwrap_or_default();
             }
         }
 
@@ -300,5 +311,45 @@ mod tests {
         assert_eq!(ctx.trace_id, 0x3557_8e77_4943_fd9d);
         assert_eq!(ctx.span_id, 0x76c0_40bd_c454_a7ac);
         assert_eq!(ctx.sampling_priority, Some(1));
+    }
+
+    #[test]
+    fn test_get_carrier_from_binary_datadog_message_attribute() {
+        let payload: Value = serde_json::from_str(
+            r#"{
+                "Records": [{
+                    "messageId": "message-id",
+                    "receiptHandle": "receipt-handle",
+                    "attributes": {
+                        "ApproximateFirstReceiveTimestamp": "1740000000000",
+                        "ApproximateReceiveCount": "1",
+                        "SentTimestamp": "1740000000000",
+                        "SenderId": "sender-id"
+                    },
+                    "messageAttributes": {
+                        "_datadog": {
+                            "binaryValue": "eyJ0cmFjZXBhcmVudCI6IjAwLTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExLTIyMjIyMjIyMjIyMjIyMjItMDEifQ==",
+                            "dataType": "Binary"
+                        }
+                    },
+                    "md5OfBody": "md5",
+                    "eventSource": "aws:sqs",
+                    "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:queue-name",
+                    "awsRegion": "us-east-1",
+                    "body": "{}"
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let event = SqsRecord::new(payload).unwrap();
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([(
+                "traceparent".to_string(),
+                "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+            )])
+        );
     }
 }
