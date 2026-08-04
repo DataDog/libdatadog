@@ -803,9 +803,28 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 /// Null-sized symbols are ignored so hooks resolve to callable definitions.
 ///
 /// Uses `gnu_hash_lookup` for objects with `DT_GNU_HASH`, and falls
-/// back to a bounded linear dynsym scan for objects that only have
-/// `DT_HASH` (sysv).
+/// back to `sysv_hash_lookup` for objects that only have `DT_HASH`.
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, None)
+}
+
+/// Like [`lookup_symbol`], but also skips any definition from the
+/// library at `skip_base` (its `dlpi_addr`). Used by
+/// [`hook_symbol_excluding_self`] to avoid resolving the original
+/// from the hook's own library.
+fn lookup_symbol_excluding_base(
+    name: &str,
+    not_this_symbol: usize,
+    skip_base: usize,
+) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, Some(skip_base))
+}
+
+fn lookup_symbol_impl(
+    name: &str,
+    not_this_symbol: usize,
+    skip_base: Option<usize>,
+) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
     // SAFETY: iterate_libraries calls dl_iterate_phdr which guarantees
@@ -822,9 +841,17 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
         if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
             return false;
         }
+        // Skip the hook's own library during resolution if requested.
+        if let Some(base) = skip_base {
+            if info.dlpi_addr as usize == base {
+                return false;
+            }
+        }
         let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
         };
+        // Try GNU hash, then fall back to sysv hash
+        // for objects that only have DT_HASH.
         let sym = if dyn_info.has_gnu_hash() {
             gnu_hash_lookup(&dyn_info, needle)
         } else if dyn_info.has_sysv_hash() {
@@ -981,8 +1008,7 @@ unsafe fn hook_symbol_impl(
         }
 
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`; the library is mapped for the callback's
-        // duration.
+        // `dl_iterate_phdr`
         let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
             return false;
         };
