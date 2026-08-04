@@ -3,7 +3,7 @@
 
 //! GOT-table interposition for heap profiling.
 //!
-//! Uses the shared ELF primitives from `libdd-got-hook` for parsing and
+//! Uses the shared ELF primitives from `libdd-gotter` for parsing and
 //! patching, and adds the multi-symbol `SymbolOverrides` registry with
 //! per-library dedup and dlopen rescan support on top.
 
