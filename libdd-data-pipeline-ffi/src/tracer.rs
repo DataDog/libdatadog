@@ -464,7 +464,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
 ///
 /// `handle` must have been created by [`ddog_tracer_trace_chunks_new`].
 #[no_mangle]
-pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Box<TracerTraceChunks>) {
+pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Option<Box<TracerTraceChunks>>) {
     drop(handle);
 }
 
