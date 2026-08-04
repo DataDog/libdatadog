@@ -17,7 +17,29 @@ bench = false
 name = "datadog_profiling_ffi"
 
 [features]
-default = ["ddcommon-ffi"]
+default = ["ddcommon-ffi", "catch_panic"]
+# Panic containment for every aggregated FFI sub-crate that supports it.
+#
+# The sub-crates enable `catch_panic` in their own `default`, but this crate pulls
+# them with `default-features = false`, so containment has to be re-enabled here.
+# Without it `catch_panic!` degrades to a bare call and a Rust panic unwinds into a
+# non-unwinding `extern "C"` frame, aborting the host process instead of returning
+# an error (APMSP-3830).
+#
+# Weak (`?/`) on purpose: enabling this must never activate an optional dependency
+# that was not otherwise requested.
+#
+# Every new aggregated FFI sub-crate declaring a `catch_panic` feature belongs here.
+# Whether it is actually enabled is builder's decision: builder passes an exhaustive
+# --features list with --no-default-features, and mirrors this as its own `catch_panic`
+# default feature. Building without it is supported and yields abort-on-panic semantics.
+# examples/ffi/trace_exporter.c verifies containment is on in the artifact our own
+# release process produces.
+catch_panic = [
+  "libdd-data-pipeline-ffi?/catch_panic",
+  "libdd-library-config-ffi?/catch_panic",
+  "libdd-shared-runtime-ffi?/catch_panic",
+]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
@@ -35,7 +57,7 @@ datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
-shared-runtime = ["dep:libdd-shared-runtime-ffi", "libdd-shared-runtime-ffi/catch_panic"]
+shared-runtime = ["dep:libdd-shared-runtime-ffi"]
 otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
