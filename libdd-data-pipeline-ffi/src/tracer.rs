@@ -287,14 +287,14 @@ pub unsafe extern "C" fn ddog_tracer_span_set_links(
         if let Some(span) = handle {
             let links = match links.try_as_slice() {
                 Ok(links) => links,
-                Err(_) => return gen_error!(ErrorCode::InvalidInput),
+                Err(_) => return gen_error!(ErrorCode::InvalidArgument),
             };
             let mut converted = Vec::with_capacity(links.len());
 
             for link in links {
                 let attributes = match link.attributes.try_as_slice() {
                     Ok(attributes) => attributes,
-                    Err(_) => return gen_error!(ErrorCode::InvalidInput),
+                    Err(_) => return gen_error!(ErrorCode::InvalidArgument),
                 };
                 let mut converted_attributes = HashMap::with_capacity(attributes.len());
                 for attribute in attributes {
@@ -739,6 +739,49 @@ mod tests {
                 "receive"
             );
             assert_eq!(span.0.span_links[1].trace_id, 2);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_links_copies_every_attribute_of_a_link() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let attributes = [
+                TracerSpanLinkAttribute {
+                    key: cs("messaging.operation"),
+                    value: cs("receive"),
+                },
+                TracerSpanLinkAttribute {
+                    key: cs("messaging.system"),
+                    value: cs("kafka"),
+                },
+                TracerSpanLinkAttribute {
+                    key: cs("link.kind"),
+                    value: cs("follows_from"),
+                },
+            ];
+            let links = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 2,
+                span_id: 3,
+                attributes: Slice::from(&attributes[..]),
+                tracestate: cs(""),
+                flags: 0,
+            }];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_none());
+
+            let copied = &span.0.span_links[0].attributes;
+            assert_eq!(copied.len(), 3);
+            assert_eq!(
+                copied.get("messaging.operation").unwrap().as_ref(),
+                "receive"
+            );
+            assert_eq!(copied.get("messaging.system").unwrap().as_ref(), "kafka");
+            assert_eq!(copied.get("link.kind").unwrap().as_ref(), "follows_from");
 
             ddog_tracer_span_free(span);
         }
