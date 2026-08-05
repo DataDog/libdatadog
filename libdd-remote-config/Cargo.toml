@@ -48,7 +48,7 @@ base64 = { version = "0.22.1", optional = true }
 sha2 = { version = "0.10", optional = true }
 uuid = { workspace = true, features = ["v4", "std"], optional = true }
 futures-util = { version = "0.3", optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["macros"] }
 tokio-util = { version = "0.7.10",  optional = true }
 manual_future = { version = "0.1.1", optional = true }
 time = { version = "0.3", features = ["parsing", "serde", "formatting"], optional = true }
@@ -67,6 +67,7 @@ hyper-util = { workspace = true, features = ["http1", "client", "client-legacy",
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "3.0.0", default-features = false }
+tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
 futures.workspace = true
