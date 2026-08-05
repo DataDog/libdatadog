@@ -6,6 +6,10 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 use crate::gen_error;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
+use rmp::encode::{
+    write_array_len, write_bin, write_bool, write_f64, write_map_len, write_nil, write_sint,
+    write_str, write_uint,
+};
 use std::ptr::NonNull;
 
 const DDOG_TRACER_VALUE_NIL: u8 = 0;
@@ -46,89 +50,21 @@ fn invalid_input(message: &str) -> Box<ExporterError> {
     Box::new(ExporterError::new(ErrorCode::InvalidInput, message))
 }
 
-fn write_len(
-    output: &mut Vec<u8>,
-    len: u32,
-    fix_base: u8,
-    fix_max: u32,
-    marker16: u8,
-    marker32: u8,
-) {
-    if len <= fix_max {
-        output.push(fix_base | len as u8);
-    } else if u16::try_from(len).is_ok() {
-        output.push(marker16);
-        output.extend_from_slice(&(len as u16).to_be_bytes());
-    } else {
-        output.push(marker32);
-        output.extend_from_slice(&len.to_be_bytes());
-    }
+/// Adapts an `rmp` write failure into an exporter error. Writing into a `Vec`
+/// cannot actually fail, so this only exists to satisfy the fallible `rmp` API.
+fn encoding_failed<E>(_: E) -> Box<ExporterError> {
+    Box::new(ExporterError::new(
+        ErrorCode::Internal,
+        "structured value encoding failed",
+    ))
 }
 
-fn write_u64(output: &mut Vec<u8>, value: u64) {
-    if value <= 0x7f {
-        output.push(value as u8);
-    } else if value <= u8::MAX as u64 {
-        output.extend_from_slice(&[0xcc, value as u8]);
-    } else if value <= u16::MAX as u64 {
-        output.push(0xcd);
-        output.extend_from_slice(&(value as u16).to_be_bytes());
-    } else if value <= u32::MAX as u64 {
-        output.push(0xce);
-        output.extend_from_slice(&(value as u32).to_be_bytes());
-    } else {
-        output.push(0xcf);
-        output.extend_from_slice(&value.to_be_bytes());
-    }
-}
-
-fn write_i64(output: &mut Vec<u8>, value: i64) {
-    if value >= 0 {
-        write_u64(output, value as u64);
-    } else if value >= -32 {
-        output.push(value as i8 as u8);
-    } else if value >= i8::MIN as i64 {
-        output.extend_from_slice(&[0xd0, value as i8 as u8]);
-    } else if value >= i16::MIN as i64 {
-        output.push(0xd1);
-        output.extend_from_slice(&(value as i16).to_be_bytes());
-    } else if value >= i32::MIN as i64 {
-        output.push(0xd2);
-        output.extend_from_slice(&(value as i32).to_be_bytes());
-    } else {
-        output.push(0xd3);
-        output.extend_from_slice(&value.to_be_bytes());
-    }
-}
-
-fn write_bytes(output: &mut Vec<u8>, bytes: &[u8], string: bool) -> Result<(), Box<ExporterError>> {
-    let len = u32::try_from(bytes.len())
-        .map_err(|_| invalid_input("structured value byte string exceeds u32::MAX"))?;
-    if string {
-        std::str::from_utf8(bytes)
-            .map_err(|_| invalid_input("structured value string is not valid UTF-8"))?;
-        if len <= 31 {
-            output.push(0xa0 | len as u8);
-        } else if len <= u8::MAX as u32 {
-            output.extend_from_slice(&[0xd9, len as u8]);
-        } else if len <= u16::MAX as u32 {
-            output.push(0xda);
-            output.extend_from_slice(&(len as u16).to_be_bytes());
-        } else {
-            output.push(0xdb);
-            output.extend_from_slice(&len.to_be_bytes());
-        }
-    } else if len <= u8::MAX as u32 {
-        output.extend_from_slice(&[0xc4, len as u8]);
-    } else if len <= u16::MAX as u32 {
-        output.push(0xc5);
-        output.extend_from_slice(&(len as u16).to_be_bytes());
-    } else {
-        output.push(0xc6);
-        output.extend_from_slice(&len.to_be_bytes());
-    }
-    output.extend_from_slice(bytes);
-    Ok(())
+/// `rmp`'s string and binary writers narrow the length to `u32` internally, so
+/// reject anything longer up front rather than emit a truncated length prefix.
+fn ensure_byte_len_fits(bytes: &[u8]) -> Result<(), Box<ExporterError>> {
+    u32::try_from(bytes.len())
+        .map(|_| ())
+        .map_err(|_| invalid_input("structured value byte string exceeds u32::MAX"))
 }
 
 fn encode_one(
@@ -143,24 +79,35 @@ fn encode_one(
     *index += 1;
 
     match token.kind {
-        DDOG_TRACER_VALUE_NIL => output.push(0xc0),
-        DDOG_TRACER_VALUE_BOOL => match token.bool_value {
-            0 => output.push(0xc2),
-            1 => output.push(0xc3),
-            _ => return Err(invalid_input("structured value boolean must be 0 or 1")),
-        },
-        DDOG_TRACER_VALUE_I64 => write_i64(output, token.i64_value),
-        DDOG_TRACER_VALUE_U64 => write_u64(output, token.u64_value),
-        DDOG_TRACER_VALUE_F64 => {
-            output.push(0xcb);
-            output.extend_from_slice(&token.f64_value.to_be_bytes());
+        DDOG_TRACER_VALUE_NIL => write_nil(output).map_err(encoding_failed)?,
+        DDOG_TRACER_VALUE_BOOL => {
+            let value = match token.bool_value {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid_input("structured value boolean must be 0 or 1")),
+            };
+            write_bool(output, value).map_err(encoding_failed)?;
         }
+        DDOG_TRACER_VALUE_I64 => {
+            write_sint(output, token.i64_value).map_err(encoding_failed)?;
+        }
+        DDOG_TRACER_VALUE_U64 => {
+            write_uint(output, token.u64_value).map_err(encoding_failed)?;
+        }
+        DDOG_TRACER_VALUE_F64 => write_f64(output, token.f64_value).map_err(encoding_failed)?,
         DDOG_TRACER_VALUE_STRING | DDOG_TRACER_VALUE_BINARY => {
             let bytes = token
                 .bytes
                 .try_as_bytes()
                 .map_err(|_| invalid_input("structured value contains an invalid byte slice"))?;
-            write_bytes(output, bytes, token.kind == DDOG_TRACER_VALUE_STRING)?;
+            ensure_byte_len_fits(bytes)?;
+            if token.kind == DDOG_TRACER_VALUE_STRING {
+                let text = std::str::from_utf8(bytes)
+                    .map_err(|_| invalid_input("structured value string is not valid UTF-8"))?;
+                write_str(output, text).map_err(encoding_failed)?;
+            } else {
+                write_bin(output, bytes).map_err(encoding_failed)?;
+            }
         }
         DDOG_TRACER_VALUE_ARRAY | DDOG_TRACER_VALUE_MAP => {
             if depth >= MAX_DEPTH {
@@ -169,18 +116,15 @@ fn encode_one(
                 ));
             }
             let values = if token.kind == DDOG_TRACER_VALUE_MAP {
+                write_map_len(output, token.child_count).map_err(encoding_failed)?;
                 token
                     .child_count
                     .checked_mul(2)
                     .ok_or_else(|| invalid_input("structured value map child count overflows"))?
             } else {
+                write_array_len(output, token.child_count).map_err(encoding_failed)?;
                 token.child_count
             };
-            if token.kind == DDOG_TRACER_VALUE_ARRAY {
-                write_len(output, token.child_count, 0x90, 15, 0xdc, 0xdd);
-            } else {
-                write_len(output, token.child_count, 0x80, 15, 0xde, 0xdf);
-            }
             for _ in 0..values {
                 encode_one(tokens, index, depth + 1, output)?;
             }
