@@ -4,7 +4,7 @@
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
-use datadog_ffe::rules_based::{
+use libdd_ffe::rules_based::{
     get_assignment, AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError,
     FlagType, Str, UniversalFlagConfig,
 };

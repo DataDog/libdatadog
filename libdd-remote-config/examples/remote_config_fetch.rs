@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_capabilities_impl::NativeHttpClient;
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
@@ -104,7 +105,7 @@ async fn main() {
             products: vec![ApmTracing],
             capabilities: vec![],
         },
-        NativeHttpClient::new_without_connection_pooling(),
+        NativeCapabilities::new_without_connection_pooling(),
     )
     .await
     .expect("Failed to create SingleChangesFetcher");

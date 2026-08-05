@@ -10,7 +10,7 @@ use base64::Engine;
 use hashbrown::HashMap;
 use http::uri::PathAndQuery;
 use http::StatusCode;
-use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
@@ -120,7 +120,7 @@ impl ConfigProductCapabilities {
     }
 }
 
-pub struct ConfigFetcherState<S, C: HttpClientCapability> {
+pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
     pub(in crate::fetch) target_files_by_path:
         Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
@@ -170,7 +170,7 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
     }
 }
 
-impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
+impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     pub fn with_client(invariants: ConfigInvariants, http_client: C) -> Self {
         let (endpoint, agentless) = match &invariants.agentless {
             Some(agentless_cfg) => {
@@ -245,7 +245,7 @@ enum FetcherMode<C: HttpClientCapability> {
     Agentless(agentless::AgentlessFetcher<C>),
 }
 
-pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability> {
+pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     mode: FetcherMode<C>,
@@ -288,7 +288,7 @@ impl ConfigClientState {
     }
 }
 
-impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
+impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S, C> {
     /// Create a new config fetcher
     /// This is guaranteed to be immediate (no await point) if `state.invariants.agentless_enabled`
     /// is false
@@ -415,19 +415,31 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 libdd_common::header::APPLICATION_JSON,
             )
             .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
-        let response = tokio::time::timeout(
-            Duration::from_millis(self.state.endpoint.timeout_ms),
-            self.state.http_client.request(req),
-        )
-        .await
-        .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
-        .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
+        let sleeper = <C as SleepCapability>::new();
+        let response = tokio::select! {
+            biased;
+            result = self.state.http_client.request(req) => result
+                .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?,
+            _ = sleeper.sleep(Duration::from_millis(self.state.endpoint.timeout_ms)) => {
+                anyhow::bail!(
+                    "Remote config request timed out after {}ms. Url: {:?}",
+                    self.state.endpoint.timeout_ms,
+                    self.state.endpoint
+                )
+            }
+        };
         let status = response.status();
         let body_bytes = response.into_body();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
                 trace!("Requested remote config and but remote config not active");
+                if self.state.expire_unused_files {
+                    self.state.target_files_by_path.lock_or_panic().clear();
+                }
+                client_state.last_config_paths.clear();
+                client_state.targets_version = 0;
+                client_state.opaque_backend_state.clear();
                 return Ok(Some(vec![]));
             }
 
@@ -715,7 +727,7 @@ pub mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use http::Response;
-    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
@@ -826,7 +838,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             )),
         )
         .await
@@ -866,7 +878,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             )),
         )
         .await
@@ -986,7 +998,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             )),
         )
         .await
@@ -1176,7 +1188,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             )),
         )
         .await
@@ -1280,7 +1292,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             )),
         )
         .await

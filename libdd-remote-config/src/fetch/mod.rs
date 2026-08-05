@@ -5,7 +5,9 @@
 mod agentless;
 
 mod fetcher;
+#[cfg(not(target_arch = "wasm32"))]
 mod multitarget;
+#[cfg(not(target_arch = "wasm32"))]
 mod shared;
 mod single;
 
@@ -18,6 +20,8 @@ pub use agentless::*;
 #[allow(clippy::useless_attribute)] // different clippy versions are differently picky
 #[cfg_attr(test, allow(ambiguous_glob_reexports))] // ignore mod tests re-export
 pub use fetcher::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use multitarget::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use shared::*;
 pub use single::*;

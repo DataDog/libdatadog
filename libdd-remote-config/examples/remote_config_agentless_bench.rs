@@ -33,6 +33,7 @@
 //!
 //! Without `DD_API_KEY` / `DD_SITE`, this example exits — agentless mode is required.
 
+use libdd_capabilities::HttpClientCapability as _;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_storage::ParsedFileStorage;
@@ -148,7 +149,7 @@ async fn run_one_iteration(
         target,
         RUNTIME_ID.to_string(),
         options,
-        libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
+        libdd_capabilities_impl::NativeCapabilities::new_without_connection_pooling(),
     ));
     let mut fetcher = Instrumented::new(fetcher_fut, &mut init_poll).await?;
     let init = Sample {

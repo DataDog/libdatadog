@@ -1143,14 +1143,14 @@ pub(crate) use cache::TargetCache;
 mod cache {
     use std::sync::{Arc, Mutex, MutexGuard};
 
-    use hashbrown::HashMap;
-    use libdd_common::MutexExt as _;
-    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
-
     use crate::{
         fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
         RemoteConfigPath,
     };
+    use hashbrown::HashMap;
+    use libdd_capabilities::{HttpClientCapability, SleepCapability};
+    use libdd_common::MutexExt as _;
+    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
 
     /// Wrapper over the shared [`ConfigFetcherState::target_files_by_path`]
     /// map giving `AgentlessFetcher::apply` a set of small, self-contained
@@ -1177,7 +1177,7 @@ mod cache {
     }
 
     impl<'a, S: FileStorage> TargetCache<'a, S> {
-        pub(crate) fn new<C: libdd_capabilities::HttpClientCapability>(
+        pub(crate) fn new<C: HttpClientCapability + SleepCapability>(
             state: &'a ConfigFetcherState<S::StoredFile, C>,
             storage: &'a S,
         ) -> Self {
