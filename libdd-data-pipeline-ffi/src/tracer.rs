@@ -929,7 +929,7 @@ mod tests {
             let bad: Slice<'_, TracerSpanLink<'_>> = Slice::from_raw_parts(std::ptr::null(), 1);
             let err = ddog_tracer_span_set_links(Some(&mut span), bad);
             assert!(err.is_some());
-            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(err);
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
@@ -958,7 +958,7 @@ mod tests {
 
             let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
             assert!(err.is_some());
-            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(err);
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
