@@ -17,7 +17,7 @@ use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::v04::{
-    AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes,
+    AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes
 };
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -295,18 +295,18 @@ pub unsafe extern "C" fn ddog_tracer_span_set_links(
                 for attribute in attributes {
                     let key = match charslice_to_bytesstring(attribute.key) {
                         Ok(key) => key,
-                        Err(err) => return Some(err),
+                        Err(err) => return err,
                     };
                     let value = match charslice_to_bytesstring(attribute.value) {
                         Ok(value) => value,
-                        Err(err) => return Some(err),
+                        Err(err) => return err,
                     };
                     converted_attributes.insert(key, value);
                 }
 
                 let tracestate = match charslice_to_bytesstring(link.tracestate) {
                     Ok(tracestate) => tracestate,
-                    Err(err) => return Some(err),
+                    Err(err) => return err,
                 };
                 converted.push(SpanLinkBytes {
                     trace_id: link.trace_id_low,
@@ -975,7 +975,7 @@ mod tests {
             );
             assert_eq!(span.0.span_links[1].trace_id, 2);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1018,7 +1018,7 @@ mod tests {
             assert_eq!(copied.get("messaging.system").unwrap().as_ref(), "kafka");
             assert_eq!(copied.get("link.kind").unwrap().as_ref(), "follows_from");
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1052,7 +1052,7 @@ mod tests {
             assert_eq!(span.0.span_links[0].trace_id, 3);
             assert_eq!(span.0.span_links[0].trace_id_high, 4);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1074,7 +1074,7 @@ mod tests {
             assert!(ddog_tracer_span_set_links(Some(&mut span), Slice::default()).is_none());
             assert!(span.0.span_links.is_empty());
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1114,7 +1114,7 @@ mod tests {
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1146,7 +1146,7 @@ mod tests {
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1169,7 +1169,7 @@ mod tests {
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
@@ -1198,7 +1198,7 @@ mod tests {
             assert_eq!(span.0.span_links.len(), 1);
             assert_eq!(span.0.span_links[0].trace_id, 7);
 
-            ddog_tracer_span_free(span);
+            ddog_tracer_span_free(Some(span));
         }
     }
 
