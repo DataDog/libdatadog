@@ -1741,9 +1741,7 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
-/// Payload-level tracer metadata consumed by the V1 msgpack encoder. Each field mirrors the
-/// corresponding field on `libdd_trace_utils::tracer_metadata::TracerMetadata`; empty slices are
-/// tolerated (the encoder falls back to span meta / omits the field).
+/// Payload-level tracer metadata for the V1 msgpack encoder; mirrors `TracerMetadata`.
 #[repr(C)]
 pub struct TracerMetadataV1 {
     pub hostname: CharSlice<'static>,
@@ -1869,10 +1867,8 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // );
 }
 
-/// Encodes `traces` as a V1 msgpack `TracerPayload` (using `metadata` for the payload-level
-/// fields) and sends it to the sidecar, which re-encodes it for the agent's `/v1.0/traces`
-/// endpoint. Mirrors `ddog_send_traces_to_sidecar` (v04) for the SHM allocation, per-span dedup,
-/// `size_hint` derivation and the shm→bytes send fallback.
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: encodes `traces` as a V1 `TracerPayload`
+/// using `metadata`, then sends it to the sidecar for the agent's `/v1.0/traces` endpoint.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(

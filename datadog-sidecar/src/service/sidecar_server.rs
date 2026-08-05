@@ -287,10 +287,8 @@ impl SidecarServer {
             generic: generic_tags,
             ..Default::default()
         };
-        // The session endpoint is built for the V0.4 wire (path "/v0.4/traces", see
-        // sidecar::tracer::Config::set_endpoint). Re-point it at the agent's V1 intake so the
-        // V1-encoded payload lands on "/v1.0/traces". Agentless (api_key) intake is out of scope
-        // for this cut and keeps its existing URL.
+        // The session endpoint targets "/v0.4/traces"; re-point agent (non-api_key) intake at
+        // "/v1.0/traces" so the V1-encoded payload lands correctly. Agentless keeps its URL.
         let rebased;
         let target = if target.api_key.is_none() {
             let mut parts = target.url.clone().into_parts();
