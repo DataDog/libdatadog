@@ -121,7 +121,7 @@ impl ConfigProductCapabilities {
 }
 
 pub struct ConfigFetcherState<S, C: HttpClientCapability> {
-    pub(crate) target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
+    pub(in crate::fetch) target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
