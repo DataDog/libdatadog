@@ -8,6 +8,7 @@ pub mod file;
 pub mod http;
 pub mod log_output;
 pub mod maybe_send;
+pub mod regex;
 pub mod sleep;
 pub mod spawn;
 
@@ -18,6 +19,7 @@ pub use self::http::{
     StreamingBodySender,
 };
 pub use self::log_output::LogWriterCapability;
+pub use self::regex::{Captures, Match, RegexCapability, RegexError};
 pub use self::sleep::SleepCapability;
 pub use self::spawn::SpawnError;
 pub use ::http::{Request, Response};
