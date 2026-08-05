@@ -569,6 +569,26 @@ pub fn check_sym(sym: &Elf64_Sym) -> bool {
         matches!(stt, 0 | 1 | 2 | 10)
 }
 
+/// Check whether `addr` falls within any of a loaded ELF object's
+/// `PT_LOAD` segments. Works regardless of PIE vs non-PIE: on non-PIE
+/// executables `dlpi_addr` is 0 but the segments still have the correct
+/// absolute virtual addresses once `dlpi_addr` is added.
+///
+/// # Safety
+/// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
+unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
+    let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
+    let base = info.dlpi_addr as usize;
+    phdrs.iter().any(|p| {
+        if p.p_type != PT_LOAD {
+            return false;
+        }
+        let start = base + p.p_vaddr as usize;
+        let end = start + p.p_memsz as usize;
+        addr >= start && addr < end
+    })
+}
+
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
 /// stop iteration.
@@ -791,21 +811,23 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
 }
 
 /// Like [`lookup_symbol`], but also skips any definition from the
-/// library at `skip_base` (its `dlpi_addr`). Used by
-/// [`hook_symbol_excluding_self`] to avoid resolving the original
-/// from the hook's own library.
-fn lookup_symbol_excluding_base(
+/// library at `skip_base` (its `dlpi_addr`).
+///
+/// Used by [`hook_symbol_excluding_self`] to ensure `orig_out` resolves
+/// to the external definition rather than a same-name export from the
+/// hook's own library.
+fn lookup_symbol_excluding_addr(
     name: &str,
     not_this_symbol: usize,
-    skip_base: usize,
+    skip_addr: usize,
 ) -> Option<LookupResult> {
-    lookup_symbol_impl(name, not_this_symbol, Some(skip_base))
+    lookup_symbol_impl(name, not_this_symbol, Some(skip_addr))
 }
 
 fn lookup_symbol_impl(
     name: &str,
     not_this_symbol: usize,
-    skip_base: Option<usize>,
+    skip_addr: Option<usize>,
 ) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
@@ -822,9 +844,9 @@ fn lookup_symbol_impl(
         if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
             return false;
         }
-        // Skip the hook's own library during resolution if requested.
-        if let Some(base) = skip_base {
-            if info.dlpi_addr as usize == base {
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
                 return false;
             }
         }
