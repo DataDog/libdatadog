@@ -1365,6 +1365,7 @@ dependencies = [
  "bincode",
  "criterion",
  "datadog-ipc-macros",
+ "glibc_version",
  "io-lifetimes",
  "libc",
  "libdd-common",
@@ -2038,6 +2039,15 @@ dependencies = [
  "fallible-iterator",
  "indexmap 2.12.1",
  "stable_deref_trait",
+]
+
+[[package]]
+name = "glibc_version"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "803ff7635f1ab4e2c064b68a0c60da917d3d18dc8d086130f689d62ce4f1c33e"
+dependencies = [
+ "regex",
 ]
 
 [[package]]
