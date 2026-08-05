@@ -63,10 +63,20 @@ pub struct Config {
     /// Forked processes may not be required to emit these.
     #[serde(default = "default_true")]
     pub emit_app_lifecycle: bool,
+
+    /// Maximum number of endpoints serialized into one payload
+    /// (`DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT` in the tracers).
+    /// Endpoints sending is batched per heartbeat interval.
+    #[serde(default = "default_endpoints_message_limit")]
+    pub endpoints_message_limit: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_endpoints_message_limit() -> u32 {
+    300
 }
 
 fn endpoint_with_telemetry_path(
@@ -107,6 +117,7 @@ pub struct Settings {
     pub telemetry_dd_url: Option<String>,
     pub telemetry_heartbeat_interval: Duration,
     pub telemetry_extended_heartbeat_interval: Duration,
+    pub endpoints_message_limit: u32,
     pub shared_lib_debug: bool,
 
     // Filesystem check
@@ -126,6 +137,7 @@ impl Default for Settings {
             telemetry_dd_url: None,
             telemetry_heartbeat_interval: Duration::from_secs(60),
             telemetry_extended_heartbeat_interval: Duration::from_secs(60 * 60 * 24),
+            endpoints_message_limit: default_endpoints_message_limit(),
             shared_lib_debug: false,
 
             agent_uds_socket_found: false,
@@ -151,6 +163,8 @@ impl Settings {
     const DD_TELEMETRY_HEARTBEAT_INTERVAL: &'static str = "DD_TELEMETRY_HEARTBEAT_INTERVAL";
     const DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL: &'static str =
         "DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL";
+    const DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT: &'static str =
+        "DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT";
     const _DD_SHARED_LIB_DEBUG: &'static str = "_DD_SHARED_LIB_DEBUG";
 
     pub fn from_env() -> Self {
@@ -180,6 +194,10 @@ impl Settings {
             )
             .unwrap_or(Duration::from_secs(60 * 60 * 24)),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
+            endpoints_message_limit: parse_env::int(
+                Self::DD_API_SECURITY_ENDPOINT_COLLECTION_MESSAGE_LIMIT,
+            )
+            .unwrap_or(default_endpoints_message_limit()),
 
             agent_uds_socket_found: (|| {
                 #[cfg(unix)]
@@ -205,6 +223,7 @@ impl Default for Config {
             parent_session_id: None,
             root_session_id: None,
             emit_app_lifecycle: true,
+            endpoints_message_limit: default_endpoints_message_limit(),
         }
     }
 }
@@ -345,6 +364,7 @@ impl Config {
             parent_session_id: None,
             root_session_id: None,
             emit_app_lifecycle: true,
+            endpoints_message_limit: settings.endpoints_message_limit,
         };
 
         _ = this.set_endpoint(TelemetryEndpoint {

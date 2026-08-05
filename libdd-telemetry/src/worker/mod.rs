@@ -137,7 +137,8 @@ struct TelemetryWorkerData {
     dependencies: store::Store<data::Dependency, data::DependencyKey>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
-    endpoints: HashSet<data::Endpoint>,
+    endpoints: store::Store<data::Endpoint>,
+    endpoints_is_first: bool,
     products: std::collections::HashMap<String, ProductState>,
     products_pending: HashSet<String>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
@@ -253,6 +254,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         self.data.integrations.clear();
         self.data.configurations.clear();
         self.data.endpoints.clear();
+        self.data.endpoints_is_first = true;
         self.data.products.clear();
         self.data.products_pending.clear();
     }
@@ -724,13 +726,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 },
             ))
         }
-        if !self.data.endpoints.is_empty() {
+        if self.data.endpoints.flush_not_empty() {
             payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
-                is_first: true,
+                is_first: self.data.endpoints_is_first,
+                // Only the first `endpoints_message_limit` of the queue: the rest is left
+                // unflushed and picked up by the next payload.
                 endpoints: self
                     .data
                     .endpoints
-                    .iter()
+                    .unflushed()
+                    .take(self.config.endpoints_message_limit as usize)
                     .map(|e| e.to_json_value().unwrap_or_default())
                     .filter(|e| e.is_object())
                     .collect(),
@@ -864,7 +869,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpoints(_) => self.data.endpoints.clear(),
+            AppEndpoints(p) => {
+                // Drops exactly the endpoints this payload carried, so anything the message limit
+                // held back is still queued for the next one.
+                self.data.endpoints.removed_flushed(p.endpoints.len());
+                self.data.endpoints_is_first = false;
+            }
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
@@ -1360,7 +1370,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
-    pub endpoints: HashSet<data::Endpoint>,
+    pub endpoints: store::Store<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1412,7 +1422,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
-            endpoints: HashSet::new(),
+            endpoints: store::Store::new(10000),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
@@ -1451,6 +1461,7 @@ impl TelemetryWorkerBuilder {
                 integrations: self.integrations,
                 configurations: self.configurations,
                 endpoints: self.endpoints,
+                endpoints_is_first: true,
                 products: std::collections::HashMap::new(),
                 products_pending: HashSet::new(),
                 logs: store::QueueHashMap::default(),
@@ -1724,6 +1735,49 @@ mod tests {
         b.flavor = flavor;
         b.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
             .1
+    }
+
+    /// `endpoints_message_limit` caps one payload, it does not discard the rest: the overflow has
+    /// to come back in later payloads, and only the very first of them may set `is_first` (the
+    /// backend replaces its endpoint set on a first payload and merges on the others).
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    async fn endpoints_message_limit_chunks_payloads_and_flags_only_the_first() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+        worker.config.endpoints_message_limit = 2;
+
+        for i in 0..5 {
+            worker.data.endpoints.insert(crate::data::Endpoint {
+                operation_name: "http.request".to_string(),
+                resource_name: format!("GET /r{i}"),
+                ..Default::default()
+            });
+        }
+
+        let mut chunks = Vec::new();
+        // Each round: build the payload the flush would send, then account for a successful send.
+        while worker.data.endpoints.flush_not_empty() {
+            let payloads = worker.build_app_events_batch();
+            let endpoints = payloads
+                .iter()
+                .find_map(|p| match p {
+                    crate::data::Payload::AppEndpoints(e) => Some(e),
+                    _ => None,
+                })
+                .expect("an app-endpoints payload while endpoints are queued");
+            chunks.push((endpoints.is_first, endpoints.endpoints.len()));
+            let sent = crate::data::Payload::AppEndpoints(crate::data::AppEndpoints {
+                is_first: endpoints.is_first,
+                endpoints: endpoints.endpoints.clone(),
+            });
+            worker.payload_sent_success(&sent);
+        }
+
+        assert_eq!(
+            chunks,
+            vec![(true, 2), (false, 2), (false, 1)],
+            "5 endpoints at a limit of 2 should be 2+2+1 with is_first only on the first payload"
+        );
     }
 
     /// Every event with a delay must be scheduled on Start; otherwise it sits in
@@ -2016,9 +2070,14 @@ mod tests {
                 stats.metric_buckets.series, 0,
                 "metric series should be cleared"
             );
-            assert!(
-                worker.data.endpoints.is_empty(),
+            assert_eq!(
+                worker.data.endpoints.len_stored(),
+                0,
                 "endpoints should be cleared"
+            );
+            assert!(
+                worker.data.endpoints_is_first,
+                "the child's first app-endpoints payload is a first one again"
             );
             assert!(worker.next_action.is_none(), "next_action should be None");
         }
