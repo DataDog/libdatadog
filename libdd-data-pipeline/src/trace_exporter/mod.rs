@@ -783,25 +783,14 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-
-            return self.send_agentless_traces_inner(traces, config).await;
-        }
-
-        // Process stats computation and drop non-sampled (p0) chunks.
-        // This must run before the OTLP path so that unsampled spans are not exported.
         stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
+            // if agentless is enabled, we want to compute top-level
+            // regardless of wether stats is enabled or not``
+            self.agentless_config.is_some(),
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
             self.telemetry.as_ref(),
@@ -811,6 +800,10 @@ impl<
             for span in chunk.iter_mut() {
                 span.dedup();
             }
+        }
+
+        if let Some(ref config) = self.agentless_config {
+            return self.send_agentless_traces_inner(traces, config).await;
         }
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
