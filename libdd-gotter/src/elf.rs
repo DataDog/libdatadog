@@ -43,11 +43,14 @@ const STN_UNDEF: u32 = 0;
 
 /// The subset of an ELF object's `PT_DYNAMIC` entries needed to find
 /// and rewrite GOT entries.
-pub struct DynamicInfo {
-    strtab: *const c_char,
-    strtab_size: usize,
-    symtab: *const Elf64_Sym,
-    sym_count: u32,
+///
+/// Slice fields (`strtab`, `symtab`, `rels`, `relas`, `jmprels`) are
+/// validated once in [`from_phdr`] so all subsequent access is safe.
+/// The hash table pointers remain raw because the hash lookup functions
+/// need arithmetic into their variable-layout internal structure.
+pub struct DynamicInfo<'a> {
+    strtab: &'a [u8],
+    symtab: &'a [Elf64_Sym],
     /// Pointer and word-count for the `.gnu.hash` table, if present.
     /// Used by [`gnu_hash_lookup`] for symbol resolution.
     gnu_hash: *const u32,
@@ -56,16 +59,13 @@ pub struct DynamicInfo {
     /// Used by [`sysv_hash_lookup`] as a fallback when `DT_GNU_HASH` is absent.
     sysv_hash: *const u32,
     sysv_hash_words: usize,
-    rels: *const Elf64_Rel,
-    rels_count: usize,
-    relas: *const Elf64_Rela,
-    relas_count: usize,
-    jmprels: *const Elf64_Rela,
-    jmprels_count: usize,
+    rels: &'a [Elf64_Rel],
+    relas: &'a [Elf64_Rela],
+    jmprels: &'a [Elf64_Rela],
     base_address: usize,
 }
 
-impl DynamicInfo {
+impl<'a> DynamicInfo<'a> {
     /// Read DT_* entries out of a PT_DYNAMIC array.
     ///
     /// Handles the glibc-vs-musl quirk where glibc stores absolute
@@ -78,7 +78,7 @@ impl DynamicInfo {
     ///
     /// # Safety
     /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
-    pub unsafe fn from_phdr(info: &dl_phdr_info) -> Option<Self> {
+    pub unsafe fn from_phdr(info: &'a dl_phdr_info) -> Option<Self> {
         // SAFETY: info is valid for the lifetime of the program.
         let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
@@ -178,41 +178,85 @@ impl DynamicInfo {
             (sym_count_fallback(symtab, strtab, sysv_hash), 0)
         };
 
+        // SAFETY (applies to all `slice::from_raw_parts` calls below):
+        //
+        // Each pointer (strtab, symtab, rels, relas, jmprels) was read
+        // from the PT_DYNAMIC segment of a currently-loaded ELF object
+        // and corrected for the glibc/musl absolute-vs-relative address
+        // quirk. The dynamic linker has already validated and mapped
+        // these sections, so:
+        // - Non-null: guarded by the `is_null()` check in each branch; the null/zero-length case
+        //   returns `&[]` without calling `from_raw_parts`.
+        // - Properly aligned: ELF sections are required by the spec to be aligned to their entry
+        //   size (e.g. `Elf64_Sym` is 8-byte aligned, `Elf64_Rela` is 8-byte aligned). The dynamic
+        //   linker enforces this at load time.
+        // - Valid for `len * size_of::<T>()` reads within a single allocation: the entire section
+        //   is mapped contiguously from the ELF file by the kernel via `mmap`. The size/count
+        //   values come from DT_STRSZ, sym_count (from DT_GNU_HASH or DT_HASH nchain), DT_RELSZ,
+        //   DT_RELASZ, and DT_PLTRELSZ respectively.
+        // - Not mutated for lifetime `'a`: the ELF object is held mapped by `dl_iterate_phdr`'s
+        //   loader lock (for the callback's duration) or by the caller's `dlopen` handle.
+        // - Total size does not overflow `isize::MAX`: ELF section sizes are bounded by the
+        //   file/mapping size, which the kernel validated at mmap time.
+        let strtab_slice = if strtab.is_null() || strtab_size == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(strtab as *const u8, strtab_size)
+        };
+
+        let rels_count = rels_size / core::mem::size_of::<Elf64_Rel>();
+        let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
+        let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
+
+        let symtab_slice = if symtab.is_null() || sym_count == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(symtab, sym_count as usize)
+        };
+        let rels_slice = if rels.is_null() || rels_count == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(rels, rels_count)
+        };
+        let relas_slice = if relas.is_null() || relas_count == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(relas, relas_count)
+        };
+        let jmprels_slice = if jmprels.is_null() || jmprels_count == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(jmprels, jmprels_count)
+        };
+
         Some(Self {
-            strtab,
-            strtab_size,
-            symtab,
-            sym_count,
+            strtab: strtab_slice,
+            symtab: symtab_slice,
             gnu_hash,
             gnu_hash_words,
             sysv_hash,
             sysv_hash_words,
-            rels,
-            rels_count: rels_size / core::mem::size_of::<Elf64_Rel>(),
-            relas,
-            relas_count: relas_size / core::mem::size_of::<Elf64_Rela>(),
-            jmprels,
-            jmprels_count: jmprels_size / core::mem::size_of::<Elf64_Rela>(),
+            rels: rels_slice,
+            relas: relas_slice,
+            jmprels: jmprels_slice,
             base_address: base,
         })
     }
 
     /// Look up the name of the symbol at index `idx` in the dynamic
     /// string table.
-    ///
-    /// # Safety
-    /// The `DynamicInfo` must have been produced by [`DynamicInfo::from_phdr`]
-    /// for a currently-loaded ELF object whose symtab/strtab are still mapped.
-    pub unsafe fn sym_name(&self, idx: u32) -> Option<&CStr> {
-        if (idx as usize) >= self.sym_count as usize {
-            return None;
-        }
-        let sym = &*self.symtab.add(idx as usize);
+    pub fn sym_name(&self, idx: u32) -> Option<&CStr> {
+        let sym = self.symtab.get(idx as usize)?;
         let off = sym.st_name as usize;
-        if off >= self.strtab_size {
+        if off >= self.strtab.len() {
             return None;
         }
-        Some(CStr::from_ptr(self.strtab.add(off)))
+        // Find the NUL terminator within the remaining strtab.
+        let remaining = &self.strtab[off..];
+        let nul_pos = remaining.iter().position(|&b| b == 0)?;
+        // SAFETY: we found a NUL byte within the validated strtab slice,
+        // so CStr::from_bytes_with_nul won't fail.
+        CStr::from_bytes_with_nul(&remaining[..=nul_pos]).ok()
     }
 
     /// The base load address of this ELF object.
@@ -221,41 +265,18 @@ impl DynamicInfo {
     }
 
     /// REL relocations for this object, or empty if none.
-    ///
-    /// Safe because `from_phdr` validated the pointer and count from the
-    /// `PT_DYNAMIC` segment of a currently-loaded ELF object.
     pub fn rels(&self) -> &[Elf64_Rel] {
-        if self.rels.is_null() || self.rels_count == 0 {
-            &[]
-        } else {
-            // SAFETY: from_phdr set rels/rels_count from the DT_REL/DT_RELSZ
-            // entries of a mapped ELF object; the array is valid for the
-            // object's lifetime (held by dl_iterate_phdr's loader lock or by
-            // the caller's dlopen handle).
-            unsafe { slice::from_raw_parts(self.rels, self.rels_count) }
-        }
+        self.rels
     }
 
     /// RELA relocations for this object, or empty if none.
     pub fn relas(&self) -> &[Elf64_Rela] {
-        if self.relas.is_null() || self.relas_count == 0 {
-            &[]
-        } else {
-            // SAFETY: same as rels(); from_phdr set relas/relas_count
-            // from DT_RELA/DT_RELASZ of a mapped ELF object.
-            unsafe { slice::from_raw_parts(self.relas, self.relas_count) }
-        }
+        self.relas
     }
 
     /// JMPREL (PLT) relocations for this object, or empty if none.
     pub fn jmprels(&self) -> &[Elf64_Rela] {
-        if self.jmprels.is_null() || self.jmprels_count == 0 {
-            &[]
-        } else {
-            // SAFETY: same as rels(); from_phdr set jmprels/jmprels_count
-            // from DT_JMPREL/DT_PLTRELSZ of a mapped ELF object.
-            unsafe { slice::from_raw_parts(self.jmprels, self.jmprels_count) }
-        }
+        self.jmprels
     }
 
     /// Whether this object has a usable GNU hash table.
@@ -369,11 +390,13 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
             break;
         }
         if let Some(sname) = info.sym_name(idx) {
-            let sym = &*info.symtab.add(idx as usize);
+            let sym = &info.symtab[idx as usize];
             if sname.to_bytes() == name && check_sym(sym) {
                 return Some(*sym);
             }
         }
+        // SAFETY: idx was bounds-checked above against nchain, and
+        // chains points into the validated sysv hash table.
         idx = *chains.add(idx as usize);
         steps += 1;
     }
@@ -508,8 +531,8 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
         let chain_h = *hashtab.add(chains_start + chain_idx);
         if ((chain_h ^ h) >> 1) == 0 {
             if let Some(sname) = info.sym_name(symidx) {
-                let sym = info.symtab.add(symidx as usize);
-                if sname.to_bytes() == name && check_sym(&*sym) {
+                let sym = &info.symtab[symidx as usize];
+                if sname.to_bytes() == name && check_sym(sym) {
                     return Some(*sym);
                 }
             }
@@ -1020,11 +1043,11 @@ mod tests {
                 return false;
             };
             assert!(
-                dyn_info.sym_count > 0,
+                !dyn_info.symtab.is_empty(),
                 "sym_count should be > 0 (base=0x{:x})",
                 dyn_info.base_address
             );
-            let name = unsafe { dyn_info.sym_name(0) };
+            let name = dyn_info.sym_name(0);
             assert!(
                 name.is_some(),
                 "sym_name(0) should succeed (base=0x{:x})",
@@ -1144,15 +1167,15 @@ mod tests {
             );
             let dyn_info = dyn_info.unwrap();
             assert!(
-                dyn_info.sym_count > 0,
+                !dyn_info.symtab.is_empty(),
                 "sym_count should be > 0 for sysv-hash library"
             );
 
             // Verify we can look up our exported symbol by walking
             // relocations isn't needed
             let mut found_sym = false;
-            for idx in 0..dyn_info.sym_count {
-                if let Some(name) = unsafe { dyn_info.sym_name(idx) } {
+            for idx in 0..dyn_info.symtab.len() as u32 {
+                if let Some(name) = dyn_info.sym_name(idx) {
                     if name.to_bytes() == b"sysv_test_symbol" {
                         found_sym = true;
                         break;
@@ -1162,7 +1185,7 @@ mod tests {
             assert!(
                 found_sym,
                 "should find sysv_test_symbol in dynsym (sym_count={})",
-                dyn_info.sym_count
+                dyn_info.symtab.len()
             );
 
             found = true;
