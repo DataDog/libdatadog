@@ -273,7 +273,7 @@ mod tests {
     }
 
     fn send_config() -> FlagEvaluationEvpSendConfig {
-        FlagEvaluationEvpSendConfig::new("datadog-ffe-test/0.0.0")
+        FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0")
     }
 
     fn batch() -> FfeFlagEvaluationBatch {
@@ -487,6 +487,10 @@ mod tests {
 
     impl HttpClientCapability for HangingCapabilities {
         fn new_client() -> Self {
+            Self
+        }
+
+        fn new_without_connection_pooling() -> Self {
             Self
         }
 

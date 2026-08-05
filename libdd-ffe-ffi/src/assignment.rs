@@ -4,8 +4,8 @@
 use std::ffi::{c_char, CStr};
 use std::pin::Pin;
 
-use datadog_ffe::rules_based as ffe;
-use datadog_ffe::rules_based::{
+use libdd_ffe::rules_based as ffe;
+use libdd_ffe::rules_based::{
     now, Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
     EvaluationError, Str,
 };

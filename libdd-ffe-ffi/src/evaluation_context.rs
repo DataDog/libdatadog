@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::sync::Arc;
 
-use datadog_ffe::rules_based::{Attribute, EvaluationContext, Str};
+use libdd_ffe::rules_based::{Attribute, EvaluationContext, Str};
 
 use crate::Handle;
 

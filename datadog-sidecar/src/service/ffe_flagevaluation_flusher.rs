@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Coalesces sidecar FFE (Feature Flag Evaluation) flag evaluation batches and
-//! dispatches them through the shared `datadog-ffe` EVP sender.
+//! dispatches them through the shared `libdd-ffe` EVP sender.
 //!
 //! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
@@ -10,13 +10,13 @@
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
 use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
-use datadog_ffe::telemetry::flagevaluation::{
+use libdd_capabilities_impl::NativeCapabilities;
+use libdd_common::Endpoint;
+use libdd_ffe::telemetry::flagevaluation::{
     flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
     FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpSendConfig,
     FlagEvaluationEvpWriterStats,
 };
-use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
@@ -132,12 +132,12 @@ async fn send_batch_with_writer_stats(
 mod tests {
     use super::*;
     use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
-    use datadog_ffe::telemetry::flagevaluation::{
-        FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, EVP_FLAGEVALUATION_PATH,
-    };
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_ffe::telemetry::flagevaluation::{
+        FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, EVP_FLAGEVALUATION_PATH,
+    };
     use std::collections::BTreeMap;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {

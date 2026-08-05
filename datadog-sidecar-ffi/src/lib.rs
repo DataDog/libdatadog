@@ -815,9 +815,11 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
             lang_vendor: &self.lang_vendor.to_utf8_lossy(),
             tracer_version: &self.tracer_version.to_utf8_lossy(),
             container_id: &self.container_id.to_utf8_lossy(),
-            client_computed_top_level: self.client_computed_top_level,
-            client_computed_stats: self.client_computed_stats,
-            ..Default::default()
+            generic: libdd_trace_utils::trace_utils::TracerGenericTags {
+                client_computed_top_level: self.client_computed_top_level,
+                client_computed_stats: self.client_computed_stats,
+                ..Default::default()
+            },
         };
 
         tags.try_into().map_err(|_| {

@@ -10,12 +10,12 @@
 
 use crate::service::ffe_evp_proxy;
 use crate::service::FfeExposureBatch;
-use datadog_ffe::telemetry::exposures::encode_exposure_batch;
-pub(crate) use datadog_ffe::telemetry::exposures::ExposureDeduplicator;
 #[cfg(test)]
 use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_ffe::telemetry::exposures::encode_exposure_batch;
+pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use tracing::debug;
 
 /// EVP proxy path for FFE exposure intake.
@@ -197,6 +197,10 @@ mod tests {
 
     impl HttpClientCapability for HangingCapabilities {
         fn new_client() -> Self {
+            Self
+        }
+
+        fn new_without_connection_pooling() -> Self {
             Self
         }
 

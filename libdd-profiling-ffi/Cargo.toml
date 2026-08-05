@@ -17,12 +17,36 @@ bench = false
 name = "datadog_profiling_ffi"
 
 [features]
-default = ["ddcommon-ffi"]
+default = ["ddcommon-ffi", "catch_panic"]
+# Panic containment for every aggregated FFI sub-crate that supports it.
+#
+# The sub-crates enable `catch_panic` in their own `default`, but this crate pulls
+# them with `default-features = false`, so containment has to be re-enabled here.
+# Without it `catch_panic!` degrades to a bare call and a Rust panic unwinds into a
+# non-unwinding `extern "C"` frame, aborting the host process instead of returning
+# an error (APMSP-3830).
+#
+# Weak (`?/`) on purpose: enabling this must never activate an optional dependency
+# that was not otherwise requested.
+#
+# Every new aggregated FFI sub-crate declaring a `catch_panic` feature belongs here.
+# Whether it is actually enabled is builder's decision: builder passes an exhaustive
+# --features list with --no-default-features, and mirrors this as its own `catch_panic`
+# default feature. Building without it is supported and yields abort-on-panic semantics.
+# examples/ffi/trace_exporter.c verifies containment is on in the artifact our own
+# release process produces.
+catch_panic = [
+  "libdd-data-pipeline-ffi?/catch_panic",
+  "libdd-library-config-ffi?/catch_panic",
+  "libdd-shared-runtime-ffi?/catch_panic",
+]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+# Enable zstd compression for the agentless trace intake sender.
+data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
@@ -32,8 +56,8 @@ demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
 datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
-datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
-shared-runtime = ["dep:libdd-shared-runtime-ffi", "libdd-shared-runtime-ffi/catch_panic"]
+libdd-ffe-ffi = ["dep:libdd-ffe-ffi"]
+shared-runtime = ["dep:libdd-shared-runtime-ffi"]
 otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
@@ -41,7 +65,7 @@ regex-lite = ["libdd-common/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
+allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
@@ -53,14 +77,14 @@ libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = fals
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
-futures = { version = "0.3", default-features = false }
+futures.workspace = true
 http-body-util = "0.1"
 hyper = { workspace = true, features = ["http1", "client"] }
-libc = "0.2"
-serde_json = { version = "1.0" }
+libc.workspace = true
+serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 thiserror = "2"
 tokio-util = "0.7.1"
-datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
+libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }

@@ -1,0 +1,24 @@
+[package]
+name = "libdd-ffe-test-suite"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobenches = false
+publish = false
+
+[lib]
+bench = false
+
+[dev-dependencies]
+libdd-ffe = { path = "../libdd-ffe", features = ["flagevaluation-evp"] }
+chrono = { workspace = true, features = ["now", "serde"] }
+criterion = { workspace = true, features = ["html_reports"] }
+env_logger = "0.10"
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true, features = ["std", "raw_value"] }
+
+[[bench]]
+name = "ffe-eval"
+harness = false
+path = "benches/eval.rs"

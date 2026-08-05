@@ -4,12 +4,12 @@
 use criterion::{
     black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion, Throughput,
 };
-use datadog_ffe::telemetry::flagevaluation::{
+use libdd_ffe::telemetry::flagevaluation::{
     encode_flag_evaluation_payloads, AllocationKey, ContextDD, FfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent, FlagEvalEventContext, FlagEvaluationEvpCoalescer, FlagKey, VariantKey,
     EVP_PAYLOAD_SIZE_LIMIT,
 };
-use datadog_ffe::telemetry::FfeTelemetryContext;
+use libdd_ffe::telemetry::FfeTelemetryContext;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
 };
 
-use datadog_ffe::rules_based::{
+use libdd_ffe::rules_based::{
     get_assignment, Attribute, Configuration, EvaluationContext, ExpectedFlagType, FlagType, Str,
     UniversalFlagConfig,
 };

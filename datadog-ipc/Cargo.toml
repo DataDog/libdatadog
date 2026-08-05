@@ -10,12 +10,12 @@ publish = false
 anyhow.workspace = true
 zwohash = "0.1.2"
 bincode = { version = "1" }
-futures = { version = "0.3", default-features = false }
-io-lifetimes = { version = "1.0" }
+futures.workspace = true
+io-lifetimes = { workspace = true, features = ["close"] }
 page_size = "0.6.0"
 memfd = { version = "0.6" }
 serde = { workspace = true, features = ["derive"] }
-libc = { version = "0.2" }
+libc.workspace = true
 libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
 
 
@@ -27,9 +27,9 @@ datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 tracing.workspace = true
 
 [dev-dependencies]
-criterion = "0.5"
+criterion.workspace = true
 pretty_assertions = "1.3"
-tempfile = { version = "3.3" }
+tempfile.workspace = true
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
