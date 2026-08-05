@@ -194,7 +194,7 @@ fn encode_one(
     Ok(())
 }
 
-pub(crate) unsafe fn encode_value(
+pub(crate) fn encode_value(
     tokens: Slice<TracerValueToken<'_>>,
 ) -> Result<Vec<u8>, Box<ExporterError>> {
     let tokens = tokens
