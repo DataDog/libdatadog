@@ -17,8 +17,9 @@ use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::v04::{
-    AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes,
+    AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
+use std::collections::HashMap;
 use std::ptr::NonNull;
 
 type TokioCancellationToken = tokio_util::sync::CancellationToken;
@@ -65,6 +66,26 @@ pub struct TracerSpanFields<'a> {
     pub start: i64,
     pub duration: i64,
     pub error: i32,
+}
+
+/// A string attribute belonging to a [`TracerSpanLink`].
+#[derive(Debug)]
+#[repr(C)]
+pub struct TracerSpanLinkAttribute<'a> {
+    pub key: CharSlice<'a>,
+    pub value: CharSlice<'a>,
+}
+
+/// FFI-safe representation of one complete span link.
+#[derive(Debug)]
+#[repr(C)]
+pub struct TracerSpanLink<'a> {
+    pub trace_id_low: u64,
+    pub trace_id_high: u64,
+    pub span_id: u64,
+    pub attributes: Slice<'a, TracerSpanLinkAttribute<'a>>,
+    pub tracestate: CharSlice<'a>,
+    pub flags: u32,
 }
 
 /// Create a new span with all scalar fields set.
@@ -234,6 +255,70 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
             span.0
                 .meta_struct
                 .insert(key, Bytes::copy_from_slice(value));
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Replace all span links in one atomic operation.
+///
+/// The links, attributes, and strings are copied before this function returns.
+/// If any slice or string is invalid, the span's existing links are unchanged.
+/// Link order is preserved.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer to a `TracerSpan`. All slices must point to
+/// valid memory for their stated lengths.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_set_links(
+    handle: Option<&mut TracerSpan>,
+    links: Slice<TracerSpanLink>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(span) = handle {
+            let links = match links.try_as_slice() {
+                Ok(links) => links,
+                Err(_) => return gen_error!(ErrorCode::InvalidArgument),
+            };
+            let mut converted = Vec::with_capacity(links.len());
+
+            for link in links {
+                let attributes = match link.attributes.try_as_slice() {
+                    Ok(attributes) => attributes,
+                    Err(_) => return gen_error!(ErrorCode::InvalidArgument),
+                };
+                let mut converted_attributes = HashMap::with_capacity(attributes.len());
+                for attribute in attributes {
+                    let key = match charslice_to_bytesstring(attribute.key) {
+                        Ok(key) => key,
+                        Err(err) => return err,
+                    };
+                    let value = match charslice_to_bytesstring(attribute.value) {
+                        Ok(value) => value,
+                        Err(err) => return err,
+                    };
+                    converted_attributes.insert(key, value);
+                }
+
+                let tracestate = match charslice_to_bytesstring(link.tracestate) {
+                    Ok(tracestate) => tracestate,
+                    Err(err) => return err,
+                };
+                converted.push(SpanLinkBytes {
+                    trace_id: link.trace_id_low,
+                    trace_id_high: link.trace_id_high,
+                    span_id: link.span_id,
+                    attributes: converted_attributes,
+                    tracestate,
+                    flags: link.flags,
+                });
+            }
+
+            span.0.span_links = converted;
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -841,6 +926,288 @@ mod tests {
             assert_eq!(span.0.meta_struct.len(), 2);
 
             ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_copies_complete_links_in_order() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let first_attributes = [TracerSpanLinkAttribute {
+                key: cs("messaging.operation"),
+                value: cs("receive"),
+            }];
+            let links = [
+                TracerSpanLink {
+                    trace_id_low: 0x0123,
+                    trace_id_high: 0x4567,
+                    span_id: 0x89ab,
+                    attributes: Slice::from(&first_attributes[..]),
+                    tracestate: cs("vendor=value"),
+                    flags: 0x8000_0001,
+                },
+                TracerSpanLink {
+                    trace_id_low: 2,
+                    trace_id_high: 0,
+                    span_id: 3,
+                    attributes: Slice::default(),
+                    tracestate: cs(""),
+                    flags: 0,
+                },
+            ];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_none());
+
+            assert_eq!(span.0.span_links.len(), 2);
+            assert_eq!(span.0.span_links[0].trace_id, 0x0123);
+            assert_eq!(span.0.span_links[0].trace_id_high, 0x4567);
+            assert_eq!(span.0.span_links[0].span_id, 0x89ab);
+            assert_eq!(span.0.span_links[0].flags, 0x8000_0001);
+            assert_eq!(span.0.span_links[0].tracestate.as_ref(), "vendor=value");
+            assert_eq!(
+                span.0.span_links[0]
+                    .attributes
+                    .get("messaging.operation")
+                    .unwrap()
+                    .as_ref(),
+                "receive"
+            );
+            assert_eq!(span.0.span_links[1].trace_id, 2);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_copies_every_attribute_of_a_link() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let attributes = [
+                TracerSpanLinkAttribute {
+                    key: cs("messaging.operation"),
+                    value: cs("receive"),
+                },
+                TracerSpanLinkAttribute {
+                    key: cs("messaging.system"),
+                    value: cs("kafka"),
+                },
+                TracerSpanLinkAttribute {
+                    key: cs("link.kind"),
+                    value: cs("follows_from"),
+                },
+            ];
+            let links = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 2,
+                span_id: 3,
+                attributes: Slice::from(&attributes[..]),
+                tracestate: cs(""),
+                flags: 0,
+            }];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_none());
+
+            let copied = &span.0.span_links[0].attributes;
+            assert_eq!(copied.len(), 3);
+            assert_eq!(
+                copied.get("messaging.operation").unwrap().as_ref(),
+                "receive"
+            );
+            assert_eq!(copied.get("messaging.system").unwrap().as_ref(), "kafka");
+            assert_eq!(copied.get("link.kind").unwrap().as_ref(), "follows_from");
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_replaces_existing_links() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let first = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 0,
+                span_id: 2,
+                attributes: Slice::default(),
+                tracestate: cs(""),
+                flags: 0,
+            }];
+            assert!(ddog_tracer_span_set_links(Some(&mut span), Slice::from(&first[..])).is_none());
+
+            let second = [TracerSpanLink {
+                trace_id_low: 3,
+                trace_id_high: 4,
+                span_id: 5,
+                attributes: Slice::default(),
+                tracestate: cs("state=value"),
+                flags: 6,
+            }];
+            assert!(
+                ddog_tracer_span_set_links(Some(&mut span), Slice::from(&second[..])).is_none()
+            );
+
+            assert_eq!(span.0.span_links.len(), 1);
+            assert_eq!(span.0.span_links[0].trace_id, 3);
+            assert_eq!(span.0.span_links[0].trace_id_high, 4);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_empty_slice_clears_existing_links() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let links = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 0,
+                span_id: 2,
+                attributes: Slice::default(),
+                tracestate: cs(""),
+                flags: 0,
+            }];
+            assert!(ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..])).is_none());
+            assert_eq!(span.0.span_links.len(), 1);
+
+            assert!(ddog_tracer_span_set_links(Some(&mut span), Slice::default()).is_none());
+            assert!(span.0.span_links.is_empty());
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_failure_is_atomic() {
+        unsafe {
+            let mut span = make_minimal_span();
+            span.0.span_links.push(SpanLinkBytes {
+                trace_id: 7,
+                span_id: 8,
+                ..Default::default()
+            });
+            let invalid = [0xff];
+            let links = [
+                TracerSpanLink {
+                    trace_id_low: 1,
+                    trace_id_high: 2,
+                    span_id: 3,
+                    attributes: Slice::default(),
+                    tracestate: cs("valid=value"),
+                    flags: 4,
+                },
+                TracerSpanLink {
+                    trace_id_low: 5,
+                    trace_id_high: 6,
+                    span_id: 7,
+                    attributes: Slice::default(),
+                    tracestate: CharSlice::from_bytes(&invalid),
+                    flags: 8,
+                },
+            ];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(err);
+            assert_eq!(span.0.span_links.len(), 1);
+            assert_eq!(span.0.span_links[0].trace_id, 7);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_rejects_invalid_attribute_utf8_atomically() {
+        unsafe {
+            let mut span = make_minimal_span();
+            span.0.span_links.push(SpanLinkBytes {
+                trace_id: 7,
+                ..Default::default()
+            });
+            let invalid = [0xff];
+            let attributes = [TracerSpanLinkAttribute {
+                key: cs("key"),
+                value: CharSlice::from_bytes(&invalid),
+            }];
+            let links = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 2,
+                span_id: 3,
+                attributes: Slice::from(&attributes[..]),
+                tracestate: cs(""),
+                flags: 4,
+            }];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+            assert_eq!(span.0.span_links.len(), 1);
+            assert_eq!(span.0.span_links[0].trace_id, 7);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    /// An invalid `links` slice must be rejected rather than dereferenced: `try_as_slice`
+    /// fails and the span's existing links are left alone.
+    #[test]
+    fn set_links_rejects_invalid_links_slice_atomically() {
+        unsafe {
+            let mut span = make_minimal_span();
+            span.0.span_links.push(SpanLinkBytes {
+                trace_id: 7,
+                ..Default::default()
+            });
+
+            let bad: Slice<'_, TracerSpanLink<'_>> = Slice::from_raw_parts(std::ptr::null(), 1);
+            let err = ddog_tracer_span_set_links(Some(&mut span), bad);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+            assert_eq!(span.0.span_links.len(), 1);
+            assert_eq!(span.0.span_links[0].trace_id, 7);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    /// Same for a nested `attributes` slice, which is validated per link.
+    #[test]
+    fn set_links_rejects_invalid_attributes_slice_atomically() {
+        unsafe {
+            let mut span = make_minimal_span();
+            span.0.span_links.push(SpanLinkBytes {
+                trace_id: 7,
+                ..Default::default()
+            });
+            let links = [TracerSpanLink {
+                trace_id_low: 1,
+                trace_id_high: 2,
+                span_id: 3,
+                attributes: Slice::from_raw_parts(std::ptr::null(), 1),
+                tracestate: cs(""),
+                flags: 4,
+            }];
+
+            let err = ddog_tracer_span_set_links(Some(&mut span), Slice::from(&links[..]));
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+            assert_eq!(span.0.span_links.len(), 1);
+            assert_eq!(span.0.span_links[0].trace_id, 7);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_links_null_handle_returns_error() {
+        unsafe {
+            let err = ddog_tracer_span_set_links(None, Slice::default());
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 
