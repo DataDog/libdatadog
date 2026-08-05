@@ -810,12 +810,13 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
     lookup_symbol_impl(name, not_this_symbol, None)
 }
 
-/// Like [`lookup_symbol`], but also skips any definition from the
-/// library at `skip_base` (its `dlpi_addr`).
+/// Like [`lookup_symbol`], but also skips the library whose `PT_LOAD`
+/// segments contain `skip_addr`.
 ///
 /// Used by [`hook_symbol_excluding_self`] to ensure `orig_out` resolves
 /// to the external definition rather than a same-name export from the
-/// hook's own library.
+/// hook's own library. Uses segment containment rather than `dlpi_addr`
+/// comparison so it works for non-PIE executables (where `dlpi_addr` is 0).
 fn lookup_symbol_excluding_addr(
     name: &str,
     not_this_symbol: usize,
@@ -1391,22 +1392,14 @@ mod tests {
     }
 
     /// Verify that `hook_symbol_excluding_self` skips the library
-    /// containing the hook function. We use `dladdr` on the hook to
-    /// find our own base address, then confirm `hook_symbol_impl` with
-    /// `skip_base = Some(our_base)` produces fewer patched entries than
-    /// without skipping.
+    /// containing the hook function. Uses `phdr_contains_addr` to identify
+    /// the hook's own library.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_hook_symbol_excluding_self_skips_own_library() {
         // Use a dummy hook function defined in this test binary.
         unsafe extern "C" fn dummy_hook() {}
         let hook_addr = dummy_hook as *const () as usize;
-
-        // Resolve our own base address
-        let mut dl_info: libc::Dl_info = unsafe { core::mem::zeroed() };
-        let have_self = unsafe { libc::dladdr(hook_addr as *const c_void, &mut dl_info) } != 0;
-        assert!(have_self, "dladdr should resolve our own hook function");
-        let self_base = dl_info.dli_fbase as usize;
 
         // Count how many libraries would be visited with and without
         // the self-skip.
@@ -1428,7 +1421,7 @@ mod tests {
                 return false;
             }
             total_libs += 1;
-            if info.dlpi_addr as usize != self_base {
+            if !unsafe { phdr_contains_addr(info, hook_addr) } {
                 libs_excluding_self += 1;
             }
             false
