@@ -263,7 +263,7 @@ impl TraceRootSamplingInfo {
         &self,
         trace_id: &T,
     ) -> Option<OtelConsistentSampling> {
-        if !self.mechanism.is_probability() || self.rl_effective_rate.is_some() {
+        if !self.mechanism.is_probability() || (self.rl_effective_rate.is_some() && !self.is_keep) {
             return None;
         }
         let rv = derive_rv(trace_id);
@@ -423,6 +423,20 @@ mod tests {
             is_keep: false,
         };
         assert!(rate_limited.otel_consistent_sampling(&1u128).is_none());
+
+        let rate_limiter_allowed = TraceRootSamplingInfo {
+            mechanism: mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
+            rate: 0.1,
+            rl_effective_rate: Some(1.0),
+            is_keep: true,
+        };
+        assert_eq!(
+            rate_limiter_allowed.otel_consistent_sampling(&1u128),
+            Some(OtelConsistentSampling {
+                rv: 0xf0948a54d43b8e,
+                th: 0xe6666666666668,
+            })
+        );
     }
 
     #[test]
