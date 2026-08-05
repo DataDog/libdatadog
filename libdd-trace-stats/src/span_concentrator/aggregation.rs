@@ -26,6 +26,14 @@ use super::{
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
 
 const TAG_STATUS_CODE: &str = "http.status_code";
+const TAG_METHOD: &str = "http.method";
+// OpenTelemetry HTTP semantic-convention names for the two attributes above. A tracer running in
+// OTel semantics mode (DD_TRACE_OTEL_SEMANTICS_ENABLED) emits these instead of the Datadog names,
+// so reading only the Datadog names silently drops the status and method stats dimensions.
+// http.endpoint and http.route need no equivalent: http.route is already the OTel name, and
+// http.endpoint is Datadog-only and retained in that mode.
+const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
+const TAG_METHOD_OTEL: &str = "http.request.method";
 const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
@@ -272,16 +280,28 @@ impl<'a> BorrowedAggregationKey<'a> {
             vec![]
         };
 
-        let http_method = span.get_meta("http.method").unwrap_or_default();
+        // The Datadog name wins when both are present, and the OTel lookups only run when it is
+        // absent, so a span using Datadog naming still costs a single map lookup.
+        let http_method = span
+            .get_meta(TAG_METHOD)
+            .or_else(|| span.get_meta(TAG_METHOD_OTEL))
+            .unwrap_or_default();
 
         let http_endpoint = span
             .get_meta("http.endpoint")
             .or_else(|| span.get_meta("http.route"))
             .unwrap_or_default();
 
+        // The status code is checked in metrics as well as meta on both names: OTel types
+        // http.response.status_code as an int, which the v04 encoder routes to metrics rather
+        // than meta.
         let status_code = if let Some(status_code) = span.get_metrics(TAG_STATUS_CODE) {
             status_code as u32
         } else if let Some(status_code) = span.get_meta(TAG_STATUS_CODE) {
+            status_code.parse().unwrap_or_default()
+        } else if let Some(status_code) = span.get_metrics(TAG_STATUS_CODE_OTEL) {
+            status_code as u32
+        } else if let Some(status_code) = span.get_meta(TAG_STATUS_CODE_OTEL) {
             status_code.parse().unwrap_or_default()
         } else {
             0
@@ -998,6 +1018,110 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Span in OTel semantics mode: status code in metrics under the OTel name, which is
+            // where the int-typed OTel attribute lands
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    metrics: vec![("http.response.status_code".into(), 418.0)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Span in OTel semantics mode: status code in meta under the OTel name, which is how
+            // the agent transport carries it
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.response.status_code".into(), "418".into())].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Both names present: the Datadog name wins, so a tracer that emits both during a
+            // migration cannot change the dimension it already reports
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.status_code".into(), "500".into()),
+                        ("http.response.status_code".into(), "418".into()),
+                        ("http.method".into(), "GET".into()),
+                        ("http.request.method".into(), "POST".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 500,
+                    http_method: "GET".into(),
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Span in OTel semantics mode: method under the OTel name, route unchanged because
+            // http.route is already the OTel name
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "GET /api/v1/users".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.request.method".into(), "GET".into()),
+                        ("http.route".into(), "/api/v1/users".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "GET /api/v1/users".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_method: "GET".into(),
+                    http_endpoint: "/api/v1/users".into(),
                     ..Default::default()
                 }
                 .into_key(),
