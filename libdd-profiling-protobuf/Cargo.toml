@@ -24,4 +24,3 @@ bolero = { workspace = true, optional = true }
 
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
-libdd-profiling-protobuf = { path = ".", features = ["bolero", "prost_impls"] }

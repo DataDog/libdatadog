@@ -14,8 +14,8 @@ bench = false
 [features]
 default = ["tracing"]
 tracing = ["tracing/std"]
-https = ["libdd-common/https", "libdd-shared-runtime/https"]
-fips = ["libdd-common/fips", "libdd-shared-runtime/fips"]
+https = ["libdd-common/https"]
+fips = ["libdd-common/fips"]
 
 [dependencies]
 anyhow.workspace = true
@@ -41,7 +41,6 @@ web-time = "1" # cross-platform Instant/SystemTime; shims via js-sys on wasm32
 sys-info = { version = "0.9.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
 uuid = { workspace = true, features = ["js", "std"] }
 
 [target."cfg(unix)".dependencies]

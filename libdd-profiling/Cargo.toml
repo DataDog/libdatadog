@@ -30,21 +30,16 @@ allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 bitmaps = "3.2.0"
 byteorder = { version = "1.5", features = ["std"] }
-bytes = "1.11.1"
 chrono = { workspace = true, features = ["std", "clock"] }
 crossbeam-channel = "0.5.15"
 crossbeam-utils = { version = "0.8.21" }
 cxx = { version = "1.0", optional = true }
-futures.workspace = true
 hashbrown = { version = "0.16", default-features = false }
 http = "1.1"
-http-body-util = "0.1"
-httparse = "1.9"
 indexmap = "2.11"
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
 rand = "0.8"
