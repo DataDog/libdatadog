@@ -170,24 +170,37 @@ fn build_attributes(
 
     let mut attrs = Vec::new();
 
-    // Service identity is on the resource; emit on the data point only when overridden.
     let group_service = if group.service.is_empty() {
         resource_info.service.as_str()
     } else {
         group.service.as_str()
     };
-    if group_service != resource_info.service {
-        push(&mut attrs, "service.name", group_service);
-    }
+    attrs.push(kv_str("service.name", group_service));
 
     push(&mut attrs, "span.name", &group.resource);
-    if !group.span_kind.is_empty() {
-        push(
-            &mut attrs,
-            "span.kind",
-            tag_to_otlp_kind_str_name(&group.span_kind),
-        );
+    push(
+        &mut attrs,
+        "span.kind",
+        if group.span_kind.is_empty() {
+            "SPAN_KIND_INTERNAL"
+        } else {
+            tag_to_otlp_kind_str_name(&group.span_kind)
+        },
+    );
+    push(
+        &mut attrs,
+        "status.code",
+        if is_error {
+            STATUS_CODE_ERROR
+        } else {
+            STATUS_CODE_OK
+        },
+    );
+
+    if otel_trace_semantics_enabled {
+        return attrs;
     }
+
     push(&mut attrs, "http.request.method", &group.http_method);
     push(&mut attrs, "http.route", &group.http_endpoint);
     // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
@@ -200,48 +213,41 @@ fn build_attributes(
             push(&mut attrs, k, v);
         }
     }
-    if !otel_trace_semantics_enabled {
-        push(&mut attrs, "datadog.operation.name", &group.name);
-        push(&mut attrs, "datadog.span.type", &group.r#type);
-    }
+    push(&mut attrs, "datadog.operation.name", &group.name);
+    push(&mut attrs, "datadog.span.type", &group.r#type);
     if group.http_status_code != 0 {
         attrs.push(kv_int(
             "http.response.status_code",
             group.http_status_code as i64,
         ));
     }
-    if !otel_trace_semantics_enabled {
-        // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
-        // boolean, not the full origin string, so other origins are lost upstream.
-        if group.synthetics {
-            attrs.push(kv_str("datadog.origin", "synthetics"));
-        }
-        let is_trace_root = group.is_trace_root == pb::Trilean::True as i32;
+    // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
+    // boolean, not the full origin string, so other origins are lost upstream.
+    if group.synthetics {
+        attrs.push(kv_str("datadog.origin", "synthetics"));
+    }
+    let is_trace_root = match pb::Trilean::try_from(group.is_trace_root) {
+        Ok(pb::Trilean::True) => Some(true),
+        Ok(pb::Trilean::False) => Some(false),
+        _ => None,
+    };
+    if let Some(is_trace_root) = is_trace_root {
         attrs.push(json!({
             "key": "datadog.is_trace_root", "value": { "boolValue": is_trace_root }
         }));
-        let top_level = group.hits > 0 && group.top_level_hits == group.hits;
-        attrs.push(json!({
-            "key": "datadog.span.top_level", "value": { "boolValue": top_level }
-        }));
-        // Unlike process_tags (a resource attribute), peer_tags is per-span and belongs on the data
-        // point.
-        if !group.peer_tags.is_empty() {
-            attrs.push(kv_str_array(
-                "datadog.peer_tags",
-                group.peer_tags.iter().map(String::as_str),
-            ));
-        }
     }
-    push(
-        &mut attrs,
-        "status.code",
-        if is_error {
-            STATUS_CODE_ERROR
-        } else {
-            STATUS_CODE_OK
-        },
-    );
+    let top_level = group.hits > 0 && group.top_level_hits == group.hits;
+    attrs.push(json!({
+        "key": "datadog.span.top_level", "value": { "boolValue": top_level }
+    }));
+    // Unlike process_tags (a resource attribute), peer_tags is per-span and belongs on the data
+    // point.
+    if !group.peer_tags.is_empty() {
+        attrs.push(kv_str_array(
+            "datadog.peer_tags",
+            group.peer_tags.iter().map(String::as_str),
+        ));
+    }
     attrs
 }
 
@@ -475,6 +481,13 @@ mod tests {
         })
     }
 
+    fn bool_at(attrs: &[Value], key: &str) -> Option<bool> {
+        attrs
+            .iter()
+            .find(|kv| kv["key"] == key)
+            .and_then(|kv| kv["value"]["boolValue"].as_bool())
+    }
+
     fn is_error_point(p: &Value) -> bool {
         str_at(p["attributes"].as_array().unwrap(), "status.code") == Some(STATUS_CODE_ERROR)
     }
@@ -517,8 +530,10 @@ mod tests {
             g.http_endpoint = "/users/:id".into();
             g.synthetics = true;
             g.span_kind = "server".into();
+            g.grpc_status_code = "5".into();
             g.is_trace_root = pb::Trilean::True as i32;
             g.peer_tags = vec!["db.hostname:prod-db-1".into(), "db.name:orders".into()];
+            g.additional_metric_tags = vec!["custom.primary:a".into()];
         });
         let custom_pair = group_with_exact(&[1_000_000_000], &[], |g| {
             g.service = "svc-other".into();
@@ -529,10 +544,12 @@ mod tests {
         let pts = points(&req);
         let a = pts
             .iter()
-            .find(|p| str_at(p["attributes"].as_array().unwrap(), "service.name").is_none())
+            .find(|p| str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc"))
             .unwrap()["attributes"]
             .as_array()
             .unwrap();
+        // service.name is on the data point even though it matches the resource default.
+        assert_eq!(str_at(a, "service.name"), Some("svc"));
         assert_eq!(str_at(a, "span.name"), Some("GET /foo"));
         assert_eq!(str_at(a, "span.kind"), Some("SPAN_KIND_SERVER"));
         assert_eq!(str_at(a, "http.request.method"), Some("POST"));
@@ -541,12 +558,7 @@ mod tests {
         assert_eq!(str_at(a, "datadog.operation.name"), Some("test.op"));
         assert_eq!(str_at(a, "datadog.span.type"), Some("web"));
         assert_eq!(str_at(a, "datadog.origin"), Some("synthetics"));
-        assert_eq!(
-            a.iter()
-                .find(|kv| kv["key"] == "datadog.is_trace_root")
-                .and_then(|kv| kv["value"]["boolValue"].as_bool()),
-            Some(true)
-        );
+        assert_eq!(bool_at(a, "datadog.is_trace_root"), Some(true));
         assert!(a.iter().any(|kv| kv["key"] == "datadog.span.top_level"));
         assert_eq!(
             str_array_at(a, "datadog.peer_tags"),
@@ -557,15 +569,56 @@ mod tests {
             |p| str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc-other")
         ));
 
-        // OTel mode strips datadog.*/_datadog.* attributes but keeps status.code always present.
+        // OTel mode emits exactly the Span Metrics Connector's default dimensions.
         let req = map_stats_to_otlp_metrics(&buckets(vec![g_pair]), &resource(), true).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
-        assert!(!a.iter().any(|kv| {
-            let k = kv["key"].as_str().unwrap_or("");
-            k.starts_with("datadog.") || k.starts_with("_datadog.")
-        }));
-        assert_eq!(str_at(a, "http.request.method"), Some("POST"));
+        let mut keys: Vec<&str> = a.iter().map(|kv| kv["key"].as_str().unwrap()).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["service.name", "span.kind", "span.name", "status.code"]
+        );
+        for prefix in ["http.", "rpc.", "datadog.", "_datadog."] {
+            assert!(!keys.iter().any(|key| key.starts_with(prefix)));
+        }
+        assert!(!keys.contains(&"additional_metric_tags"));
+        assert!(!keys.contains(&"custom.primary"));
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
+        assert_eq!(str_at(a, "service.name"), Some("svc"));
+    }
+
+    #[test]
+    fn is_trace_root_preserves_trilean_semantics() {
+        for (value, expected) in [
+            (pb::Trilean::NotSet, None),
+            (pb::Trilean::True, Some(true)),
+            (pb::Trilean::False, Some(false)),
+        ] {
+            let g = group_with_exact(&[1_000_000_000], &[], |g| {
+                g.is_trace_root = value as i32;
+            });
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            assert_eq!(
+                bool_at(
+                    points(&req)[0]["attributes"].as_array().unwrap(),
+                    "datadog.is_trace_root"
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn empty_span_kind_defaults_to_internal() {
+        let req =
+            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), true).unwrap();
+        assert_eq!(
+            str_at(
+                points(&req)[0]["attributes"].as_array().unwrap(),
+                "span.kind"
+            ),
+            Some("SPAN_KIND_INTERNAL")
+        );
     }
 
     #[test]
@@ -663,11 +716,10 @@ mod tests {
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
 
-        // Additional metric tags are user/tracer-defined (not Datadog-internal), so unlike
-        // `datadog.*` attributes they still pass through in OTel-semantics mode.
+        // OTel-semantics mode is limited to the Span Metrics Connector defaults.
         let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), true).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
-        assert_eq!(str_at(a, "custom.primary"), Some("a"));
+        assert_eq!(str_at(a, "custom.primary"), None);
 
         // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
