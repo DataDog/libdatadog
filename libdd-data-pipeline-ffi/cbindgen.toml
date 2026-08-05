@@ -12,6 +12,7 @@ includes = ["common.h"]
 after_includes = """
 typedef struct ddog_TraceExporter ddog_TraceExporter;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
+typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
 typedef struct ddog_TraceExporterCancelToken ddog_TraceExporterCancelToken;
 typedef enum ddog_TracerValueKind {
@@ -30,7 +31,7 @@ typedef enum ddog_TracerValueKind {
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
-exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellationToken"]
+exclude = ["TraceExporter", "TracerSpan", "TracerSpanEvent", "TracerTraceChunks", "TokioCancellationToken"]
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
@@ -42,7 +43,10 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellatio
 "ExporterErrorCode" = "ddog_TraceExporterErrorCode"
 "ExporterError" = "ddog_TraceExporterError"
 "TracerSpan" = "ddog_TracerSpan"
+"TracerSpanEvent" = "ddog_TracerSpanEvent"
 "TracerSpanFields" = "ddog_TracerSpanFields"
+"TracerSpanLink" = "ddog_TracerSpanLink"
+"TracerSpanLinkAttribute" = "ddog_TracerSpanLinkAttribute"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
 "TokioCancellationToken" = "ddog_TraceExporterCancelToken"
 
@@ -58,4 +62,4 @@ must_use = "DDOG_CHECK_RETURN"
 
 [parse]
 parse_deps = true
-include = ["libdd-common", "libdd-common-ffi", "libdd-shared-runtime", "libdd-data-pipeline", "libdd-trace-utils"]
+include = ["libdd-common", "libdd-common-ffi", "libdd-shared-runtime", "libdd-data-pipeline", "libdd-trace-utils", "libdd-trace-stats"]

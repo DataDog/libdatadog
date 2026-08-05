@@ -40,7 +40,7 @@ use crate::utils::{file_replace, project_root};
 ///         Ok(())
 ///     }
 /// }
-/// let mut builder = Builder::new("source", "target", "arch", "features", "profile", "version");
+/// let mut builder = Builder::new("source", "target", "arch", "profile", "features", "version");
 /// let core = Box::new(Core {
 ///     version: builder.version.clone(),
 /// });

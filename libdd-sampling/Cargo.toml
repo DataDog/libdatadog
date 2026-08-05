@@ -42,5 +42,5 @@ v04_span = ["dep:libdd-trace-utils"]
 bench-internals = []
 
 [dev-dependencies]
-criterion = "0.5"
+criterion.workspace = true
 libdd-common = { path = "../libdd-common", version = "5.1.0", features = ["bench-utils"] }

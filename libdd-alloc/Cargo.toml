@@ -12,7 +12,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-allocator-api2 = { version = "0.2", default-features = false }
+allocator-api2.workspace = true
 
 [target.'cfg(unix)'.dependencies.libc]
 version = "0.2.153"
@@ -26,8 +26,8 @@ features = [
 ]
 
 [dev-dependencies]
-allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
-bolero = "0.13"
+allocator-api2 = { workspace = true, features = ["alloc"] }
+bolero = { workspace = true, features = ["std"] }
 
 [lib]
 bench = false

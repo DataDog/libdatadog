@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod fetcher;
+#[cfg(not(target_arch = "wasm32"))]
 mod multitarget;
+#[cfg(not(target_arch = "wasm32"))]
 mod shared;
 mod single;
 #[cfg(any(test, feature = "test"))]
@@ -11,6 +13,8 @@ pub mod test_server;
 #[allow(clippy::useless_attribute)] // different clippy versions are differently picky
 #[cfg_attr(test, allow(ambiguous_glob_reexports))] // ignore mod tests re-export
 pub use fetcher::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use multitarget::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use shared::*;
 pub use single::*;

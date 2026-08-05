@@ -9,7 +9,7 @@ use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
 use std::time::Duration;
 
@@ -67,7 +67,16 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         None,
     );
 
-    match send_with_retry(capabilities, &target, body, &headers, &retry_strategy).await {
+    match send_with_retry(
+        capabilities,
+        &target,
+        body,
+        &headers,
+        &retry_strategy,
+        CompressionStrategy::None,
+    )
+    .await
+    {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e).await),
     }

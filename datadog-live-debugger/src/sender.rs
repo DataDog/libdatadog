@@ -218,7 +218,19 @@ pub fn agent_info_supports_debugger_v2_endpoint(info: &AgentInfoStruct) -> bool 
         .unwrap_or(false)
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 #[repr(C)]
 pub enum DebuggerType {
     Diagnostics,
@@ -240,6 +252,32 @@ impl DebuggerType {
         }
     }
 }
+
+/// The agent or intake answered with a >= 400 status.
+///
+/// Carried inside the [`anyhow::Error`] returned by [`send`], [`send_symdb`] and
+/// [`PayloadSender::finish`], so callers can `downcast_ref` to recover the status
+/// code and tell an unsupported endpoint (e.g. 404 from an agent that does not
+/// proxy `/debugger/v2/input`) apart from a transport failure.
+#[derive(Debug)]
+pub struct PayloadRejected {
+    pub status: u16,
+    pub body: String,
+    /// The payload flavour, as it appears in the error message ("debugger" or "symdb").
+    pub kind: &'static str,
+}
+
+impl Display for PayloadRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Server did not accept {} payload ({}): {}",
+            self.kind, self.status, self.body
+        )
+    }
+}
+
+impl std::error::Error for PayloadRejected {}
 
 pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     #[allow(clippy::unwrap_used)]
@@ -451,7 +489,11 @@ impl PayloadSender {
             if status >= 400 {
                 let response_body =
                     String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
+                anyhow::bail!(PayloadRejected {
+                    status,
+                    body: response_body,
+                    kind: "debugger",
+                });
             }
             Ok(self.payloads)
         } else {
@@ -615,7 +657,11 @@ async fn send_symdb_to_endpoint<C: HttpClientCapability>(
 
     if status >= 400 {
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-        anyhow::bail!("Server did not accept symdb payload ({status}): {response_body}");
+        anyhow::bail!(PayloadRejected {
+            status,
+            body: response_body,
+            kind: "symdb",
+        });
     }
     Ok(())
 }
@@ -738,6 +784,20 @@ mod tests {
         for endpoint in diagnostics {
             assert_eq!(endpoint.url.path(), "/api/v2/debugger");
         }
+    }
+
+    #[test]
+    fn test_payload_rejected_display_is_downcastable() {
+        let err: anyhow::Error = anyhow::Error::from(PayloadRejected {
+            status: 404,
+            body: "Not Found".to_string(),
+            kind: "debugger",
+        });
+        assert_eq!(
+            err.to_string(),
+            "Server did not accept debugger payload (404): Not Found"
+        );
+        assert_eq!(err.downcast_ref::<PayloadRejected>().unwrap().status, 404);
     }
 
     #[test]
