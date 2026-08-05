@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tracing::debug;
 
-use super::event_bridge::EventBridgeEvent;
+use super::event_bridge::{carrier_from_eventbridge_body, EventBridgeEvent};
 use super::sns::{SnsEntity, SnsRecord};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -207,12 +207,10 @@ impl Trigger for SqsRecord {
             return sns_record.get_carrier();
         }
 
-        // Fallback: check for EventBridge event in SQS body
-        if let Ok(event) = serde_json::from_str::<EventBridgeEvent>(&self.body) {
-            return event.get_carrier();
-        }
-
-        HashMap::new()
+        // Fallback: check for EventBridge event in SQS body. EventBridge input
+        // transformers can preserve `detail._datadog` without preserving the
+        // full EventBridge envelope, so extract the carrier directly.
+        carrier_from_eventbridge_body(&self.body)
     }
 
     fn is_async(&self) -> bool {
@@ -351,5 +349,86 @@ mod tests {
                 "00-11111111111111111111111111111111-2222222222222222-01".to_string()
             )])
         );
+    }
+
+    #[test]
+    fn test_get_carrier_from_eventbridge_body() {
+        let body = serde_json::json!({
+            "version": "0",
+            "id": "event-id",
+            "detail-type": "WorkItemSubmitted",
+            "source": "rust-sqs-sample.client",
+            "account": "123456789012",
+            "time": "2026-08-04T00:00:00Z",
+            "region": "us-east-1",
+            "resources": [],
+            "detail": {
+                "message": "hello through eventbridge",
+                "_datadog": {
+                    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+                    "x-datadog-start-time": "1740000000"
+                }
+            }
+        })
+        .to_string();
+        let payload = sqs_payload_with_body(&body);
+
+        let event = SqsRecord::new(payload).unwrap();
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([
+                (
+                    "traceparent".to_string(),
+                    "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+                ),
+                ("x-datadog-start-time".to_string(), "1740000000".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_get_carrier_from_transformed_eventbridge_body() {
+        let body = serde_json::json!({
+            "detail": {
+                "message": "hello through eventbridge",
+                "_datadog": {
+                    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+                }
+            }
+        })
+        .to_string();
+        let payload = sqs_payload_with_body(&body);
+
+        let event = SqsRecord::new(payload).unwrap();
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([(
+                "traceparent".to_string(),
+                "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+            )])
+        );
+    }
+
+    fn sqs_payload_with_body(body: &str) -> Value {
+        serde_json::json!({
+            "Records": [{
+                "messageId": "message-id",
+                "receiptHandle": "receipt-handle",
+                "attributes": {
+                    "ApproximateFirstReceiveTimestamp": "1740000000000",
+                    "ApproximateReceiveCount": "1",
+                    "SentTimestamp": "1740000000000",
+                    "SenderId": "sender-id"
+                },
+                "messageAttributes": {},
+                "md5OfBody": "md5",
+                "eventSource": "aws:sqs",
+                "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:queue-name",
+                "awsRegion": "us-east-1",
+                "body": body
+            }]
+        })
     }
 }

@@ -45,6 +45,34 @@ impl EventBridgeEvent {
     }
 }
 
+pub(super) fn carrier_from_detail(detail: &Value) -> HashMap<String, String> {
+    detail
+        .as_object()
+        .and_then(|detail| detail.get(DATADOG_CARRIER_KEY))
+        .and_then(carrier_from_value)
+        .unwrap_or_default()
+}
+
+pub(super) fn carrier_from_eventbridge_body(body: &str) -> HashMap<String, String> {
+    #[derive(Deserialize)]
+    struct EventBridgeEnvelope {
+        detail: Option<Value>,
+    }
+
+    serde_json::from_str::<EventBridgeEnvelope>(body)
+        .ok()
+        .and_then(|envelope| envelope.detail.map(|detail| carrier_from_detail(&detail)))
+        .unwrap_or_default()
+}
+
+fn carrier_from_value(value: &Value) -> Option<HashMap<String, String>> {
+    match value {
+        Value::Object(_) => serde_json::from_value(value.clone()).ok(),
+        Value::String(s) => serde_json::from_str(s).ok(),
+        _ => None,
+    }
+}
+
 impl Trigger for EventBridgeEvent {
     fn new(payload: Value) -> Option<Self> {
         match serde_json::from_value(payload) {
@@ -115,12 +143,7 @@ impl Trigger for EventBridgeEvent {
     }
 
     fn get_carrier(&self) -> HashMap<String, String> {
-        if let Ok(detail) = serde_json::from_value::<HashMap<String, Value>>(self.detail.clone()) {
-            if let Some(carrier) = detail.get(DATADOG_CARRIER_KEY) {
-                return serde_json::from_value(carrier.clone()).unwrap_or_default();
-            }
-        }
-        HashMap::new()
+        carrier_from_detail(&self.detail)
     }
 
     fn is_async(&self) -> bool {
