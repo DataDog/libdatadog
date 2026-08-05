@@ -50,6 +50,10 @@ fn invalid_input(message: &str) -> Box<ExporterError> {
     Box::new(ExporterError::new(ErrorCode::InvalidInput, message))
 }
 
+fn invalid_argument(message: &str) -> Box<ExporterError> {
+    Box::new(ExporterError::new(ErrorCode::InvalidArgument, message))
+}
+
 /// Adapts an `rmp` write failure into an exporter error. Writing into a `Vec`
 /// cannot actually fail, so this only exists to satisfy the fallible `rmp` API.
 fn encoding_failed<E>(_: E) -> Box<ExporterError> {
@@ -99,7 +103,7 @@ fn encode_one(
             let bytes = token
                 .bytes
                 .try_as_bytes()
-                .map_err(|_| invalid_input("structured value contains an invalid byte slice"))?;
+                .map_err(|_| invalid_argument("structured value contains an invalid byte slice"))?;
             ensure_byte_len_fits(bytes)?;
             if token.kind == DDOG_TRACER_VALUE_STRING {
                 let text = std::str::from_utf8(bytes)
@@ -160,7 +164,7 @@ pub unsafe extern "C" fn ddog_tracer_encode_value(
             let inner = || -> Result<(), Box<ExporterError>> {
                 let tokens = tokens
                     .try_as_slice()
-                    .map_err(|_| invalid_input("structured value token slice is invalid"))?;
+                    .map_err(|_| invalid_argument("structured value token slice is invalid"))?;
                 if tokens.is_empty() {
                     return Err(invalid_input("structured value token slice is empty"));
                 }
@@ -391,7 +395,7 @@ mod tests {
         let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
         let out = NonNull::new(handle.as_mut_ptr()).unwrap();
         let error = unsafe { ddog_tracer_encode_value(tokens, out) };
-        assert!(error.is_some());
+        assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
     }
 
     #[test]
