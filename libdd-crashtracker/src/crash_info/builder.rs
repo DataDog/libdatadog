@@ -195,8 +195,10 @@ impl CrashInfoBuilder {
     /// when the builder is created, so it is excluded: comparing the whole struct
     /// against `Self::default()` would always differ on it and always report data
     pub fn has_data(&self) -> bool {
-        let mut blank = Self::default();
-        blank.uuid = self.uuid;
+        let blank = Self {
+            uuid: self.uuid,
+            ..Self::default()
+        };
 
         self != &blank
     }
