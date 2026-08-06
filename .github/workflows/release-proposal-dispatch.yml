@@ -469,8 +469,13 @@ jobs:
           
       - name: Release version bumps
         id: release-version-bumps
+        env:
+          PROPOSAL_BRANCH: ${{ steps.proposal-branch.outputs.branch_name }}
+          EPHEMERAL_BRANCH: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
+          IS_HOTFIX: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
+          BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
         run: |
-          echo "Release version bumps..."
+          set -euo pipefail
 
           # TODO: check if this is really necessary, we should have the full history from
           # previous steps.
@@ -479,120 +484,18 @@ jobs:
             git fetch --unshallow
           fi
 
-          # Initialize results array. It holds one row per candidate crate: those released
-          # here, and those with no commits of their own, which carry "pending_release":
-          # "true" and are only released if the libdd-* major-bump check pulls them back in.
-          echo "[]" > /tmp/api-changes.json
+          ARGS=()
+          if [ "$IS_HOTFIX" = "true" ]; then ARGS+=(--hotfix); fi
+          if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then ARGS+=(--bypass-standard-checks); fi
 
-          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
-
-          # iterate over the commits and execute cargo release for each crate
-          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
-            NAME=$(echo "$crate" | jq -r '.name')
-            TAG=$(echo "$crate" | jq -r '.tag')
-            TAG_PREFIX="$NAME-v"
-            CRATE_PATH=$(echo "$crate" | jq -r '.path')
-            TAG_EXISTS=$(echo "$crate" | jq -r '.tag_exists')
-            COMMITS=$(echo "$crate" | jq -r '.commits')
-            INITIAL_RELEASE=false
-
-            # if there are no commits and there is an existing tag, do not release the crate here.
-            # but record it as a pending candidate
-            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then
-              VERSION=$(echo "$crate" | jq -r '.version')
-              echo "No commits since last release for $NAME; deferring to the libdd-* major-bump check"
-              jq --arg name "$NAME" \
-                --arg tag "$TAG" \
-                --arg version "$VERSION" \
-                --arg path "$CRATE_PATH" \
-                '. += [{"name": $name, "level": "none", "tag": $tag, "prev_tag": $tag, "version": $version, "range": "", "commits": [], "path": $path, "initial_release": "false", "pending_release": "true"}]' \
-                /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
-              continue
-            fi
-
-            if [ "$TAG_EXISTS" = "true" ]; then
-              TAG_COMMIT=$(echo "$crate" | jq -r '.tag_commit')
-              RANGE=$(echo "$crate" | jq -r '.range')
-              if [ -z "$TAG_COMMIT" ] || [ -z "$RANGE" ]; then
-                echo "ERROR: Could not dereference tag $TAG to a commit" >&2
-                exit 1
-              fi
-              echo "Using $RANGE as range (tag: $TAG)"
-
-              if [ "$(echo "$crate" | jq -r '.tag_in_local_branch')" != "true" ]; then
-                echo "Warning: tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
-              fi
-
-              # if there is a tag more recent than $TAG, continue the loop.
-              LATEST_TAG=$(echo "$crate" | jq -r '.latest_tag')
-              if [ "$LATEST_TAG" != "$TAG" ]; then
-                echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-
-                # do not skip the release for hotfix branches
-                if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
-                  echo "Continuing with the release for $NAME because it is a hotfix"
-                else
-                  if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
-                    echo "Skipping release for $NAME"
-                    continue
-                  else
-                    echo "Continuing with the release for $NAME because bypass_standard_checks is true"
-                  fi
-                fi
-              fi
-
-              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$("${WORKFLOW_SCRIPTS_ROOT}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1)
-              echo "Semver level: $SEMVER_LEVEL"
-
-              LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
-              
-              echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
-              cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
-
-            else
-              echo "No previous release tag for $NAME, preparing initial release..."
-
-              # Use the version from the crate metadata
-              VERSION=$(echo "$crate" | jq -r '.version')
-              LEVEL="major"
-              TAG=""
-              RANGE=""
-              
-              # fail when the version is not an initial release
-              if [ "$VERSION" != "0.1.0" ]; then
-                echo "Error: $NAME is not a 0.1.0 release" >&2
-                exit 1
-              fi
-
-              INITIAL_RELEASE=true
-
-              echo "Executing cargo release for $NAME with level $LEVEL..."
-              cargo release version -p "$NAME" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
-            fi
-            
-            # Commit the changes
-            cargo release commit --no-confirm -x
-            
-            NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-            NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
-
-            # Add to results array
-            jq --arg name "$NAME" \
-            --arg level "$LEVEL" \
-            --arg tag "$NEXT_TAG" \
-            --arg prev_tag "$TAG" \
-            --arg version "$NEXT_VERSION" \
-            --arg range "$RANGE" \
-            --argjson commits "$COMMITS" \
-            --arg path "$CRATE_PATH" \
-            --arg initial_release "$INITIAL_RELEASE" \
-            '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]' \
-              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
-          done
+          "${WORKFLOW_SCRIPTS_ROOT}/release-version-bumps.sh" \
+            --commits-by-crate /tmp/commits-by-crate.json \
+            --out /tmp/api-changes.json \
+            --branch "$PROPOSAL_BRANCH" \
+            "${ARGS[@]}"
 
           # Check if there are commits to push or pending
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
+          if git diff --quiet "$EPHEMERAL_BRANCH"; then
             PENDING_COUNT=$(jq '[.[] | select(.pending_release == "true")] | length' /tmp/api-changes.json)
             if [ "$PENDING_COUNT" -gt 0 ]; then
               echo "No direct version bumps yet, but $PENDING_COUNT crate(s) are pending libdd-* major-bump evaluation; continuing."
@@ -601,10 +504,6 @@ jobs:
               exit 1
             fi
           fi
-
-          # Output the results
-          echo "API changes summary:"
-          jq . /tmp/api-changes.json
 
       - name: Update version for crates with libdd-* direct dependency major bumps since last release
         run: |
