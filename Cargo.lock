@@ -715,7 +715,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1453,7 +1453,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2787,13 +2787,13 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.178"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdd-agent-client"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2892,7 +2892,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3013,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3023,6 +3023,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-utils",
+ "rmp",
  "rmp-serde",
  "tokio-util",
  "tracing",
@@ -3042,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3101,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3109,6 +3110,13 @@ dependencies = [
  "libdd-ffe",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "libdd-gotter"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -3184,7 +3192,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3299,13 +3307,14 @@ name = "libdd-profiling-heap-gotter"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "libdd-gotter",
  "libdd-profiling-heap-sampler",
  "serial_test",
 ]
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3399,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3427,6 +3436,8 @@ dependencies = [
  "libdd-shared-runtime",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "sys-info",
  "tokio",
  "tokio-util",
@@ -3439,7 +3450,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -5722,7 +5733,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6170,7 +6181,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "38.0.0"
+version = "39.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

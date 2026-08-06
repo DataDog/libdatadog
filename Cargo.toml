@@ -7,6 +7,7 @@ members = [
   "libdd-alloc",
   "libdd-profiling-heap-sampler",
   "libdd-profiling-heap-allocator",
+  "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",
@@ -79,7 +80,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.87.0"
 edition = "2021"
-version = "38.0.0"
+version = "39.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
