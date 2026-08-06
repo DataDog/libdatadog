@@ -135,5 +135,6 @@ pub struct OtlpMetricsConfig {
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
     /// Retained for downstream compatibility; OTLP trace metrics ignore this value.
+    #[allow(dead_code)]
     pub otel_trace_semantics_enabled: bool,
 }

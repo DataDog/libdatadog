@@ -293,11 +293,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
         if buckets.is_empty() {
             return Ok(false);
         }
-        let Some(request) = map_stats_to_otlp_metrics(
-            &buckets,
-            &self.resource,
-            self.config.otel_trace_semantics_enabled,
-        ) else {
+        let Some(request) = map_stats_to_otlp_metrics(&buckets, &self.resource, false) else {
             return Ok(false);
         };
         send_otlp_http(
