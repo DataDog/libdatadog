@@ -43,6 +43,13 @@ jobs:
         with:
           toolchain: 1.92.0
 
+      # release-version-bumps.bats runs cargo-release for real against a throwaway
+      # workspace, so the versions it asserts are the ones a release would land on.
+      # Without it those tests skip rather than fail.
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: cargo-release
+
       - name: Install bats-core
         run: |
           set -euo pipefail

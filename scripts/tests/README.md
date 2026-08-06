@@ -38,7 +38,8 @@ CI runs the same suite plus `shellcheck` over `scripts/*.sh`
 | Suite | Covers |
 | --- | --- |
 | `publication-order.bats` | which crates a release includes, and the order they publish in |
-| `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; the exported `range`; exclusion rules |
+| `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; the exported `range`, `latest_tag` and `tag_in_local_branch`; exclusion rules |
+| `release-version-bumps.bats` | each crate's fate — released at a level, deferred, skipped, or a hard failure — and the version cargo-release actually lands on |
 | `semver-level.bats` | the bump level fed to `cargo release version -x`, parsed out of cargo-semver-checks and cargo-public-api output |
 | `major-bumps-level.bats` | whether a direct `libdd-*` dependency going major forces a dependent to major |
 | `release-proposal-workflow.bats` | job-level `if:` gating, untrusted-`main_start_ref` defenses, branch prefixes, push path, PR contract |
@@ -56,6 +57,13 @@ scripts have to discriminate. Nothing touches the libdatadog checkout.
 parsing* `semver-level.sh` gets wrong when it regresses. The shim replays recorded
 output for those two subcommands and forwards everything else to the real cargo, so
 the script under test runs unmodified.
+
+**Real cargo-release** — `release-version-bumps.bats` runs `cargo release` against the
+fixture workspace rather than stubbing it, so the versions it asserts are the ones a
+release would land on. Only `semver-level.sh` is doubled there, by copying the script
+under test next to a stub sibling: it resolves `semver-level.sh` relative to itself, so
+no test-only hook is needed in the script. Install `cargo-release` to run those tests;
+without it they skip rather than fail.
 
 **Workflow guards** (`helpers/workflow-to-json.py`) — transcribes the workflow YAML to
 JSON so the tests can assert on it with `jq`. These are intentionally
@@ -76,9 +84,11 @@ depends on it. Two properties worth preserving:
 
 ## Not covered
 
-The inline bash in `release-proposal-dispatch.yml` — the bump-range computation, the
-"tag is not the latest" skip rule, the major-bump merge, CHANGELOG generation and the
-PR body — is untestable while it lives inside `run:` blocks. Making it testable means
-extracting the decision half of each step into a script that takes JSON and git state
-and returns JSON. The guards in `release-proposal-workflow.bats` are a holding
-measure for the security-critical parts of that logic, not a substitute.
+What remains inline in `release-proposal-dispatch.yml` is untestable while it lives
+inside `run:` blocks: the libdd-* major-bump merge, CHANGELOG generation via git-cliff,
+and the PR body. Making those testable means the same move that produced
+`release-version-bumps.sh` — separate the decision from the side effects, so the
+decision takes JSON and git state and returns JSON.
+
+The guards in `release-proposal-workflow.bats` are a holding measure for the
+security-critical parts of what is left, not a substitute.
