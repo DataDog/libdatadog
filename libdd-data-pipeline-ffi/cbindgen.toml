@@ -15,17 +15,7 @@ typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
 typedef struct ddog_TraceExporterCancelToken ddog_TraceExporterCancelToken;
-typedef enum ddog_TracerValueKind {
-  DDOG_TRACER_VALUE_NIL = 0,
-  DDOG_TRACER_VALUE_BOOL = 1,
-  DDOG_TRACER_VALUE_I64 = 2,
-  DDOG_TRACER_VALUE_U64 = 3,
-  DDOG_TRACER_VALUE_F64 = 4,
-  DDOG_TRACER_VALUE_STRING = 5,
-  DDOG_TRACER_VALUE_BINARY = 6,
-  DDOG_TRACER_VALUE_ARRAY = 7,
-  DDOG_TRACER_VALUE_MAP = 8,
-} ddog_TracerValueKind;
+typedef uint8_t ddog_TracerValueKind;
 """
 
 [export]
@@ -49,6 +39,15 @@ exclude = ["TraceExporter", "TracerSpan", "TracerSpanEvent", "TracerTraceChunks"
 "TracerSpanLinkAttribute" = "ddog_TracerSpanLinkAttribute"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
 "TokioCancellationToken" = "ddog_TraceExporterCancelToken"
+"DDOG_TRACER_VALUE_NIL" = "DDOG_TRACER_VALUE_NIL"
+"DDOG_TRACER_VALUE_BOOL" = "DDOG_TRACER_VALUE_BOOL"
+"DDOG_TRACER_VALUE_I64" = "DDOG_TRACER_VALUE_I64"
+"DDOG_TRACER_VALUE_U64" = "DDOG_TRACER_VALUE_U64"
+"DDOG_TRACER_VALUE_F64" = "DDOG_TRACER_VALUE_F64"
+"DDOG_TRACER_VALUE_STRING" = "DDOG_TRACER_VALUE_STRING"
+"DDOG_TRACER_VALUE_BINARY" = "DDOG_TRACER_VALUE_BINARY"
+"DDOG_TRACER_VALUE_ARRAY" = "DDOG_TRACER_VALUE_ARRAY"
+"DDOG_TRACER_VALUE_MAP" = "DDOG_TRACER_VALUE_MAP"
 
 [export.mangle]
 rename_types = "PascalCase"

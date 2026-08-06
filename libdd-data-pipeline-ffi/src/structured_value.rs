@@ -12,15 +12,29 @@ use rmp::encode::{
 };
 use std::ptr::NonNull;
 
-const DDOG_TRACER_VALUE_NIL: u8 = 0;
-const DDOG_TRACER_VALUE_BOOL: u8 = 1;
-const DDOG_TRACER_VALUE_I64: u8 = 2;
-const DDOG_TRACER_VALUE_U64: u8 = 3;
-const DDOG_TRACER_VALUE_F64: u8 = 4;
-const DDOG_TRACER_VALUE_STRING: u8 = 5;
-const DDOG_TRACER_VALUE_BINARY: u8 = 6;
-const DDOG_TRACER_VALUE_ARRAY: u8 = 7;
-const DDOG_TRACER_VALUE_MAP: u8 = 8;
+pub const DDOG_TRACER_VALUE_NIL: u8 = 0;
+pub const DDOG_TRACER_VALUE_BOOL: u8 = 1;
+pub const DDOG_TRACER_VALUE_I64: u8 = 2;
+pub const DDOG_TRACER_VALUE_U64: u8 = 3;
+pub const DDOG_TRACER_VALUE_F64: u8 = 4;
+pub const DDOG_TRACER_VALUE_STRING: u8 = 5;
+pub const DDOG_TRACER_VALUE_BINARY: u8 = 6;
+pub const DDOG_TRACER_VALUE_ARRAY: u8 = 7;
+pub const DDOG_TRACER_VALUE_MAP: u8 = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum TracerValueKind {
+    Nil = DDOG_TRACER_VALUE_NIL,
+    Bool = DDOG_TRACER_VALUE_BOOL,
+    I64 = DDOG_TRACER_VALUE_I64,
+    U64 = DDOG_TRACER_VALUE_U64,
+    F64 = DDOG_TRACER_VALUE_F64,
+    String = DDOG_TRACER_VALUE_STRING,
+    Binary = DDOG_TRACER_VALUE_BINARY,
+    Array = DDOG_TRACER_VALUE_ARRAY,
+    Map = DDOG_TRACER_VALUE_MAP,
+}
 
 const MAX_DEPTH: u32 = 64;
 
@@ -29,8 +43,8 @@ const MAX_DEPTH: u32 = 64;
 /// Scalar tokens use the corresponding scalar field. String and binary tokens
 /// use `bytes`. Array and map tokens use `child_count`; a map is followed by
 /// two values per entry (key, then value). All other fields must be ignored.
-/// Integer `kind` constants are used instead of a C enum so malformed tags can
-/// be rejected without constructing an invalid Rust enum discriminant.
+/// `kind` remains a raw integer so malformed C input can be rejected without
+/// constructing an invalid Rust enum discriminant.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct TracerValueToken<'a> {
@@ -83,8 +97,10 @@ fn encode_one(
     *index += 1;
 
     match token.kind {
-        DDOG_TRACER_VALUE_NIL => write_nil(output).map_err(encoding_failed)?,
-        DDOG_TRACER_VALUE_BOOL => {
+        kind if kind == TracerValueKind::Nil as u8 => {
+            write_nil(output).map_err(encoding_failed)?
+        }
+        kind if kind == TracerValueKind::Bool as u8 => {
             let value = match token.bool_value {
                 0 => false,
                 1 => true,
@@ -92,20 +108,25 @@ fn encode_one(
             };
             write_bool(output, value).map_err(encoding_failed)?;
         }
-        DDOG_TRACER_VALUE_I64 => {
+        kind if kind == TracerValueKind::I64 as u8 => {
             write_sint(output, token.i64_value).map_err(encoding_failed)?;
         }
-        DDOG_TRACER_VALUE_U64 => {
+        kind if kind == TracerValueKind::U64 as u8 => {
             write_uint(output, token.u64_value).map_err(encoding_failed)?;
         }
-        DDOG_TRACER_VALUE_F64 => write_f64(output, token.f64_value).map_err(encoding_failed)?,
-        DDOG_TRACER_VALUE_STRING | DDOG_TRACER_VALUE_BINARY => {
+        kind if kind == TracerValueKind::F64 as u8 => {
+            write_f64(output, token.f64_value).map_err(encoding_failed)?
+        }
+        kind
+            if kind == TracerValueKind::String as u8
+                || kind == TracerValueKind::Binary as u8 =>
+        {
             let bytes = token
                 .bytes
                 .try_as_bytes()
                 .map_err(|_| invalid_argument("structured value contains an invalid byte slice"))?;
             ensure_byte_len_fits(bytes)?;
-            if token.kind == DDOG_TRACER_VALUE_STRING {
+            if token.kind == TracerValueKind::String as u8 {
                 let text = std::str::from_utf8(bytes)
                     .map_err(|_| invalid_input("structured value string is not valid UTF-8"))?;
                 write_str(output, text).map_err(encoding_failed)?;
@@ -113,13 +134,15 @@ fn encode_one(
                 write_bin(output, bytes).map_err(encoding_failed)?;
             }
         }
-        DDOG_TRACER_VALUE_ARRAY | DDOG_TRACER_VALUE_MAP => {
+        kind
+            if kind == TracerValueKind::Array as u8 || kind == TracerValueKind::Map as u8 =>
+        {
             if depth >= MAX_DEPTH {
                 return Err(invalid_input(
                     "structured value exceeds maximum depth of 64",
                 ));
             }
-            let values = if token.kind == DDOG_TRACER_VALUE_MAP {
+            let values = if token.kind == TracerValueKind::Map as u8 {
                 write_map_len(output, token.child_count).map_err(encoding_failed)?;
                 token
                     .child_count
