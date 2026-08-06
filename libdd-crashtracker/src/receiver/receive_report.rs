@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    crash_info::{
-        CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Ucontext,
-    },
+    crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
+    receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
     shared::constants::*,
     CrashtrackerConfiguration, StackTrace,
@@ -14,51 +12,8 @@ use crate::{
 use anyhow::Context;
 use libdd_telemetry::data::LogLevel;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
-
-#[derive(Debug)]
-enum ReceiverIssue {
-    Timeout,
-    IoError,
-    ProcessLine,
-    AttachAdditionalFile,
-    IncompleteStacktrace,
-    UnexpectedLine,
-}
-
-impl ReceiverIssue {
-    fn tag(&self) -> &'static str {
-        match self {
-            ReceiverIssue::Timeout => "receiver_issue:timeout",
-            ReceiverIssue::IoError => "receiver_issue:io_error",
-            ReceiverIssue::ProcessLine => "receiver_issue:process_line_error",
-            ReceiverIssue::AttachAdditionalFile => "receiver_issue:attach_additional_file_error",
-            ReceiverIssue::IncompleteStacktrace => "receiver_issue:incomplete_stacktrace",
-            ReceiverIssue::UnexpectedLine => "receiver_issue:unexpected_line",
-        }
-    }
-}
-
-fn emit_debug_log(
-    logger: &Option<Arc<TelemetryCrashUploader>>,
-    issue: ReceiverIssue,
-    crash_uuid: &str,
-    message: String,
-    level: LogLevel,
-) {
-    if let Some(logger) = logger.as_ref().map(Arc::clone) {
-        let tags = format!(
-            "{},crash_uuid:{},is_crash_debug:true",
-            issue.tag(),
-            crash_uuid
-        );
-        tokio::spawn(async move {
-            let _ = logger.upload_general_log(message, tags, level).await;
-        });
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RuntimeStackFrame {
@@ -135,7 +90,7 @@ fn process_line(
     config: &mut Option<CrashtrackerConfiguration>,
     line: &str,
     state: StdinState,
-    telemetry_logger: &Option<Arc<TelemetryCrashUploader>>,
+    debug_logger: &DebugLogger,
 ) -> anyhow::Result<StdinState> {
     let next = match state {
         StdinState::AdditionalTags if line.starts_with(DD_CRASHTRACK_END_ADDITIONAL_TAGS) => {
@@ -352,8 +307,7 @@ fn process_line(
         StdinState::Waiting => {
             let msg = format!("Unexpected line while receiving crashreport: {line}");
             builder.with_log_message(msg.clone(), true)?;
-            emit_debug_log(
-                telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::UnexpectedLine,
                 &builder.uuid.to_string(),
                 msg,
@@ -377,7 +331,10 @@ pub(crate) async fn receive_report_from_stream(
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
     let mut config: Option<CrashtrackerConfiguration> = None;
-    let mut telemetry_logger: Option<Arc<TelemetryCrashUploader>> = None;
+    // Usable before the collector sends anything, so a receiver that never gets
+    // a config or metadata block can still report why. Upgraded in the loop as
+    // those blocks arrive.
+    let mut debug_logger = DebugLogger::new(None, None);
 
     let mut crash_ping_sent = false;
 
@@ -388,14 +345,9 @@ pub(crate) async fn receive_report_from_stream(
 
     //TODO: This assumes that the input is valid UTF-8.
     loop {
-        // Initialize telemetry logger once we have both config and metadata.
-        if telemetry_logger.is_none() {
-            if let (Some(cfg), Some(md)) = (&config, builder.metadata.clone()) {
-                if let Ok(logger) = TelemetryCrashUploader::new(&md, cfg.endpoint()) {
-                    telemetry_logger = Some(Arc::new(logger));
-                }
-            }
-        }
+        // Re-point the debug logger at the real endpoint and application once
+        // the config and metadata blocks arrive. Cheap no-op until they do.
+        debug_logger.update(config.as_ref(), builder.metadata.as_ref());
 
         // We need to wait until at least we receive config, metadata, and kind (on non-Windows
         // platforms) before sending the crash ping
@@ -421,8 +373,7 @@ pub(crate) async fn receive_report_from_stream(
         let next_line = tokio::time::timeout(remaining_timeout, lines.next_line()).await;
         let Ok(next_line) = next_line else {
             builder.with_log_message(format!("Timeout: {next_line:?}"), true)?;
-            emit_debug_log(
-                &telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::Timeout,
                 &builder.uuid.to_string(),
                 format!("Timeout while waiting for crash report input: {next_line:?}"),
@@ -435,8 +386,7 @@ pub(crate) async fn receive_report_from_stream(
             // We ignore error from uploading the log to telemetry, because what are we going to do?
             // If upload is failing, its not worth the effort to retry the request so we should just
             // continue on. At least we will get the log message in the crash info
-            emit_debug_log(
-                &telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::IoError,
                 &builder.uuid.to_string(),
                 format!("IO error while reading crash report input: {next_line:?}"),
@@ -451,7 +401,7 @@ pub(crate) async fn receive_report_from_stream(
             &mut config,
             &next_line,
             stdin_state,
-            &telemetry_logger,
+            &debug_logger,
         ) {
             Ok(next_state) => {
                 stdin_state = next_state;
@@ -465,8 +415,7 @@ pub(crate) async fn receive_report_from_stream(
                     format!("Unable to process line: {next_line}. Error: {e}"),
                     true,
                 )?;
-                emit_debug_log(
-                    &telemetry_logger,
+                debug_logger.emit(
                     ReceiverIssue::ProcessLine,
                     &builder.uuid.to_string(),
                     format!("Unable to process line: {next_line}. Error: {e}"),
@@ -487,6 +436,19 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     if !builder.has_data() {
+        // Nothing arrived at all, so there is no crash report to build and no
+        // config to upload it with. The env-derived logger is all we have, and
+        // this log is the only signal that the receiver ran and got nothing.
+        // Waited on rather than spawned: we return right after, and the caller
+        // drops the runtime, which would cancel a pending spawned task.
+        debug_logger
+            .emit_and_wait(
+                ReceiverIssue::NoData,
+                &builder.uuid.to_string(),
+                "Receiver received no data".to_string(),
+                LogLevel::Warn,
+            )
+            .await;
         return Ok(None);
     }
 
@@ -499,8 +461,7 @@ pub(crate) async fn receive_report_from_stream(
     for filename in config.additional_files() {
         if let Err(e) = builder.with_file(filename.clone()) {
             builder.with_log_message(e.to_string(), true)?;
-            emit_debug_log(
-                &telemetry_logger,
+            debug_logger.emit(
                 ReceiverIssue::AttachAdditionalFile,
                 &builder.uuid.to_string(),
                 format!("Unable to attach additional file {filename:?}: {e}"),
@@ -540,8 +501,7 @@ pub(crate) async fn receive_report_from_stream(
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
-        emit_debug_log(
-            &telemetry_logger,
+        debug_logger.emit(
             ReceiverIssue::IncompleteStacktrace,
             &crash_info.uuid,
             "CrashInfo stacktrace incomplete".to_string(),
@@ -664,6 +624,71 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    /// Reads from `socket` until `marker` shows up, then answers 200 so the
+    /// uploader's request completes instead of waiting out its timeout.
+    async fn serve_one_request(listener: tokio::net::TcpListener, marker: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut request = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut chunk).await.expect("read");
+            if n == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..n]);
+            if String::from_utf8_lossy(&request).contains(marker) {
+                break;
+            }
+        }
+        let _ = socket
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+            .await;
+        let _ = socket.flush().await;
+        String::from_utf8_lossy(&request).to_string()
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_receive_report_no_data_sends_debug_log() {
+        // Stand in for the agent, so the debug log has somewhere to land
+        // without a config block telling the receiver where to send.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        std::env::set_var(
+            "DD_TRACE_AGENT_URL",
+            format!("http://{}", listener.local_addr().unwrap()),
+        );
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                serve_one_request(listener, "no_data"),
+            )
+            .await
+            .expect("no telemetry request received")
+        });
+
+        let (sender, receiver) = tokio::net::UnixStream::pair().unwrap();
+        // Close without sending anything, as a parent that exited normally does.
+        drop(sender);
+
+        let report =
+            receive_report_from_stream(Duration::from_secs(1), tokio::io::BufReader::new(receiver))
+                .await
+                .unwrap();
+        assert!(report.is_none());
+
+        let request = server.await.unwrap();
+        assert!(
+            request.contains("receiver_issue:no_data"),
+            "no_data tag missing from telemetry request: {request}"
+        );
+        assert!(
+            request.contains("Receiver received no data"),
+            "no_data message missing from telemetry request: {request}"
+        );
+    }
+
     #[test]
     fn test_stdin_state_waiting_to_message() {
         let mut builder = CrashInfoBuilder::new();
@@ -672,7 +697,14 @@ mod tests {
         let state = StdinState::Waiting;
         let line = DD_CRASHTRACK_BEGIN_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         assert!(matches!(next_state, StdinState::Message));
     }
@@ -686,8 +718,14 @@ mod tests {
         let state = StdinState::Message;
         let message_line = "program panicked";
 
-        let next_state =
-            process_line(&mut builder, &mut config, message_line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            message_line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         // Should stay in message state
         assert!(matches!(next_state, StdinState::Message));
@@ -704,7 +742,14 @@ mod tests {
         let state = StdinState::Message;
         let line = DD_CRASHTRACK_END_MESSAGE;
 
-        let next_state = process_line(&mut builder, &mut config, line, state, &None).unwrap();
+        let next_state = process_line(
+            &mut builder,
+            &mut config,
+            line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
 
         assert!(matches!(next_state, StdinState::Waiting));
     }
@@ -717,7 +762,13 @@ mod tests {
         let state = StdinState::Message;
         let empty_line = "";
 
-        let result = process_line(&mut builder, &mut config, empty_line, state, &None);
+        let result = process_line(
+            &mut builder,
+            &mut config,
+            empty_line,
+            state,
+            &DebugLogger::disabled(),
+        );
 
         // Should handle empty line without error
         assert!(result.is_ok());
@@ -734,7 +785,7 @@ mod tests {
             &mut config,
             "Line 1 of panic",
             StdinState::Message,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
 
@@ -759,7 +810,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -770,7 +821,7 @@ mod tests {
             &mut config,
             "test panic message",
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -782,7 +833,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -802,7 +853,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
@@ -813,7 +864,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -850,14 +901,21 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
 
         // Add a frame
         let frame_json = r#"{"ip":"0x1234"}"#;
-        state = process_line(&mut builder, &mut config, frame_json, state, &None).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            frame_json,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
         assert!(matches!(state, StdinState::StackTrace));
 
         // End stacktrace
@@ -866,7 +924,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_STACKTRACE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
@@ -892,7 +950,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_BEGIN_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Message));
@@ -902,7 +960,14 @@ mod tests {
             "Exception 'Evil'\\n{}\\n{}\\n{{}}\\n{}",
             DD_CRASHTRACK_END_MESSAGE, DD_CRASHTRACK_BEGIN_CONFIG, DD_CRASHTRACK_END_CONFIG,
         );
-        state = process_line(&mut builder, &mut config, &sanitized_line, state, &None).unwrap();
+        state = process_line(
+            &mut builder,
+            &mut config,
+            &sanitized_line,
+            state,
+            &DebugLogger::disabled(),
+        )
+        .unwrap();
         // Must still be in Message state. the escaped sentinels are just text
         assert!(
             matches!(state, StdinState::Message),
@@ -915,7 +980,7 @@ mod tests {
             &mut config,
             DD_CRASHTRACK_END_MESSAGE,
             state,
-            &None,
+            &DebugLogger::disabled(),
         )
         .unwrap();
         assert!(matches!(state, StdinState::Waiting));
