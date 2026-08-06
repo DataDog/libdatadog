@@ -180,11 +180,7 @@ fn build_attributes(
     push(
         &mut attrs,
         "span.kind",
-        if group.span_kind.is_empty() {
-            "SPAN_KIND_INTERNAL"
-        } else {
-            tag_to_otlp_kind_str_name(&group.span_kind)
-        },
+        tag_to_otlp_kind_str_name(&group.span_kind),
     );
     push(
         &mut attrs,
@@ -208,7 +204,6 @@ fn build_attributes(
             group.http_status_code as i64,
         ));
     }
-    // additional_metric_tags support is still evolving/TBD across most SDKs.
     for tag in &group.additional_metric_tags {
         if let Some((k, v)) = tag.split_once(':') {
             push(&mut attrs, k, v);
@@ -237,8 +232,6 @@ fn build_attributes(
     attrs.push(json!({
         "key": "datadog.span.top_level", "value": { "boolValue": top_level }
     }));
-    // Unlike process_tags (a resource attribute), peer_tags is per-span and belongs on the data
-    // point.
     if !group.peer_tags.is_empty() {
         attrs.push(kv_str_array(
             "datadog.peer_tags",
@@ -266,8 +259,7 @@ fn build_resource_attributes(info: &OtlpResourceInfo) -> Vec<Value> {
     if !info.runtime_id.is_empty() {
         attrs.push(kv_str("datadog.runtime_id", &info.runtime_id));
     }
-    // Mirrors the v0.6/legacy stats export's process_tags string; keep both in sync if that
-    // format changes.
+    // Keep this representation aligned with v0.6 stats export.
     let process_tags: Vec<&str> = info
         .process_tags
         .split(',')
@@ -537,7 +529,6 @@ mod tests {
             .unwrap()["attributes"]
             .as_array()
             .unwrap();
-        // service.name is on the data point even though it matches the resource default.
         assert_eq!(str_at(a, "service.name"), Some("svc"));
         assert_eq!(str_at(a, "span.name"), Some("GET /foo"));
         assert_eq!(str_at(a, "span.kind"), Some("SPAN_KIND_SERVER"));
@@ -610,16 +601,20 @@ mod tests {
     }
 
     #[test]
-    fn empty_span_kind_defaults_to_internal() {
-        let req =
-            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), false).unwrap();
-        assert_eq!(
-            str_at(
-                points(&req)[0]["attributes"].as_array().unwrap(),
-                "span.kind"
-            ),
-            Some("SPAN_KIND_INTERNAL")
-        );
+    fn absent_or_unknown_span_kind_defaults_to_internal() {
+        for span_kind in ["", "unknown"] {
+            let group = group_with_exact(&[1_000_000_000], &[], |g| {
+                g.span_kind = span_kind.into();
+            });
+            let req = map_stats_to_otlp_metrics(&buckets(vec![group]), &resource(), false).unwrap();
+            assert_eq!(
+                str_at(
+                    points(&req)[0]["attributes"].as_array().unwrap(),
+                    "span.kind"
+                ),
+                Some("SPAN_KIND_INTERNAL")
+            );
+        }
     }
 
     #[test]

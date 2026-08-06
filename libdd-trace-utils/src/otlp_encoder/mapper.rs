@@ -118,7 +118,7 @@ pub fn tag_to_otlp_kind_str_name(t: &str) -> &'static str {
         span_kind::PRODUCER => "SPAN_KIND_PRODUCER",
         span_kind::CONSUMER => "SPAN_KIND_CONSUMER",
         span_kind::INTERNAL => "SPAN_KIND_INTERNAL",
-        _ => "SPAN_KIND_UNSPECIFIED",
+        _ => "SPAN_KIND_INTERNAL",
     }
 }
 
