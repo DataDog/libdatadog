@@ -212,9 +212,7 @@ fn build_attributes(
     // additional_metric_tags support is still evolving/TBD across most SDKs.
     for tag in &group.additional_metric_tags {
         if let Some((k, v)) = tag.split_once(':') {
-            if otel_trace_semantics_enabled
-                && (k.starts_with("datadog.") || k.starts_with("_datadog."))
-            {
+            if otel_trace_semantics_enabled && k.starts_with("datadog.") {
                 continue;
             }
             push(&mut attrs, k, v);
@@ -594,9 +592,7 @@ mod tests {
                 "status.code",
             ]
         );
-        for prefix in ["datadog.", "_datadog."] {
-            assert!(!keys.iter().any(|key| key.starts_with(prefix)));
-        }
+        assert!(!keys.iter().any(|key| key.starts_with("datadog.")));
         assert!(!keys.contains(&"additional_metric_tags"));
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
         assert_eq!(str_at(a, "service.name"), Some("svc"));
@@ -725,7 +721,6 @@ mod tests {
                 // Only the first `:` is a delimiter; the value keeps any embedded `:`.
                 "endpoint:https://host:8080".into(),
                 "datadog.custom:dd".into(),
-                "_datadog.custom:internal".into(),
             ];
         });
         let req = map_stats_to_otlp_metrics(&buckets(vec![g.clone()]), &resource(), false).unwrap();
@@ -734,7 +729,6 @@ mod tests {
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
         assert_eq!(str_at(a, "datadog.custom"), Some("dd"));
-        assert_eq!(str_at(a, "_datadog.custom"), Some("internal"));
 
         // OTel-semantics mode keeps custom tags and filters only Datadog-prefixed tags.
         let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), true).unwrap();
@@ -743,7 +737,6 @@ mod tests {
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
         assert_eq!(str_at(a, "datadog.custom"), None);
-        assert_eq!(str_at(a, "_datadog.custom"), None);
 
         // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
