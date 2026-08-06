@@ -197,30 +197,36 @@ fn build_attributes(
         },
     );
 
-    if otel_trace_semantics_enabled {
-        return attrs;
-    }
-
     push(&mut attrs, "http.request.method", &group.http_method);
     push(&mut attrs, "http.route", &group.http_endpoint);
     // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
     if let Some(name) = grpc_status_code_to_name(&group.grpc_status_code) {
         push(&mut attrs, "rpc.response.status_code", name);
     }
-    // additional_metric_tags support is still evolving/TBD across most SDKs.
-    for tag in &group.additional_metric_tags {
-        if let Some((k, v)) = tag.split_once(':') {
-            push(&mut attrs, k, v);
-        }
-    }
-    push(&mut attrs, "datadog.operation.name", &group.name);
-    push(&mut attrs, "datadog.span.type", &group.r#type);
     if group.http_status_code != 0 {
         attrs.push(kv_int(
             "http.response.status_code",
             group.http_status_code as i64,
         ));
     }
+    // additional_metric_tags support is still evolving/TBD across most SDKs.
+    for tag in &group.additional_metric_tags {
+        if let Some((k, v)) = tag.split_once(':') {
+            if otel_trace_semantics_enabled
+                && (k.starts_with("datadog.") || k.starts_with("_datadog."))
+            {
+                continue;
+            }
+            push(&mut attrs, k, v);
+        }
+    }
+
+    if otel_trace_semantics_enabled {
+        return attrs;
+    }
+
+    push(&mut attrs, "datadog.operation.name", &group.name);
+    push(&mut attrs, "datadog.span.type", &group.r#type);
     // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
     // boolean, not the full origin string, so other origins are lost upstream.
     if group.synthetics {
@@ -559,7 +565,7 @@ mod tests {
         assert_eq!(str_at(a, "datadog.span.type"), Some("web"));
         assert_eq!(str_at(a, "datadog.origin"), Some("synthetics"));
         assert_eq!(bool_at(a, "datadog.is_trace_root"), Some(true));
-        assert!(a.iter().any(|kv| kv["key"] == "datadog.span.top_level"));
+        assert_eq!(bool_at(a, "datadog.span.top_level"), Some(true));
         assert_eq!(
             str_array_at(a, "datadog.peer_tags"),
             Some(vec!["db.hostname:prod-db-1", "db.name:orders"])
@@ -569,20 +575,29 @@ mod tests {
             |p| str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc-other")
         ));
 
-        // OTel mode emits exactly the Span Metrics Connector's default dimensions.
+        // OTel mode retains semantic and custom attributes while suppressing Datadog attributes.
         let req = map_stats_to_otlp_metrics(&buckets(vec![g_pair]), &resource(), true).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         let mut keys: Vec<&str> = a.iter().map(|kv| kv["key"].as_str().unwrap()).collect();
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["service.name", "span.kind", "span.name", "status.code"]
+            [
+                "custom.primary",
+                "http.request.method",
+                "http.response.status_code",
+                "http.route",
+                "rpc.response.status_code",
+                "service.name",
+                "span.kind",
+                "span.name",
+                "status.code",
+            ]
         );
-        for prefix in ["http.", "rpc.", "datadog.", "_datadog."] {
+        for prefix in ["datadog.", "_datadog."] {
             assert!(!keys.iter().any(|key| key.starts_with(prefix)));
         }
         assert!(!keys.contains(&"additional_metric_tags"));
-        assert!(!keys.contains(&"custom.primary"));
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
         assert_eq!(str_at(a, "service.name"), Some("svc"));
     }
@@ -596,15 +611,16 @@ mod tests {
         ] {
             let g = group_with_exact(&[1_000_000_000], &[], |g| {
                 g.is_trace_root = value as i32;
+                g.top_level_hits = 0;
             });
             let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let attrs = points(&req)[0]["attributes"].as_array().unwrap();
+            let is_trace_root = attrs.iter().find(|kv| kv["key"] == "datadog.is_trace_root");
             assert_eq!(
-                bool_at(
-                    points(&req)[0]["attributes"].as_array().unwrap(),
-                    "datadog.is_trace_root"
-                ),
-                expected
+                is_trace_root.map(|kv| kv["value"].clone()),
+                expected.map(|value| json!({ "boolValue": value }))
             );
+            assert_eq!(bool_at(attrs, "datadog.span.top_level"), Some(false));
         }
     }
 
@@ -708,6 +724,8 @@ mod tests {
                 "region:us-east".into(),
                 // Only the first `:` is a delimiter; the value keeps any embedded `:`.
                 "endpoint:https://host:8080".into(),
+                "datadog.custom:dd".into(),
+                "_datadog.custom:internal".into(),
             ];
         });
         let req = map_stats_to_otlp_metrics(&buckets(vec![g.clone()]), &resource(), false).unwrap();
@@ -715,11 +733,17 @@ mod tests {
         assert_eq!(str_at(a, "custom.primary"), Some("a"));
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
+        assert_eq!(str_at(a, "datadog.custom"), Some("dd"));
+        assert_eq!(str_at(a, "_datadog.custom"), Some("internal"));
 
-        // OTel-semantics mode is limited to the Span Metrics Connector defaults.
+        // OTel-semantics mode keeps custom tags and filters only Datadog-prefixed tags.
         let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), true).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
-        assert_eq!(str_at(a, "custom.primary"), None);
+        assert_eq!(str_at(a, "custom.primary"), Some("a"));
+        assert_eq!(str_at(a, "region"), Some("us-east"));
+        assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
+        assert_eq!(str_at(a, "datadog.custom"), None);
+        assert_eq!(str_at(a, "_datadog.custom"), None);
 
         // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
