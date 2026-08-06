@@ -147,13 +147,6 @@ pub struct AppClientConfigurationChange {
 
 #[derive(Debug, Serialize)]
 pub struct AppEndpoints {
-    /// Flags the first app-endpoints payload of the process.
-    ///
-    /// Serialized as `is_first`: that is what every tracer actually puts on the wire (dd-trace-py
-    /// shipped `{"is_first": ...}` from its Python implementation) and what system-tests asserts
-    /// on. The backend's `AppEndpointsPayload` struct tags this `json:"is-first"`, but no producer
-    /// sends the hyphenated form, so that tag matches nothing today - do not "fix" this to match
-    /// it without changing the producers too, or the flag silently stops arriving.
     pub is_first: bool,
     pub endpoints: Vec<serde_json::Value>,
 }
