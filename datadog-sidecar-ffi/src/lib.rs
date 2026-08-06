@@ -456,7 +456,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     let seq_id = seq_id.to_std();
     let config_entry = TelemetryActions::AddConfig(data::Configuration {
         name: config_key.to_utf8_lossy().into_owned(),
-        value: config_value.to_utf8_lossy().into_owned(),
+        value: Some(config_value.to_utf8_lossy().into_owned()),
         origin,
         config_id,
         seq_id,
@@ -487,6 +487,9 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
         path: Some(path.to_utf8_lossy().into_owned()),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
+        request_body_type: None,
+        response_body_type: None,
+        response_code: None,
     });
 
     try_c!(blocking::enqueue_actions(
@@ -515,6 +518,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     let dependency = TelemetryActions::AddDependency(Dependency {
         name: dependency_name.to_utf8_lossy().into_owned(),
         version,
+        hash: None,
+        metadata: None,
     });
 
     try_c!(blocking::enqueue_actions(
@@ -547,6 +552,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
         version,
         compatible: None,
         auto_enabled: None,
+        error: None,
     });
 
     try_c!(blocking::enqueue_actions(

@@ -47,6 +47,8 @@ use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "telemetry")]
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -260,7 +262,7 @@ pub struct TraceExporter<
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     #[cfg(feature = "telemetry")]
-    telemetry: Option<TelemetryClient<C>>,
+    telemetry: ArcSwapOption<TelemetryClient<C>>,
     health_metrics_enabled: bool,
     capabilities: C,
     workers: TraceExporterWorkers,
@@ -292,6 +294,18 @@ impl<
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
         TraceExporterBuilder::new()
+    }
+
+    /// Re-point health-metric reporting at a different telemetry worker, or at none.
+    ///
+    /// Libraries might need to update the used telemetry worker at runtime. This allows doing so
+    /// without rebuilding the whole trace exporter.
+    ///
+    /// Pass `None` on telemetry shut down, so reporting stops rather than targeting a dead worker.
+    #[cfg(feature = "telemetry")]
+    pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
+        self.telemetry
+            .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
     }
 
     /// Stop the background workers owned by this exporter.
@@ -474,7 +488,11 @@ impl<
                         None
                     },
                     #[cfg(feature = "telemetry")]
-                    telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
+                    telemetry: self
+                        .telemetry
+                        .load_full()
+                        .as_ref()
+                        .map(|t| t.clone_handle()),
                     #[cfg(not(feature = "telemetry"))]
                     _phantom: std::marker::PhantomData,
                 };
@@ -733,7 +751,7 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = &self.telemetry {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
                 payload_len as u64,
@@ -804,7 +822,7 @@ impl<
             self.client_computed_top_level,
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
-            self.telemetry.as_ref(),
+            self.telemetry.load_full().as_deref(),
         );
 
         for chunk in &mut traces {
