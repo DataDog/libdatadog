@@ -79,7 +79,6 @@ fn kv_str_array<'a>(key: &str, values: impl IntoIterator<Item = &'a str>) -> Val
 pub fn map_stats_to_otlp_metrics(
     buckets: &[OtlpStatsBucket],
     resource_info: &OtlpResourceInfo,
-    otel_trace_semantics_enabled: bool,
 ) -> Option<Value> {
     let mut data_points = Vec::new();
     for b in buckets {
@@ -96,7 +95,7 @@ pub fn map_stats_to_otlp_metrics(
                     continue;
                 };
                 data_points.push(json!({
-                    "attributes": build_attributes(group, is_error, resource_info, otel_trace_semantics_enabled),
+                    "attributes": build_attributes(group, is_error, resource_info),
                     "startTimeUnixNano": b.bucket.start.to_string(),
                     "timeUnixNano": end.to_string(),
                     "count": cell.count.to_string(),
@@ -114,7 +113,7 @@ pub fn map_stats_to_otlp_metrics(
     }
     Some(json!({
         "resourceMetrics": [{
-            "resource": { "attributes": build_resource_attributes(resource_info, otel_trace_semantics_enabled) },
+            "resource": { "attributes": build_resource_attributes(resource_info) },
             "scopeMetrics": [{
                 "metrics": [{
                     "name": METRIC_NAME,
@@ -160,7 +159,6 @@ fn build_attributes(
     group: &pb::ClientGroupedStats,
     is_error: bool,
     resource_info: &OtlpResourceInfo,
-    otel_trace_semantics_enabled: bool,
 ) -> Vec<Value> {
     fn push(attrs: &mut Vec<Value>, k: &str, v: &str) {
         if !v.is_empty() {
@@ -212,19 +210,13 @@ fn build_attributes(
     // additional_metric_tags support is still evolving/TBD across most SDKs.
     for tag in &group.additional_metric_tags {
         if let Some((k, v)) = tag.split_once(':') {
-            if otel_trace_semantics_enabled && k.starts_with("datadog.") {
-                continue;
-            }
             push(&mut attrs, k, v);
         }
     }
 
-    if otel_trace_semantics_enabled {
-        return attrs;
-    }
-
     push(&mut attrs, "datadog.operation.name", &group.name);
     push(&mut attrs, "datadog.span.type", &group.r#type);
+    push(&mut attrs, "datadog.svc_src", &group.service_source);
     // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
     // boolean, not the full origin string, so other origins are lost upstream.
     if group.synthetics {
@@ -255,10 +247,7 @@ fn build_attributes(
     attrs
 }
 
-fn build_resource_attributes(
-    info: &OtlpResourceInfo,
-    otel_trace_semantics_enabled: bool,
-) -> Vec<Value> {
+fn build_resource_attributes(info: &OtlpResourceInfo) -> Vec<Value> {
     let mut attrs: Vec<Value> = [
         ("service.name", info.service.as_str()),
         ("service.version", info.app_version.as_str()),
@@ -273,21 +262,19 @@ fn build_resource_attributes(
     .map(|(k, v)| kv_str(k, v))
     .collect();
 
-    if !otel_trace_semantics_enabled {
-        if !info.runtime_id.is_empty() {
-            attrs.push(kv_str("datadog.runtime_id", &info.runtime_id));
-        }
-        // Mirrors the v0.6/legacy stats export's process_tags string; keep both in sync if that
-        // format changes.
-        let process_tags: Vec<&str> = info
-            .process_tags
-            .split(',')
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
-        if !process_tags.is_empty() {
-            attrs.push(kv_str_array("datadog.process_tags", process_tags));
-        }
+    if !info.runtime_id.is_empty() {
+        attrs.push(kv_str("datadog.runtime_id", &info.runtime_id));
+    }
+    // Mirrors the v0.6/legacy stats export's process_tags string; keep both in sync if that
+    // format changes.
+    let process_tags: Vec<&str> = info
+        .process_tags
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if !process_tags.is_empty() {
+        attrs.push(kv_str_array("datadog.process_tags", process_tags));
     }
     attrs
 }
@@ -313,11 +300,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
         if buckets.is_empty() {
             return Ok(false);
         }
-        let Some(request) = map_stats_to_otlp_metrics(
-            &buckets,
-            &self.resource,
-            self.config.otel_trace_semantics_enabled,
-        ) else {
+        let Some(request) = map_stats_to_otlp_metrics(&buckets, &self.resource) else {
             return Ok(false);
         };
         send_otlp_http(
@@ -498,36 +481,33 @@ mod tests {
 
     #[test]
     fn metric_shape_and_resource_attributes() {
-        assert!(map_stats_to_otlp_metrics(&[], &resource(), false).is_none());
+        assert!(map_stats_to_otlp_metrics(&[], &resource()).is_none());
         let mut r = resource();
         r.app_version = "1.2.3".to_string();
         r.hostname = "my-host".to_string();
         r.runtime_id = "abc-123".to_string();
         r.process_tags = "entrypoint.name:server".to_string();
-        for otel in [false, true] {
-            let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r, otel).unwrap();
-            let m = metric(&req);
-            assert_eq!(m["name"], "traces.span.sdk.metrics.duration");
-            assert_eq!(m["unit"], "s");
-            assert_eq!(m["histogram"]["aggregationTemporality"], 1);
-            assert!(req["resourceMetrics"][0]["scopeMetrics"][0]["scope"].is_null());
-            let a = resource_attrs(&req);
-            assert_eq!(str_at(a, "service.name"), Some("svc"));
-            assert_eq!(str_at(a, "service.version"), Some("1.2.3"));
-            assert_eq!(str_at(a, "deployment.environment.name"), Some("test"));
-            assert_eq!(str_at(a, "host.name"), Some("my-host"));
-            assert_eq!(str_at(a, "telemetry.sdk.name"), Some("datadog"));
-            let dd = !otel;
-            assert_eq!(str_at(a, "datadog.runtime_id").is_some(), dd);
-            assert_eq!(
-                str_array_at(a, "datadog.process_tags"),
-                dd.then(|| vec!["entrypoint.name:server"])
-            );
-        }
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r).unwrap();
+        let m = metric(&req);
+        assert_eq!(m["name"], "traces.span.sdk.metrics.duration");
+        assert_eq!(m["unit"], "s");
+        assert_eq!(m["histogram"]["aggregationTemporality"], 1);
+        assert!(req["resourceMetrics"][0]["scopeMetrics"][0]["scope"].is_null());
+        let a = resource_attrs(&req);
+        assert_eq!(str_at(a, "service.name"), Some("svc"));
+        assert_eq!(str_at(a, "service.version"), Some("1.2.3"));
+        assert_eq!(str_at(a, "deployment.environment.name"), Some("test"));
+        assert_eq!(str_at(a, "host.name"), Some("my-host"));
+        assert_eq!(str_at(a, "telemetry.sdk.name"), Some("datadog"));
+        assert_eq!(str_at(a, "datadog.runtime_id"), Some("abc-123"));
+        assert_eq!(
+            str_array_at(a, "datadog.process_tags"),
+            Some(vec!["entrypoint.name:server"])
+        );
     }
 
     #[test]
-    fn data_point_attributes_and_otel_strip() {
+    fn data_point_attributes() {
         let g_pair = group_with_exact(&[1_000_000_000], &[], |g| {
             g.http_status_code = 404;
             g.http_method = "POST".into();
@@ -542,9 +522,9 @@ mod tests {
         let custom_pair = group_with_exact(&[1_000_000_000], &[], |g| {
             g.service = "svc-other".into();
         });
-        let bs = buckets(vec![g_pair.clone(), custom_pair]);
+        let bs = buckets(vec![g_pair, custom_pair]);
 
-        let req = map_stats_to_otlp_metrics(&bs, &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&bs, &resource()).unwrap();
         let pts = points(&req);
         let a = pts
             .iter()
@@ -572,30 +552,6 @@ mod tests {
         assert!(pts.iter().any(
             |p| str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc-other")
         ));
-
-        // OTel mode retains semantic and custom attributes while suppressing Datadog attributes.
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g_pair]), &resource(), true).unwrap();
-        let a = points(&req)[0]["attributes"].as_array().unwrap();
-        let mut keys: Vec<&str> = a.iter().map(|kv| kv["key"].as_str().unwrap()).collect();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            [
-                "custom.primary",
-                "http.request.method",
-                "http.response.status_code",
-                "http.route",
-                "rpc.response.status_code",
-                "service.name",
-                "span.kind",
-                "span.name",
-                "status.code",
-            ]
-        );
-        assert!(!keys.iter().any(|key| key.starts_with("datadog.")));
-        assert!(!keys.contains(&"additional_metric_tags"));
-        assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
-        assert_eq!(str_at(a, "service.name"), Some("svc"));
     }
 
     #[test]
@@ -610,7 +566,7 @@ mod tests {
                 g.is_trace_root = value;
                 g.top_level_hits = 0;
             });
-            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
             let attrs = points(&req)[0]["attributes"].as_array().unwrap();
             let is_trace_root = attrs.iter().find(|kv| kv["key"] == "datadog.is_trace_root");
             assert_eq!(
@@ -622,9 +578,34 @@ mod tests {
     }
 
     #[test]
+    fn service_source_is_emitted_as_string() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.service_source = "lambda".into();
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
+        let attrs = points(&req)[0]["attributes"].as_array().unwrap();
+        let service_source = attrs.iter().find(|kv| kv["key"] == "datadog.svc_src");
+
+        assert_eq!(
+            service_source,
+            Some(&json!({
+                "key": "datadog.svc_src",
+                "value": { "stringValue": "lambda" }
+            }))
+        );
+    }
+
+    #[test]
+    fn empty_service_source_is_omitted() {
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource()).unwrap();
+        let attrs = points(&req)[0]["attributes"].as_array().unwrap();
+
+        assert!(!attrs.iter().any(|kv| kv["key"] == "datadog.svc_src"));
+    }
+
+    #[test]
     fn empty_span_kind_defaults_to_internal() {
-        let req =
-            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), true).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource()).unwrap();
         assert_eq!(
             str_at(
                 points(&req)[0]["attributes"].as_array().unwrap(),
@@ -639,7 +620,7 @@ mod tests {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
             g.grpc_status_code = "5".into();
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert_eq!(str_at(a, "rpc.response.status_code"), Some("NOT_FOUND"));
 
@@ -648,7 +629,7 @@ mod tests {
             let g = group_with_exact(&[1_000_000_000], &[], |g| {
                 g.grpc_status_code = code.into();
             });
-            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
             let a = points(&req)[0]["attributes"].as_array().unwrap();
             assert!(!a.iter().any(|kv| kv["key"] == "rpc.response.status_code"));
         }
@@ -657,8 +638,7 @@ mod tests {
     #[test]
     fn histogram_values_are_exact_and_distribution_uses_sketch() {
         // Single 1s ok span: count/sum/min/max all exact, distribution shaped by the sketch.
-        let req =
-            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource()).unwrap();
         let p = &points(&req)[0];
         assert_eq!(p["count"], "1");
         assert_eq!(p["sum"].as_f64().unwrap(), 1.0);
@@ -674,7 +654,7 @@ mod tests {
 
         // 3ms, 300ms, 3s land in three distinct buckets; exact sum = 3.303s.
         let g = group_with_exact(&[3_000_000, 300_000_000, 3_000_000_000], &[], |_| {});
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let p = &points(&req)[0];
         assert_eq!(p["count"], "3");
         assert_eq!(p["sum"].as_f64().unwrap(), ns_to_s(3_303_000_000));
@@ -691,7 +671,7 @@ mod tests {
         let err = [700_000_000_u64];
         let combined_ns = ok.iter().sum::<u64>() + err.iter().sum::<u64>();
         let g = group_with_exact(&ok, &err, |_| {});
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let pts = points(&req);
         assert_eq!(pts.len(), 2);
         let ok_pt = pts.iter().find(|p| !is_error_point(p)).unwrap();
@@ -724,26 +704,18 @@ mod tests {
                 "datadog.custom:dd".into(),
             ];
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g.clone()]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert_eq!(str_at(a, "custom.primary"), Some("a"));
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
         assert_eq!(str_at(a, "datadog.custom"), Some("dd"));
 
-        // OTel-semantics mode keeps custom tags and filters only Datadog-prefixed tags.
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), true).unwrap();
-        let a = points(&req)[0]["attributes"].as_array().unwrap();
-        assert_eq!(str_at(a, "custom.primary"), Some("a"));
-        assert_eq!(str_at(a, "region"), Some("us-east"));
-        assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
-        assert_eq!(str_at(a, "datadog.custom"), None);
-
         // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
             g.additional_metric_tags = vec!["malformed".into(), "empty:".into()];
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert!(!a.iter().any(|kv| kv["key"] == "malformed"));
         assert!(!a.iter().any(|kv| kv["key"] == "empty"));
