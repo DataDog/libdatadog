@@ -69,7 +69,11 @@ ${arg#--exclude=}"
             echo "Output JSON format:"
             echo '  [{"name":"crate-name","version":"1.0.0","path":"crate-name","tag":"crate-name-v1.0.0",'
             echo '    "tag_exists":true,"tag_ancestor":"true","tag_commit":"<sha>",'
-            echo '    "latest_tag":"crate-name-v1.0.0","range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo '    "tag_in_local_branch":true,"latest_tag":"crate-name-v1.0.0",'
+            echo '    "range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo ""
+            echo '  "tag_in_local_branch" is false when no local branch contains the tagged commit,'
+            echo '  which is normal for squash-merged releases. Always false when there is no tag.'
             echo ""
             echo '  "latest_tag" is the highest release tag that exists for the crate, which is not'
             echo '  necessarily "tag": the manifest version lags behind when a release was cut'
@@ -180,6 +184,7 @@ while read -r crate; do
     TAG_EXISTS=false
     TAG_ANCESTOR="unknown"
     TAG_COMMIT=""
+    TAG_IN_LOCAL_BRANCH=false
     RANGE=""
     RANGE_START=""
     COMMITS_JSON="[]"
@@ -220,6 +225,16 @@ while read -r crate; do
                 TAG_ANCESTOR="no merge-base"
                 log_verbose "  WARNING: Could not find merge-base, using $TAG..HEAD"
             fi
+        fi
+
+        # Is the tagged commit reachable from any local branch? Squash-merged releases leave
+        # the tag on history no branch points at, which is normal but worth surfacing: it is
+        # also what a tag pushed from an abandoned branch looks like. Only the yes/no matters,
+        # so the branch names are deliberately not collected.
+        if [ -n "$TAG_COMMIT" ] && git branch --contains "$TAG_COMMIT" 2>/dev/null | grep -q .; then
+            TAG_IN_LOCAL_BRANCH=true
+        else
+            log_verbose "  WARNING: $TAG ($TAG_COMMIT) is not in any local branch"
         fi
 
         # Get commits since tag that affect this crate's directory
@@ -292,7 +307,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 
