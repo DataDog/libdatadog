@@ -479,11 +479,10 @@ jobs:
             git fetch --unshallow
           fi
 
-          # Initialize results array
+          # Initialize results array. It holds one row per candidate crate: those released
+          # here, and those with no commits of their own, which carry "pending_release":
+          # "true" and are only released if the libdd-* major-bump check pulls them back in.
           echo "[]" > /tmp/api-changes.json
-
-          # Crates with no commits of their own are not released here, but recorded as candidates:
-          echo "[]" > /tmp/pending-major-only.json
 
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
@@ -507,16 +506,11 @@ jobs:
                 --arg version "$VERSION" \
                 --arg path "$CRATE_PATH" \
                 '. += [{"name": $name, "level": "none", "tag": $tag, "prev_tag": $tag, "version": $version, "range": "", "commits": [], "path": $path, "initial_release": "false", "pending_release": "true"}]' \
-                /tmp/pending-major-only.json > /tmp/pending-major-only.tmp && mv /tmp/pending-major-only.tmp /tmp/pending-major-only.json
+                /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
               continue
             fi
 
             if [ "$TAG_EXISTS" = "true" ]; then
-              # commits-since-release.sh resolved the tag (dereferencing annotated tags) and
-              # worked out the range the commits above were taken from: the tag commit, the
-              # merge-base when the tag is not an ancestor of HEAD, or the parent of the
-              # oldest commit found when the tag sits on unrelated history. Reuse its answer
-              # rather than recomputing it here against a HEAD that has since moved.
               TAG_COMMIT=$(echo "$crate" | jq -r '.tag_commit')
               RANGE=$(echo "$crate" | jq -r '.range')
               if [ -z "$TAG_COMMIT" ] || [ -z "$RANGE" ]; then
@@ -602,7 +596,7 @@ jobs:
 
           # Check if there are commits to push or pending
           if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
-            PENDING_COUNT=$(jq 'length' /tmp/pending-major-only.json)
+            PENDING_COUNT=$(jq '[.[] | select(.pending_release == "true")] | length' /tmp/api-changes.json)
             if [ "$PENDING_COUNT" -gt 0 ]; then
               echo "No direct version bumps yet, but $PENDING_COUNT crate(s) are pending libdd-* major-bump evaluation; continuing."
             else
@@ -620,13 +614,11 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
-          # Audit input: crates released in the previous step (api-changes.json) plus the pending
-          # no-commit candidates. The pending rows carry "pending_release": "true" so we can tell
-          # them apart below; every row is checked the same way for direct libdd-* major bumps.
-          jq -s '.[0] + .[1]' /tmp/api-changes.json /tmp/pending-major-only.json > /tmp/major-bumps-input.json
-          echo "Major-bump audit input:"
-          jq . /tmp/major-bumps-input.json
-
+          # Audit input is api-changes.json: every candidate from the previous step -- the crates
+          # released there and the pending no-commit candidates, which carry "pending_release":
+          # "true" so we can tell them apart below. Every row is checked the same way for direct
+          # libdd-* major bumps; only what happens to the result differs.
+          #
           # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch
           # the job checkout. Check it out at the proposal branch tip (HEAD) — the released ref plus
           # this run's version bumps from the previous step. This is deliberate on both ends:
@@ -640,7 +632,7 @@ jobs:
 
           git worktree add --detach "$MAJOR_BUMPS_WT" "$PROPOSAL_SHA"
           set +e
-          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/major-bumps-input.json ) \
+          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
           MB_RC=$?
           git worktree remove --force "$MAJOR_BUMPS_WT" || true
@@ -942,7 +934,9 @@ jobs:
             NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
           fi
 
-          # PR body from api-changes-with-major-bumps.json (same crates as api-changes.json; tags/versions updated after libdd major bumps).
+          # PR body from api-changes-with-major-bumps.json: the crates actually being released,
+          # i.e. api-changes.json minus the pending candidates that did not earn a major bump,
+          # with tags/versions updated for those that did.
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
           [ $api[0][]
