@@ -435,8 +435,7 @@ fn channel<T>(
         state: Mutex::new(SharedState {
             flush_needed: false,
             last_flush_generation: BatchGeneration::default(),
-            accepting_chunks: true,
-            has_shutdown: false,
+            channel_state: ChannelState::Running,
             batch: Batch::new(max_buffered_bytes),
             metrics: QueueMetrics::default(),
         }),
@@ -466,7 +465,7 @@ impl<T> Sender<T> {
         timeout: Option<Duration>,
     ) -> Result<(), TraceBufferError> {
         let cond = |state: &mut SharedState<T>| {
-            state.last_flush_generation < flush_gen && !state.has_shutdown
+            state.last_flush_generation < flush_gen && state.channel_state != ChannelState::Stopped
         };
 
         let state = if let Some(timeout) = timeout {
@@ -515,7 +514,7 @@ impl<T> Sender<T> {
 
     fn get_running_state(&self) -> Result<MutexGuard<'_, SharedState<T>>, TraceBufferError> {
         let state = self.lock_state()?;
-        if !state.accepting_chunks {
+        if state.channel_state != ChannelState::Running {
             return Err(TraceBufferError::AlreadyShutdown);
         }
         Ok(state)
@@ -588,7 +587,9 @@ impl<T> Sender<T> {
         let (_state, res) = self
             .waiter
             .sender_notifier
-            .wait_timeout_while(state, timeout, |state| !state.has_shutdown)
+            .wait_timeout_while(state, timeout, |state| {
+                state.channel_state != ChannelState::Stopped
+            })
             .map_err(|_| TraceBufferError::MutexPoisoned)?;
         if res.timed_out() {
             return Err(TraceBufferError::TimedOut(timeout));
@@ -617,15 +618,13 @@ impl<T> Receiver<T> {
         let SharedState {
             flush_needed,
             last_flush_generation,
-            accepting_chunks,
-            has_shutdown,
+            channel_state,
             batch,
             metrics,
         } = state.deref_mut();
         *flush_needed = false;
         *last_flush_generation = BatchGeneration::default();
-        *accepting_chunks = true;
-        *has_shutdown = false;
+        *channel_state = ChannelState::Running;
         batch.reset();
         *metrics = QueueMetrics::default();
         Ok(())
@@ -682,7 +681,7 @@ impl<T> Receiver<T> {
     /// a batch that no exporter takes again.
     fn close_and_drain(&self) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         let mut state = self.lock_state()?;
-        state.accepting_chunks = false;
+        state.channel_state = ChannelState::Stopping;
         if state.batch.chunks.is_empty() {
             return Ok(Vec::new());
         }
@@ -710,11 +709,22 @@ impl BatchGeneration {
     }
 }
 
+/// The lifecycle of a channel: `Running`, `Stopping`, `Stopped`.
+///
+/// `close_and_drain` sets `Stopping` so that no chunk arrives after the final drain takes
+/// the batch. A waiter that treats `Stopping` as `Stopped` reports a successful flush before
+/// the drained batch exports. Only `mark_shutdown` sets `Stopped`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ChannelState {
+    Running,
+    Stopping,
+    Stopped,
+}
+
 struct SharedState<T> {
     flush_needed: bool,
     last_flush_generation: BatchGeneration,
-    accepting_chunks: bool,
-    has_shutdown: bool,
+    channel_state: ChannelState,
     batch: Batch<T>,
     metrics: QueueMetrics,
 }
@@ -758,8 +768,7 @@ impl<T> Waiter<T> {
     }
 
     fn mark_shutdown(&self, mut state: MutexGuard<'_, SharedState<T>>) {
-        state.accepting_chunks = false;
-        state.has_shutdown = true;
+        state.channel_state = ChannelState::Stopped;
         self.notify_sender(state);
     }
 }
