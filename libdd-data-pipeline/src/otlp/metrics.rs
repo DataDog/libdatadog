@@ -601,12 +601,13 @@ mod tests {
     #[test]
     fn is_trace_root_preserves_trilean_semantics() {
         for (value, expected) in [
-            (pb::Trilean::NotSet, None),
-            (pb::Trilean::True, Some(true)),
-            (pb::Trilean::False, Some(false)),
+            (pb::Trilean::NotSet as i32, None),
+            (pb::Trilean::True as i32, Some(true)),
+            (pb::Trilean::False as i32, Some(false)),
+            (i32::MAX, None),
         ] {
             let g = group_with_exact(&[1_000_000_000], &[], |g| {
-                g.is_trace_root = value as i32;
+                g.is_trace_root = value;
                 g.top_level_hits = 0;
             });
             let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
