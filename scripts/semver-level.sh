@@ -261,8 +261,17 @@ compute_semver_results() {
         '{"name": $name, "level": $level, "reason": $reason, "details": $details}')"
 }
 
-# Run the computation and capture JSON output
+# Run the computation and capture JSON output.
+# compute_semver_results runs in a command substitution, so the `exit` calls in its
+# error paths only terminate that subshell. Propagate the status explicitly, otherwise
+# a tool failure leaves RESULT_JSON empty and the script still exits 0 — the caller
+# then reads an empty semver level and bumps the crate with whatever cargo-release
+# makes of it.
 RESULT_JSON=$(compute_semver_results "$CRATE" "$BASE_REF" "$CURRENT_REF")
+COMPUTE_EXIT_CODE=$?
+if [[ $COMPUTE_EXIT_CODE -ne 0 ]]; then
+    exit $COMPUTE_EXIT_CODE
+fi
 
 # Output JSON to stdout (captured by workflow)
 echo "$RESULT_JSON"
