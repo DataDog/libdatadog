@@ -69,7 +69,11 @@ ${arg#--exclude=}"
             echo "Output JSON format:"
             echo '  [{"name":"crate-name","version":"1.0.0","path":"crate-name","tag":"crate-name-v1.0.0",'
             echo '    "tag_exists":true,"tag_ancestor":"true","tag_commit":"<sha>",'
-            echo '    "range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo '    "latest_tag":"crate-name-v1.0.0","range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo ""
+            echo '  "latest_tag" is the highest release tag that exists for the crate, which is not'
+            echo '  necessarily "tag": the manifest version lags behind when a release was cut'
+            echo '  elsewhere. Empty when the crate was never released.'
             echo ""
             echo '  "range" is the commit range the listed commits were taken from, resolved to'
             echo '  SHAs: the tag commit, or the merge-base when the tag is not an ancestor of'
@@ -164,6 +168,14 @@ while read -r crate; do
     
     log_verbose "  Crate path: $CRATE_PATH"
     
+    # Highest release tag that exists for this crate, which is not necessarily $TAG: the
+    # manifest version can lag behind the tags when a release was cut elsewhere (a hotfix
+    # branch, or a release already merged to main). Empty when the crate was never released.
+    # The `-v` in the glob keeps sibling crates out: libdd-common-v* cannot match
+    # libdd-common-ffi-v1.0.0.
+    LATEST_TAG=$(git tag -l "${NAME}-v*" --sort=-v:refname | head -1)
+    log_verbose "  Latest tag: ${LATEST_TAG:-<none>}"
+
     # Check if tag exists
     TAG_EXISTS=false
     TAG_ANCESTOR="unknown"
@@ -280,7 +292,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 
