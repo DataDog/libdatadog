@@ -434,8 +434,10 @@ jobs:
           # Get commits since release for each crate and save to file
           "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
-          # Capture ephemeral release branch tip now. Use this in Release version bumps
-          # so tag/merge-base resolution uses the same ref the script used.
+          # Capture the ephemeral release branch tip now: later steps run from the proposal
+          # branch, whose HEAD has moved on. commits-since-release.sh already ends every
+          # crate's `range` at this same commit; this is for the steps that need the tip on
+          # its own (the commit list handed to the verified push).
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
           echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
@@ -483,11 +485,6 @@ jobs:
           # Crates with no commits of their own are not released here, but recorded as candidates:
           echo "[]" > /tmp/pending-major-only.json
 
-          # Use release branch tip from when we ran commits-since-release (same ref the script used).
-          # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
-          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
-          echo "ORIGINAL_HEAD: $ORIGINAL_HEAD"
-
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
           # iterate over the commits and execute cargo release for each crate
@@ -515,39 +512,18 @@ jobs:
             fi
 
             if [ "$TAG_EXISTS" = "true" ]; then
-              # Explicitly dereference annotated tags to their underlying commit.
-              # Several git commands do not consistently dereference annotated tag objects
-              # across all git versions.
-              TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
-              if [ -z "$TAG_COMMIT" ]; then
+              # commits-since-release.sh resolved the tag (dereferencing annotated tags) and
+              # worked out the range the commits above were taken from: the tag commit, the
+              # merge-base when the tag is not an ancestor of HEAD, or the parent of the
+              # oldest commit found when the tag sits on unrelated history. Reuse its answer
+              # rather than recomputing it here against a HEAD that has since moved.
+              TAG_COMMIT=$(echo "$crate" | jq -r '.tag_commit')
+              RANGE=$(echo "$crate" | jq -r '.range')
+              if [ -z "$TAG_COMMIT" ] || [ -z "$RANGE" ]; then
                 echo "ERROR: Could not dereference tag $TAG to a commit" >&2
                 exit 1
               fi
-
-              RANGE="$TAG_COMMIT..$ORIGINAL_HEAD"
               echo "Using $RANGE as range (tag: $TAG)"
-
-              if git merge-base --is-ancestor "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null; then
-                echo "  Tag $TAG is ancestor of HEAD"
-              else
-                MERGE_BASE=$(git merge-base "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
-                if [ -n "$MERGE_BASE" ]; then
-                    RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
-                    echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
-                else
-                    # No common ancestor, tag is on unrelated history. Derive the range start from
-                    # the parent of the oldest commit found by commits-since-release.sh. That way
-                    # git can compute TREESAME correctly and the path filter won't include unrelated commits.
-                    OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
-                    OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
-                    if [ -n "$OLDEST_PARENT" ]; then
-                        RANGE="$OLDEST_PARENT..$ORIGINAL_HEAD"
-                        echo "  No common ancestor with tag $TAG: using parent of oldest commit as range start: $RANGE"
-                    else
-                        echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
-                    fi
-                fi
-              fi
 
               BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
               if [ -n "$BRANCHES" ]; then
@@ -816,7 +792,10 @@ jobs:
             # go through git-cliff filtering process.
             NEWEST_COMMIT=$(echo "$COMMITS" | jq -r '.[0].hash // empty')
             OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
-            OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+            # --verify matters: plain `git rev-parse <root-commit>^` exits non-zero but still
+            # echoes "<sha>^" on stdout, so the `|| echo ""` fallback to $RANGE would never
+            # fire and git-cliff would be handed a range start that does not resolve.
+            OLDEST_PARENT=$(git rev-parse --verify "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
             if [ -n "$OLDEST_PARENT" ] && [ -n "$NEWEST_COMMIT" ]; then
               COMMITS_RANGE="$OLDEST_PARENT..$NEWEST_COMMIT"
             else
