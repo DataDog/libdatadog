@@ -38,7 +38,7 @@ CI runs the same suite plus `shellcheck` over `scripts/*.sh`
 | Suite | Covers |
 | --- | --- |
 | `publication-order.bats` | which crates a release includes, and the order they publish in |
-| `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; exclusion rules |
+| `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; the exported `range`; exclusion rules |
 | `semver-level.bats` | the bump level fed to `cargo release version -x`, parsed out of cargo-semver-checks and cargo-public-api output |
 | `major-bumps-level.bats` | whether a direct `libdd-*` dependency going major forces a dependent to major |
 | `release-proposal-workflow.bats` | job-level `if:` gating, untrusted-`main_start_ref` defenses, branch prefixes, push path, PR contract |
