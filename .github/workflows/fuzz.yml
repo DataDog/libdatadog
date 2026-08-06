@@ -66,6 +66,8 @@ jobs:
       with:
         cache-targets: true # cache build artifacts
         cache-bin: true # cache the ~/.cargo/bin directory
+        shared-key: fuzz
+        save-if: ${{ github.ref == 'refs/heads/main' }}
     - env:
         # Override rust-toolchain.toml so cargo-bolero runs on the dated nightly.
         RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
