@@ -73,7 +73,7 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - Bubble errors up to the library caller with detail — prefer structured error enums (e.g. `thiserror`) over opaque strings.
 - Stay free of global effects unless a feature requires them: no spawning threads, no globals, no reading environment variables behind the caller's back.
 - Care about performance, especially memory allocations on hot paths.
-- Panics across FFI boundaries are undefined behavior. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime.
+- A panic that reaches an `extern "C"` boundary aborts the host process. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime. Whether a release artifact gets panic containment is decided by `builder` alone, through its `catch_panic` feature (a default), which propagates to the `catch_panic` feature in `libdd-profiling-ffi/Cargo.toml`. Projects building their own flavor with `builder`'s default features off ask for `catch_panic` explicitly; leaving it out yields abort-on-panic semantics. The FFI examples are what verify containment is on for our own release process.
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
 ### Cryptography

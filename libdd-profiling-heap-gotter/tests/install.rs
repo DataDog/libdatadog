@@ -21,7 +21,9 @@
 
 use std::ffi::c_void;
 
-use libdd_profiling_heap_sampler::{dd_sample_flag_peek, dd_tl_state_get_or_init};
+use libdd_profiling_heap_sampler::{
+    dd_sample_flag_peek, dd_test_set_profiler_active, dd_tl_state_get_or_init,
+};
 use serial_test::serial;
 
 /// Warn (once) when these tests aren't running under nextest. The GOT install
@@ -86,6 +88,10 @@ fn install_produces_sampled_allocations() {
     assert!(installed);
 
     unsafe {
+        // Activate the USDT semaphore so the fast-path guard in
+        // dd_allocation_requested allows sampling without a real profiler.
+        dd_test_set_profiler_active(true);
+
         // Ensure sampler TLS is materialised on this thread.
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
@@ -116,6 +122,8 @@ fn install_produces_sampled_allocations() {
         // Free via libc::free which goes through gotter_free; it
         // handles the tagged pointer correctly (check + free raw).
         libc::free(p);
+
+        dd_test_set_profiler_active(false);
     }
 }
 
@@ -130,6 +138,10 @@ fn realloc_null_produces_sampled_allocation() {
     assert!(installed);
 
     unsafe {
+        // Activate the USDT semaphore so the fast-path guard in
+        // dd_allocation_requested allows sampling without a real profiler.
+        dd_test_set_profiler_active(true);
+
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
         (*tl).sampling_interval = 1;
@@ -148,6 +160,8 @@ fn realloc_null_produces_sampled_allocation() {
         );
 
         libc::free(p);
+
+        dd_test_set_profiler_active(false);
     }
 }
 
@@ -164,6 +178,10 @@ fn page_aligned_allocations_are_unsampled() {
     assert!(installed);
 
     unsafe {
+        // Activate the USDT semaphore so we actually exercise the sampling
+        // decision path (which should still reject page-aligned pointers).
+        dd_test_set_profiler_active(true);
+
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
         (*tl).sampling_interval = 1;
@@ -183,6 +201,8 @@ fn page_aligned_allocations_are_unsampled() {
         );
 
         libc::free(p);
+
+        dd_test_set_profiler_active(false);
     }
 }
 
@@ -197,6 +217,10 @@ fn realloc_of_sampled_allocation_preserves_data() {
     assert!(installed);
 
     unsafe {
+        // Activate the USDT semaphore so the fast-path guard in
+        // dd_allocation_requested allows sampling without a real profiler.
+        dd_test_set_profiler_active(true);
+
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
         (*tl).sampling_interval = 1;
@@ -239,6 +263,8 @@ fn realloc_of_sampled_allocation_preserves_data() {
         }
 
         libc::free(p2 as *mut c_void);
+
+        dd_test_set_profiler_active(false);
     }
 }
 
@@ -299,6 +325,10 @@ fn realloc_stress_across_alignments_preserves_data() {
     let mut saw_sampled = false;
 
     unsafe {
+        // Activate the USDT semaphore so the fast-path guard in
+        // dd_allocation_requested allows sampling without a real profiler.
+        dd_test_set_profiler_active(true);
+
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
         // Force every allocation to sample so the tagged-pointer /
@@ -355,6 +385,8 @@ fn realloc_stress_across_alignments_preserves_data() {
 
             libc::free(p as *mut c_void);
         }
+
+        dd_test_set_profiler_active(false);
     }
 
     // Only meaningful with live-heap tracking on; without it nothing is

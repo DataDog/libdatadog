@@ -56,6 +56,9 @@ pub type BodySender = Box<dyn StreamingBodySender>;
 pub trait HttpClientCapability: Clone + std::fmt::Debug {
     fn new_client() -> Self;
 
+    /// Construct a client that does not reuse connections.
+    fn new_without_connection_pooling() -> Self;
+
     fn request(
         &self,
         req: http::Request<bytes::Bytes>,

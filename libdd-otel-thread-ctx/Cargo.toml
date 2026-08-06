@@ -18,7 +18,7 @@ bench = false
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
-elf = { version = "0.7", optional = true }
+elf = { workspace = true, features = ["std"], optional = true }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core"], optional = true }
 
 [features]

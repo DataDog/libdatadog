@@ -155,10 +155,13 @@ impl DatadogSampler {
 
             if !rule.sample(trace_id) {
                 is_keep = false;
-            } else if !self.rate_limiter.is_allowed() {
-                // Rule kept the span, but the rate limiter dropped it.
-                is_keep = false;
+            } else {
+                // Record the limiter's effective rate whether it allows or drops the trace.
+                let allowed = self.rate_limiter.is_allowed();
                 rl_effective_rate = Some(self.rate_limiter.effective_rate());
+                if !allowed {
+                    is_keep = false;
+                }
             }
         } else {
             let service_key = self.service_key(span);
