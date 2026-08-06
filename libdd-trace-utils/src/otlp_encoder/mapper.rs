@@ -11,7 +11,7 @@
 
 use super::OtlpResourceInfo;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::TraceData;
+use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use std::borrow::Borrow;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
@@ -469,8 +469,9 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
             .collect(),
         dropped_attributes_count: 0,
         // W3C trace flags of the linked context (sampled bit, etc.); carry them through so OTLP
-        // consumers see the same link metadata the tracer recorded.
-        flags: link.flags,
+        // consumers see the same link metadata the tracer recorded. Bit 31 is an internal
+        // "explicitly set" sentinel that must not leak into OTLP's flags field.
+        flags: link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL,
     }
 }
 
@@ -1002,6 +1003,42 @@ mod tests {
         assert_eq!(
             link.flags, 1,
             "OTLP Link.flags must carry the span link's flags"
+        );
+    }
+
+    #[test]
+    fn span_link_flags_sentinel_bit_masked() {
+        // The internal "explicitly set" sentinel (bit 31) must never appear in OTLP's
+        // Link.flags, which downstream consumers treat as the real W3C trace-flags value.
+        // Covers both sentinel states: kept (0x8000_0001) and explicitly dropped (0x8000_0000).
+        fn mapped_flags(flags: u32) -> u32 {
+            let mut span: Span<BytesData> = Span {
+                trace_id: 1,
+                span_id: 2,
+                name: libdd_tinybytes::BytesString::from_static("s"),
+                start: 0,
+                duration: 1,
+                ..Default::default()
+            };
+            span.span_links.push(SpanLink {
+                trace_id: 0x11,
+                span_id: 0x22,
+                flags,
+                ..Default::default()
+            });
+            let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default(), false);
+            req.resource_spans[0].scope_spans[0].spans[0].links[0].flags
+        }
+
+        assert_eq!(
+            mapped_flags(0x8000_0001),
+            1,
+            "OTLP Link.flags must not carry the internal sentinel bit"
+        );
+        assert_eq!(
+            mapped_flags(0x8000_0000),
+            0,
+            "an explicit drop decision must still map to flags: 0"
         );
     }
 
