@@ -55,7 +55,6 @@ time = { version = "0.3", features = ["parsing", "serde", "formatting"], optiona
 tracing = { workspace = true, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
-serde_with = "3"
 thiserror = "2"
 hashbrown = "0.15"
 # `EnumIter` for external consumers to make struct available to runtime

@@ -26,7 +26,6 @@ http = "1.1"
 rmp-serde = "1.3.0"
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "time"] }
-tokio-util = "0.7.11"
 tracing.workspace = true
 async-trait = "0.1.85"
 # Cross-platform `SystemTime`; `std::time::SystemTime::now()` panics on wasm32.
@@ -56,5 +55,5 @@ default = ["https"]
 stats-obfuscation = []
 telemetry = ["libdd-telemetry"]
 dogstatsd = ["libdd-dogstatsd-client"]
-https = ["libdd-common/https", "libdd-capabilities-impl/https", "libdd-shared-runtime/https","libdd-telemetry?/https","libdd-dogstatsd-client?/https" ]
-fips = ["libdd-common/fips", "libdd-capabilities-impl/fips", "libdd-shared-runtime/fips", "libdd-telemetry?/fips", "libdd-dogstatsd-client?/fips"]
+https = ["libdd-common/https", "libdd-capabilities-impl/https", "libdd-telemetry?/https","libdd-dogstatsd-client?/https" ]
+fips = ["libdd-common/fips", "libdd-capabilities-impl/fips", "libdd-telemetry?/fips", "libdd-dogstatsd-client?/fips"]

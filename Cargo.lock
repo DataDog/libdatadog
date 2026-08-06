@@ -136,12 +136,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
 
 [[package]]
-name = "arrayref"
-version = "0.3.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
-
-[[package]]
 name = "assert-json-diff"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -465,17 +459,14 @@ dependencies = [
  "anyhow",
  "current_platform",
  "errno",
- "hex",
  "libc",
  "libdd-common",
  "libdd-crashtracker",
- "libdd-profiling",
  "nix 0.29.0",
  "once_cell",
  "os_info",
  "serde_json",
  "serial_test",
- "strum",
  "tempfile",
 ]
 
@@ -718,7 +709,6 @@ name = "build_common"
 version = "39.0.0"
 dependencies = [
  "cbindgen",
- "serde",
  "serde_json",
 ]
 
@@ -1375,7 +1365,6 @@ dependencies = [
  "bincode",
  "criterion",
  "datadog-ipc-macros",
- "futures",
  "glibc_version",
  "io-lifetimes",
  "libc",
@@ -1387,14 +1376,11 @@ dependencies = [
  "memfd",
  "nix 0.29.0",
  "page_size",
- "pretty_assertions",
- "sendfd",
  "serde",
  "spawn_worker",
  "tempfile",
  "tokio",
  "tracing",
- "tracing-subscriber",
  "winapi 0.3.9",
  "windows-sys 0.48.0",
  "zwohash",
@@ -1448,7 +1434,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
- "uuid",
 ]
 
 [[package]]
@@ -1469,7 +1454,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
- "arrayref",
  "base64 0.22.1",
  "bincode",
  "chrono",
@@ -1480,7 +1464,6 @@ dependencies = [
  "datadog-sidecar-macros",
  "futures",
  "http",
- "http-body-util",
  "httpmock",
  "libc",
  "libdd-capabilities",
@@ -1499,13 +1482,10 @@ dependencies = [
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
- "microseh",
  "nix 0.29.0",
  "prctl",
  "priority-queue",
  "rand 0.8.5",
- "rmp-serde",
- "sendfd",
  "serde",
  "serde_json",
  "serde_with",
@@ -1520,8 +1500,6 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "winapi 0.3.9",
- "windows 0.51.1",
- "windows-sys 0.52.0",
  "zwohash",
 ]
 
@@ -1544,10 +1522,7 @@ dependencies = [
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
  "libdd-trace-utils",
- "paste",
  "rmp-serde",
- "serde_json",
- "tempfile",
  "tracing",
 ]
 
@@ -2803,7 +2778,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "serial_test",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -2855,7 +2829,6 @@ dependencies = [
  "const_format",
  "criterion",
  "futures",
- "futures-core",
  "futures-util",
  "hex",
  "http",
@@ -2877,7 +2850,6 @@ dependencies = [
  "regex-lite",
  "reqwest",
  "rustls",
- "rustls-native-certs",
  "rustls-platform-verifier",
  "rustls-webpki",
  "serde",
@@ -2956,7 +2928,6 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker",
- "serde",
  "serde_json",
  "symbolic-common",
  "symbolic-demangle",
@@ -2977,9 +2948,7 @@ dependencies = [
  "duplicate 2.0.1",
  "either",
  "futures",
- "getrandom 0.2.15",
  "http",
- "http-body-util",
  "httpmock",
  "libdd-capabilities",
  "libdd-capabilities-impl",
@@ -2990,7 +2959,6 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
- "libdd-trace-normalization",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
@@ -3081,11 +3049,8 @@ dependencies = [
  "pyo3",
  "semver",
  "serde",
- "serde-bool",
  "serde_json",
- "serde_with",
  "thiserror 2.0.17",
- "url",
 ]
 
 [[package]]
@@ -3146,7 +3111,6 @@ dependencies = [
  "memfd",
  "prost",
  "rand 0.8.5",
- "rmp",
  "rmp-serde",
  "serde",
  "serde_yaml",
@@ -3164,7 +3128,6 @@ dependencies = [
  "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",
- "tempfile",
 ]
 
 [[package]]
@@ -3226,24 +3189,19 @@ dependencies = [
  "bitmaps",
  "bolero",
  "byteorder",
- "bytes",
  "chrono",
  "criterion",
  "crossbeam-channel",
  "crossbeam-utils",
  "cxx",
  "cxx-build",
- "futures",
  "hashbrown 0.16.1",
  "http",
- "http-body-util",
- "httparse",
  "indexmap 2.12.1",
  "libdd-alloc",
  "libdd-common",
  "libdd-profiling",
  "libdd-profiling-protobuf",
- "mime",
  "parking_lot",
  "proptest",
  "prost",
@@ -3271,8 +3229,6 @@ dependencies = [
  "anyhow",
  "build_common",
  "function_name",
- "futures",
- "http-body-util",
  "hyper",
  "libc",
  "libdd-common",
@@ -3365,7 +3321,6 @@ dependencies = [
  "manual_future",
  "serde",
  "serde_json",
- "serde_with",
  "sha2",
  "strum",
  "strum_macros",
@@ -3397,7 +3352,6 @@ dependencies = [
  "futures",
  "futures-util",
  "libdd-capabilities",
- "libdd-capabilities-impl",
  "libdd-common",
  "tokio",
  "tokio-util",
@@ -3423,7 +3377,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures",
- "getrandom 0.2.15",
  "hashbrown 0.15.1",
  "http",
  "httpmock",
@@ -3451,7 +3404,6 @@ version = "39.0.0"
 dependencies = [
  "build_common",
  "function_name",
- "libc",
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
@@ -3544,7 +3496,6 @@ dependencies = [
  "rmp-serde",
  "serde",
  "tokio",
- "tokio-util",
  "tracing",
  "web-time",
 ]
@@ -3777,17 +3728,6 @@ checksum = "c73f5c649995a115e1a0220b35e4df0a1294500477f97a91d0660fb5abeb574a"
 dependencies = [
  "libc",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "microseh"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f26b2a7c5ccfb370edd57fda423f3a551516ee127e10bc22a6215e8c63b20a38"
-dependencies = [
- "cc",
- "libc",
- "windows-sys 0.42.0",
 ]
 
 [[package]]
@@ -5243,16 +5183,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sendfd"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "604b71b8fc267e13bb3023a2c901126c8f349393666a6d98ac1ae5729b701798"
-dependencies = [
- "libc",
- "tokio",
-]
-
-[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5260,15 +5190,6 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde-bool"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fdd050c9c2ed5ae1fb29e71be0a6efdd9df43c7cb13ea5826528cfe10c51db0"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -5889,8 +5810,6 @@ name = "test_spawn_from_lib"
 version = "0.0.1"
 dependencies = [
  "anyhow",
- "io-lifetimes",
- "libc",
  "spawn_worker",
  "tempfile",
 ]
@@ -6805,21 +6724,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b888f919960b42ea4e11c2f408fadb55f78a9f236d5eef084103c8ce52893491"
 dependencies = [
  "windows-targets 0.53.5",
-]
-
-[[package]]
-name = "windows-sys"
-version = "0.42.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a3e1820f08b8513f676f7ab6c1f99ff312fb97b553d30ff4dd86f9f15728aa7"
-dependencies = [
- "windows_aarch64_gnullvm 0.42.2",
- "windows_aarch64_msvc 0.42.2",
- "windows_i686_gnu 0.42.2",
- "windows_i686_msvc 0.42.2",
- "windows_x86_64_gnu 0.42.2",
- "windows_x86_64_gnullvm 0.42.2",
- "windows_x86_64_msvc 0.42.2",
 ]
 
 [[package]]

@@ -46,7 +46,6 @@ symbolic-common = { version = "12.8.0", default-features = false, optional = tru
 function_name = "0.3.0"
 libc.workspace = true
 serde_json.workspace = true
-serde = { version = "1.0.214", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "Win32_System_ErrorReporting"] }
