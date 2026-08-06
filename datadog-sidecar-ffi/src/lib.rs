@@ -1741,6 +1741,46 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
+/// Payload-level tracer metadata for the V1 msgpack encoder; mirrors `TracerMetadata`.
+#[repr(C)]
+pub struct TracerMetadataV1 {
+    pub hostname: CharSlice<'static>,
+    pub env: CharSlice<'static>,
+    pub app_version: CharSlice<'static>,
+    pub runtime_id: CharSlice<'static>,
+    pub service: CharSlice<'static>,
+    pub tracer_version: CharSlice<'static>,
+    pub language_name: CharSlice<'static>,
+    pub language_version: CharSlice<'static>,
+    pub language_interpreter: CharSlice<'static>,
+    pub language_interpreter_vendor: CharSlice<'static>,
+    pub git_commit_sha: CharSlice<'static>,
+    pub process_tags: CharSlice<'static>,
+}
+
+impl TracerMetadataV1 {
+    fn to_tracer_metadata(&self) -> libdd_trace_utils::tracer_metadata::TracerMetadata {
+        libdd_trace_utils::tracer_metadata::TracerMetadata {
+            hostname: self.hostname.to_utf8_lossy().into_owned(),
+            env: self.env.to_utf8_lossy().into_owned(),
+            app_version: self.app_version.to_utf8_lossy().into_owned(),
+            runtime_id: self.runtime_id.to_utf8_lossy().into_owned(),
+            service: self.service.to_utf8_lossy().into_owned(),
+            tracer_version: self.tracer_version.to_utf8_lossy().into_owned(),
+            language: self.language_name.to_utf8_lossy().into_owned(),
+            language_version: self.language_version.to_utf8_lossy().into_owned(),
+            language_interpreter: self.language_interpreter.to_utf8_lossy().into_owned(),
+            language_interpreter_vendor: self
+                .language_interpreter_vendor
+                .to_utf8_lossy()
+                .into_owned(),
+            git_commit_sha: self.git_commit_sha.to_utf8_lossy().into_owned(),
+            process_tags: self.process_tags.to_utf8_lossy().into_owned(),
+            ..Default::default()
+        }
+    }
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
@@ -1825,6 +1865,94 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     //     size,
     //     parameters.url
     // );
+}
+
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: encodes `traces` as a V1 `TracerPayload`
+/// using `metadata`, then sends it to the sidecar for the agent's `/v1.0/traces` endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
+    traces: &mut TracesBytes,
+    parameters: &mut SenderParameters,
+    metadata: &TracerMetadataV1,
+) {
+    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+
+    // Check connection to the sidecar
+    if parameters.transport.is_closed() {
+        tracing::info!(
+            "Skipping flushing traces of size {} as connection to sidecar failed",
+            size
+        );
+        return;
+    }
+
+    let tracer_metadata = metadata.to_tracer_metadata();
+
+    // Create and map shared memory
+    let shm = check!(
+        ShmHandle::new(parameters.limit),
+        "Failed to create shared memory"
+    );
+
+    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
+
+    // Write traces to the shared memory as a V1 payload
+    let mut shm_slice = mapped_shm.as_slice_mut();
+    let shm_slice_len = shm_slice.len();
+    let written = match msgpack_encoder::v1::write_to_slice_from_v04(
+        &mut shm_slice,
+        traces,
+        &tracer_metadata,
+    ) {
+        Ok(()) => shm_slice_len - shm_slice.len(),
+        Err(_) => {
+            tracing::error!("Failed serializing the traces");
+            return;
+        }
+    };
+
+    // Send traces to the sidecar via the shared memory handler
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = blocking::send_trace_v1_shm(
+        &mut parameters.transport,
+        &parameters.instance_id,
+        shm,
+        size_hint,
+        (&parameters.tracer_headers_tags).into(),
+    );
+
+    // Retry sending traces via bytes if there was an error
+    if send_error.is_err() {
+        match blocking::send_trace_v1_bytes(
+            &mut parameters.transport,
+            &parameters.instance_id,
+            msgpack_encoder::v1::to_vec_with_capacity_from_v04(
+                traces,
+                written as u32,
+                &tracer_metadata,
+            ),
+            (&parameters.tracer_headers_tags).into(),
+        ) {
+            Ok(_) => {}
+            Err(_) => tracing::debug!(
+                "Failed sending traces via shm to sidecar: {}",
+                send_error.err().unwrap_unchecked().to_string()
+            ),
+        };
+    }
+
+    tracing::event!(target: "info", tracing::Level::INFO, "Flushing v1 trace of size {} to send-queue for {}", size, parameters.url);
 }
 
 /// Drops the agent info reader.
