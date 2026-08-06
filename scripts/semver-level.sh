@@ -396,17 +396,15 @@ compute_semver_results() {
 }
 
 # Run the computation and capture JSON output.
-#
-# compute_semver_results runs in a command substitution, so its `exit` calls only
-# terminate that subshell. Without propagating the status here the script would
-# return 0 with empty stdout, and the caller would report a confusing "unknown
-# level ()" instead of the underlying tool error.
+# compute_semver_results runs in a command substitution, so the `exit` calls in its
+# error paths only terminate that subshell. Propagate the status explicitly, otherwise
+# a tool failure leaves RESULT_JSON empty and the script still exits 0 — the caller
+# then reads an empty semver level and bumps the crate with whatever cargo-release
+# makes of it.
 RESULT_JSON=$(compute_semver_results "$CRATE" "$BASE_REF" "$CURRENT_REF")
-RESULT_EXIT_CODE=$?
-
-if [[ $RESULT_EXIT_CODE -ne 0 ]] || [[ -z "$RESULT_JSON" ]]; then
-    echo "Error: failed to compute semver level for $CRATE (exit code: $RESULT_EXIT_CODE)" >&2
-    exit "$(( RESULT_EXIT_CODE == 0 ? 1 : RESULT_EXIT_CODE ))"
+COMPUTE_EXIT_CODE=$?
+if [[ $COMPUTE_EXIT_CODE -ne 0 ]]; then
+    exit $COMPUTE_EXIT_CODE
 fi
 
 # Output JSON to stdout (captured by workflow)
