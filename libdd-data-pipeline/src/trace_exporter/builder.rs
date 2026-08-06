@@ -754,6 +754,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             headers: build_otlp_header_map(self.otlp_metrics_headers),
             timeout: otlp_timeout,
             protocol: OtlpProtocol::HttpJson,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
         let runtime_id = self

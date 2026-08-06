@@ -134,4 +134,7 @@ pub struct OtlpMetricsConfig {
     /// Protocol (for future use; currently only HttpJson is supported).
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
+    /// Whether OTel trace semantics are enabled. Retained for downstream compatibility; OTLP
+    /// trace-metrics export does not branch on this value.
+    pub otel_trace_semantics_enabled: bool,
 }
