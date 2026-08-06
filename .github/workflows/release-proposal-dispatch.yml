@@ -542,8 +542,8 @@ jobs:
                 echo "Tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
               fi
 
-              # if there is a tag more recent than $TAG, continue the loop
-              LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
+              # if there is a tag more recent than $TAG, continue the loop.
+              LATEST_TAG=$(echo "$crate" | jq -r '.latest_tag')
               if [ "$LATEST_TAG" != "$TAG" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
 
