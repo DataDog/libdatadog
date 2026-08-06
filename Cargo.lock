@@ -3023,6 +3023,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-utils",
+ "rmp",
  "rmp-serde",
  "tokio-util",
  "tracing",
