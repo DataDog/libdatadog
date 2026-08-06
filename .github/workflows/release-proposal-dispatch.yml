@@ -519,11 +519,8 @@ jobs:
               fi
               echo "Using $RANGE as range (tag: $TAG)"
 
-              BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
-              if [ -n "$BRANCHES" ]; then
-                echo "Tag $TAG is in branches: $BRANCHES"
-              else
-                echo "Tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
+              if [ "$(echo "$crate" | jq -r '.tag_in_local_branch')" != "true" ]; then
+                echo "Warning: tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
               fi
 
               # if there is a tag more recent than $TAG, continue the loop.
