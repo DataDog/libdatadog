@@ -158,6 +158,105 @@ teardown() {
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' "feat(alpha): on main after fork"
 }
 
+# --- reachability of the tagged commit -----------------------------------------
+
+@test "reports the tagged commit as reachable from a local branch" {
+  fixture_touch_crate libdd-alpha "feat(alpha): after the tag"
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  assert_jq "$output" '.[0].tag_in_local_branch' "true"
+  # A JSON boolean, not the string "true": the workflow compares it as one.
+  assert_jq "$output" '.[0].tag_in_local_branch | type' "boolean"
+}
+
+@test "flags a tagged commit that no local branch contains" {
+  # What a squash-merged release leaves behind -- normal, but also what a tag pushed from an
+  # abandoned branch looks like, so the workflow surfaces it.
+  local fork_point
+  fork_point="$(git rev-parse HEAD)"
+  fixture_touch_crate libdd-alpha "feat(alpha): on main"
+
+  git checkout -q -b throwaway "$fork_point"
+  fixture_touch_crate libdd-alpha "chore: release-only commit"
+  git tag -f "libdd-alpha-v1.2.3" >/dev/null
+  git checkout -q main
+  git branch -qD throwaway
+
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  assert_jq "$output" '.[0].tag_exists' "true"
+  assert_jq "$output" '.[0].tag_in_local_branch' "false"
+}
+
+@test "tag_in_local_branch is false when the crate has no tag" {
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  assert_success
+  assert_jq "$output" '.[0].tag_exists' "false"
+  assert_jq "$output" '.[0].tag_in_local_branch' "false"
+}
+
+# --- the latest release tag ---------------------------------------------------
+#
+# `latest_tag` is the highest tag that exists for the crate, which is not necessarily the
+# tag matching the manifest version. release-proposal-dispatch.yml compares the two and
+# skips the crate when they differ -- main already holds a newer release -- unless the run
+# is a hotfix or a bypass. Getting it wrong either skips a crate that should ship or
+# re-releases a version that already went out.
+
+@test "reports the highest release tag for the crate" {
+  fixture_tag "libdd-alpha-v1.9.0"
+  fixture_tag "libdd-alpha-v1.10.0"
+
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  # Version sort, not lexicographic: plain string ordering puts v1.9.0 above v1.10.0.
+  assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.10.0"
+}
+
+@test "latest_tag differs from tag when the manifest version lags behind the tags" {
+  # This is the state the skip rule exists for: a release for this crate was already cut
+  # somewhere else, so the proposal must not re-release the older version.
+  fixture_tag "libdd-alpha-v2.0.0"
+
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  assert_jq "$output" '.[0].tag' "libdd-alpha-v1.2.3"
+  assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v2.0.0"
+}
+
+@test "latest_tag equals tag when the crate is at its most recent release" {
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.2.3"
+  assert_jq "$output" '.[0].tag' "libdd-alpha-v1.2.3"
+}
+
+@test "latest_tag is empty for a crate that was never released" {
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  assert_success
+  assert_jq "$output" '.[0].tag_exists' "false"
+  assert_jq "$output" '.[0].latest_tag' ""
+}
+
+@test "latest_tag is reported even when the crate's own tag does not exist" {
+  # Manifest bumped without a release: no libdd-beta-v0.5.0 tag, but older ones exist.
+  fixture_tag "libdd-beta-v0.4.0"
+
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  assert_success
+  assert_jq "$output" '.[0].tag_exists' "false"
+  assert_jq "$output" '.[0].latest_tag' "libdd-beta-v0.4.0"
+}
+
+@test "latest_tag does not pick up tags belonging to a longer-named sibling crate" {
+  # libdd-alpha and libdd-alpha-ffi share a prefix; the "-v" in the glob keeps them apart.
+  fixture_tag "libdd-alpha-ffi-v9.9.9"
+
+  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  assert_success
+  assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.2.3"
+}
+
 # --- the exported range ------------------------------------------------------
 #
 # `range` is the commit span the listed commits came from, resolved to SHAs.
