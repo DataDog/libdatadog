@@ -97,9 +97,7 @@ fn encode_one(
     *index += 1;
 
     match token.kind {
-        kind if kind == TracerValueKind::Nil as u8 => {
-            write_nil(output).map_err(encoding_failed)?
-        }
+        kind if kind == TracerValueKind::Nil as u8 => write_nil(output).map_err(encoding_failed)?,
         kind if kind == TracerValueKind::Bool as u8 => {
             let value = match token.bool_value {
                 0 => false,
@@ -117,10 +115,7 @@ fn encode_one(
         kind if kind == TracerValueKind::F64 as u8 => {
             write_f64(output, token.f64_value).map_err(encoding_failed)?
         }
-        kind
-            if kind == TracerValueKind::String as u8
-                || kind == TracerValueKind::Binary as u8 =>
-        {
+        kind if kind == TracerValueKind::String as u8 || kind == TracerValueKind::Binary as u8 => {
             let bytes = token
                 .bytes
                 .try_as_bytes()
@@ -134,9 +129,7 @@ fn encode_one(
                 write_bin(output, bytes).map_err(encoding_failed)?;
             }
         }
-        kind
-            if kind == TracerValueKind::Array as u8 || kind == TracerValueKind::Map as u8 =>
-        {
+        kind if kind == TracerValueKind::Array as u8 || kind == TracerValueKind::Map as u8 => {
             if depth >= MAX_DEPTH {
                 return Err(invalid_input(
                     "structured value exceeds maximum depth of 64",
