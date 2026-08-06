@@ -21,7 +21,7 @@ arbitrary = { version = "1.3", features = ["derive"], optional = true }
 fuzzing = ["arbitrary"]
 
 [dev-dependencies]
-rand = "0.8.5"
+rand = ">=0.8.6"
 duplicate = "0.4.1"
 criterion.workspace = true
 
