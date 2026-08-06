@@ -29,7 +29,8 @@ const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_METHOD: &str = "http.method";
 // OpenTelemetry HTTP semantic-convention names for the two attributes above. A tracer running in
 // OTel semantics mode (DD_TRACE_OTEL_SEMANTICS_ENABLED) emits these instead of the Datadog names,
-// so reading only the Datadog names silently drops the status and method stats dimensions.
+// so reading only the Datadog names silently drops the status and method stats dimensions: the
+// bucket reports status 0 and an empty method while the span itself is correct.
 // http.endpoint and http.route need no equivalent: http.route is already the OTel name, and
 // http.endpoint is Datadog-only and retained in that mode.
 const TAG_STATUS_CODE_OTEL: &str = "http.response.status_code";
@@ -166,6 +167,42 @@ fn float_to_int(f: f64) -> Option<u8> {
     Some(f as u8)
 }
 
+/// The HTTP method, under either naming convention, or "" when the span carries neither.
+///
+/// The Datadog name is preferred so a tracer emitting both during a migration keeps reporting
+/// the dimension it already reports.
+fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
+    for key in [TAG_METHOD, TAG_METHOD_OTEL] {
+        if let Some(value) = span.get_meta(key) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+
+    ""
+}
+
+/// The HTTP status code, under either naming convention, or 0 when the span carries neither.
+///
+/// `metrics` is checked before `meta` for each name because a numeric attribute is routed there
+/// by the tracer's own setter, and OTel types `http.response.status_code` as an int. A name whose
+/// value does not parse falls through to the next name rather than terminating the search at 0,
+/// so a stray `http.status_code: ""` cannot hide a valid `http.response.status_code`.
+fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
+    for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
+        if let Some(value) = span.get_metrics(key) {
+            return value as u32;
+        }
+
+        if let Some(code) = span.get_meta(key).and_then(|value| value.parse().ok()) {
+            return code;
+        }
+    }
+
+    0
+}
+
 fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
         if let Some(val) = span.get_meta(key) {
@@ -280,32 +317,17 @@ impl<'a> BorrowedAggregationKey<'a> {
             vec![]
         };
 
-        // The Datadog name wins when both are present, and the OTel lookups only run when it is
-        // absent, so a span using Datadog naming still costs a single map lookup.
-        let http_method = span
-            .get_meta(TAG_METHOD)
-            .or_else(|| span.get_meta(TAG_METHOD_OTEL))
-            .unwrap_or_default();
+        // The Datadog name wins when both are present. An empty value counts as absent, so a
+        // tracer that writes the key unconditionally cannot shadow a real value under the other
+        // name, which is the mistake get_grpc_status_code above already avoids.
+        let http_method = get_http_method(span);
 
         let http_endpoint = span
             .get_meta("http.endpoint")
             .or_else(|| span.get_meta("http.route"))
             .unwrap_or_default();
 
-        // The status code is checked in metrics as well as meta on both names: OTel types
-        // http.response.status_code as an int, which the v04 encoder routes to metrics rather
-        // than meta.
-        let status_code = if let Some(status_code) = span.get_metrics(TAG_STATUS_CODE) {
-            status_code as u32
-        } else if let Some(status_code) = span.get_meta(TAG_STATUS_CODE) {
-            status_code.parse().unwrap_or_default()
-        } else if let Some(status_code) = span.get_metrics(TAG_STATUS_CODE_OTEL) {
-            status_code as u32
-        } else if let Some(status_code) = span.get_meta(TAG_STATUS_CODE_OTEL) {
-            status_code.parse().unwrap_or_default()
-        } else {
-            0
-        };
+        let status_code = get_http_status_code(span);
 
         let grpc_status_code = get_grpc_status_code(span);
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
@@ -1045,8 +1067,8 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Span in OTel semantics mode: status code in meta under the OTel name, which is how
-            // the agent transport carries it
+            // Span in OTel semantics mode: status code in meta under the OTel name, which is
+            // where it lands whenever the tracer stringifies its attributes
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1064,6 +1086,83 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Datadog name in meta, OTel name in metrics: the Datadog name still wins, so the
+            // metrics-before-meta order inside one name never leaks across names
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.status_code".into(), "500".into())].into(),
+                    metrics: vec![("http.response.status_code".into(), 418.0)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 500,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // An unparseable Datadog status falls through to the OTel name instead of ending the
+            // search at 0, which would reproduce the span/stats disagreement this is fixing
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.status_code".into(), "x".into()),
+                        ("http.response.status_code".into(), "418".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // An empty Datadog method counts as absent, so it cannot shadow the OTel name
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.method".into(), "".into()),
+                        ("http.request.method".into(), "GET".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_method: "GET".into(),
                     ..Default::default()
                 }
                 .into_key(),
