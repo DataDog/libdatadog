@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "agentless")]
+use super::agentless;
+
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
@@ -16,6 +19,7 @@ use libdd_trace_protobuf::remoteconfig::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -51,14 +55,26 @@ pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
     pub endpoint: Endpoint,
+    #[cfg(feature = "agentless")]
+    /// Enables and configures agentless mode. If some the fetcher will
+    /// talk directly to the RC backend
+    pub agentless: Option<agentless::AgentlessConfig>,
+    #[cfg(not(feature = "agentless"))]
+    pub agentless: Option<std::convert::Infallible>,
 }
 
-struct StoredTargetFile<S> {
-    hash: String,
-    handle: Arc<S>,
-    state: ConfigState,
-    meta: TargetFileMeta,
-    expiring: bool,
+impl ConfigInvariants {
+    pub fn agentless_enabled(&self) -> bool {
+        self.agentless.is_some()
+    }
+}
+
+pub(crate) struct StoredTargetFile<S> {
+    pub(crate) hash: String,
+    pub(crate) handle: Arc<S>,
+    pub(crate) state: ConfigState,
+    pub(crate) meta: TargetFileMeta,
+    pub(crate) expiring: bool,
 }
 
 pub enum ConfigApplyState {
@@ -105,7 +121,8 @@ impl ConfigProductCapabilities {
 }
 
 pub struct ConfigFetcherState<S, C: HttpClientCapability + SleepCapability> {
-    target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
+    pub(in crate::fetch) target_files_by_path:
+        Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
@@ -155,10 +172,28 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     pub fn with_client(invariants: ConfigInvariants, http_client: C) -> Self {
+        let (endpoint, agentless) = match &invariants.agentless {
+            Some(agentless_cfg) => {
+                #[cfg(feature = "agentless")]
+                {
+                    (
+                        agentless_cfg.agentless_endpoint().clone(),
+                        Some(agentless_cfg.clone()),
+                    )
+                }
+
+                #[cfg(not(feature = "agentless"))]
+                match *agentless_cfg {}
+            }
+            None => (make_agent_configs_endpoint(&invariants.endpoint), None),
+        };
         ConfigFetcherState {
             target_files_by_path: Default::default(),
-            endpoint: get_agent_configs_endpoint(&invariants.endpoint),
-            invariants,
+            endpoint,
+            invariants: ConfigInvariants {
+                agentless,
+                ..invariants
+            },
             expire_unused_files: true,
             http_client,
         }
@@ -203,9 +238,17 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+enum FetcherMode<C: HttpClientCapability> {
+    Agent(PhantomData<C>),
+    #[cfg(feature = "agentless")]
+    Agentless(agentless::AgentlessFetcher<C>),
+}
+
 pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+    mode: FetcherMode<C>,
 }
 
 pub struct ConfigClientState {
@@ -217,6 +260,8 @@ pub struct ConfigClientState {
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
     extra_services: Vec<String>,
+    /// Server-recommended interval between consecutive polls.
+    refresh_interval: Option<Duration>,
 }
 
 impl Default for ConfigClientState {
@@ -228,6 +273,7 @@ impl Default for ConfigClientState {
             root_version: 1,
             last_error: None,
             extra_services: vec![],
+            refresh_interval: None,
         }
     }
 }
@@ -236,14 +282,40 @@ impl ConfigClientState {
     pub fn set_extra_services(&mut self, services: Vec<String>) {
         self.extra_services = services;
     }
+
+    pub fn server_recommended_refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
+    }
 }
 
 impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S, C> {
-    pub fn new(file_storage: S, state: Arc<ConfigFetcherState<S::StoredFile, C>>) -> Self {
-        ConfigFetcher {
+    /// Create a new config fetcher
+    /// This is guaranteed to be immediate (no await point) if `state.invariants.agentless_enabled`
+    /// is false
+    pub async fn new(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+    ) -> anyhow::Result<Self> {
+        #[cfg(feature = "agentless")]
+        let mode: FetcherMode<C> = match &state.invariants.agentless {
+            Some(agentless_cfg) => FetcherMode::Agentless(
+                agentless::AgentlessFetcher::new(
+                    agentless_cfg.clone(),
+                    state.endpoint.clone(),
+                    state.http_client.clone(),
+                )
+                .await?,
+            ),
+            None => FetcherMode::Agent(PhantomData),
+        };
+        #[cfg(not(feature = "agentless"))]
+        let mode: FetcherMode<C> = FetcherMode::Agent(PhantomData);
+
+        Ok(ConfigFetcher {
             file_storage,
             state,
-        }
+            mode,
+        })
     }
 
     /// Sets the apply state on a stored file.
@@ -326,34 +398,13 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         }
     }
 
-    /// Quite generic fetching implementation:
-    ///  - runs a request against the Remote Config Server,
-    ///  - validates the data,
-    ///  - removes unused files
-    ///  - checks if the files are already known,
-    ///  - stores new files,
-    ///  - returns all currently active files.
-    ///
-    /// It also makes sure that old files are dropped before new files are inserted.
-    ///
-    /// Returns None if nothing changed. Otherwise Some(active configs).
-    pub async fn fetch_once(
+    async fn fetch_agent(
         &mut self,
-        runtime_id: &str,
+        config_req: ClientGetConfigsRequest,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
-        client_id: &str,
         client_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        let config_req = self.build_config_request(
-            runtime_id,
-            target,
-            product_capabilities,
-            client_id,
-            &*client_state,
-        );
-        trace!("Submitting remote config request: {config_req:?}");
-
+        trace!("Submitting remote config request");
         let req = self
             .state
             .endpoint
@@ -520,14 +571,14 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 continue;
             };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
-                anyhow::bail!(
-                    "Failed base64 decoding config for path {path}: {}",
-                    String::from_utf8_lossy(raw_file)
-                )
+                anyhow::bail!("Failed base64 decoding config for path {path}")
             };
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
-                anyhow::bail!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
+                anyhow::bail!(
+                    "Computed hash of file {computed_hash} did not match remote config targets \
+                    file hash {hash} for path {path}"
+                );
             }
             let Some(version) = target_file.try_parse_version() else {
                 anyhow::bail!("Failed parsing version from remote config path {path}");
@@ -540,9 +591,9 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
                 StoredTargetFile {
                     hash: computed_hash,
                     state: ConfigState {
-                        id: parsed_path.config_id.to_string(),
+                        id: parsed_path.config_id().to_string(),
                         version,
-                        product: parsed_path.product.to_string(),
+                        product: parsed_path.product().to_string(),
                         apply_state: 2, // Acknowledged
                         apply_error: "".to_string(),
                     },
@@ -583,9 +634,82 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         client_state.last_config_paths = config_paths;
         Ok(Some(configs))
     }
+
+    /// Quite generic fetching implementation:
+    ///  - runs a request against the Remote Config Server,
+    ///  - validates the data,
+    ///  - removes unused files
+    ///  - checks if the files are already known,
+    ///  - stores new files,
+    ///  - returns all currently active files.
+    ///
+    /// It also makes sure that old files are dropped before new files are inserted.
+    ///
+    /// Returns None if nothing changed. Otherwise Some(active configs).
+    pub async fn fetch_once(
+        &mut self,
+        runtime_id: &str,
+        target: &Target,
+        product_capabilities: &ConfigProductCapabilities,
+        client_id: &str,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
+        let config_req = self.build_config_request(
+            runtime_id,
+            target,
+            product_capabilities,
+            client_id,
+            &*client_state,
+        );
+        match &mut self.mode {
+            FetcherMode::Agent(_) => self.fetch_agent(config_req, target, client_state).await,
+            #[cfg(feature = "agentless")]
+            FetcherMode::Agentless(agentless_fetcher) => {
+                #[allow(clippy::expect_used)]
+                let client = config_req.client.expect(
+                    "RC ConfigFetcher::build_config_request should always return a `Some` client",
+                );
+
+                let cache = agentless::TargetCache::new(&self.state, &self.file_storage);
+                let res = match agentless_fetcher.fetch_config(client, &cache).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        client_state.last_error = Some(format!("{e:#}"));
+                        // Surface the recommended backoff to the consumer of
+                        // `ConfigClientState::server_recommended_refresh_interval`
+                        // so it waits before the next attempt. `None` means
+                        // "no extra backoff, use the regular interval".
+                        if let Some(backoff) = agentless_fetcher.next_backoff() {
+                            client_state.refresh_interval = Some(backoff);
+                        }
+                        return Err(e);
+                    }
+                };
+
+                client_state.root_version = res.root_version;
+                client_state.targets_version = res.target_version;
+                client_state.refresh_interval = Some(res.refresh_interval);
+                if res.opaque_backend_state != client_state.opaque_backend_state {
+                    client_state.opaque_backend_state = res.opaque_backend_state.clone();
+                }
+                client_state.last_error = None;
+
+                let config_paths: HashSet<RemoteConfigPath> = res
+                    .targets
+                    .iter()
+                    .map(|target_ref| target_ref.path.clone())
+                    .collect();
+
+                let configs = cache.lock().collect_handles(&res.targets)?;
+
+                client_state.last_config_paths = config_paths;
+                Ok(Some(configs))
+            }
+        }
+    }
 }
 
-fn get_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
+fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     #[allow(clippy::unwrap_used)]
@@ -602,27 +726,21 @@ fn get_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
 pub mod tests {
     use super::*;
     use crate::fetch::test_server::RemoteConfigServer;
-    use crate::RemoteConfigSource;
     use http::Response;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 
-    pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "1234".to_string(),
-        name: "config".to_string(),
+    pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/1234/config")
+            .expect("PATH_FIRST is a valid remote config path")
     });
 
-    pub(crate) static PATH_SECOND: LazyLock<RemoteConfigPath> =
-        LazyLock::new(|| RemoteConfigPath {
-            source: RemoteConfigSource::Employee,
-            product: RemoteConfigProduct::ApmTracing,
-            config_id: "9876".to_string(),
-            name: "config".to_string(),
-        });
+    pub(crate) static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/9876/config")
+            .expect("PATH_SECOND is a valid remote config path")
+    });
 
     pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
         Arc::new(Target::new(
@@ -722,7 +840,9 @@ pub mod tests {
                 server.dummy_options().invariants,
                 NativeCapabilities::new_without_connection_pooling(),
             )),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         let mut response = http_common::empty_response(Response::builder()).unwrap();
@@ -760,7 +880,9 @@ pub mod tests {
                 server.dummy_options().invariants,
                 NativeCapabilities::new_without_connection_pooling(),
             )),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         let capabilities = server.dummy_product_capabilities();
@@ -862,6 +984,7 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
+            agentless: None,
         };
         let product_capabilities = ConfigProductCapabilities::new(
             vec![
@@ -877,7 +1000,10 @@ pub mod tests {
                 invariants,
                 NativeCapabilities::new_without_connection_pooling(),
             )),
-        );
+        )
+        .await
+        .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         {
@@ -1064,7 +1190,10 @@ pub mod tests {
                 server.dummy_options().invariants,
                 NativeCapabilities::new_without_connection_pooling(),
             )),
-        );
+        )
+        .await
+        .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         // Default: nothing set, agent receives an empty list.
@@ -1165,7 +1294,10 @@ pub mod tests {
                 server.dummy_options().invariants,
                 NativeCapabilities::new_without_connection_pooling(),
             )),
-        );
+        )
+        .await
+        .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         let fetched = fetcher

@@ -182,6 +182,7 @@ impl TracerFlareManager {
                 language,
                 tracer_version,
                 endpoint: remote_config_endpoint,
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::AgentConfig,
@@ -190,13 +191,16 @@ impl TracerFlareManager {
             capabilities: vec![],
         };
 
-        tracer_flare.listener = Some(SingleChangesFetcher::new(
-            ParsedFileStorage::default(),
-            Target::new(service, env, app_version, vec![], vec![]),
-            runtime_id,
-            config_to_fetch,
-            NativeCapabilities::new_without_connection_pooling(),
-        ));
+        tracer_flare.listener = Some(
+            SingleChangesFetcher::new_no_agentless(
+                ParsedFileStorage::default(),
+                Target::new(service, env, app_version, vec![], vec![]),
+                runtime_id,
+                config_to_fetch,
+                NativeCapabilities::new_without_connection_pooling(),
+            )
+            .map_err(|e| FlareError::ListeningError(e.to_string()))?,
+        );
 
         Ok(tracer_flare)
     }
@@ -523,7 +527,7 @@ mod tests {
         },
         fetch::FileStorage,
         file_storage::ParsedFileStorage,
-        RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
+        RemoteConfigPath,
     };
     #[cfg(feature = "listener")]
     use std::sync::{atomic::Ordering, Arc};
@@ -631,12 +635,10 @@ mod tests {
     #[cfg(feature = "listener")]
     fn test_remote_config_with_valid_log_level() {
         let storage = ParsedFileStorage::default();
-        let path = Arc::new(RemoteConfigPath {
-            product: RemoteConfigProduct::AgentConfig,
-            config_id: "test".to_string(),
-            name: "flare-log-level.test".to_string(),
-            source: RemoteConfigSource::Datadog(1),
-        });
+        let path = Arc::new(
+            RemoteConfigPath::parse("datadog/1/AGENT_CONFIG/test/flare-log-level.test")
+                .expect("valid path"),
+        );
 
         let config = AgentConfigFile {
             name: "flare-log-level.test".to_string(),
@@ -657,12 +659,9 @@ mod tests {
     #[cfg(feature = "listener")]
     fn test_remote_config_with_send_task() {
         let storage = ParsedFileStorage::default();
-        let path = Arc::new(RemoteConfigPath {
-            product: RemoteConfigProduct::AgentTask,
-            config_id: "test".to_string(),
-            name: "tracer_flare".to_string(),
-            source: RemoteConfigSource::Datadog(1),
-        });
+        let path = Arc::new(
+            RemoteConfigPath::parse("datadog/1/AGENT_TASK/test/tracer_flare").expect("valid path"),
+        );
 
         let task = AgentTaskFile {
             args: AgentTask {
@@ -686,12 +685,10 @@ mod tests {
     #[cfg(feature = "listener")]
     fn test_remote_config_with_invalid_config() {
         let storage = ParsedFileStorage::default();
-        let path = Arc::new(RemoteConfigPath {
-            product: RemoteConfigProduct::AgentConfig,
-            config_id: "test".to_string(),
-            name: "invalid-config".to_string(),
-            source: RemoteConfigSource::Datadog(1),
-        });
+        let path = Arc::new(
+            RemoteConfigPath::parse("datadog/1/AGENT_CONFIG/test/invalid-config")
+                .expect("valid path"),
+        );
 
         let config = AgentConfigFile {
             name: "invalid-config".to_string(),
@@ -756,12 +753,10 @@ mod tests {
         let agent_config_file = storage
             .store(
                 1,
-                Arc::new(RemoteConfigPath {
-                    product: RemoteConfigProduct::AgentConfig,
-                    config_id: "test".to_string(),
-                    name: "flare-log-level.test".to_string(),
-                    source: RemoteConfigSource::Datadog(1),
-                }),
+                Arc::new(
+                    RemoteConfigPath::parse("datadog/1/AGENT_CONFIG/test/flare-log-level.test")
+                        .expect("valid path"),
+                ),
                 serde_json::to_vec(&AgentConfigFile {
                     name: "flare-log-level.test".to_string(),
                     config: AgentConfig {
@@ -791,12 +786,10 @@ mod tests {
         let error_file = storage
             .store(
                 2,
-                Arc::new(RemoteConfigPath {
-                    product: RemoteConfigProduct::AgentConfig,
-                    config_id: "error".to_string(),
-                    name: "error".to_string(),
-                    source: RemoteConfigSource::Datadog(1),
-                }),
+                Arc::new(
+                    RemoteConfigPath::parse("datadog/1/AGENT_CONFIG/error/error")
+                        .expect("valid path"),
+                ),
                 b"invalid".to_vec(),
             )
             .unwrap();
@@ -809,12 +802,10 @@ mod tests {
     #[cfg(feature = "listener")]
     fn test_check_remote_config_file_with_parsing_error() {
         let storage = ParsedFileStorage::default();
-        let path = Arc::new(RemoteConfigPath {
-            product: RemoteConfigProduct::AgentConfig,
-            config_id: "test".to_string(),
-            name: "invalid-json".to_string(),
-            source: RemoteConfigSource::Datadog(1),
-        });
+        let path = Arc::new(
+            RemoteConfigPath::parse("datadog/1/AGENT_CONFIG/test/invalid-json")
+                .expect("valid path"),
+        );
 
         let file = storage
             .store(1, path.clone(), b"invalid json".to_vec())
