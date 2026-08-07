@@ -40,7 +40,9 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{
+    HttpClientCapability, LogWriterCapability, MaybeSend, RegexCapability, SleepCapability,
+};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::DogStatsDClient;
@@ -238,7 +240,13 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 /// [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
 #[derive(Debug)]
 pub struct TraceExporter<
-    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability
+        + SleepCapability
+        + LogWriterCapability
+        + RegexCapability
+        + MaybeSend
+        + Sync
+        + 'static,
     R: SharedRuntime,
 > {
     endpoint: Endpoint,
@@ -272,7 +280,7 @@ pub struct TraceExporter<
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
-    trace_filterer: ArcSwap<TraceFilterer>,
+    trace_filterer: ArcSwap<TraceFilterer<C>>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
@@ -287,7 +295,13 @@ pub struct TraceExporter<
 }
 
 impl<
-        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability
+            + SleepCapability
+            + LogWriterCapability
+            + RegexCapability
+            + MaybeSend
+            + Sync
+            + 'static,
         R: SharedRuntime,
     > TraceExporter<C, R>
 {
@@ -463,7 +477,7 @@ impl<
             return;
         }
 
-        self.trace_filterer.store(Arc::new(TraceFilterer::new(
+        self.trace_filterer.store(Arc::new(TraceFilterer::<C>::new(
             &agent_info.info.filter_tags.require,
             &agent_info.info.filter_tags.reject,
             &agent_info.info.filter_tags_regex.require,
@@ -1417,6 +1431,47 @@ mod tests {
         fn write_log_output(&self, bytes: &[u8]) -> std::io::Result<()> {
             LOG_CAPTURE.with(|c| c.borrow_mut().extend_from_slice(bytes));
             Ok(())
+        }
+    }
+
+    impl libdd_capabilities::RegexCapability for CapturingCapabilities {
+        type Handle = <NativeCapabilities as libdd_capabilities::RegexCapability>::Handle;
+
+        fn compile(pattern: &str) -> Result<Self::Handle, libdd_capabilities::regex::RegexError> {
+            NativeCapabilities::compile(pattern)
+        }
+
+        fn is_match(handle: &Self::Handle, haystack: &str) -> bool {
+            NativeCapabilities::is_match(handle, haystack)
+        }
+
+        fn find(handle: &Self::Handle, haystack: &str) -> Option<libdd_capabilities::regex::Match> {
+            NativeCapabilities::find(handle, haystack)
+        }
+
+        fn find_all(
+            handle: &Self::Handle,
+            haystack: &str,
+        ) -> Vec<libdd_capabilities::regex::Match> {
+            NativeCapabilities::find_all(handle, haystack)
+        }
+
+        fn captures(
+            handle: &Self::Handle,
+            haystack: &str,
+        ) -> Option<libdd_capabilities::regex::Captures> {
+            NativeCapabilities::captures(handle, haystack)
+        }
+
+        fn captures_all(
+            handle: &Self::Handle,
+            haystack: &str,
+        ) -> Vec<libdd_capabilities::regex::Captures> {
+            NativeCapabilities::captures_all(handle, haystack)
+        }
+
+        fn pattern(handle: &Self::Handle) -> &str {
+            NativeCapabilities::pattern(handle)
         }
     }
 

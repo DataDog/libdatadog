@@ -19,7 +19,9 @@ use crate::trace_exporter::{
     TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{
+    HttpClientCapability, LogWriterCapability, MaybeSend, RegexCapability, SleepCapability,
+};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
@@ -555,7 +557,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// available on wasm — use [`Self::build_async`] there.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn build<
-        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability
+            + SleepCapability
+            + LogWriterCapability
+            + RegexCapability
+            + MaybeSend
+            + Sync
+            + 'static,
     >(
         mut self,
     ) -> Result<TraceExporter<C, R>, TraceExporterError>
@@ -583,7 +591,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// context. If [`set_shared_runtime`](Self::set_shared_runtime) was not called, a new
     /// runtime is constructed via [`SharedRuntime::new`].
     pub async fn build_async<
-        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability
+            + SleepCapability
+            + LogWriterCapability
+            + RegexCapability
+            + MaybeSend
+            + Sync
+            + 'static,
     >(
         self,
     ) -> Result<TraceExporter<C, R>, TraceExporterError> {
@@ -872,6 +886,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             #[cfg(feature = "telemetry")]
             telemetry: ArcSwapOption::from(telemetry_client.map(Arc::new)),
             health_metrics_enabled: self.health_metrics_enabled,
+            trace_filterer: ArcSwap::from_pointee(TraceFilterer::<C>::with_empty_conf()),
             capabilities,
             workers: TraceExporterWorkers {
                 dogstatsd: dogstatsd_handle,
@@ -884,7 +899,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
             agentless_config,
-            trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
             log_output,
             restart_after_fork: self.restart_after_fork,

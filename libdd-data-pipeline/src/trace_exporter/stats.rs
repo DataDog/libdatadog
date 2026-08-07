@@ -13,7 +13,7 @@ use super::add_path;
 use super::TracerMetadata;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, RegexCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
@@ -43,7 +43,7 @@ pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 /// Context struct that groups immutable parameters used by stats functions
 pub(crate) struct StatsContext<
     'a,
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + RegexCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 > {
     pub metadata: &'a TracerMetadata,
@@ -124,7 +124,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 ///
 /// Should only be used if the agent enabled stats computation
 pub(crate) fn start_stats_computation<
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + RegexCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
     ctx: &StatsContext<C, R>,
@@ -153,7 +153,7 @@ pub(crate) fn start_stats_computation<
 
 /// Create stats exporter and worker, start the worker, and update the state
 fn create_and_start_stats_worker<
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + RegexCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
     ctx: &StatsContext<C, R>,
@@ -212,7 +212,7 @@ pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComp
 
 /// Handle stats computation when agent changes from disabled to enabled
 pub(crate) fn handle_stats_disabled_by_agent<
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + RegexCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
     ctx: &StatsContext<C, R>,
@@ -321,8 +321,9 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 /// will be sent to telemetry.
 pub(crate) fn process_traces_for_stats<
     T: libdd_trace_utils::span::TraceData,
-    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+    C: libdd_capabilities::HttpClientCapability
         + libdd_capabilities::SleepCapability
+        + libdd_capabilities::RegexCapability
         + libdd_capabilities::MaybeSend
         + Sync
         + 'static,
@@ -331,7 +332,7 @@ pub(crate) fn process_traces_for_stats<
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-    trace_filterer: &TraceFilterer,
+    trace_filterer: &TraceFilterer<C>,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) {
     let status = client_side_stats.load();
