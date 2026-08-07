@@ -527,93 +527,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Audit input is api-changes.json: every candidate from the previous step -- the crates
-          # released there and the pending no-commit candidates, which carry "pending_release":
-          # "true" so we can tell them apart below. Every row is checked the same way for direct
-          # libdd-* major bumps; only what happens to the result differs.
-          #
-          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch
-          # the job checkout. Check it out at the proposal branch tip (HEAD) — the released ref plus
-          # this run's version bumps from the previous step. This is deliberate on both ends:
-          #   - It includes the dependency-requirement rewrites cargo-release made in the previous
-          #     step, so a dependency bumped to a new major IN THIS proposal propagates a major bump
-          #     to its dependents (e.g. protobuf 3->4 forces its dependents major).
-          #   - It is built from the released ref, NOT github.sha, so changes present only on current
-          #     main (and absent from a hotfix/older-ref release) never trigger a spurious bump.
-          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
-          PROPOSAL_SHA=$(git rev-parse HEAD)
+          "${WORKFLOW_SCRIPTS_ROOT}/release-version-major-bumps.sh" \
+            --api-changes /tmp/api-changes.json \
+            --out /tmp/api-changes-with-major-bumps.json \
+            --branch "$BRANCH_NAME"
 
-          git worktree add --detach "$MAJOR_BUMPS_WT" "$PROPOSAL_SHA"
-          set +e
-          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
-            > /tmp/api-changes-with-major-bumps-pre-commit.json
-          MB_RC=$?
-          git worktree remove --force "$MAJOR_BUMPS_WT" || true
-          set -e
-          if [[ "$MB_RC" -ne 0 ]]; then
-            echo "Major bumps level script failed with code $MB_RC"
-            echo "Major bumps level script output:"
-            cat /tmp/api-changes-with-major-bumps-pre-commit.json
-            exit "$MB_RC"
-          fi
-
-          # Seed the result with every already-released crate. Pending crates are appended below
-          # only if they earn a major bump; those that do not stay out of the release entirely.
-          jq '[.[] | select(.pending_release != "true") | del(.pending_release)]' \
-            /tmp/api-changes-with-major-bumps-pre-commit.json > /tmp/api-changes-with-major-bumps.json
-
-          # iterate over the crates and, where a direct libdd-* dependency had a major bump, update the version
-          jq -c '.[]' /tmp/api-changes-with-major-bumps-pre-commit.json | while read -r bump; do
-            NAME=$(echo "$bump" | jq -r '.name')
-            LEVEL=$(echo "$bump" | jq -r '.level')
-            PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
-            TAG=$(echo "$bump" | jq -r '.tag')
-            VERSION=$(echo "$bump" | jq -r '.version')
-            PENDING=$(echo "$bump" | jq -r '.pending_release // "false"')
-            MAJOR_BUMPS=$(echo "$bump" | jq -c '.major_bumps')
-
-            if [ "$MAJOR_BUMPS" = "[]" ]; then
-              if [ "$PENDING" = "true" ]; then
-                echo "No commits and no direct dependency major bumps for $NAME, keeping it out of the release"
-              fi
-              continue
-            fi
-
-            # A crate already bumped to major in the previous step needs nothing more. Pending
-            # crates always have level "none" here, so this only short-circuits released crates.
-            if [ "$LEVEL" = "major" ]; then
-              echo "Skipping $NAME: already bumped at major level in the previous step (major_bumps: $MAJOR_BUMPS)"
-              continue
-            fi
-
-            # Bump to major: either a pending (no-commit) crate whose direct dependency went major,
-            # or a released crate bumped below major in the previous step. Both are handled the same.
-            echo "Bumping $NAME to major due to direct dependency major bumps: $MAJOR_BUMPS"
-            cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
-
-            git commit -am "chore(release): update version for $NAME with major bumps"
-
-            NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-            NEXT_TAG="$NAME-v$NEXT_VERSION"
-
-            echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
-
-            # Released crates are already in the result (seeded above): update them in place. Pending
-            # crates are not: append them. The row is derived from the audit entry either way.
-            ROW=$(echo "$bump" | jq --arg version "$NEXT_VERSION" --arg tag "$NEXT_TAG" \
-              'del(.pending_release) | . + {level: "major", version: $version, tag: $tag}')
-            jq --argjson row "$ROW" \
-              'if any(.[]; .name == $row.name)
-               then map(if .name == $row.name then $row else . end)
-               else . + [$row] end' \
-              /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
-              && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
-          done
-
-          # Output the results
-          echo "API changes with major bumps summary:"
-          jq . /tmp/api-changes-with-major-bumps.json
-      
       - name: Generate CHANGELOGS
         id: generate-changelogs
         run: |
