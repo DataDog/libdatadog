@@ -879,10 +879,7 @@ pub enum HookError {
 ///
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
-pub unsafe fn hook_symbol(
-    symbol_name: &CStr,
-    hook_fn: usize,
-) -> Result<HookResult, HookError> {
+pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> {
     let symbol_name_bytes = symbol_name.to_bytes();
     let name_str = symbol_name
         .to_str()
