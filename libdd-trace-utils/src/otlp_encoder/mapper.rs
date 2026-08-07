@@ -110,18 +110,6 @@ fn tag_to_otlp_kind(t: &str) -> i32 {
     }
 }
 
-/// Maps a Datadog `span.kind` tag value to the OTel Span Metrics Connector's string convention.
-pub fn tag_to_otlp_kind_str_name(t: &str) -> &'static str {
-    match tag_to_otlp_kind(t) {
-        span_kind::SERVER => "SPAN_KIND_SERVER",
-        span_kind::CLIENT => "SPAN_KIND_CLIENT",
-        span_kind::PRODUCER => "SPAN_KIND_PRODUCER",
-        span_kind::CONSUMER => "SPAN_KIND_CONSUMER",
-        span_kind::INTERNAL => "SPAN_KIND_INTERNAL",
-        _ => "SPAN_KIND_INTERNAL",
-    }
-}
-
 /// Maps the Datadog span type field (set by DD-instrumented tracers) to an OTLP SpanKind.
 fn dd_type_to_otlp_kind(t: &str) -> i32 {
     // Case-insensitive match without allocating (see `tag_to_otlp_kind`).

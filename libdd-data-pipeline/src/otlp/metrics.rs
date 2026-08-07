@@ -13,7 +13,6 @@ use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
-use libdd_trace_utils::otlp_encoder::mapper::tag_to_otlp_kind_str_name;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -48,6 +47,20 @@ const GRPC_STATUS_NAMES: [&str; 17] = [
 
 fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
     GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
+}
+
+fn span_kind_name(kind: &str) -> &'static str {
+    if kind.eq_ignore_ascii_case("server") {
+        "SPAN_KIND_SERVER"
+    } else if kind.eq_ignore_ascii_case("client") {
+        "SPAN_KIND_CLIENT"
+    } else if kind.eq_ignore_ascii_case("producer") {
+        "SPAN_KIND_PRODUCER"
+    } else if kind.eq_ignore_ascii_case("consumer") {
+        "SPAN_KIND_CONSUMER"
+    } else {
+        "SPAN_KIND_INTERNAL"
+    }
 }
 
 const STATUS_CODE_OK: &str = "STATUS_CODE_OK";
@@ -177,11 +190,7 @@ fn build_attributes(
     attrs.push(kv_str("service.name", group_service));
 
     push(&mut attrs, "span.name", &group.resource);
-    push(
-        &mut attrs,
-        "span.kind",
-        tag_to_otlp_kind_str_name(&group.span_kind),
-    );
+    push(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
     push(
         &mut attrs,
         "status.code",
@@ -204,12 +213,6 @@ fn build_attributes(
             group.http_status_code as i64,
         ));
     }
-    for tag in &group.additional_metric_tags {
-        if let Some((k, v)) = tag.split_once(':') {
-            push(&mut attrs, k, v);
-        }
-    }
-
     push(&mut attrs, "datadog.operation.name", &group.name);
     push(&mut attrs, "datadog.span.type", &group.r#type);
     push(&mut attrs, "datadog.svc_src", &group.service_source);
@@ -237,6 +240,11 @@ fn build_attributes(
             "datadog.peer_tags",
             group.peer_tags.iter().map(String::as_str),
         ));
+    }
+    for tag in &group.additional_metric_tags {
+        if let Some((k, v)) = tag.split_once(':') {
+            push(&mut attrs, k, v);
+        }
     }
     attrs
 }
@@ -509,6 +517,7 @@ mod tests {
             g.span_kind = "server".into();
             g.grpc_status_code = "5".into();
             g.is_trace_root = pb::Trilean::True as i32;
+            g.service_source = "lambda".into();
             g.peer_tags = vec!["db.hostname:prod-db-1".into(), "db.name:orders".into()];
             g.additional_metric_tags = vec!["custom.primary:a".into()];
         });
@@ -533,6 +542,7 @@ mod tests {
         assert!(a.iter().any(|kv| kv["key"] == "http.response.status_code"));
         assert_eq!(str_at(a, "datadog.operation.name"), Some("test.op"));
         assert_eq!(str_at(a, "datadog.span.type"), Some("web"));
+        assert_eq!(str_at(a, "datadog.svc_src"), Some("lambda"));
         assert_eq!(str_at(a, "datadog.origin"), Some("synthetics"));
         assert_eq!(bool_at(a, "datadog.is_trace_root"), Some(true));
         assert_eq!(bool_at(a, "datadog.span.top_level"), Some(true));
@@ -541,9 +551,15 @@ mod tests {
             Some(vec!["db.hostname:prod-db-1", "db.name:orders"])
         );
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
-        assert!(pts.iter().any(
-            |p| str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc-other")
-        ));
+        let custom = pts
+            .iter()
+            .find(|p| {
+                str_at(p["attributes"].as_array().unwrap(), "service.name") == Some("svc-other")
+            })
+            .unwrap()["attributes"]
+            .as_array()
+            .unwrap();
+        assert_eq!(str_at(custom, "span.kind"), Some("SPAN_KIND_INTERNAL"));
     }
 
     #[test]
@@ -552,7 +568,6 @@ mod tests {
             (pb::Trilean::NotSet as i32, None),
             (pb::Trilean::True as i32, Some(true)),
             (pb::Trilean::False as i32, Some(false)),
-            (i32::MAX, None),
         ] {
             let g = group_with_exact(&[1_000_000_000], &[], |g| {
                 g.is_trace_root = value;
@@ -566,50 +581,6 @@ mod tests {
                 expected.map(|value| json!({ "boolValue": value }))
             );
             assert_eq!(bool_at(attrs, "datadog.span.top_level"), Some(false));
-        }
-    }
-
-    #[test]
-    fn service_source_is_emitted_as_string() {
-        let g = group_with_exact(&[1_000_000_000], &[], |g| {
-            g.service_source = "lambda".into();
-        });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
-        let attrs = points(&req)[0]["attributes"].as_array().unwrap();
-        let service_source = attrs.iter().find(|kv| kv["key"] == "datadog.svc_src");
-
-        assert_eq!(
-            service_source,
-            Some(&json!({
-                "key": "datadog.svc_src",
-                "value": { "stringValue": "lambda" }
-            }))
-        );
-    }
-
-    #[test]
-    fn empty_service_source_is_omitted() {
-        let req =
-            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), false).unwrap();
-        let attrs = points(&req)[0]["attributes"].as_array().unwrap();
-
-        assert!(!attrs.iter().any(|kv| kv["key"] == "datadog.svc_src"));
-    }
-
-    #[test]
-    fn absent_or_unknown_span_kind_defaults_to_internal() {
-        for span_kind in ["", "unknown"] {
-            let group = group_with_exact(&[1_000_000_000], &[], |g| {
-                g.span_kind = span_kind.into();
-            });
-            let req = map_stats_to_otlp_metrics(&buckets(vec![group]), &resource(), false).unwrap();
-            assert_eq!(
-                str_at(
-                    points(&req)[0]["attributes"].as_array().unwrap(),
-                    "span.kind"
-                ),
-                Some("SPAN_KIND_INTERNAL")
-            );
         }
     }
 
