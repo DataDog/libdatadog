@@ -92,7 +92,6 @@ fn kv_str_array<'a>(key: &str, values: impl IntoIterator<Item = &'a str>) -> Val
 pub fn map_stats_to_otlp_metrics(
     buckets: &[OtlpStatsBucket],
     resource_info: &OtlpResourceInfo,
-    _otel_trace_semantics_enabled: bool,
 ) -> Option<Value> {
     let mut data_points = Vec::new();
     for b in buckets {
@@ -300,7 +299,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
         if buckets.is_empty() {
             return Ok(false);
         }
-        let Some(request) = map_stats_to_otlp_metrics(&buckets, &self.resource, false) else {
+        let Some(request) = map_stats_to_otlp_metrics(&buckets, &self.resource) else {
             return Ok(false);
         };
         send_otlp_http(
@@ -481,13 +480,13 @@ mod tests {
 
     #[test]
     fn metric_shape_and_resource_attributes() {
-        assert!(map_stats_to_otlp_metrics(&[], &resource(), false).is_none());
+        assert!(map_stats_to_otlp_metrics(&[], &resource()).is_none());
         let mut r = resource();
         r.app_version = "1.2.3".to_string();
         r.hostname = "my-host".to_string();
         r.runtime_id = "abc-123".to_string();
         r.process_tags = "entrypoint.name:server".to_string();
-        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r, false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r).unwrap();
         let m = metric(&req);
         assert_eq!(m["name"], "traces.span.sdk.metrics.duration");
         assert_eq!(m["unit"], "s");
@@ -525,7 +524,7 @@ mod tests {
         });
         let bs = buckets(vec![g_pair, custom_pair]);
 
-        let req = map_stats_to_otlp_metrics(&bs, &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&bs, &resource()).unwrap();
         let pts = points(&req);
         let a = pts
             .iter()
@@ -572,7 +571,7 @@ mod tests {
                 g.is_trace_root = value;
                 g.top_level_hits = 0;
             });
-            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
             let attrs = points(&req)[0]["attributes"].as_array().unwrap();
             let is_trace_root = attrs.iter().find(|kv| kv["key"] == "datadog.is_trace_root");
             assert_eq!(
@@ -588,7 +587,7 @@ mod tests {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
             g.grpc_status_code = "5".into();
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert_eq!(str_at(a, "rpc.response.status_code"), Some("NOT_FOUND"));
 
@@ -597,7 +596,7 @@ mod tests {
             let g = group_with_exact(&[1_000_000_000], &[], |g| {
                 g.grpc_status_code = code.into();
             });
-            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
             let a = points(&req)[0]["attributes"].as_array().unwrap();
             assert!(!a.iter().any(|kv| kv["key"] == "rpc.response.status_code"));
         }
@@ -606,8 +605,7 @@ mod tests {
     #[test]
     fn histogram_values_are_exact_and_distribution_uses_sketch() {
         // Single 1s ok span: count/sum/min/max all exact, distribution shaped by the sketch.
-        let req =
-            map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &resource()).unwrap();
         let p = &points(&req)[0];
         assert_eq!(p["count"], "1");
         assert_eq!(p["sum"].as_f64().unwrap(), 1.0);
@@ -623,7 +621,7 @@ mod tests {
 
         // 3ms, 300ms, 3s land in three distinct buckets; exact sum = 3.303s.
         let g = group_with_exact(&[3_000_000, 300_000_000, 3_000_000_000], &[], |_| {});
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let p = &points(&req)[0];
         assert_eq!(p["count"], "3");
         assert_eq!(p["sum"].as_f64().unwrap(), ns_to_s(3_303_000_000));
@@ -640,7 +638,7 @@ mod tests {
         let err = [700_000_000_u64];
         let combined_ns = ok.iter().sum::<u64>() + err.iter().sum::<u64>();
         let g = group_with_exact(&ok, &err, |_| {});
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let pts = points(&req);
         assert_eq!(pts.len(), 2);
         let ok_pt = pts.iter().find(|p| !is_error_point(p)).unwrap();
@@ -673,7 +671,7 @@ mod tests {
                 "datadog.custom:dd".into(),
             ];
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert_eq!(str_at(a, "custom.primary"), Some("a"));
         assert_eq!(str_at(a, "region"), Some("us-east"));
@@ -684,7 +682,7 @@ mod tests {
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
             g.additional_metric_tags = vec!["malformed".into(), "empty:".into()];
         });
-        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert!(!a.iter().any(|kv| kv["key"] == "malformed"));
         assert!(!a.iter().any(|kv| kv["key"] == "empty"));
