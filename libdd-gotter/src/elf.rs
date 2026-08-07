@@ -839,10 +839,20 @@ pub struct HookResult {
     /// Resolved address of the original symbol. Store this so the hook
     /// function can forward calls to the real implementation.
     pub orig_addr: usize,
-    /// Whether at least one GOT entry was patched. `false` means the
-    /// symbol was found but no loaded library had a matching GOT
-    /// relocation for it (e.g. statically linked libc on musl).
-    pub patched: bool,
+    /// Number of GOT entries successfully rewritten.
+    pub entries_patched: usize,
+    /// Number of GOT entries that matched the symbol but could not be
+    /// patched (`mprotect` failed to make the page writable).
+    pub entries_failed: usize,
+}
+
+/// Error returned by [`hook_symbol`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookError {
+    /// `symbol_name` was not valid.
+    InvalidSymbolName,
+    /// No loaded library exports a definition for this symbol.
+    SymbolNotFound,
 }
 
 /// Hook a single symbol across all loaded ELF objects by patching their
@@ -856,29 +866,37 @@ pub struct HookResult {
 /// [`PageProtGuard`] primitives to build a registry that re-scans on
 /// `dlopen` (see `libdd-profiling-heap-gotter`'s `SymbolOverrides`).
 ///
-/// - `symbol_name`: the symbol to hook (e.g. `c"__assert_fail"`)
+/// - `symbol_name`: the symbol to hook (`c"__assert_fail"`)
 /// - `hook_fn`: address of the replacement function
 ///
-/// Returns `None` if the symbol could not be found in any loaded
-/// library. Returns `Some(HookResult)` if the symbol was resolved,
-/// with `orig_addr` set to the original function address and `patched`
+/// Returns `Ok(HookResult)` if the symbol was resolved, with
+/// `orig_addr` set to the original function address and `patched`
 /// indicating whether any GOT entries were actually rewritten.
+/// Returns `Err(HookError)` if the symbol name is invalid or the
+/// symbol could not be found.
 ///
 /// # Safety
 ///
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
-pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Option<HookResult> {
+pub unsafe fn hook_symbol(
+    symbol_name: &CStr,
+    hook_fn: usize,
+) -> Result<HookResult, HookError> {
     let symbol_name_bytes = symbol_name.to_bytes();
-    let name_str = symbol_name.to_str().ok()?;
+    let name_str = symbol_name
+        .to_str()
+        .map_err(|_| HookError::InvalidSymbolName)?;
 
-    let result = lookup_symbol(name_str, hook_fn)?;
+    let result = lookup_symbol(name_str, hook_fn).ok_or(HookError::SymbolNotFound)?;
 
-    let mut patched_any = false;
+    let mut entries_patched: usize = 0;
+    let mut entries_failed: usize = 0;
     let mut guard = PageProtGuard::new();
 
     let guard_ptr = &mut guard as *mut PageProtGuard;
-    let patched_ptr = &mut patched_any as *mut bool;
+    let patched_ptr = &mut entries_patched as *mut usize;
+    let failed_ptr = &mut entries_failed as *mut usize;
 
     iterate_libraries(|info, _is_exe| {
         let lib_name = if info.dlpi_name.is_null() {
@@ -900,8 +918,9 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Option<HookResu
             return false;
         };
         // SAFETY: dyn_info was just produced from a currently-loaded
-        // library. guard_ptr/patched_ptr are valid for the duration of
-        // iterate_libraries (they point to locals in the enclosing fn).
+        // library. guard_ptr/patched_ptr/failed_ptr are valid for the
+        // duration of iterate_libraries (they point to locals in the
+        // enclosing fn).
         unsafe {
             patch_got_entries(
                 &dyn_info,
@@ -909,14 +928,16 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Option<HookResu
                 hook_fn,
                 &mut *guard_ptr,
                 &mut *patched_ptr,
+                &mut *failed_ptr,
             );
         }
         false
     });
 
-    Some(HookResult {
+    Ok(HookResult {
         orig_addr: result.address,
-        patched: patched_any,
+        entries_patched,
+        entries_failed,
     })
 }
 
@@ -935,7 +956,8 @@ unsafe fn patch_got_entries(
     symbol_name: &[u8],
     hook_fn: usize,
     guard: &mut PageProtGuard,
-    patched: &mut bool,
+    patched: &mut usize,
+    failed: &mut usize,
 ) {
     // Both REL and RELA relocations carry r_info (symbol + type) and
     // r_offset (GOT slot address). RELA has an additional r_addend we
@@ -949,7 +971,9 @@ unsafe fn patch_got_entries(
             if cstr.to_bytes() == symbol_name {
                 let addr = r_offset as usize + dyn_info.base_address();
                 if guard.override_entry(addr, hook_fn) {
-                    *patched = true;
+                    *patched += 1;
+                } else {
+                    *failed += 1;
                 }
             }
         }

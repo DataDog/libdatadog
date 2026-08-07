@@ -21,11 +21,17 @@ unsafe extern "C" fn my_hook(/* same signature as target */) {
     // forward to original via ORIG_FN
 }
 
-if let Some(result) = unsafe { hook_symbol(c"__assert_fail", my_hook as *const () as usize) } {
-    // Release pairs with the Acquire load in my_hook, ensuring the GOT
-    // patches from hook_symbol are visible before the hook reads orig_addr.
-    ORIG_FN.store(result.orig_addr, Ordering::Release);
-    // result.patched tells you whether any GOT entries were rewritten
+match unsafe { hook_symbol(c"__assert_fail", my_hook as *const () as usize) } {
+    Ok(result) => {
+        // Release pairs with the Acquire load in my_hook, ensuring the GOT
+        // patches from hook_symbol are visible before the hook reads orig_addr.
+        ORIG_FN.store(result.orig_addr, Ordering::Release);
+
+        // result.entries_patched: number of GOT entries rewritten
+        // result.entries_failed: matched but mprotect failed
+    }
+    Err(HookError::SymbolNotFound) => { /* expected on musl/static libc */ }
+    Err(HookError::InvalidSymbolName) => { /* bug */ }
 }
 ```
 
