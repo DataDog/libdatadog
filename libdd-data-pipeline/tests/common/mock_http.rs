@@ -21,15 +21,45 @@ use tokio::sync::Notify;
 /// Response queue for a single URI path.
 type PathResponseQueue = VecDeque<Result<http::Response<Bytes>, HttpError>>;
 
+/// Compression encoding detected from the `Content-Encoding` header of a captured request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compression {
+    Zstd,
+}
+
 #[derive(Debug, Clone)]
 pub struct CapturedRequest {
     pub method: http::Method,
     pub uri: http::Uri,
     pub headers: http::HeaderMap,
+    /// The raw wire bytes exactly as received (may be compressed).
+    pub raw_body: Bytes,
+    /// Compression detected from `Content-Encoding`, or `None` if the body is uncompressed.
+    pub compression: Option<Compression>,
+    /// Always the decompressed body. Equal to `raw_body` when `compression` is `None`.
     pub body: Bytes,
 }
 
 impl CapturedRequest {
+    fn from_parts(method: http::Method, uri: http::Uri, headers: http::HeaderMap, raw_body: Bytes) -> Self {
+        let compression = headers
+            .get(http::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| match s {
+                "zstd" => Some(Compression::Zstd),
+                _ => None,
+            });
+        let body = match compression {
+            Some(Compression::Zstd) => {
+                zstd::decode_all(raw_body.as_ref())
+                    .map(Bytes::from)
+                    .unwrap_or_else(|_| raw_body.clone())
+            }
+            None => raw_body.clone(),
+        };
+        Self { method, uri, headers, raw_body, compression, body }
+    }
+
     pub fn header(&self, name: &str) -> &str {
         self.headers
             .get(name)
@@ -179,12 +209,7 @@ impl HttpClientCapability for MockHttpCapabilities {
            + libdd_capabilities::MaybeSend {
         let path = req.uri().path().to_owned();
         let (parts, body) = req.into_parts();
-        let captured = CapturedRequest {
-            method: parts.method,
-            uri: parts.uri,
-            headers: parts.headers,
-            body,
-        };
+        let captured = CapturedRequest::from_parts(parts.method, parts.uri, parts.headers, body);
 
         let response = {
             let mut responses = self.inner.responses.lock().unwrap();
