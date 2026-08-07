@@ -45,7 +45,7 @@ fn top_level_payload_shape_and_metadata() {
         metrics: VecMap::from_iter([("_top_level".into(), 1.0)]),
         ..Default::default()
     };
-    let bytes = encode_payload(&[vec![span]], &base_metadata()).unwrap();
+    let bytes = encode_payload(&[vec![span]], &base_metadata(), false).unwrap();
     let v = json_from_bytes(&bytes);
 
     assert!(v.is_object());
@@ -96,7 +96,7 @@ fn resource_defaults_to_name_when_empty() {
         duration: 1,
         ..Default::default()
     };
-    let bytes = encode_payload(&[vec![span]], &base_metadata()).unwrap();
+    let bytes = encode_payload(&[vec![span]], &base_metadata(), false).unwrap();
     let v = json_from_bytes(&bytes);
     let s = &v["traces"][0]["spans"][0];
     assert_eq!(s["resource"], "op");
@@ -121,7 +121,7 @@ fn keeps_existing_dd_p_tid_in_meta() {
     span.meta.insert(bs("_dd.p.tid"), bs("5b8efff798038103"));
     span.meta.insert(bs("some.tag"), bs("kept"));
 
-    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata(), false).unwrap());
     let s = &v["traces"][0]["spans"][0];
     // Only the low 64 bits appear in `trace_id`.
     assert_eq!(s["trace_id"], "123456789abcdef0");
@@ -155,7 +155,7 @@ fn span_links_serialised_into_meta_as_json_string() {
         span_links: vec![link],
         ..Default::default()
     };
-    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata(), false).unwrap());
     let s = &v["traces"][0]["spans"][0];
     // No top-level `span_links` field.
     assert!(s.get("span_links").is_none_or(|v| v.is_null()));
@@ -202,7 +202,7 @@ fn span_events_serialised_into_meta_as_json_string() {
         span_events: vec![event],
         ..Default::default()
     };
-    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata(), false).unwrap());
     let s = &v["traces"][0]["spans"][0];
     // No top-level `span_events` field.
     assert!(s.get("span_events").is_none_or(|v| v.is_null()));
@@ -257,6 +257,7 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
         &encode_payload(
             &[vec![parent, child_same_service, child_other_service]],
             &base_metadata(),
+            false,
         )
         .unwrap(),
     );
@@ -315,7 +316,7 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     span.meta_struct
         .insert(bs("_dd.appsec.json"), Bytes::from(payload));
 
-    let encoded = encode_payload(&[vec![span]], &base_metadata()).unwrap();
+    let encoded = encode_payload(&[vec![span]], &base_metadata(), false).unwrap();
     let v = json_from_bytes(&encoded);
     let s = &v["traces"][0]["spans"][0];
     let ms = s["meta_struct"]
@@ -348,7 +349,51 @@ fn meta_struct_field_omitted_when_empty() {
         duration: 1,
         ..Default::default()
     };
-    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata(), false).unwrap());
     let s = &v["traces"][0]["spans"][0];
     assert!(s.get("meta_struct").is_none());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn suppress_compute_stats_omits_marker_when_local_stats_enabled() {
+    // When the caller is computing and exporting stats locally (agentless stats
+    // path), `suppress_compute_stats = true` must prevent `_dd.compute_stats=1`
+    // from being injected so the intake does not double-count the traces.
+    let span: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 1,
+        parent_id: 0,
+        start: 0,
+        duration: 1,
+        ..Default::default()
+    };
+
+    // With suppression: marker must be absent.
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata(), true).unwrap());
+    let s = &v["traces"][0]["spans"][0];
+    assert!(
+        s["meta"].get("_dd.compute_stats").is_none(),
+        "_dd.compute_stats must not be injected when suppress_compute_stats is true"
+    );
+
+    // Without suppression: marker must be present (baseline sanity check).
+    let span2: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 1,
+        parent_id: 0,
+        start: 0,
+        duration: 1,
+        ..Default::default()
+    };
+    let v = json_from_bytes(&encode_payload(&[vec![span2]], &base_metadata(), false).unwrap());
+    let s = &v["traces"][0]["spans"][0];
+    assert_eq!(
+        s["meta"]["_dd.compute_stats"], "1",
+        "_dd.compute_stats must be injected when suppress_compute_stats is false"
+    );
 }

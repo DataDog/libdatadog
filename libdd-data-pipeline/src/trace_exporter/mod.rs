@@ -638,11 +638,17 @@ impl<
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
+        stats_computed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // When local stats computation is active (agentless stats path), the
+        // intake must not also compute stats for these traces.  Suppressing
+        // `_dd.compute_stats=1` prevents double-counting.
+        let suppress_compute_stats = stats_computed;
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
             &traces,
             &self.metadata,
+            suppress_compute_stats,
         )
         .map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
@@ -783,7 +789,7 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        stats::process_traces_for_stats(
+        let stats_computed = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
@@ -806,7 +812,9 @@ impl<
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_agentless_traces_inner(traces, config).await;
+            return self
+                .send_agentless_traces_inner(traces, config, stats_computed)
+                .await;
         }
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.

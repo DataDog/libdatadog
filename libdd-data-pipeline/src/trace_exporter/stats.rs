@@ -319,6 +319,8 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 ///
 /// If a telemetry client is provided and stats are enabled, dropped P0 counts
 /// will be sent to telemetry.
+///
+/// Returns true if stats were computed for the traces passed
 pub(crate) fn process_traces_for_stats<
     T: libdd_trace_utils::span::TraceData,
     #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
@@ -334,7 +336,7 @@ pub(crate) fn process_traces_for_stats<
     force_compute_top_level: bool,
     trace_filterer: &TraceFilterer,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
-) {
+) -> bool {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
@@ -371,11 +373,13 @@ pub(crate) fn process_traces_for_stats<
                 tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
             }
         }
+        return true;
     } else if !client_computed_top_level && force_compute_top_level {
         for chunk in traces.iter_mut() {
             libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
         }
     }
+    false
 }
 
 #[cfg(test)]
