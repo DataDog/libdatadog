@@ -230,7 +230,7 @@ impl RemoteConfigServer {
             },
             products: vec![
                 RemoteConfigProduct::ApmTracing,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::LiveDebugging,
             ],
             capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         }
