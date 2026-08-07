@@ -40,6 +40,7 @@ CI runs the same suite plus `shellcheck` over `scripts/*.sh`
 | `publication-order.bats` | which crates a release includes, and the order they publish in |
 | `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; the exported `range`, `latest_tag` and `tag_in_local_branch`; exclusion rules |
 | `release-version-bumps.bats` | each crate's fate — released at a level, deferred, skipped, or a hard failure — and the version cargo-release actually lands on |
+| `release-version-major-bumps.bats` | which crates get forced to major by a dependency that went major in the same proposal, and which no-commit candidates are pulled back in or dropped |
 | `semver-level.bats` | the bump level fed to `cargo release version -x`, parsed out of cargo-semver-checks and cargo-public-api output |
 | `major-bumps-level.bats` | whether a direct `libdd-*` dependency going major forces a dependent to major |
 | `release-proposal-workflow.bats` | job-level `if:` gating, untrusted-`main_start_ref` defenses, branch prefixes, push path, PR contract |
@@ -58,12 +59,17 @@ parsing* `semver-level.sh` gets wrong when it regresses. The shim replays record
 output for those two subcommands and forwards everything else to the real cargo, so
 the script under test runs unmodified.
 
-**Real cargo-release** — `release-version-bumps.bats` runs `cargo release` against the
-fixture workspace rather than stubbing it, so the versions it asserts are the ones a
-release would land on. Only `semver-level.sh` is doubled there, by copying the script
-under test next to a stub sibling: it resolves `semver-level.sh` relative to itself, so
-no test-only hook is needed in the script. Install `cargo-release` to run those tests;
-without it they skip rather than fail.
+**Real cargo-release** — the two `release-version-*` suites run `cargo release` against
+the fixture workspace rather than stubbing it, so the versions they assert are the ones
+a release would land on. They also use it to *set up* state: driving the simulated
+previous release through cargo-release rewrites dependents' version requirements the way
+a real release does, which a hand-edited manifest does not. Install `cargo-release` to
+run them; without it they skip rather than fail.
+
+`release-version-major-bumps.bats` needs no doubles at all — `major-bumps-level.sh` only
+reads cargo metadata, with no compilation. `release-version-bumps.bats` doubles just
+`semver-level.sh`, by copying the script under test next to a stub sibling: it resolves
+`semver-level.sh` relative to itself, so no test-only hook is needed in the script.
 
 **Workflow guards** (`helpers/workflow-to-json.py`) — transcribes the workflow YAML to
 JSON so the tests can assert on it with `jq`. These are intentionally

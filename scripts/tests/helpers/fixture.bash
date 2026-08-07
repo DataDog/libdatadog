@@ -133,12 +133,6 @@ fixture_touch_crate() {
   fixture_commit_all "$message" "$author" "$email"
 }
 
-# fixture_set_version CRATE VERSION — rewrite the [package] version in place.
-fixture_set_version() {
-  local crate="$1" version="$2"
-  sed -i -E "0,/^version = \".*\"$/s//version = \"${version}\"/" "${FIXTURE_REPO}/${crate}/Cargo.toml"
-}
-
 # fixture_set_dep_req CRATE DEP REQ — rewrite a dependency's version requirement.
 fixture_set_dep_req() {
   local crate="$1" dep="$2" req="$3"
