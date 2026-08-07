@@ -3,7 +3,7 @@
 
 //! GOT-table interposition for heap profiling.
 //!
-//! Uses the shared ELF primitives from `libdd-got-hook` for parsing and
+//! Uses the shared ELF primitives from `libdd-gotter` for parsing and
 //! patching, and adds the multi-symbol `SymbolOverrides` registry with
 //! per-library dedup and dlopen rescan support on top.
 
@@ -12,7 +12,9 @@ use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use libdd_gotter::lookup_symbol;
-use libdd_gotter::{elf64_r_sym, iterate_libraries, DynamicInfo, PageProtGuard};
+use libdd_gotter::{
+    elf64_r_sym, elf64_r_type, is_got_pointer_reloc, iterate_libraries, DynamicInfo, PageProtGuard,
+};
 
 /// Per-library bookkeeping for the GOT re-scan. We never un-patch (see
 /// the crate docs on why un-installing can't be done safely), so this
@@ -144,6 +146,7 @@ impl SymbolOverrides {
         // /proc/self/maps via PageProtGuard even if only one new object needs
         // patching. Track already-processed libraries and lazily create the
         // page-protection guard to avoid repeated heavy work.
+
         let mut guard = PageProtGuard::new();
 
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
@@ -222,21 +225,32 @@ impl SymbolOverrides {
             return;
         }
 
+        // NOTE: the SysV x86-64 ABI:
+        // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
+        // specifies that only RELA entries are used on AMD64 (spec page 64).
+        // ARM64 appears similar. REL processing is kept for defensive completeness
+        // but may be dead code on both architectures. We should revisit this.
         for reloc in dyn_info.rels() {
+            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                continue;
+            }
             Self::process_relocation(
                 &self.overrides,
                 dyn_info,
-                elf64_r_sym(reloc.r_info) as u32,
+                elf64_r_sym(reloc.r_info),
                 reloc.r_offset as usize,
                 guard,
             );
         }
         for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
             for reloc in relocs {
+                if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                    continue;
+                }
                 Self::process_relocation(
                     &self.overrides,
                     dyn_info,
-                    elf64_r_sym(reloc.r_info) as u32,
+                    elf64_r_sym(reloc.r_info),
                     reloc.r_offset as usize,
                     guard,
                 );
