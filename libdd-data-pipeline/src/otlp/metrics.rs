@@ -189,17 +189,16 @@ fn build_attributes(
     };
     attrs.push(kv_str("service.name", group_service));
 
-    push(&mut attrs, "span.name", &group.resource);
-    push(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
-    push(
-        &mut attrs,
+    attrs.push(kv_str(
         "status.code",
         if is_error {
             STATUS_CODE_ERROR
         } else {
             STATUS_CODE_OK
         },
-    );
+    ));
+    push(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
+    push(&mut attrs, "span.name", &group.resource);
 
     push(&mut attrs, "http.request.method", &group.http_method);
     push(&mut attrs, "http.route", &group.http_endpoint);
@@ -213,7 +212,7 @@ fn build_attributes(
             group.http_status_code as i64,
         ));
     }
-    push(&mut attrs, "datadog.operation.name", &group.name);
+    attrs.push(kv_str("datadog.operation.name", &group.name));
     push(&mut attrs, "datadog.span.type", &group.r#type);
     push(&mut attrs, "datadog.svc_src", &group.service_source);
     // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
