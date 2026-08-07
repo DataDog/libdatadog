@@ -803,6 +803,9 @@ impl<
         }
 
         if let Some(ref config) = self.agentless_config {
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
             return self.send_agentless_traces_inner(traces, config).await;
         }
 
