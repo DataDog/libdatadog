@@ -45,6 +45,14 @@ impl<T: DeserializableTraceData> Buffer<T> {
         self.0.borrow()
     }
 
+    /// Returns the underlying owned bytes buffer, unaffected by the lied `'static` lifetime
+    /// `as_mut_slice` exposes. Cloning this (cheap: a refcount bump for `T::Bytes = Bytes`)
+    /// before advancing the buffer lets callers keep the backing allocation alive for data
+    /// borrowed from a since-advanced position.
+    pub fn bytes(&self) -> &T::Bytes {
+        &self.0
+    }
+
     /// Tries to extract a slice of `bytes` from the buffer and advances the buffer.
     pub fn try_slice_and_advance(&mut self, bytes: usize) -> Option<T::Bytes> {
         T::try_slice_and_advance(&mut self.0, bytes)
