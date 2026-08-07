@@ -522,9 +522,10 @@ jobs:
           fi
 
       - name: Update version for crates with libdd-* direct dependency major bumps since last release
+        env:
+          BRANCH_NAME: ${{ steps.proposal-branch.outputs.branch_name }}
         run: |
           set -euo pipefail
-          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
           # Audit input is api-changes.json: every candidate from the previous step -- the crates
           # released there and the pending no-commit candidates, which carry "pending_release":
