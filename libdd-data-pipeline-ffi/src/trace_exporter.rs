@@ -4,6 +4,7 @@
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::{catch_panic, gen_error};
+use http::{HeaderName, HeaderValue};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common_ffi::{
     CharSlice,
@@ -88,6 +89,7 @@ pub struct TraceExporterConfig {
     connection_timeout: Option<u64>,
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
+    otlp_headers: Vec<(String, String)>,
     otlp_protocol: Option<OtlpProtocol>,
     otlp_instrumentation_scope_name: Option<String>,
     otlp_instrumentation_scope_version: Option<String>,
@@ -509,6 +511,41 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
+/// Adds an HTTP header to OTLP trace export requests.
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`. Repeated names use the last configured value.
+/// Invalid HTTP header names and values are rejected without changing the configuration.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_add_otlp_header(
+    config: Option<&mut TraceExporterConfig>,
+    key: CharSlice,
+    value: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let key = match sanitize_string(key) {
+                Ok(value) => value,
+                Err(error) => return Some(error),
+            };
+            let value = match sanitize_string(value) {
+                Ok(value) => value,
+                Err(error) => return Some(error),
+            };
+            if HeaderName::from_bytes(key.as_bytes()).is_err()
+                || HeaderValue::from_bytes(value.as_bytes()).is_err()
+            {
+                return gen_error!(ErrorCode::InvalidArgument);
+            }
+            handle.otlp_headers.push((key, value));
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
 /// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
 /// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
@@ -717,6 +754,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
+                builder.set_otlp_headers(config.otlp_headers.clone());
                 if let Some(protocol) = config.otlp_protocol {
                     builder.set_otlp_protocol(protocol);
                 }
@@ -834,6 +872,7 @@ mod tests {
             assert!(!cfg.output_to_log);
             assert_eq!(cfg.log_max_line_size, None);
             assert_eq!(cfg.stats_cardinality_limits, None);
+            assert!(cfg.otlp_headers.is_empty());
             assert!(cfg.otlp_instrumentation_scope_name.is_none());
             assert!(cfg.otlp_instrumentation_scope_version.is_none());
 
@@ -1512,6 +1551,148 @@ mod tests {
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
             ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn config_otlp_headers_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_add_otlp_header(
+                None,
+                CharSlice::from("authorization"),
+                CharSlice::from("Bearer token"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            assert!(ddog_trace_exporter_config_add_otlp_header(
+                config.as_mut(),
+                CharSlice::from("x-first"),
+                CharSlice::from("one"),
+            )
+            .is_none());
+            assert!(ddog_trace_exporter_config_add_otlp_header(
+                config.as_mut(),
+                CharSlice::from("x-second"),
+                CharSlice::from("two"),
+            )
+            .is_none());
+            assert_eq!(
+                config.as_ref().unwrap().otlp_headers,
+                vec![
+                    ("x-first".to_string(), "one".to_string()),
+                    ("x-second".to_string(), "two".to_string()),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn config_otlp_headers_reject_invalid_utf8() {
+        let invalid = [0x80_u8, 0xff_u8];
+        let mut config = Some(TraceExporterConfig::default());
+        let error = unsafe {
+            ddog_trace_exporter_config_add_otlp_header(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+                CharSlice::from("value"),
+            )
+        };
+        assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+        unsafe { ddog_trace_exporter_error_free(error) };
+        assert!(config.as_ref().unwrap().otlp_headers.is_empty());
+
+        let error = unsafe {
+            ddog_trace_exporter_config_add_otlp_header(
+                config.as_mut(),
+                CharSlice::from("key"),
+                CharSlice::from_bytes(&invalid),
+            )
+        };
+        assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+        unsafe { ddog_trace_exporter_error_free(error) };
+        assert!(config.as_ref().unwrap().otlp_headers.is_empty());
+    }
+
+    #[test]
+    fn config_otlp_headers_reject_invalid_http_syntax() {
+        let mut config = Some(TraceExporterConfig::default());
+        for (key, value) in [
+            ("invalid header name", "value"),
+            ("x-test", "first line\nsecond line"),
+        ] {
+            let error = unsafe {
+                ddog_trace_exporter_config_add_otlp_header(
+                    config.as_mut(),
+                    CharSlice::from(key),
+                    CharSlice::from(value),
+                )
+            };
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            unsafe { ddog_trace_exporter_error_free(error) };
+            assert!(config.as_ref().unwrap().otlp_headers.is_empty());
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_forwards_otlp_headers() {
+        unsafe {
+            let server = MockServer::start();
+            let mock_traces = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/v1/traces")
+                    .header("x-first", "latest")
+                    .header("x-second", "two");
+                then.status(200);
+            });
+
+            let cfg = TraceExporterConfig {
+                tracer_version: Some("0.1".to_string()),
+                language: Some("ruby".to_string()),
+                language_version: Some("3.2".to_string()),
+                language_interpreter: Some("ruby".to_string()),
+                hostname: Some("hostname".to_string()),
+                env: Some("env-test".to_string()),
+                version: Some("1.0".to_string()),
+                service: Some("test-service".to_string()),
+                otlp_endpoint: Some(server.url("/v1/traces")),
+                otlp_headers: vec![
+                    ("x-first".to_string(), "one".to_string()),
+                    ("x-second".to_string(), "two".to_string()),
+                    ("x-first".to_string(), "latest".to_string()),
+                ],
+                otlp_protocol: Some(OtlpProtocol::HttpJson),
+                ..Default::default()
+            };
+
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
+            assert!(ret.is_none(), "{ret:?}");
+            let exporter = ptr.assume_init();
+
+            let span = SpanSlice {
+                service: "test-service",
+                name: "operation",
+                resource: "GET /test",
+                trace_id: 1,
+                span_id: 2,
+                start: 1_000_000_000,
+                duration: 1_000,
+                ..Default::default()
+            };
+            let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+            let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
+            let ret = ddog_trace_exporter_send(
+                Some(exporter.as_ref()),
+                ByteSlice::new(&data),
+                Some(NonNull::new_unchecked(&mut response).cast()),
+            );
+            assert!(ret.is_none(), "{ret:?}");
+            drop(response.assume_init());
+            mock_traces.assert();
+            ddog_trace_exporter_free(exporter);
         }
     }
 
