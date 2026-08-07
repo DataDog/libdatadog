@@ -43,9 +43,7 @@ fn make_root_span(trace_id: u128, sampling_priority: Option<f64>, error: i32) ->
         duration: 5_000_000,
         error,
         metrics: VecMap::from_iter(
-            sampling_priority
-                .map(|p| (BytesString::from_static("_sampling_priority_v1"), p))
-                .into_iter(),
+            sampling_priority.map(|p| (BytesString::from_static("_sampling_priority_v1"), p)),
         ),
         ..Default::default()
     }
@@ -339,7 +337,10 @@ async fn test_sampled_span_sent_to_intake_with_correct_stats() {
     let groups = grouped_stats_from_request(stats_req);
     let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
     let total_errors: u64 = groups.iter().map(|g| g.errors).sum();
-    assert_eq!(total_hits, 1, "stats must record 1 hit for the sampled span");
+    assert_eq!(
+        total_hits, 1,
+        "stats must record 1 hit for the sampled span"
+    );
     assert_eq!(total_errors, 0, "stats must record 0 errors");
 }
 
@@ -374,7 +375,10 @@ async fn test_p0_span_not_sent_to_intake_but_counted_in_stats() {
         .expect("/api/v0.2/stats request not found");
     let groups = grouped_stats_from_request(stats_req);
     let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
-    assert_eq!(total_hits, 1, "dropped P0 span must still be counted in stats");
+    assert_eq!(
+        total_hits, 1,
+        "dropped P0 span must still be counted in stats"
+    );
 }
 
 /// A span with a **negative** sampling priority but `error = 1` must be kept
@@ -439,7 +443,10 @@ async fn test_mixed_sampling_priorities_span_count_and_stats() {
     .await;
 
     // Exactly one POST to /v1/input (the sampled trace only).
-    let trace_reqs: Vec<_> = reqs.iter().filter(|r| r.uri.path() == "/v1/input").collect();
+    let trace_reqs: Vec<_> = reqs
+        .iter()
+        .filter(|r| r.uri.path() == "/v1/input")
+        .collect();
     assert_eq!(
         trace_reqs.len(),
         1,
