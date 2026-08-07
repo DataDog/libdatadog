@@ -388,6 +388,53 @@ mod tests {
     }
 
     #[test]
+    fn test_get_carrier_from_eventbridge_inside_sns_body_without_message_attributes() {
+        let eventbridge_body = serde_json::json!({
+            "version": "0",
+            "id": "event-id",
+            "detail-type": "WorkItemSubmitted",
+            "source": "rust-sqs-sample.client",
+            "account": "123456789012",
+            "time": "2026-08-04T00:00:00Z",
+            "region": "us-east-1",
+            "resources": [],
+            "detail": {
+                "message": "hello through eventbridge sns",
+                "_datadog": {
+                    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+                    "x-datadog-start-time": "1740000000"
+                }
+            }
+        });
+        let sns_body = serde_json::json!({
+            "Type": "Notification",
+            "MessageId": "sns-message-id",
+            "TopicArn": "arn:aws:sns:us-east-1:123456789012:topic-name",
+            "Timestamp": "2026-08-04T00:00:01.000Z",
+            "Message": eventbridge_body.to_string()
+        })
+        .to_string();
+        let payload = sqs_payload_with_body(&sns_body);
+
+        let event = SqsRecord::new(payload).unwrap();
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([
+                (
+                    "traceparent".to_string(),
+                    "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+                ),
+                ("x-datadog-start-time".to_string(), "1740000000".to_string())
+            ])
+        );
+        assert!(matches!(
+            event.get_wrapped_trigger(),
+            Some(WrappedSqsTrigger::Sns(_))
+        ));
+    }
+
+    #[test]
     fn test_get_carrier_from_transformed_eventbridge_body() {
         let body = serde_json::json!({
             "detail": {

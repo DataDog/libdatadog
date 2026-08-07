@@ -15,7 +15,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use tracing::debug;
 
-use super::event_bridge::EventBridgeEvent;
+use super::event_bridge::{carrier_from_eventbridge_body, EventBridgeEvent};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SnsRecord {
@@ -33,7 +33,7 @@ pub struct SnsEntity {
     pub r#type: String,
     #[serde(rename = "TopicArn")]
     pub topic_arn: String,
-    #[serde(rename = "MessageAttributes")]
+    #[serde(default, rename = "MessageAttributes")]
     pub message_attributes: HashMap<String, SnsMessageAttribute>,
     #[serde(rename = "Timestamp")]
     pub timestamp: String,
@@ -168,11 +168,11 @@ impl Trigger for SnsRecord {
             }
         }
 
-        // Fallback: check message for EventBridge event
+        // Fallback: check message for EventBridge event. EventBridge input
+        // transformers can preserve `detail._datadog` without preserving the
+        // full EventBridge envelope, so extract the carrier directly.
         if let Some(message) = &self.sns.message {
-            if let Ok(event) = serde_json::from_str::<EventBridgeEvent>(message) {
-                return event.get_carrier();
-            }
+            return carrier_from_eventbridge_body(message);
         }
 
         HashMap::new()
@@ -180,5 +180,81 @@ impl Trigger for SnsRecord {
 
     fn is_async(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_carrier_from_eventbridge_message() {
+        let message = serde_json::json!({
+            "version": "0",
+            "id": "event-id",
+            "detail-type": "WorkItemSubmitted",
+            "source": "rust-sns-sample.client",
+            "account": "123456789012",
+            "time": "2026-08-04T00:00:00Z",
+            "region": "us-east-1",
+            "resources": [],
+            "detail": {
+                "message": "hello through eventbridge",
+                "_datadog": {
+                    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+                    "x-datadog-start-time": "1740000000"
+                }
+            }
+        })
+        .to_string();
+        let event = sns_record_with_message(&message);
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([
+                (
+                    "traceparent".to_string(),
+                    "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+                ),
+                ("x-datadog-start-time".to_string(), "1740000000".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_get_carrier_from_transformed_eventbridge_message() {
+        let message = serde_json::json!({
+            "detail": {
+                "message": "hello through eventbridge",
+                "_datadog": {
+                    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+                }
+            }
+        })
+        .to_string();
+        let event = sns_record_with_message(&message);
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([(
+                "traceparent".to_string(),
+                "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+            )])
+        );
+    }
+
+    fn sns_record_with_message(message: &str) -> SnsRecord {
+        SnsRecord {
+            sns: SnsEntity {
+                message_id: "message-id".to_string(),
+                r#type: "Notification".to_string(),
+                topic_arn: "arn:aws:sns:us-east-1:123456789012:topic-name".to_string(),
+                message_attributes: HashMap::new(),
+                timestamp: "2026-08-04T00:00:00.000Z".to_string(),
+                subject: None,
+                message: Some(message.to_string()),
+            },
+            event_subscription_arn: None,
+        }
     }
 }
