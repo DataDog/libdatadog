@@ -91,6 +91,7 @@ scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
 scripts/release-version-bumps.sh     @DataDog/apm-common-components-core
 scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core
 scripts/semver-level.sh              @DataDog/apm-common-components-core
+scripts/tests/                       @DataDog/apm-common-components-core
 scripts/update_license_3rdparty.sh   @DataDog/apm-common-components-core
 scripts/Dockerfile.license           @DataDog/libdatadog-core
 spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog-apm
