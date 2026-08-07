@@ -503,9 +503,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     ///   without agentless trace export.
     /// - [`Self::set_otlp_metrics_endpoint`] must not be set. OTLP stats and agentless stats cannot
     ///   both be enabled.
+    /// - The `stats-obfuscation` crate feature must be enabled. Unlike the agent-assisted path
+    ///   (where the Agent obfuscates SQL/Redis resources before forwarding stats), the agentless
+    ///   path sends stats directly to the intake with no downstream obfuscation.
     ///
     /// Authentication reuses the agentless API key configured via
     /// [`Self::set_agentless_endpoint`].
+    #[cfg(feature = "stats-obfuscation")]
     pub fn set_agentless_stats_endpoint(&mut self, url: &str) -> &mut Self {
         self.agentless_stats_endpoint = Some(url.to_owned());
         self
@@ -1109,6 +1113,23 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             ));
         }
 
+        // Agentless stats bypass the Agent, so nothing downstream obfuscates SQL/Redis
+        // resources. Without the `stats-obfuscation` feature the concentrator would emit
+        // raw resource names directly to the intake, inflating cardinality and retaining
+        // literal values. Reject the configuration at build time so this is a hard error
+        // rather than a silent data-quality issue.
+        #[cfg(not(feature = "stats-obfuscation"))]
+        if self.agentless_stats_endpoint.is_some() {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export requires the `stats-obfuscation` crate feature; \
+                     without it, SQL/Redis resource names are sent to the intake unobfuscated. \
+                     Enable the `stats-obfuscation` feature or use the agent-assisted stats path."
+                        .to_string(),
+                ),
+            ));
+        }
+
         Ok(())
     }
 
@@ -1389,6 +1410,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
+    #[cfg(feature = "stats-obfuscation")]
     fn test_agentless_stats_without_agentless_traces_rejected() {
         let mut builder = TraceExporterBuilder::default();
         builder.set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats");
@@ -1401,6 +1423,7 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
+    #[cfg(feature = "stats-obfuscation")]
     fn test_agentless_stats_with_otlp_stats_rejected() {
         let mut builder = TraceExporterBuilder::default();
         builder
