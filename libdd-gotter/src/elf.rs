@@ -3,7 +3,22 @@
 
 //! GOT-table interposition primitives.
 //!
-//! Scope:
+//! # Choosing an API
+//!
+//! * [`hook_symbol`] -- one-shot, single-symbol hook. Only patches libraries that are loaded at
+//!   call time. Libraries `dlopen`'d afterwards will **not** have their GOT entries patched, so
+//!   calls to the hooked symbol from those libraries will bypass the hook. Use this when you know
+//!   the target symbol is already loaded and all relevant callers are already in memory (e.g.
+//!   crashtracker hooking `__assert_fail` during `init()`).
+//!
+//! * [`DynamicInfo`], [`iterate_libraries`], [`PageProtGuard`] -- the lower-level building blocks.
+//!   Use these when you need to hook multiple symbols, re-scan after `dlopen` for newly loaded
+//!   libraries, or maintain per-library bookkeeping. Example: `libdd-profiling-heap-gotter`'s
+//!   `SymbolOverrides` registry, which patches `malloc`/`free`/etc. and re-applies overrides
+//!   whenever a new library is loaded.
+//!
+//! # Scope
+//!
 //! * 64-bit Linux ELF only (`Elf64_*`).
 //! * Supports `DT_GNU_HASH` and falls back to `DT_HASH` (sysv) for determining dynsym entry count.
 //! * REL / RELA / JMPREL relocation arrays.
@@ -243,20 +258,22 @@ impl<'a> DynamicInfo<'a> {
         })
     }
 
+    /// Look up the symbol entry and its name at index `idx`.
+    /// Returns the `Elf64_Sym` and its name from the string table,
+    /// or `None` if the index is out of bounds or the name is invalid.
+    pub fn sym_entry(&self, idx: u32) -> Option<(&Elf64_Sym, &CStr)> {
+        let sym = self.symtab.get(idx as usize)?;
+        let off = sym.st_name as usize;
+        let remaining = self.strtab.get(off..)?;
+        let nul_pos = remaining.iter().position(|&b| b == 0)?;
+        let name = CStr::from_bytes_with_nul(&remaining[..=nul_pos]).ok()?;
+        Some((sym, name))
+    }
+
     /// Look up the name of the symbol at index `idx` in the dynamic
     /// string table.
     pub fn sym_name(&self, idx: u32) -> Option<&CStr> {
-        let sym = self.symtab.get(idx as usize)?;
-        let off = sym.st_name as usize;
-        if off >= self.strtab.len() {
-            return None;
-        }
-        // Find the NUL terminator within the remaining strtab.
-        let remaining = &self.strtab[off..];
-        let nul_pos = remaining.iter().position(|&b| b == 0)?;
-        // SAFETY: we found a NUL byte within the validated strtab slice,
-        // so CStr::from_bytes_with_nul won't fail.
-        CStr::from_bytes_with_nul(&remaining[..=nul_pos]).ok()
+        self.sym_entry(idx).map(|(_, name)| name)
     }
 
     /// The base load address of this ELF object.
@@ -389,8 +406,7 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
         if (idx as usize) >= nchain as usize {
             break;
         }
-        if let Some(sname) = info.sym_name(idx) {
-            let sym = &info.symtab[idx as usize];
+        if let Some((sym, sname)) = info.sym_entry(idx) {
             if sname.to_bytes() == name && check_sym(sym) {
                 return Some(*sym);
             }
@@ -530,8 +546,7 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
         }
         let chain_h = *hashtab.add(chains_start + chain_idx);
         if ((chain_h ^ h) >> 1) == 0 {
-            if let Some(sname) = info.sym_name(symidx) {
-                let sym = &info.symtab[symidx as usize];
+            if let Some((sym, sname)) = info.sym_entry(symidx) {
                 if sname.to_bytes() == name && check_sym(sym) {
                     return Some(*sym);
                 }
@@ -821,7 +836,15 @@ pub struct LookupResult {
 /// Hook a single symbol across all loaded ELF objects by patching their
 /// GOT entries.
 ///
-/// - `symbol_name`: the symbol to hook (`c"__assert_fail"`)
+/// This is a one-shot API: it patches every library that is loaded at
+/// call time. Libraries `dlopen`'d after this call will **not** be
+/// patched. Their calls to the hooked symbol will go directly to the
+/// original. For hooks that need to cover dynamically loaded libraries,
+/// use the lower-level [`DynamicInfo`] / [`iterate_libraries`] /
+/// [`PageProtGuard`] primitives to build a registry that re-scans on
+/// `dlopen` (see `libdd-profiling-heap-gotter`'s `SymbolOverrides`).
+///
+/// - `symbol_name`: the symbol to hook (e.g. `c"__assert_fail"`)
 /// - `hook_fn`: address of the replacement function
 /// - `orig_out`: on success, receives the address of the original symbol
 ///
@@ -1172,7 +1195,7 @@ mod tests {
             );
 
             // Verify we can look up our exported symbol by walking
-            // relocations isn't needed
+            // relocations aren't needed
             let mut found_sym = false;
             for idx in 0..dyn_info.symtab.len() as u32 {
                 if let Some(name) = dyn_info.sym_name(idx) {
