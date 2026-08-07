@@ -10,7 +10,7 @@ use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWay
 use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_live_debugger::LiveDebuggingData;
-use libdd_capabilities_impl::NativeHttpClient;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{tag::Tag, MutexExt};
 use libdd_remote_config::config::dynamic::{parse_json, Configs};
 use libdd_remote_config::fetch::{
@@ -187,7 +187,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product == RemoteConfigProduct::LiveDebugger {
+            limiter: if path.product == RemoteConfigProduct::LiveDebugging {
                 Some(SHM_LIMITER.lock_or_panic().alloc())
             } else {
                 None
@@ -246,12 +246,12 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
-impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     for ConfigFileStorage<N>
 {
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeHttpClient>>,
+        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeCapabilities>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -320,9 +320,9 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
                 let now_enabled =
                     dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
                 if was_enabled && !now_enabled {
-                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
                 } else if !was_enabled && now_enabled {
-                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -411,7 +411,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
                         freshly_disabled = true;
                     }
                     if Some(false) != apm_config_dynamic_instrumentation && freshly_disabled {
-                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugger);
+                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugging);
                     }
                     remove
                 };
@@ -425,7 +425,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeHttpClient>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeCapabilities>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -454,7 +454,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         let fetcher = MultiTargetFetcher::new(
             storage,
             invariants,
-            NativeHttpClient::new_without_connection_pooling(),
+            NativeCapabilities::new_without_connection_pooling(),
         );
         fetcher
             .remote_config_interval
@@ -528,7 +528,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
                 };
                 if freshly_enabled {
                     self.0
-                        .force_product(&target, RemoteConfigProduct::LiveDebugger);
+                        .force_product(&target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -826,7 +826,7 @@ mod tests {
 
     static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
         source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::LiveDebugger,
+        product: RemoteConfigProduct::LiveDebugging,
         config_id: "ld-1".to_string(),
         name: "config".to_string(),
     });
@@ -1116,7 +1116,7 @@ mod tests {
             assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
             assert_eq!(
                 value.product,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::LiveDebugging,
                 "must be parsed as LiveDebugger, not skipped"
             );
             let data = value.data.as_ref().expect("LiveDebugger must parse");

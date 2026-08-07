@@ -29,9 +29,9 @@ clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
-datadog-ffe                          @DataDog/feature-flagging-and-experimentation-sdk
-datadog-ffe-test-suite               @DataDog/feature-flagging-and-experimentation-sdk
-datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentation-sdk
+libdd-ffe                            @DataDog/feature-flagging-and-experimentation-sdk
+libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
+libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
@@ -43,6 +43,7 @@ deny.toml                            @DataDog/libdatadog
 docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
+libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
@@ -50,14 +51,14 @@ libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
-libdd-profiling-heap-*/                        @DataDog/libdatadog-profiling
+libdd-gotter/                      @DataDog/libdatadog @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
-libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-profiling-heap-*/              @DataDog/libdatadog-profiling
 libdd-sampling/                      @DataDog/apm-common-components-core
 libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core

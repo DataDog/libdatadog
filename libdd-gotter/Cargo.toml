@@ -1,0 +1,18 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-gotter"
+version = "0.1.0"
+description = "ELF GOT-patching primitives for runtime function interposition on 64-bit Linux."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-gotter"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-gotter"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+libc.workspace = true
