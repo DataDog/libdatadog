@@ -166,7 +166,20 @@ step_if() {
   # And every release script call must go through that snapshot.
   local calls
   calls="$(jq -r '[.jobs[].steps[]?.run // ""] | join("\n")' <<< "$WF" \
-    | grep -oE '[^ "]*scripts?/[a-z-]+\.sh' | sort -u)"
+    | grep -oE '(\$\{WORKFLOW_SCRIPTS_ROOT\}|\./scripts)/[a-z-]+\.sh' | sort -u)"
+
+  # Keep this assertion from passing vacuously if the invocation syntax changes in
+  # a way the matcher above no longer recognises.
+  local expected
+  for expected in \
+    commits-since-release.sh \
+    publication-order.sh \
+    release-generate-changelogs.sh \
+    release-version-bumps.sh \
+    release-version-major-bumps.sh; do
+    assert_contains "$calls" "\${WORKFLOW_SCRIPTS_ROOT}/$expected"
+  done
+
   while IFS= read -r call; do
     [[ -z "$call" ]] && continue
     case "$call" in
@@ -262,10 +275,20 @@ step_if() {
 
 @test "a failed PR creation fails the run unless it is a bypass run" {
   # Otherwise the branches survive and block the next release.
-  local body
+  local body bypass_marker standard_marker bypass_body standard_body
   body="$(step_run create-pr "Create a PR")"
-  assert_contains "$body" '::error::Failed to create the release proposal PR.'
-  assert_contains "$body" "exit 1"
+  bypass_marker='elif [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then'
+  standard_marker='# Standard run: PR creation must succeed.'
+  assert_contains "$body" "$bypass_marker"
+  assert_contains "$body" "$standard_marker"
+
+  bypass_body="${body#*"$bypass_marker"}"
+  bypass_body="${bypass_body%%"$standard_marker"*}"
+  assert_not_contains "$bypass_body" "exit 1"
+
+  standard_body="${body#*"$standard_marker"}"
+  assert_contains "$standard_body" '::error::Failed to create the release proposal PR.'
+  assert_contains "$standard_body" "exit 1"
 }
 
 # --- run safety -------------------------------------------------------------
