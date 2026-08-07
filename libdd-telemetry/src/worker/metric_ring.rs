@@ -242,6 +242,7 @@ mod tests {
         assert_eq!(sum, (0..n).map(|i| i as f64).sum::<f64>());
     }
 
+    #[cfg_attr(miri, ignore)] // very slow
     #[test]
     fn multi_producer_batch_drain_loses_nothing() {
         let ring = Arc::new(MetricRing::new());

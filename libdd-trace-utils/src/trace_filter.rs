@@ -461,6 +461,7 @@ mod tests {
 
     // ---- require_regex (TagRegexFilter – literal key, regex value) ----
 
+    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn require_regex_value_match_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "production")]));
