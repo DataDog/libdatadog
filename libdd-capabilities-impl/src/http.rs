@@ -59,23 +59,51 @@ mod native {
         }
     }
 
-    /// Write `body` as a newline-terminated record to the file referenced by `uri` (which must
-    /// have a `file://` scheme), then return a synthetic 202 response.
+    /// Record `body` to the on-disk location referenced by `uri` (which must have a `file://`
+    /// scheme), then return a synthetic 202 response.
+    ///
+    /// If the location is a directory (the path ends with a separator, as the offline
+    /// telemetry writer passes `file:///dir/`), each request is written to its own
+    /// `telemetry-<seq>-<pid>-<ts>.json` file inside it — ordinal-first so a lexicographic sort
+    /// reproduces emission order. Otherwise the body is appended as a newline-terminated record to
+    /// that single file.
     fn write_to_file_endpoint(
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
         let path = libdd_common::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?;
-        let mut record = body.to_vec();
-        record.push(b'\n');
-        file.write_all(&record)
-            .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {path:?}: {e}")))?;
+
+        let is_dir = path.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR) || path.is_dir();
+        if is_dir {
+            std::fs::create_dir_all(&path)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("creating {path:?}: {e}")))?;
+            // Process-wide sequence so successive requests get distinct, ordered filenames.
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let name = format!("telemetry-{seq:020}-{}-{ts}.json", std::process::id());
+            // Write to a temp file then rename, so a concurrent reader never sees a partial file.
+            let dest = path.join(name);
+            let tmp = dest.with_extension("json.tmp");
+            std::fs::write(&tmp, &body)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {tmp:?}: {e}")))?;
+            std::fs::rename(&tmp, &dest)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("renaming to {dest:?}: {e}")))?;
+        } else {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?;
+            let mut record = body.to_vec();
+            record.push(b'\n');
+            file.write_all(&record)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {path:?}: {e}")))?;
+        }
 
         http::Response::builder()
             .status(http::StatusCode::ACCEPTED)

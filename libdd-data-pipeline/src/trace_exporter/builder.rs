@@ -18,7 +18,7 @@ use crate::trace_exporter::{
     TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
     TracerMetadata, INFO_ENDPOINT,
 };
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
@@ -82,6 +82,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
+    #[cfg(feature = "telemetry")]
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
@@ -155,6 +156,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             client_side_stats_obfuscation_enabled: false,
             #[cfg(feature = "telemetry")]
             telemetry: None,
+            #[cfg(feature = "telemetry")]
             telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
             shared_runtime: None,
             health_metrics_enabled: false,
@@ -385,6 +387,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
+    #[cfg(feature = "telemetry")]
     /// Sets optional instrumentation session headers on telemetry requests (`dd-session-id`, etc.).
     pub fn set_telemetry_instrumentation_sessions(
         &mut self,
@@ -1007,7 +1010,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,
             #[cfg(feature = "telemetry")]
-            telemetry: telemetry_client,
+            telemetry: ArcSwapOption::from(telemetry_client.map(Arc::new)),
             health_metrics_enabled: self.health_metrics_enabled,
             capabilities,
             workers: TraceExporterWorkers {
@@ -1234,7 +1237,7 @@ mod tests {
         assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
         assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
-        assert!(exporter.telemetry.is_some());
+        assert!(exporter.telemetry.load().is_some());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1258,7 +1261,7 @@ mod tests {
         assert!(!exporter.metadata.client_computed_stats);
         assert!(exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
-        assert!(exporter.telemetry.is_none());
+        assert!(exporter.telemetry.load().is_none());
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1403,7 +1406,7 @@ mod tests {
         assert!(exporter.workers.info_fetcher.is_none());
         // Telemetry talks to the agent base URL and is also skipped.
         assert!(exporter.workers.telemetry.is_none());
-        assert!(exporter.telemetry.is_none());
+        assert!(exporter.telemetry.load().is_none());
         // Sanity: the agentless transport is actually configured.
         assert!(exporter.agentless_config.is_some());
     }
