@@ -444,6 +444,43 @@ mod tests {
     }
 
     #[test]
+    fn span_link_flags_sentinel_bit_masked() {
+        // The internal "explicitly set" sentinel (bit 31) must never appear in the emitted
+        // JSON log, which downstream consumers treat as the real W3C trace-flags value.
+        // Covers both sentinel states: kept (0x8000_0001) and explicitly dropped (0x8000_0000).
+        use crate::span::v04::SpanLink;
+
+        fn encoded_flags(flags: u32) -> Value {
+            let span = SpanSlice {
+                span_id: 1,
+                span_links: vec![SpanLink {
+                    trace_id: 7,
+                    span_id: 8,
+                    flags,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let mut out = Vec::new();
+            encode_traces(&[vec![span]], &mut out, MAX).unwrap();
+            let emitted = lines(&out);
+            let parsed: Value = serde_json::from_str(&emitted[0]).unwrap();
+            parsed["traces"][0][0]["span_links"][0]["flags"].clone()
+        }
+
+        assert_eq!(
+            encoded_flags(0x8000_0001),
+            1,
+            "the sentinel bit must not leak into the JSON log"
+        );
+        assert_eq!(
+            encoded_flags(0x8000_0000),
+            0,
+            "an explicit drop decision must still emit flags: 0, not omit the field"
+        );
+    }
+
+    #[test]
     fn empty_inner_trace_writes_nothing() {
         // One trace containing zero spans: nothing is emitted and no spans counted.
         let traces: Vec<Vec<SpanSlice>> = vec![vec![]];

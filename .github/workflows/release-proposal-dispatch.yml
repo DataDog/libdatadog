@@ -691,7 +691,6 @@ jobs:
           if [ "${#PR_TITLE}" -gt 100 ]; then
             PR_TITLE="${PR_TITLE:0:97}..."
           fi
-          
           if gh pr create \
               --head "$BRANCH_NAME" \
               --title "$PR_TITLE" \
