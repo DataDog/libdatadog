@@ -1261,12 +1261,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn send_appsec_message(
-        &self,
-        session_id: String,
-        client_id: u64,
-        data: Vec<u8>,
-    ) -> (Vec<u8>, bool) {
+    async fn send_appsec_message(&self, client_id: u64, data: Vec<u8>) -> (Vec<u8>, bool) {
         #[cfg(unix)]
         {
             let Some(appsec) = self.server.appsec.as_ref() else {
@@ -1274,23 +1269,13 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             };
 
-            match self.session_id.get() {
-                Some(known) if known == &session_id => {}
-                Some(known) => {
-                    warn!(
-                        "appsec: extension has sent an appsec message for session {session_id} \
-                         on a connection with a different session id ({known})"
-                    );
-                    return (vec![], true /* disconnect */);
-                }
-                None => {
-                    warn!(
-                        "appsec: extension has sent an appsec message for session {session_id} \
-                         on a connection without a session id"
-                    );
-                    return (vec![], true /* disconnect */);
-                }
-            }
+            let Some(session_id) = self.session_id.get() else {
+                warn!(
+                    "appsec: extension has sent an appsec message on a connection \
+                     without a session id"
+                );
+                return (vec![], true /* disconnect */);
+            };
 
             // Update the tracked active client and determine whether an old
             // client_id must be eagerly evicted before dispatching the message.
@@ -1333,7 +1318,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             };
 
             if let Some(prev) = evict {
-                appsec.disconnect(&session_id, prev);
+                appsec.disconnect(session_id, prev);
             }
 
             if reject {
@@ -1341,7 +1326,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             }
 
-            let Some(response) = appsec.send_message(&session_id, client_id, data).await else {
+            let Some(response) = appsec.send_message(session_id, client_id, data).await else {
                 info!("appsec: not in running phase anymore");
                 return (vec![], true /* disconnect */);
             };
@@ -1352,7 +1337,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
         #[cfg(not(unix))]
         {
-            _ = (session_id, client_id, data);
+            _ = (client_id, data);
             (vec![], false)
         }
     }

@@ -499,15 +499,10 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
 /// Returns the response bytes from the helper and a disconnect flag.
 pub fn send_appsec_message(
     transport: &mut SidecarTransport,
-    session_id: &[u8],
     client_id: u64,
     data: &[u8],
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceClientRequest::SendAppsecMessage {
-        session_id,
-        client_id,
-        data,
-    };
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
     transport.with_retry(|s| {
         s.send_appsec_message(&request)
             .map_err(|e| io::Error::other(e.to_string()))

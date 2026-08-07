@@ -1806,16 +1806,10 @@ pub struct AppsecCResponse {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     transport: &mut Box<SidecarTransport>,
-    session_id: ffi::CharSlice,
     client_id: u64,
     data: ffi::CharSlice,
 ) -> AppsecCResponse {
-    match blocking::send_appsec_message(
-        transport,
-        session_id.as_bytes(),
-        client_id,
-        data.as_bytes(),
-    ) {
+    match blocking::send_appsec_message(transport, client_id, data.as_bytes()) {
         Ok((bytes, disconnect)) => {
             let mut bytes = std::mem::ManuallyDrop::new(bytes);
             AppsecCResponse {

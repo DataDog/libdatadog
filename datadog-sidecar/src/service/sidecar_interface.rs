@@ -256,7 +256,6 @@ pub trait SidecarInterface {
     /// Returns the response bytes from the helper and a flag indicating whether
     /// the extension session should be disconnected.
     async fn send_appsec_message(
-        #[ClientType(&'request [u8])] session_id: String,
         client_id: u64,
         #[ClientType(&'request [u8])] data: Vec<u8>,
     ) -> (Vec<u8>, bool);
@@ -292,7 +291,6 @@ mod tests {
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
         let request = SidecarInterfaceClientRequest::SendAppsecMessage {
-            session_id: b"session",
             client_id: 42,
             data: b"payload",
         };
@@ -302,12 +300,7 @@ mod tests {
             datadog_ipc::codec::decode(&encoded).expect("client request should decode");
 
         match decoded {
-            SidecarInterfaceRequest::SendAppsecMessage {
-                session_id,
-                client_id,
-                data,
-            } => {
-                assert_eq!(session_id, "session");
+            SidecarInterfaceRequest::SendAppsecMessage { client_id, data } => {
                 assert_eq!(client_id, 42);
                 assert_eq!(data, b"payload");
             }
