@@ -3,7 +3,7 @@
 
 //! Integration tests for the agentless stats export feature.
 //!
-//! Each test runs inside `spawn_blocking` (required because `send`/`shutdown` call `block_on`)
+//! Each test runs inside `spawn_blocking` (required because `send_trace_chunks` calls `block_on`)
 //! and calls `mock.register_on_current_thread()` before `build()` so the builder-internal
 //! capabilities share the mock queues. `shutdown()` force-flushes the stats worker.
 //!
@@ -13,41 +13,113 @@
 mod common;
 use common::mock_http::MockHttpCapabilities;
 
-use libdd_data_pipeline::trace_exporter::{TraceExporterBuilder, TraceExporterInputFormat};
+use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_shared_runtime::ForkSafeRuntime;
+use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
-use serde_json::json;
+use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
 use std::time::Duration;
 use tokio::task;
 
 /// Large enough that the periodic flush never fires during a test; only shutdown flushes.
 const STATS_BUCKET: Duration = Duration::from_secs(10);
 
-/// Build a msgpack-encoded V04 trace payload containing one sampled root span.
+/// Build a root `SpanBytes` (parent_id = 0, so `compute_top_level_span` marks it top-level).
 ///
-/// * `parent_id = 0` — root span, so `compute_top_level_span` marks it as top-level, causing the
-///   stats concentrator to record a bucket entry.
-/// * `_sampling_priority_v1 = 1` — positive priority, so `drop_chunks` keeps the trace when
-///   agentless stats are enabled and P0 dropping is active.
-fn make_v04_trace_payload() -> Vec<u8> {
-    let span = json!({
-        "trace_id": 1u64,
-        "span_id": 1u64,
-        "parent_id": 0u64,
-        "service": "test-svc",
-        "name": "test-op",
-        "resource": "GET /",
-        "start": 1_000_000_000i64,
-        "duration": 5_000_000i64,
-        "error": 0,
-        "meta": { "env": "integration-test" },
-        // Positive sampling priority: kept by drop_chunks when stats are enabled.
-        "metrics": { "_sampling_priority_v1": 1.0 },
-        "meta_struct": {},
-        "span_links": [],
-        "span_events": [],
-    });
-    rmp_serde::to_vec_named(&vec![vec![span]]).expect("msgpack encode")
+/// * `trace_id` — lets callers create distinct operations in the concentrator.
+/// * `sampling_priority` — sets `_sampling_priority_v1`; `None` omits the metric (treated as
+///   positive by `drop_chunks`).
+/// * `error` — `1` triggers the error-sampler path in `drop_chunks`, keeping the chunk even when
+///   the priority is negative.
+fn make_root_span(trace_id: u128, sampling_priority: Option<f64>, error: i32) -> SpanBytes {
+    SpanBytes {
+        service: BytesString::from_static("test-svc"),
+        name: BytesString::from_static("test-op"),
+        resource: BytesString::from_static("GET /"),
+        trace_id,
+        span_id: 1,
+        parent_id: 0,
+        start: 1_000_000_000,
+        duration: 5_000_000,
+        error,
+        metrics: VecMap::from_iter(
+            sampling_priority
+                .map(|p| (BytesString::from_static("_sampling_priority_v1"), p))
+                .into_iter(),
+        ),
+        ..Default::default()
+    }
+}
+
+/// Build a single exporter, call `send_trace_chunks` for each element of `chunks_per_call`,
+/// shut down, and return all captured requests.
+///
+/// Both the trace intake and the stats endpoint are wired through `mock`.
+async fn run_agentless_with_stats(
+    mock: &MockHttpCapabilities,
+    chunks_per_call: Vec<Vec<Vec<SpanBytes>>>,
+    service: &'static str,
+) -> Vec<common::mock_http::CapturedRequest> {
+    let mock_clone = mock.clone();
+    task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "test-api-key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_language("rust")
+            .set_language_version("1.85")
+            .set_language_interpreter("rustc")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service(service)
+            .set_hostname("test-host");
+
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("TraceExporter::build failed");
+
+        for chunks in chunks_per_call {
+            exporter
+                .send_trace_chunks(chunks, None)
+                .expect("send_trace_chunks failed");
+        }
+        exporter.shutdown(None).expect("shutdown failed");
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    mock.captured_requests()
+}
+
+/// Decode the JSON body of an agentless `/v1/input` request and return the total number of
+/// spans across all trace chunks.
+fn count_spans_in_intake_request(req: &common::mock_http::CapturedRequest) -> usize {
+    let body: serde_json::Value =
+        serde_json::from_slice(&req.body).expect("/v1/input body must be valid JSON");
+    body["traces"]
+        .as_array()
+        .expect("`traces` array missing")
+        .iter()
+        .map(|trace| trace["spans"].as_array().map_or(0, |s| s.len()))
+        .sum()
+}
+
+/// Decode the stats payload from a `/api/v0.2/stats` request and return a flattened list of
+/// all `ClientGroupedStats` entries across every bucket.
+fn grouped_stats_from_request(
+    req: &common::mock_http::CapturedRequest,
+) -> Vec<pb::ClientGroupedStats> {
+    let payload: pb::StatsPayload =
+        rmp_serde::from_slice(&req.body).expect("stats body must be valid msgpack StatsPayload");
+    payload
+        .stats
+        .into_iter()
+        .flat_map(|csp| csp.stats)
+        .flat_map(|bucket| bucket.stats)
+        .collect()
 }
 
 /// When `set_agentless_stats_endpoint` is configured alongside
@@ -64,8 +136,6 @@ async fn test_agentless_stats_sent_to_correct_endpoint() {
     let mock = MockHttpCapabilities::new();
     mock.queue_response_for_path("/v1/input", 200, "{}");
     mock.queue_response_for_path("/api/v0.2/stats", 202, "");
-
-    let trace_payload = make_v04_trace_payload();
 
     let mock_clone = mock.clone();
     task::spawn_blocking(move || {
@@ -91,7 +161,9 @@ async fn test_agentless_stats_sent_to_correct_endpoint() {
             .build::<MockHttpCapabilities>()
             .expect("TraceExporter::build failed");
 
-        let _ = exporter.send(&trace_payload).expect("send failed");
+        exporter
+            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
     .await
@@ -138,8 +210,6 @@ async fn test_agentless_stats_payload_structure() {
     mock.queue_response_for_path("/v1/input", 200, "{}");
     mock.queue_response_for_path("/api/v0.2/stats", 202, "");
 
-    let trace_payload = make_v04_trace_payload();
-
     let mock_clone = mock.clone();
     task::spawn_blocking(move || {
         mock_clone.register_on_current_thread();
@@ -164,7 +234,9 @@ async fn test_agentless_stats_payload_structure() {
             .build::<MockHttpCapabilities>()
             .expect("build failed");
 
-        let _ = exporter.send(&trace_payload).expect("send failed");
+        exporter
+            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
     .await
@@ -222,6 +294,176 @@ async fn test_agentless_stats_payload_structure() {
     );
 }
 
+/// A span with positive sampling priority (`_sampling_priority_v1 = 1`) must
+/// be forwarded to `/v1/input`.  The body must contain exactly one span and
+/// the stats bucket must record `hits = 1, errors = 0`.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_sampled_span_sent_to_intake_with_correct_stats() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let reqs = run_agentless_with_stats(
+        &mock,
+        vec![vec![vec![make_root_span(1, Some(1.0), 0)]]],
+        "test-svc",
+    )
+    .await;
+
+    // One trace POST + one stats POST.
+    assert_eq!(
+        reqs.len(),
+        2,
+        "expected trace + stats requests, got {}: {:#?}",
+        reqs.len(),
+        reqs.iter().map(|r| r.uri.to_string()).collect::<Vec<_>>()
+    );
+
+    // The trace request must contain exactly 1 span.
+    let trace_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/v1/input")
+        .expect("/v1/input request not found");
+    assert_eq!(
+        count_spans_in_intake_request(trace_req),
+        1,
+        "sampled span must be forwarded to the intake"
+    );
+
+    // Stats must record 1 hit, 0 errors.
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("/api/v0.2/stats request not found");
+    let groups = grouped_stats_from_request(stats_req);
+    let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
+    let total_errors: u64 = groups.iter().map(|g| g.errors).sum();
+    assert_eq!(total_hits, 1, "stats must record 1 hit for the sampled span");
+    assert_eq!(total_errors, 0, "stats must record 0 errors");
+}
+
+/// A span with a **negative** sampling priority and no error must be dropped
+/// by `drop_chunks` after stats are recorded.  The exporter must therefore
+/// skip the `/v1/input` POST entirely and only send the stats flush.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_p0_span_not_sent_to_intake_but_counted_in_stats() {
+    let mock = MockHttpCapabilities::new();
+    // No response queued for /v1/input — any POST there would be unexpected.
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let reqs = run_agentless_with_stats(
+        &mock,
+        vec![vec![vec![make_root_span(1, Some(-1.0), 0)]]],
+        "test-svc",
+    )
+    .await;
+
+    // Only the stats flush; no trace POST because all chunks were dropped.
+    assert!(
+        reqs.iter().all(|r| r.uri.path() != "/v1/input"),
+        "a dropped P0 span must not be forwarded to /v1/input; requests: {:#?}",
+        reqs.iter().map(|r| r.uri.to_string()).collect::<Vec<_>>()
+    );
+
+    // Stats must still count the dropped span.
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("/api/v0.2/stats request not found");
+    let groups = grouped_stats_from_request(stats_req);
+    let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
+    assert_eq!(total_hits, 1, "dropped P0 span must still be counted in stats");
+}
+
+/// A span with a **negative** sampling priority but `error = 1` must be kept
+/// by the error-sampler path in `drop_chunks` and forwarded to `/v1/input`.
+/// Stats must record `hits = 1, errors = 1`.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_error_span_with_negative_priority_kept_by_error_sampler() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let reqs = run_agentless_with_stats(
+        &mock,
+        vec![vec![vec![make_root_span(1, Some(-1.0), 1)]]],
+        "test-svc",
+    )
+    .await;
+
+    // The error chunk must reach the intake.
+    let trace_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/v1/input")
+        .expect("error span must be forwarded to /v1/input despite negative priority");
+    assert_eq!(
+        count_spans_in_intake_request(trace_req),
+        1,
+        "exactly one span must be in the intake request"
+    );
+
+    // Stats: 1 hit, 1 error.
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("/api/v0.2/stats not found");
+    let groups = grouped_stats_from_request(stats_req);
+    let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
+    let total_errors: u64 = groups.iter().map(|g| g.errors).sum();
+    assert_eq!(total_hits, 1, "stats must record 1 hit");
+    assert_eq!(total_errors, 1, "stats must record 1 error");
+}
+
+/// Sending **two** trace chunks in separate calls — one sampled (`priority = 1`) and one dropped
+/// (`priority = -1`, no error) — must forward only the sampled chunk to `/v1/input`,
+/// while the stats bucket records `hits = 2` (both counted before dropping).
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_mixed_sampling_priorities_span_count_and_stats() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    // Two separate send_trace_chunks calls: one sampled (trace_id=1), one dropped (trace_id=2).
+    let reqs = run_agentless_with_stats(
+        &mock,
+        vec![
+            vec![vec![make_root_span(1, Some(1.0), 0)]],
+            vec![vec![make_root_span(2, Some(-1.0), 0)]],
+        ],
+        "test-svc",
+    )
+    .await;
+
+    // Exactly one POST to /v1/input (the sampled trace only).
+    let trace_reqs: Vec<_> = reqs.iter().filter(|r| r.uri.path() == "/v1/input").collect();
+    assert_eq!(
+        trace_reqs.len(),
+        1,
+        "only the sampled trace must reach /v1/input"
+    );
+    assert_eq!(
+        count_spans_in_intake_request(trace_reqs[0]),
+        1,
+        "the /v1/input request must contain exactly 1 span (the sampled one)"
+    );
+
+    // Stats must count both spans (sampled + dropped).
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("/api/v0.2/stats not found");
+    let groups = grouped_stats_from_request(stats_req);
+    let total_hits: u64 = groups.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits, 2,
+        "stats must count both the sampled and dropped span (got {total_hits})"
+    );
+}
+
 /// `set_agentless_stats_endpoint` without `set_agentless_endpoint` must be
 /// rejected at build time.
 #[cfg_attr(miri, ignore)]
@@ -269,60 +511,5 @@ fn test_builder_rejects_agentless_stats_with_otlp_stats() {
     assert!(
         msg.contains("agentless stats") && msg.contains("OTLP"),
         "unexpected error message: {msg}"
-    );
-}
-
-/// Smoke-test that `MockHttpCapabilities` intercepts requests in agent (non-agentless) mode.
-/// Only verifies the trace POST arrives; full stats-enable coverage is in `test_trace_exporter.rs`.
-#[cfg_attr(miri, ignore)]
-#[tokio::test]
-async fn test_agent_mode_trace_request_captured() {
-    let mock = MockHttpCapabilities::new();
-    mock.queue_response_for_path(
-        "/info",
-        200,
-        r#"{"version":"7.0.0","endpoints":["/v0.4/traces"]}"#,
-    );
-    mock.queue_response_for_path("/v0.4/traces", 200, r#"{"rate_by_service":{}}"#);
-
-    let trace_payload = make_v04_trace_payload();
-
-    let mock_clone = mock.clone();
-    task::spawn_blocking(move || {
-        mock_clone.register_on_current_thread();
-
-        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
-        builder
-            .set_url("http://fake-agent.example.com")
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_language("rust")
-            .set_language_version("1.85")
-            .set_language_interpreter("rustc")
-            .set_tracer_version("0.0.0-test")
-            .set_env("integration-test")
-            .set_service("test-svc");
-
-        let exporter = builder
-            .build::<MockHttpCapabilities>()
-            .expect("build failed");
-
-        let _ = exporter.send(&trace_payload);
-        exporter.shutdown(None).expect("shutdown failed");
-    })
-    .await
-    .expect("spawn_blocking panicked");
-
-    let arrived = mock.wait_for_requests(1, Duration::from_secs(2)).await;
-    assert!(arrived, "no requests captured at all");
-
-    let reqs = mock.captured_requests();
-    let trace_req = reqs
-        .iter()
-        .find(|r| r.method == http::Method::POST)
-        .expect("no POST request captured");
-    assert!(
-        trace_req.uri.path().contains("traces"),
-        "expected a /traces POST, got {}",
-        trace_req.uri
     );
 }
