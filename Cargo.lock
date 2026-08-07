@@ -3069,9 +3069,14 @@ dependencies = [
 name = "libdd-ffe"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "chrono",
  "derive_more",
  "faststr",
+ "http",
+ "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-remote-config",
  "libdd-trace-protobuf",
@@ -3086,6 +3091,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror 2.0.17",
+ "tokio",
  "url",
 ]
 
@@ -3436,6 +3442,8 @@ dependencies = [
  "libdd-shared-runtime",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "sys-info",
  "tokio",
  "tokio-util",

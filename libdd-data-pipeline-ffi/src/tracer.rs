@@ -11,6 +11,7 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
+use crate::structured_value::{encode_value, TracerValueToken};
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
@@ -255,6 +256,43 @@ pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
             span.0
                 .meta_struct
                 .insert(key, Bytes::copy_from_slice(value));
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Encode and add or overwrite a structured metadata entry (`meta_struct`) on
+/// the span.
+///
+/// The `key` is copied into the span. The structured-value tokens are fully
+/// validated and encoded directly into the span without exposing an
+/// intermediate blob to the caller. The span is unchanged on failure.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to
+/// valid UTF-8 memory. `tokens` and every byte slice referenced by its tokens
+/// must remain valid for this call.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct(
+    handle: Option<&mut TracerSpan>,
+    key: CharSlice,
+    tokens: Slice<TracerValueToken<'_>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(span) = handle {
+            let key = match charslice_to_bytesstring(key) {
+                Ok(key) => key,
+                Err(error) => return error,
+            };
+            let value = match encode_value(tokens) {
+                Ok(value) => value,
+                Err(error) => return Some(error),
+            };
+            span.0.meta_struct.insert(key, Bytes::from(value));
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -755,6 +793,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
+    use crate::structured_value::{
+        ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
+        ddog_tracer_encoded_value_free, TracerEncodedValue,
+    };
     use std::mem::MaybeUninit;
 
     fn cs(s: &str) -> CharSlice<'_> {
@@ -763,6 +805,18 @@ mod tests {
 
     fn bs(bytes: &[u8]) -> ByteSlice<'_> {
         ByteSlice::from(bytes)
+    }
+
+    fn nil_token() -> TracerValueToken<'static> {
+        TracerValueToken {
+            kind: 0,
+            bool_value: 0,
+            child_count: 0,
+            i64_value: 0,
+            u64_value: 0,
+            f64_value: 0.0,
+            bytes: ByteSlice::empty(),
+        }
     }
 
     fn make_minimal_span() -> Box<TracerSpan> {
@@ -1208,6 +1262,83 @@ mod tests {
             let err = ddog_tracer_span_set_links(None, Slice::default());
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_matches_standalone_encoder_without_copying_value() {
+        unsafe {
+            let tokens = [nil_token()];
+            let token_slice = Slice::from(tokens.as_slice());
+            let expected = {
+                let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
+                let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+                assert!(ddog_tracer_encode_value(token_slice, out).is_none());
+                let blob = handle.assume_init();
+                let bytes = ddog_tracer_encoded_value_as_slice(Some(&blob))
+                    .as_bytes()
+                    .to_vec();
+                ddog_tracer_encoded_value_free(Some(blob));
+                bytes
+            };
+
+            let mut span = make_minimal_span();
+            let encoded = encode_value(token_slice).unwrap();
+            let encoded_ptr = encoded.as_ptr();
+            let bytes = Bytes::from(encoded);
+            assert_eq!(bytes.as_ptr(), encoded_ptr);
+
+            assert!(
+                ddog_tracer_span_set_meta_struct(Some(&mut *span), cs("key"), token_slice,)
+                    .is_none()
+            );
+            assert_eq!(span.0.meta_struct.get("key").unwrap().as_ref(), expected);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_failure_does_not_replace_existing_value() {
+        unsafe {
+            let mut span = make_minimal_span();
+            assert!(ddog_tracer_span_set_meta_struct_blob(
+                Some(&mut *span),
+                cs("key"),
+                bs(b"existing"),
+            )
+            .is_none());
+
+            let empty: &[TracerValueToken<'_>] = &[];
+            let error =
+                ddog_tracer_span_set_meta_struct(Some(&mut *span), cs("key"), Slice::from(empty));
+            assert!(error.is_some());
+            assert_eq!(span.0.meta_struct.get("key").unwrap().as_ref(), b"existing");
+            ddog_trace_exporter_error_free(error);
+
+            let invalid_key = CharSlice::from_bytes(&[0xff]);
+            let tokens = [nil_token()];
+            let error = ddog_tracer_span_set_meta_struct(
+                Some(&mut *span),
+                invalid_key,
+                Slice::from(tokens.as_slice()),
+            );
+            assert!(error.is_some());
+            assert_eq!(span.0.meta_struct.get("key").unwrap().as_ref(), b"existing");
+            ddog_trace_exporter_error_free(error);
+
+            ddog_tracer_span_free(Some(span));
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_null_handle_returns_error() {
+        unsafe {
+            let tokens = [nil_token()];
+            let error =
+                ddog_tracer_span_set_meta_struct(None, cs("key"), Slice::from(tokens.as_slice()));
+            assert!(error.is_some());
+            ddog_trace_exporter_error_free(error);
         }
     }
 
