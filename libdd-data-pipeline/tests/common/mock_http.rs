@@ -41,7 +41,12 @@ pub struct CapturedRequest {
 }
 
 impl CapturedRequest {
-    fn from_parts(method: http::Method, uri: http::Uri, headers: http::HeaderMap, raw_body: Bytes) -> Self {
+    fn from_parts(
+        method: http::Method,
+        uri: http::Uri,
+        headers: http::HeaderMap,
+        raw_body: Bytes,
+    ) -> Self {
         let compression = headers
             .get(http::header::CONTENT_ENCODING)
             .and_then(|v| v.to_str().ok())
@@ -50,14 +55,19 @@ impl CapturedRequest {
                 _ => None,
             });
         let body = match compression {
-            Some(Compression::Zstd) => {
-                zstd::decode_all(raw_body.as_ref())
-                    .map(Bytes::from)
-                    .unwrap_or_else(|_| raw_body.clone())
-            }
+            Some(Compression::Zstd) => zstd::decode_all(raw_body.as_ref())
+                .map(Bytes::from)
+                .unwrap_or_else(|_| raw_body.clone()),
             None => raw_body.clone(),
         };
-        Self { method, uri, headers, raw_body, compression, body }
+        Self {
+            method,
+            uri,
+            headers,
+            raw_body,
+            compression,
+            body,
+        }
     }
 
     pub fn header(&self, name: &str) -> &str {
