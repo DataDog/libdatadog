@@ -8,6 +8,14 @@ on:
       branches:
         - release/**
         - release-testing/**
+
+env:
+  # dd-trace-rs tags to test the proposal against are resolved at run time: the newest tag of each
+  # of the DD_TRACE_RS_LINES most recent release lines matching DD_TRACE_RS_TAG_PREFIX.
+  DD_TRACE_RS_REPO: https://github.com/DataDog/dd-trace-rs
+  DD_TRACE_RS_TAG_PREFIX: datadog-opentelemetry-v
+  DD_TRACE_RS_LINES: 3
+
 jobs:
   package-and-upload-crates:
     permissions:
@@ -15,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       upload_artifact: ${{ steps.package-crates.outputs.upload_artifact }}
+      dd_trace_rs_versions: ${{ steps.dd-trace-rs-versions.outputs.versions }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -78,6 +87,54 @@ jobs:
           cargo +1.92.0 package "${PKG_ARGS[@]}" --all-features
           echo "upload_artifact=true" >> "$GITHUB_OUTPUT"
 
+      # Resolve the dd-trace-rs versions to compile against instead of hardcoding a matrix that
+      # goes stale. A "release line" is the SemVer-breaking component: MAJOR from 1.0.0 on, and
+      # MAJOR.MINOR while MAJOR is 0 (a 0.x minor bump is breaking). We take the newest patch of
+      # each of the DD_TRACE_RS_LINES most recent lines, newest line first.
+      # Runs unconditionally (even when nothing was packaged) so the matrix expression downstream
+      # never sees an empty string.
+      - name: Resolve dd-trace-rs versions to test against
+        id: dd-trace-rs-versions
+        run: |
+          set -euo pipefail
+          PREFIX="${DD_TRACE_RS_TAG_PREFIX}"
+
+          # --refs drops the peeled `^{}` entries annotated tags produce. Pre-release tags
+          # (e.g. -alpha.1) are filtered out; the prefix is matched literally (index/substr,
+          # not a regex) so a prefix with regex metacharacters would still work.
+          VERSIONS=$(git ls-remote --tags --refs "$DD_TRACE_RS_REPO" "refs/tags/${PREFIX}*" \
+            | awk -v ref_prefix="refs/tags/${PREFIX}" '
+                index($2, ref_prefix) == 1 {
+                  v = substr($2, length(ref_prefix) + 1)
+                  if (v ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) print v
+                }' \
+            | sort -V)
+
+          if [ -z "$VERSIONS" ]; then
+            echo "Error: no '${PREFIX}MAJOR.MINOR.PATCH' tags found in $DD_TRACE_RS_REPO." >&2
+            exit 1
+          fi
+
+          # Newest version of each release line. Input is ascending, so the last write per key wins.
+          declare -A LATEST_BY_LINE=()
+          while read -r version; do
+            IFS='.' read -r major minor _patch <<< "$version"
+            if [ "$major" = "0" ]; then
+              LATEST_BY_LINE["0.$minor"]="$version"
+            else
+              LATEST_BY_LINE["$major"]="$version"
+            fi
+          done <<< "$VERSIONS"
+
+          TAGS=()
+          while read -r line; do
+            TAGS+=("${PREFIX}${LATEST_BY_LINE[$line]}")
+          done < <(printf '%s\n' "${!LATEST_BY_LINE[@]}" | sort -Vr | head -n "$DD_TRACE_RS_LINES")
+
+          MATRIX=$(printf '%s\n' "${TAGS[@]}" | jq -R . | jq -c -s .)
+          echo "dd-trace-rs versions to test against: $MATRIX"
+          echo "versions=$MATRIX" >> "$GITHUB_OUTPUT"
+
       - name: Upload crates
         if: steps.package-crates.outputs.upload_artifact == 'true'
         uses: actions/upload-artifact@v4
@@ -95,7 +152,7 @@ jobs:
     if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
     strategy:
       matrix:
-        version: ["datadog-opentelemetry-v0.4.0", "datadog-opentelemetry-v0.3.3", "datadog-opentelemetry-v0.3.2"]
+        version: ${{ fromJSON(needs.package-and-upload-crates.outputs.dd_trace_rs_versions) }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
