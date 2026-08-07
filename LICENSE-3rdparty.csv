@@ -418,6 +418,7 @@ sval_ref,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashley
 sval_serde,https://github.com/sval-rs/sval,Apache-2.0 OR MIT,Ashley Mannix <ashleymannix@live.com.au>
 symbolic-common,https://github.com/getsentry/symbolic,MIT,"Armin Ronacher <armin.ronacher@active-4.com>, Jan Michael Auer <mail@jauer.org>"
 symbolic-demangle,https://github.com/getsentry/symbolic,MIT,"Armin Ronacher <armin.ronacher@active-4.com>, Jan Michael Auer <mail@jauer.org>"
+symlink,https://gitlab.com/chris-morgan/symlink,MIT OR Apache-2.0,Chris Morgan <me@chrismorgan.info>
 syn,https://github.com/dtolnay/syn,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 sync_wrapper,https://github.com/Actyx/sync_wrapper,Apache-2.0,Actyx AG <developer@actyx.io>
 synstructure,https://github.com/mystor/synstructure,MIT,Nika Layzell <nika@thelayzells.com>
