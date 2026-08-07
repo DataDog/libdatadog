@@ -205,7 +205,7 @@ pub struct Logs {
     pub logs: Vec<Log>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone, Default)]
 #[serde(rename_all = "UPPERCASE")]
 #[repr(C)]
 pub enum Method {
@@ -222,15 +222,14 @@ pub enum Method {
     // describes the "*" concept (any method) or whether it should be a
     // catch-all for unknown methods is unclear.
     #[serde(rename = "*")]
+    #[default]
     Other = 9,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Endpoint {
-    #[serde(default)]
-    pub method: Option<Method>,
-    #[serde(default)]
-    pub path: Option<String>,
+    pub method: Method,
+    pub path: String,
     pub operation_name: String,
     pub resource_name: String,
     #[serde(default)]

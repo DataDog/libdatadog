@@ -488,8 +488,8 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     resource_name: CharSlice,
 ) -> MaybeError {
     let endpoint = TelemetryActions::AddEndpoint(libdd_telemetry::data::Endpoint {
-        method: Some(method),
-        path: Some(path.to_utf8_lossy().into_owned()),
+        method,
+        path: path.to_utf8_lossy().into_owned(),
         operation_name: operation_name.to_utf8_lossy().into_owned(),
         resource_name: resource_name.to_utf8_lossy().into_owned(),
         request_body_type: None,
