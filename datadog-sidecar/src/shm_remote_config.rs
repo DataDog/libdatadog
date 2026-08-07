@@ -187,7 +187,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product == RemoteConfigProduct::LiveDebugger {
+            limiter: if path.product == RemoteConfigProduct::LiveDebugging {
                 Some(SHM_LIMITER.lock_or_panic().alloc())
             } else {
                 None
@@ -320,9 +320,9 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 let now_enabled =
                     dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
                 if was_enabled && !now_enabled {
-                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
                 } else if !was_enabled && now_enabled {
-                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -411,7 +411,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
                         freshly_disabled = true;
                     }
                     if Some(false) != apm_config_dynamic_instrumentation && freshly_disabled {
-                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugger);
+                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugging);
                     }
                     remove
                 };
@@ -528,7 +528,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
                 };
                 if freshly_enabled {
                     self.0
-                        .force_product(&target, RemoteConfigProduct::LiveDebugger);
+                        .force_product(&target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -826,7 +826,7 @@ mod tests {
 
     static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
         source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::LiveDebugger,
+        product: RemoteConfigProduct::LiveDebugging,
         config_id: "ld-1".to_string(),
         name: "config".to_string(),
     });
@@ -1116,7 +1116,7 @@ mod tests {
             assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
             assert_eq!(
                 value.product,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::LiveDebugging,
                 "must be parsed as LiveDebugger, not skipped"
             );
             let data = value.data.as_ref().expect("LiveDebugger must parse");
