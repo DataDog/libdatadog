@@ -569,6 +569,26 @@ pub fn check_sym(sym: &Elf64_Sym) -> bool {
         matches!(stt, 0 | 1 | 2 | 10)
 }
 
+/// Check whether `addr` falls within any of a loaded ELF object's
+/// `PT_LOAD` segments. Works regardless of PIE vs non-PIE: on non-PIE
+/// executables `dlpi_addr` is 0 but the segments still have the correct
+/// absolute virtual addresses once `dlpi_addr` is added.
+///
+/// # Safety
+/// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
+unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
+    let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
+    let base = info.dlpi_addr as usize;
+    phdrs.iter().any(|p| {
+        if p.p_type != PT_LOAD {
+            return false;
+        }
+        let start = base + p.p_vaddr as usize;
+        let end = start + p.p_memsz as usize;
+        addr >= start && addr < end
+    })
+}
+
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
 /// stop iteration.
@@ -785,9 +805,31 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 /// Null-sized symbols are ignored so hooks resolve to callable definitions.
 ///
 /// Uses `gnu_hash_lookup` for objects with `DT_GNU_HASH`, and falls
-/// back to a bounded linear dynsym scan for objects that only have
-/// `DT_HASH` (sysv).
+/// back to `sysv_hash_lookup` for objects that only have `DT_HASH`.
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, None)
+}
+
+/// Like [`lookup_symbol`], but also skips the library whose `PT_LOAD`
+/// segments contain `skip_addr`.
+///
+/// Used by [`hook_symbol_excluding_self`] to ensure `orig_out` resolves
+/// to the external definition rather than a same-name export from the
+/// hook's own library. Uses segment containment rather than `dlpi_addr`
+/// comparison so it works for non-PIE executables (where `dlpi_addr` is 0).
+fn lookup_symbol_excluding_addr(
+    name: &str,
+    not_this_symbol: usize,
+    skip_addr: usize,
+) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, Some(skip_addr))
+}
+
+fn lookup_symbol_impl(
+    name: &str,
+    not_this_symbol: usize,
+    skip_addr: Option<usize>,
+) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
     // SAFETY: the callback runs synchronously inside dl_iterate_phdr;
@@ -803,9 +845,17 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
         if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
             return false;
         }
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
+                return false;
+            }
+        }
         let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
         };
+        // Try GNU hash, then fall back to sysv hash
+        // for objects that only have DT_HASH.
         let sym = if dyn_info.has_gnu_hash() {
             gnu_hash_lookup(&dyn_info, needle)
         } else if dyn_info.has_sysv_hash() {
@@ -856,7 +906,7 @@ pub enum HookError {
 }
 
 /// Hook a single symbol across all loaded ELF objects by patching their
-/// GOT entries.
+/// GOT entries, including the library that contains the hook function.
 ///
 /// This is a one-shot API: it patches every library that is loaded at
 /// call time. Libraries `dlopen`'d after this call will **not** be
@@ -883,12 +933,54 @@ pub unsafe fn hook_symbol(
     symbol_name: &CStr,
     hook_fn: usize,
 ) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, None)
+}
+
+/// Like [`hook_symbol`], but skips the library that contains `hook_fn`.
+///
+/// Use this when the hook function forwards calls to the original via
+/// normal linkage (e.g. `libc::read(fd, buf, len)`) rather than through
+/// the stored `orig_addr`. By skipping the hook's own library during
+/// patching, its GOT entries remain pointed at the real symbol, so
+/// normal calls from within the hook don't recurse.
+///
+/// This also excludes the hook's library during symbol resolution, so
+/// even if it exports the hooked symbol under the same name, `orig_addr`
+/// will point to the external definition rather than the hook library's
+/// own export.
+///
+/// # Safety
+/// Same as [`hook_symbol`].
+pub unsafe fn hook_symbol_excluding_self(
+    symbol_name: &CStr,
+    hook_fn: usize,
+) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn))
+}
+
+/// `skip_addr`: if `Some(addr)`, skip the library whose PT_LOAD segments
+/// contain `addr`. Used by `hook_symbol_excluding_self` to identify the
+/// hook's own library regardless of PIE vs non-PIE (where `dlpi_addr`
+/// may be 0 for the main executable).
+unsafe fn hook_symbol_impl(
+    symbol_name: &CStr,
+    hook_fn: usize,
+    skip_addr: Option<usize>,
+) -> Result<HookResult, HookError> {
     let symbol_name_bytes = symbol_name.to_bytes();
     let name_str = symbol_name
         .to_str()
         .map_err(|_| HookError::InvalidSymbolName)?;
 
-    let result = lookup_symbol(name_str, hook_fn).ok_or(HookError::SymbolNotFound)?;
+    // Resolve the original symbol, excluding both the hook_fn address
+    // and (if excluding self) the entire hook library so we don't
+    // accidentally resolve to a different export from the same object.
+    let result = if let Some(addr) = skip_addr {
+        lookup_symbol_excluding_addr(name_str, hook_fn, addr)
+    } else {
+        lookup_symbol(name_str, hook_fn)
+    }
+    .ok_or(HookError::SymbolNotFound)?;
 
     let mut entries_patched: usize = 0;
     let mut entries_failed: usize = 0;
@@ -911,9 +1003,16 @@ pub unsafe fn hook_symbol(
         if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
             return false;
         }
+
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
+                return false;
+            }
+        }
+
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`; the library is mapped for the callback's
-        // duration.
+        // `dl_iterate_phdr`
         let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
             return false;
         };
@@ -1290,6 +1389,50 @@ mod tests {
         assert!(!is_got_pointer_reloc(258)); // R_AARCH64_ABS32
         assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLSDESC
         assert!(!is_got_pointer_reloc(u32::MAX));
+    }
+
+    /// Verify that `hook_symbol_excluding_self` skips the library
+    /// containing the hook function. Uses `phdr_contains_addr` to identify
+    /// the hook's own library.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_hook_symbol_excluding_self_skips_own_library() {
+        // Use a dummy hook function defined in this test binary.
+        unsafe extern "C" fn dummy_hook() {}
+        let hook_addr = dummy_hook as *const () as usize;
+
+        // Count how many libraries would be visited with and without
+        // the self-skip.
+        let mut total_libs = 0usize;
+        let mut libs_excluding_self = 0usize;
+
+        iterate_libraries(|info, _| {
+            let lib_name = if info.dlpi_name.is_null() {
+                ""
+            } else {
+                unsafe { CStr::from_ptr(info.dlpi_name) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+                return false;
+            }
+            if unsafe { DynamicInfo::from_phdr(info) }.is_none() {
+                return false;
+            }
+            total_libs += 1;
+            if !unsafe { phdr_contains_addr(info, hook_addr) } {
+                libs_excluding_self += 1;
+            }
+            false
+        });
+
+        assert!(total_libs > 0, "should find at least one library");
+        assert!(
+            libs_excluding_self < total_libs,
+            "excluding self should skip at least one library \
+             (total={total_libs}, excluding_self={libs_excluding_self})"
+        );
     }
 
     /// Sanity check against real loaded libraries: the filter should
