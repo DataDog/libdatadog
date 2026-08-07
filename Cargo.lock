@@ -3472,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
