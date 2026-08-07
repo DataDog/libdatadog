@@ -4,13 +4,10 @@
 use crate::config::AppSecConfig;
 use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crossbeam_utils::atomic::AtomicCell;
-use std::cell::UnsafeCell;
 use std::future::Future;
-use std::mem::MaybeUninit;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
-use tokio::sync::Notify;
+use tokio::sync::OnceCell;
 use tracing::{error, info};
 
 pub type AppSecBackendFactory =
@@ -27,95 +24,56 @@ pub fn register_backend_factory(factory: AppSecBackendFactory) {
 }
 
 /// Publishes one AppSec backend and coordinates its one-way lifecycle.
+///
+/// WARNING: This type assumes that the caller drains all sidecar connections
+/// before calling [`Self::shutdown`], so initialization, message handling, and
+/// disconnects do not race with shutdown (the watchdog's forced exit path
+/// disconsidered).
 pub(crate) struct AppSecManager {
     telemetry: InProcessTelemetryClientFactory,
-    phase: AtomicCell<AppSecPhase>,
-    initialization_finished: Notify,
-    // Calling send_message/disconnect is allowed to race with shutdown. It either
-    // completes successfully or observes a closed channel in the backend and fails,
-    // returning a message requesting a disconnect.
-    send_message: OnceLock<AppSecSendMessage>,
-    disconnect: OnceLock<AppSecDisconnect>,
-    shutdown: TakeSlot<AppSecShutdownFuture>,
+    backend: OnceCell<AppSecBackendState>,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[repr(u8)]
-enum AppSecPhase {
-    Uninitialized,
-    Starting,
-    Running,
-    ShuttingDown,
-    Stopped,
+enum AppSecBackendState {
+    Running(AppSecBackend),
+    Failed,
 }
-
-const _: () = assert!(AtomicCell::<AppSecPhase>::is_lock_free());
 
 impl AppSecManager {
     pub(crate) fn new(telemetry: InProcessTelemetryClientFactory) -> Self {
         Self {
             telemetry,
-            phase: AtomicCell::new(AppSecPhase::Uninitialized),
-            initialization_finished: Notify::new(),
-            send_message: OnceLock::new(),
-            disconnect: OnceLock::new(),
-            shutdown: TakeSlot::new(),
+            backend: OnceCell::new(),
         }
     }
 
     pub(crate) async fn ensure_started(&self, config: &AppSecConfig) -> bool {
-        loop {
-            match self.phase() {
-                AppSecPhase::Uninitialized => {
-                    if self.transition(AppSecPhase::Uninitialized, AppSecPhase::Starting) {
-                        return self.start(config);
-                    }
-                }
-                AppSecPhase::Starting => {
-                    self.wait_for_initialization().await;
-                    return self.phase() == AppSecPhase::Running;
-                }
-                AppSecPhase::Running => return true,
-                AppSecPhase::ShuttingDown | AppSecPhase::Stopped => return false,
-            }
-        }
+        matches!(
+            self.backend
+                .get_or_init(|| async { self.start(config) })
+                .await,
+            AppSecBackendState::Running(_)
+        )
     }
 
-    fn start(&self, config: &AppSecConfig) -> bool {
+    fn start(&self, config: &AppSecConfig) -> AppSecBackendState {
         info!("Starting appsec backend");
 
         let Some(factory) = APPSEC_BACKEND_FACTORY.get() else {
             error!("No appsec backend is registered");
-            self.finish_initialization(AppSecPhase::Stopped);
-            return false;
+            return AppSecBackendState::Failed;
         };
 
-        let backend = match factory(config, self.telemetry.clone()) {
-            Ok(backend) => backend,
+        match factory(config, self.telemetry.clone()) {
+            Ok(backend) => {
+                info!("Appsec backend started");
+                AppSecBackendState::Running(backend)
+            }
             Err(err) => {
                 error!("Appsec backend failed to start: {err:#}");
-                self.finish_initialization(AppSecPhase::Stopped);
-                return false;
+                AppSecBackendState::Failed
             }
-        };
-
-        let AppSecBackend {
-            send_message,
-            disconnect,
-            shutdown,
-        } = backend;
-        if self.send_message.set(send_message).is_err()
-            || self.disconnect.set(disconnect).is_err()
-            || self.shutdown.set(shutdown).is_err()
-        {
-            error!("AppSec backend was already published");
-            self.finish_initialization(AppSecPhase::Stopped);
-            return false;
         }
-
-        self.finish_initialization(AppSecPhase::Running);
-        info!("Appsec backend started");
-        true
     }
 
     pub(crate) async fn send_message(
@@ -124,75 +82,30 @@ impl AppSecManager {
         client_id: u64,
         data: Vec<u8>,
     ) -> Option<AppSecMessageResponse> {
-        if self.phase() != AppSecPhase::Running {
+        let AppSecBackendState::Running(backend) = self.backend.get()? else {
             return None;
-        }
-        let send_message = *self.send_message.get()?;
-        Some(send_message(session_id, client_id, data).await)
+        };
+        Some((backend.send_message)(session_id, client_id, data).await)
     }
 
     pub(crate) fn disconnect(&self, session_id: &str, client_id: u64) {
-        if self.phase() != AppSecPhase::Running {
+        let Some(AppSecBackendState::Running(backend)) = self.backend.get() else {
             return;
-        }
-        if let Some(disconnect) = self.disconnect.get() {
-            disconnect(session_id, client_id);
-        }
+        };
+        (backend.disconnect)(session_id, client_id);
     }
 
     pub(crate) async fn shutdown(&self) {
-        loop {
-            match self.phase() {
-                AppSecPhase::Uninitialized => {
-                    if self.transition(AppSecPhase::Uninitialized, AppSecPhase::Stopped) {
-                        return;
-                    }
-                }
-                AppSecPhase::Starting => self.wait_for_initialization().await,
-                AppSecPhase::Running => {
-                    if !self.transition(AppSecPhase::Running, AppSecPhase::ShuttingDown) {
-                        continue;
-                    }
+        let Some(AppSecBackendState::Running(backend)) = self.backend.get() else {
+            return;
+        };
+        let Some(shutdown) = backend.shutdown.take() else {
+            return;
+        };
 
-                    let Some(shutdown) = self.shutdown.take() else {
-                        error!("Running AppSec backend has no shutdown owner");
-                        self.set_phase(AppSecPhase::Stopped);
-                        return;
-                    };
-
-                    info!("Shutting down appsec backend");
-                    shutdown.await;
-                    info!("Appsec backend shutdown");
-                    self.set_phase(AppSecPhase::Stopped);
-                    return;
-                }
-                AppSecPhase::ShuttingDown | AppSecPhase::Stopped => return,
-            }
-        }
-    }
-
-    fn phase(&self) -> AppSecPhase {
-        self.phase.load()
-    }
-
-    fn transition(&self, from: AppSecPhase, to: AppSecPhase) -> bool {
-        self.phase.compare_exchange(from, to).is_ok()
-    }
-
-    fn set_phase(&self, phase: AppSecPhase) {
-        self.phase.store(phase);
-    }
-
-    fn finish_initialization(&self, phase: AppSecPhase) {
-        self.set_phase(phase);
-        self.initialization_finished.notify_waiters();
-    }
-
-    async fn wait_for_initialization(&self) {
-        let notified = self.initialization_finished.notified();
-        if self.phase() == AppSecPhase::Starting {
-            notified.await;
-        }
+        info!("Shutting down appsec backend");
+        shutdown.await;
+        info!("Appsec backend shutdown");
     }
 }
 
@@ -211,106 +124,16 @@ pub struct AppSecMessageResponse {
 
 type AppSecDisconnect = fn(&str, u64);
 
-/// A slot that a value can be published into and taken out of, each by at
-/// most one thread at a time. After a `take`, the slot is empty and may be
-/// published to again.
-pub struct TakeSlot<T> {
-    state: AtomicU8,
-    value: UnsafeCell<MaybeUninit<T>>,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-#[repr(u8)]
-enum TakeSlotState {
-    Empty,
-    Writing,
-    Ready,
-    Taking,
-}
-
-// SAFETY: the slot transfers `T` by value between threads and never hands
-// out shared references to it, so `T: Send` suffices for both.
-unsafe impl<T: Send> Send for TakeSlot<T> {}
-unsafe impl<T: Send> Sync for TakeSlot<T> {}
+/// A slot initialized with one value that may be taken at most once.
+struct TakeSlot<T>(AtomicCell<Option<T>>);
 
 impl<T> TakeSlot<T> {
-    pub const fn new() -> Self {
-        Self {
-            state: AtomicU8::new(TakeSlotState::Empty as u8),
-            value: UnsafeCell::new(MaybeUninit::uninit()),
-        }
+    const fn new(value: T) -> Self {
+        Self(AtomicCell::new(Some(value)))
     }
 
-    /// Sets the value in the slot.
-    ///
-    /// Returns an error if the slot is already set.
-    /// Regardless, after returning, the value is set (though not necessarily the
-    /// one provided as argument), unless of course it is taken in the interim.
-    pub fn set(&self, value: T) -> Result<(), T> {
-        loop {
-            // Failure: Acquire so that observing READY (and returning Err)
-            // establishes a happens-before with the value's initialization,
-            // matching `OnceLock::set`'s guarantee.
-            match self.state.compare_exchange_weak(
-                TakeSlotState::Empty as u8,
-                TakeSlotState::Writing as u8,
-                Ordering::Acquire,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => {
-                    // SAFETY: holding the WRITING state gives us exclusive
-                    // access to the (uninitialized) slot.
-                    unsafe { (*self.value.get()).write(value) };
-                    // Release pairs with the Acquire CAS in `take`: the
-                    // taker observes a fully initialized value.
-                    self.state
-                        .store(TakeSlotState::Ready as u8, Ordering::Release);
-                    return Ok(());
-                }
-                Err(state) if state == TakeSlotState::Ready as u8 => return Err(value),
-                Err(_) => {
-                    // WRITING: another publisher is mid-initialization; wait
-                    // for it to reach READY/EMPTY, then return Err. (Also absorbs
-                    // spurious `compare_exchange_weak` failures.)
-                    core::hint::spin_loop();
-                }
-            }
-        }
-    }
-
-    pub fn take(&self) -> Option<T> {
-        // Acquire pairs with the Release store of READY in `publish`.
-        self.state
-            .compare_exchange(
-                TakeSlotState::Ready as u8,
-                TakeSlotState::Taking as u8,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            )
-            .ok()?;
-        // SAFETY: holding the TAKING state gives us exclusive access to the
-        // slot, and READY guarantees it holds an initialized value.
-        let value = unsafe { (*self.value.get()).assume_init_read() };
-        self.state
-            .store(TakeSlotState::Empty as u8, Ordering::Release);
-        Some(value)
-    }
-}
-
-impl<T> Drop for TakeSlot<T> {
-    fn drop(&mut self) {
-        // &mut self: no concurrent publisher/taker can exist, so the state
-        // is either EMPTY or READY (the guard states are never observable
-        // here — nothing panics between entering and leaving them).
-        if *self.state.get_mut() == TakeSlotState::Ready as u8 {
-            // SAFETY: READY means the slot holds an initialized value.
-            unsafe { (*self.value.get()).assume_init_drop() };
-        }
-    }
-}
-impl<T> Default for TakeSlot<T> {
-    fn default() -> Self {
-        Self::new()
+    fn take(&self) -> Option<T> {
+        self.0.take()
     }
 }
 
@@ -318,7 +141,7 @@ impl<T> Default for TakeSlot<T> {
 pub struct AppSecBackend {
     send_message: AppSecSendMessage,
     disconnect: AppSecDisconnect,
-    shutdown: AppSecShutdownFuture,
+    shutdown: TakeSlot<AppSecShutdownFuture>,
 }
 
 impl AppSecBackend {
@@ -330,7 +153,7 @@ impl AppSecBackend {
         Self {
             send_message,
             disconnect,
-            shutdown,
+            shutdown: TakeSlot::new(shutdown),
         }
     }
 }
