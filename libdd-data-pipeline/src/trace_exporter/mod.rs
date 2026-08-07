@@ -383,8 +383,8 @@ impl<
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
 
@@ -626,8 +626,8 @@ impl<
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
