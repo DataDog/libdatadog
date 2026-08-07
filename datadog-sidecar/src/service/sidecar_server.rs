@@ -52,7 +52,7 @@ use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
-use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.
@@ -270,7 +270,37 @@ impl SidecarServer {
                 return;
             }
         };
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
+    }
 
+    /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
+    /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
+    /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
+    ///
+    /// The V1 payload already carries the tracer identity (lang, version, ...) itself, so only
+    /// the generic bool/int tags need to be threaded through here.
+    fn send_trace_v1(
+        &self,
+        generic_tags: TracerGenericTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+    ) {
+        let headers = TracerHeaderTags {
+            generic: generic_tags,
+            ..Default::default()
+        };
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
+    }
+
+    fn send_trace(
+        &self,
+        headers: TracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+        encoding: TraceEncoding,
+    ) {
         debug!(
             "Received {} bytes of data for {:?} with headers {:?}",
             data.len(),
@@ -278,7 +308,7 @@ impl SidecarServer {
             headers
         );
 
-        match decode_to_trace_chunks(data, TraceEncoding::V04) {
+        match decode_to_trace_chunks(data, encoding) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
                 let mut data = SendData::new(
@@ -952,6 +982,61 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
                 server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+            });
+        } else {
+            warn!(
+                "Received trace data for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
+    async fn send_trace_v1_shm(
+        &self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        _len: usize,
+        headers: TracerGenericTags,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        if let Some(endpoint) = trace_config.endpoint.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        let bytes = tinybytes::Bytes::from(mapped);
+                        server.send_trace_v1(headers, bytes, &endpoint, retry_interval);
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        } else {
+            warn!(
+                "Received trace data ({handle:?}) for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
+    async fn send_trace_v1_bytes(
+        &self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: TracerGenericTags,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+
+        if let Some(endpoint) = trace_config.endpoint.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                let bytes = tinybytes::Bytes::from(data);
+                server.send_trace_v1(headers, bytes, &endpoint, retry_interval);
             });
         } else {
             warn!(

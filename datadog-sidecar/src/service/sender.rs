@@ -23,6 +23,7 @@ use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
@@ -404,6 +405,33 @@ impl SidecarSender {
         }
         self.channel
             .try_send_send_trace_v04_bytes(instance_id, data, headers);
+    }
+
+    pub fn send_trace_v1_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        headers: TracerGenericTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v1_shm(instance_id, handle, len, headers);
+    }
+
+    pub fn send_trace_v1_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: TracerGenericTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v1_bytes(instance_id, data, headers);
     }
 
     pub fn send_debugger_data_shm(

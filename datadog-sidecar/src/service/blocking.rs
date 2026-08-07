@@ -15,6 +15,7 @@ use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -316,6 +317,31 @@ pub fn send_trace_v04_shm(
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
     lock_sender(transport)?.send_trace_v04_shm(instance_id.clone(), handle, len, headers);
+    Ok(())
+}
+
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    headers: TracerGenericTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(instance_id.clone(), data, headers);
+    Ok(())
+}
+
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    headers: TracerGenericTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(instance_id.clone(), handle, len, headers);
     Ok(())
 }
 
