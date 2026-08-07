@@ -87,6 +87,14 @@ tokio = { version = "1.23", features = [
 duplicate = "2.0.1"
 zstd = { version = "0.13", default-features = false }
 
+[[test]]
+name = "test_agentless_stats"
+required-features = ["stats-obfuscation"]
+
+[[example]]
+name = "send-traces-with-stats"
+required-features = ["stats-obfuscation"]
+
 [features]
 default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
@@ -114,5 +122,5 @@ fips = [
 ]
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
-# Enable zstd compression for the agentless trace intake sender.
-compression = ["libdd-trace-utils/compression"]
+# Enable zstd compression for the agentless trace and stats intake senders.
+compression = ["libdd-trace-utils/compression", "libdd-trace-stats/compression"]
