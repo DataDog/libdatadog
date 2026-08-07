@@ -86,6 +86,7 @@ pub fn init(
     Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
     register_panic_hook()?;
+    super::assert_interceptor::install_assert_hook();
     enable();
     Ok(())
 }

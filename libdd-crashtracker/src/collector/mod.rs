@@ -3,6 +3,7 @@
 #![cfg(unix)]
 mod additional_tags;
 mod api;
+mod assert_interceptor;
 mod atomic_set;
 mod collector_manager;
 mod counters;
