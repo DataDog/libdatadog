@@ -21,13 +21,12 @@ unsafe extern "C" fn my_hook(/* same signature as target */) {
     // forward to original via ORIG_FN
 }
 
-let mut orig_addr: usize = 0;
-unsafe {
-    hook_symbol(c"__assert_fail", my_hook as *const () as usize, &mut orig_addr);
+if let Some(result) = unsafe { hook_symbol(c"__assert_fail", my_hook as *const () as usize) } {
+    // Release pairs with the Acquire load in my_hook, ensuring the GOT
+    // patches from hook_symbol are visible before the hook reads orig_addr.
+    ORIG_FN.store(result.orig_addr, Ordering::Release);
+    // result.patched tells you whether any GOT entries were rewritten
 }
-// Release pairs with the Acquire load in my_hook, ensuring the GOT
-// patches from hook_symbol are visible before the hook reads orig_addr.
-ORIG_FN.store(orig_addr, Ordering::Release);
 ```
 
 ### Multi-symbol registry (heap profiling hooking malloc/free/calloc/realloc)

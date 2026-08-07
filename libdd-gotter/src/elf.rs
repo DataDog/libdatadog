@@ -833,6 +833,18 @@ pub struct LookupResult {
     pub address: usize,
 }
 
+/// Result of a successful [`hook_symbol`] call.
+#[derive(Clone, Copy, Debug)]
+pub struct HookResult {
+    /// Resolved address of the original symbol. Store this so the hook
+    /// function can forward calls to the real implementation.
+    pub orig_addr: usize,
+    /// Whether at least one GOT entry was patched. `false` means the
+    /// symbol was found but no loaded library had a matching GOT
+    /// relocation for it (e.g. statically linked libc on musl).
+    pub patched: bool,
+}
+
 /// Hook a single symbol across all loaded ELF objects by patching their
 /// GOT entries.
 ///
@@ -846,24 +858,21 @@ pub struct LookupResult {
 ///
 /// - `symbol_name`: the symbol to hook (e.g. `c"__assert_fail"`)
 /// - `hook_fn`: address of the replacement function
-/// - `orig_out`: on success, receives the address of the original symbol
 ///
-/// Returns `true` if at least one GOT entry was patched.
+/// Returns `None` if the symbol could not be found in any loaded
+/// library. Returns `Some(HookResult)` if the symbol was resolved,
+/// with `orig_addr` set to the original function address and `patched`
+/// indicating whether any GOT entries were actually rewritten.
 ///
 /// # Safety
 ///
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
-pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize, orig_out: &mut usize) -> bool {
+pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Option<HookResult> {
     let symbol_name_bytes = symbol_name.to_bytes();
-    let Ok(name_str) = symbol_name.to_str() else {
-        return false;
-    };
+    let name_str = symbol_name.to_str().ok()?;
 
-    let Some(result) = lookup_symbol(name_str, hook_fn) else {
-        return false;
-    };
-    *orig_out = result.address;
+    let result = lookup_symbol(name_str, hook_fn)?;
 
     let mut patched_any = false;
     let mut guard = PageProtGuard::new();
@@ -905,7 +914,10 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize, orig_out: &mut usi
         false
     });
 
-    patched_any
+    Some(HookResult {
+        orig_addr: result.address,
+        patched: patched_any,
+    })
 }
 
 /// Patch GOT entries in one library for the target symbol.
