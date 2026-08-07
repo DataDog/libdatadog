@@ -523,17 +523,19 @@ jobs:
 
       - name: Update version for crates with libdd-* direct dependency major bumps since last release
         env:
-          BRANCH_NAME: ${{ steps.proposal-branch.outputs.branch_name }}
+          PROPOSAL_BRANCH: ${{ steps.proposal-branch.outputs.branch_name }}
         run: |
           set -euo pipefail
 
           "${WORKFLOW_SCRIPTS_ROOT}/release-version-major-bumps.sh" \
             --api-changes /tmp/api-changes.json \
             --out /tmp/api-changes-with-major-bumps.json \
-            --branch "$BRANCH_NAME"
+            --branch "$PROPOSAL_BRANCH"
 
       - name: Generate CHANGELOGS
         id: generate-changelogs
+        env:
+          EPHEMERAL_BRANCH: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
         run: |
           set -euo pipefail
           ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
@@ -652,7 +654,7 @@ jobs:
           done
 
           # Check if there are commits to push
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
+          if git diff --quiet "$EPHEMERAL_BRANCH"; then
             echo "No changes to push. Cancelling the workflow."
             exit 1
           fi
