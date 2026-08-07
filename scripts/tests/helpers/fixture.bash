@@ -150,6 +150,19 @@ fixture_tag() {
   fi
 }
 
+# fixture_add_cliff_config — copy the repository's real cliff.toml into the fixture, so
+# git-cliff renders with the same template the release actually uses.
+fixture_add_cliff_config() {
+  cp "${REPO_ROOT}/cliff.toml" "${FIXTURE_REPO}/cliff.toml"
+  fixture_commit_all "chore: add cliff.toml"
+}
+
+# fixture_commits_json RANGE [-- PATH...] — the commit list shape that
+# commits-since-release.sh produces, for handing to a script under test.
+fixture_commits_json() {
+  git log --format='{"hash":"%H","subject":"%s","author":"%an","date":"%aI"}' "$@" | jq -s '.'
+}
+
 # fixture_add_origin — publish the fixture to a bare repo and wire it as `origin`,
 # for scripts that run `git fetch origin` or resolve `origin/<branch>`.
 fixture_add_origin() {

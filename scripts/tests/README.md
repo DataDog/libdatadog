@@ -41,6 +41,7 @@ CI runs the same suite plus `shellcheck` over `scripts/*.sh`
 | `commits-since-release.bats` | which commits are attributed to each crate; tag/merge-base resolution; the exported `range`, `latest_tag` and `tag_in_local_branch`; exclusion rules |
 | `release-version-bumps.bats` | each crate's fate — released at a level, deferred, skipped, or a hard failure — and the version cargo-release actually lands on |
 | `release-version-major-bumps.bats` | which crates get forced to major by a dependency that went major in the same proposal, and which no-commit candidates are pulled back in or dropped |
+| `release-generate-changelogs.bats` | the CHANGELOG entry each crate gets — rendered by git-cliff, minimal, or none — and that only the crate's own commits reach it |
 | `semver-level.bats` | the bump level fed to `cargo release version -x`, parsed out of cargo-semver-checks and cargo-public-api output |
 | `major-bumps-level.bats` | whether a direct `libdd-*` dependency going major forces a dependent to major |
 | `release-proposal-workflow.bats` | job-level `if:` gating, untrusted-`main_start_ref` defenses, branch prefixes, push path, PR contract |
@@ -71,6 +72,11 @@ reads cargo metadata, with no compilation. `release-version-bumps.bats` doubles 
 `semver-level.sh`, by copying the script under test next to a stub sibling: it resolves
 `semver-level.sh` relative to itself, so no test-only hook is needed in the script.
 
+**Real git-cliff, real cliff.toml** — `release-generate-changelogs.bats` copies the
+repository's own `cliff.toml` into the fixture and lets git-cliff render, so the entries
+it asserts are the ones a release would publish rather than an approximation of them.
+Install `git-cliff` to run it; without it those tests skip.
+
 **Workflow guards** (`helpers/workflow-to-json.py`) — transcribes the workflow YAML to
 JSON so the tests can assert on it with `jq`. These are intentionally
 change-detectors: each states *why* the invariant exists, so changing the workflow
@@ -90,11 +96,14 @@ depends on it. Two properties worth preserving:
 
 ## Not covered
 
-What remains inline in `release-proposal-dispatch.yml` is untestable while it lives
-inside `run:` blocks: the libdd-* major-bump merge, CHANGELOG generation via git-cliff,
-and the PR body. Making those testable means the same move that produced
-`release-version-bumps.sh` — separate the decision from the side effects, so the
-decision takes JSON and git state and returns JSON.
+The four release stages now live in scripts and are covered above. What is still inline
+in `release-proposal-dispatch.yml`, and so still out of reach, is the PR body built in
+`create-pr` and the branch/ref plumbing in `cargo-release` — checking out the start ref,
+creating the ephemeral and proposal branches, and the guards around them.
+
+Making those testable is the same move that produced the four release scripts: lift the
+step into a script with its inputs as arguments, A/B it against the previous step body
+on a fixture repository, then cover it.
 
 The guards in `release-proposal-workflow.bats` are a holding measure for the
 security-critical parts of what is left, not a substitute.

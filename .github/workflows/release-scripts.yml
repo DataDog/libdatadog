@@ -50,6 +50,12 @@ jobs:
         with:
           tool: cargo-release
 
+      # release-generate-changelogs.bats renders with the repository's real cliff.toml,
+      # so the entries it asserts are the ones a release would publish.
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        with:
+          tool: git-cliff
+
       - name: Install bats-core
         run: |
           set -euo pipefail
