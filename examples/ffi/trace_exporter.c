@@ -201,6 +201,16 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_service(config, service);
     ddog_trace_exporter_config_set_connection_timeout(config, 1000);
 
+    ret = ddog_trace_exporter_config_add_otlp_header(
+        config,
+        DDOG_CHARSLICE_C("x-datadog-ffi-test"),
+        DDOG_CHARSLICE_C("true"));
+    if (ret) {
+        error = ret->code;
+        handle_error(ret);
+        goto error;
+    }
+
     ddog_TelemetryClientConfig telemetry_config = {
         .interval = 60000,
         .runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
