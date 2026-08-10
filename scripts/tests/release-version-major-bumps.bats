@@ -201,6 +201,24 @@ crate_version() {
   assert_eq "$(git worktree list | tail -n +2 | wc -l)" "0"
 }
 
+@test "accepts relative --api-changes and --out paths" {
+  # Regression: --api-changes was validated in the caller's directory and then passed
+  # unchanged into `( cd "$MAJOR_BUMPS_WT" && major-bumps-level.sh ... )`, so a relative
+  # path was looked up from the throwaway worktree and failed there with "Not a file"
+  # after validating fine a few lines earlier. The workflow passes absolute /tmp paths,
+  # but the documented interface takes a generic FILE.
+  printf '%s\n' "$(row libdd-beta minor 0.5.0 0.6.0)" | jq -s '.' > "${FIXTURE_REPO}/rel-in.json"
+
+  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+    --api-changes rel-in.json \
+    --out rel-out.json \
+    --branch proposal
+  assert_success
+  # --out is resolved from the caller's directory, which is where it must land.
+  assert_jq "$(cat "${FIXTURE_REPO}/rel-out.json")" '.[0].version' "1.0.0"
+  assert_jq "$(cat "${FIXTURE_REPO}/rel-out.json")" '.[0].level' "major"
+}
+
 @test "fails when the jq that streams the audited rows fails" {
   # Regression: see release-version-bumps.bats. The audit itself succeeds here; the
   # failure is in the read of its output, which used to be a process substitution and
