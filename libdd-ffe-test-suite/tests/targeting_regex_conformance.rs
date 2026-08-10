@@ -66,6 +66,7 @@ fn evaluates_targeting_regex_conformance_fixture() {
         "no regex conformance cases loaded"
     );
 
+    let mut mismatches = Vec::new();
     for case in fixture.cases {
         let (expected_compile, expected_match) = case
             .engine_expectations
@@ -76,24 +77,31 @@ fn evaluates_targeting_regex_conformance_fixture() {
             .unwrap_or_else(|| panic!("{} has no Rust compile expectation", case.id));
 
         let compiled = Regex::new(&case.raw_pattern);
-        assert_eq!(
-            compiled.is_ok(),
-            expected_compile,
-            "unexpected native compile result for {} ({:?})",
-            case.id,
-            case.raw_pattern
-        );
+        let actual_compile = compiled.is_ok();
+        if actual_compile != expected_compile {
+            mismatches.push(format!(
+                "{}: compile expected {expected_compile}, got {actual_compile} ({:?})",
+                case.id, case.raw_pattern
+            ));
+            continue;
+        }
 
         let actual_match = compiled
             .as_ref()
             .is_ok_and(|regex| regex.is_match(&case.input));
-        assert_eq!(
-            actual_match,
-            expected_match.unwrap_or(false),
-            "unexpected native match result for {} ({:?} against {:?})",
-            case.id,
-            case.raw_pattern,
-            case.input
-        );
+        let expected_match = expected_match.unwrap_or(false);
+        if actual_match != expected_match {
+            mismatches.push(format!(
+                "{}: match expected {expected_match}, got {actual_match} ({:?} against {:?})",
+                case.id, case.raw_pattern, case.input
+            ));
+        }
     }
+
+    assert!(
+        mismatches.is_empty(),
+        "regex conformance mismatches ({}):\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
 }
