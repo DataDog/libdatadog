@@ -385,15 +385,20 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
 // Not yet called from the live pipeline; will be wired in once the exporter's public API is
 // swapped to v1 native structs.
 #[allow(dead_code)]
-pub(crate) fn process_traces_for_stats_v1<T: libdd_trace_utils::span::TraceData>(
+pub(crate) fn process_traces_for_stats_v1<
+    T: libdd_trace_utils::span::TraceData,
+    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+        + libdd_capabilities::SleepCapability
+        + libdd_capabilities::MaybeSend
+        + Sync
+        + 'static,
+>(
     traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
-    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))] telemetry: Option<
-        &crate::telemetry::TelemetryClient,
-    >,
+    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
@@ -500,6 +505,119 @@ mod tests {
 
             let info = make_agent_info(Some(true), None);
             assert!(!is_stats_computation_supported(&info));
+        }
+    }
+
+    mod v1 {
+        use super::super::*;
+        use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+        use web_time::SystemTime;
+
+        fn top_level_span(span_id: u64, duration: i64) -> SpanBytes {
+            SpanBytes {
+                span_id,
+                service: "test-service".into(),
+                name: "test-name".into(),
+                resource: "test-resource".into(),
+                r#type: "web".into(),
+                duration,
+                attributes: vec![("_top_level".into(), AttributeValue::Float(1.0))].into(),
+                ..Default::default()
+            }
+        }
+
+        fn new_concentrator() -> Mutex<SpanConcentrator> {
+            Mutex::new(SpanConcentrator::new(
+                Duration::from_secs(10),
+                SystemTime::now(),
+                vec![],
+                vec![],
+                None,
+                vec![],
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            ))
+        }
+
+        /// Total number of spans aggregated across all flushed buckets, regardless of
+        /// obfuscation.
+        fn total_hits(concentrator: &Mutex<SpanConcentrator>) -> u64 {
+            let flushed = concentrator.lock_or_panic().flush(SystemTime::now(), true);
+            flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.hits)
+                .sum()
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_aggregates_eligible_spans_across_chunks() {
+            let stats_concentrator = new_concentrator();
+            let traces = vec![
+                TraceChunkBytes {
+                    spans: vec![top_level_span(1, 10)],
+                    ..Default::default()
+                },
+                TraceChunkBytes {
+                    spans: vec![top_level_span(2, 10)],
+                    ..Default::default()
+                },
+            ];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 2);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_skips_ineligible_spans() {
+            let stats_concentrator = new_concentrator();
+            // Not top-level, not measured, and no eligible span.kind: not eligible for stats.
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 0);
+        }
+
+        #[test]
+        fn process_traces_for_stats_v1_is_noop_when_disabled() {
+            let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
+            let mut traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                // Negative priority would normally make `drop_chunks` remove this chunk, so
+                // this also verifies drop_chunks is never reached while disabled.
+                priority: Some(-1),
+                ..Default::default()
+            }];
+            let mut header_tags = TracerHeaderTags::default();
+            let trace_filterer = TraceFilterer::default();
+
+            process_traces_for_stats_v1(
+                &mut traces,
+                &mut header_tags,
+                &client_side_stats,
+                false,
+                &trace_filterer,
+                #[cfg(feature = "telemetry")]
+                None::<
+                    &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,
+                >,
+            );
+
+            assert_eq!(traces.len(), 1);
+            assert!(!header_tags.client_computed_top_level);
+            assert!(!header_tags.client_computed_stats);
         }
     }
 }

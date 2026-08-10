@@ -6,12 +6,12 @@
 use crate::span::trace_utils::DroppedP0Stats;
 use crate::span::v1::{AttributeValue, Span, TraceChunk};
 use crate::span::{SpanText, TraceData};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
-/// Span metric the mini agent must set for the backend to recognize top level span
+/// Span attribute the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
-/// Span metric the tracer sets to denote a top level span
+/// Span attribute the tracer sets to denote a top level span
 const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
@@ -41,28 +41,24 @@ fn set_top_level_span<T: TraceData>(span: &mut Span<T>) {
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
 pub fn compute_top_level_span<T: TraceData>(trace: &mut [Span<T>]) {
-    let mut span_id_idx: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
-    for (i, span) in trace.iter().enumerate() {
-        span_id_idx.insert(span.span_id, i);
-    }
-    for span_idx in 0..trace.len() {
-        let parent_id = trace[span_idx].parent_id;
-        if parent_id == 0 {
-            set_top_level_span(&mut trace[span_idx]);
-            continue;
-        }
-        match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
-            Some(parent_span_service) => {
-                if !(parent_span_service == &trace[span_idx].service) {
-                    // parent is not in the same service
-                    set_top_level_span(&mut trace[span_idx])
-                }
-            }
-            None => {
-                // span has no parent in chunk
-                set_top_level_span(&mut trace[span_idx])
-            }
-        }
+    let span_id_idx: HashMap<u64, usize> = trace
+        .iter()
+        .enumerate()
+        .map(|(i, span)| (span.span_id, i))
+        .collect();
+    let top_level: Vec<usize> = trace
+        .iter()
+        .enumerate()
+        .filter(|(_, span)| {
+            span.parent_id == 0
+                || span_id_idx
+                    .get(&span.parent_id)
+                    .is_none_or(|&parent_idx| trace[parent_idx].service != span.service)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for i in top_level {
+        set_top_level_span(&mut trace[i]);
     }
 }
 
@@ -101,7 +97,7 @@ pub fn get_root_span_index<T: TraceData>(trace: &[Span<T>]) -> anyhow::Result<us
     })
 }
 
-/// Return true if the span has a top level key set
+/// Returns true if the span has a top level key set
 pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
     span.attributes
         .get(TRACER_TOP_LEVEL_KEY)
@@ -124,8 +120,8 @@ pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
 
 /// Returns true if the span is a partial snapshot.
 /// This kind of spans are partial images of long-running spans.
-/// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
-/// integer. The metric usually increases each time a new version of the same span is sent by
+/// When incomplete, a partial snapshot has an attribute _dd.partial_version which is a positive
+/// integer. This value usually increases each time a new version of the same span is sent by
 /// the tracer
 pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
     span.attributes
@@ -142,8 +138,7 @@ pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
 ///
 /// # Returns
 ///
-/// A tuple containing the dropped p0 stats, the first value correspond the amount of traces
-/// dropped and the latter to the spans dropped.
+/// The number of P0 traces and spans that were dropped.
 pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0Stats {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
@@ -162,31 +157,22 @@ pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0St
         }
 
         // SingleSpanSampler and AnalyzedSpansSampler
-        // List of spans to keep even if the chunk is dropped
-        let mut sampled_indexes = Vec::new();
-        for (index, span) in chunk.spans.iter().enumerate() {
-            if span
-                .attributes
+        // Keep only the spans sampled by single-span sampling or analyzed spans, even if the
+        // chunk is dropped.
+        let spans_before = chunk.spans.len();
+        chunk.spans.retain(|span| {
+            span.attributes
                 .get(SAMPLING_SINGLE_SPAN_MECHANISM)
                 .and_then(attribute_as_f64)
                 .is_some_and(|m| m == 8.0)
                 || span.attributes.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
-            {
-                // We send spans sampled by single-span sampling or analyzed spans
-                sampled_indexes.push(index);
-            }
-        }
-        dropped_p0_spans += chunk.spans.len() - sampled_indexes.len();
-        if sampled_indexes.is_empty() {
+        });
+        dropped_p0_spans += spans_before - chunk.spans.len();
+        if chunk.spans.is_empty() {
             // If no spans were sampled we can drop the whole chunk
             dropped_p0_traces += 1;
             return false;
         }
-        let sampled_spans = sampled_indexes
-            .iter()
-            .map(|i| std::mem::take(&mut chunk.spans[*i]))
-            .collect();
-        chunk.spans = sampled_spans;
         true
     });
 
