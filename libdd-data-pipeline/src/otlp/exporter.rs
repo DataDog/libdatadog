@@ -50,7 +50,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     .await?
     {
         Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e)),
+        Err(e) => Err(map_send_error(e).await),
     }
 }
 
@@ -131,7 +131,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     .await
 }
 
-pub(crate) fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
+pub(crate) async fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
     match err {
         SendWithRetryError::Http(response, _) => {
             let status = response.status();

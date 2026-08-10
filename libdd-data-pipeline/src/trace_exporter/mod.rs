@@ -773,7 +773,9 @@ impl<
             span_count as u64,
         ));
 
-        result.map_err(map_otlp_send_error)?;
+        if let Err(err) = result {
+            return Err(map_otlp_send_error(err).await);
+        }
         Ok(AgentResponse::Unchanged)
     }
 
