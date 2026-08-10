@@ -9,6 +9,7 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
@@ -92,7 +93,7 @@ pub struct TraceExporterConfig {
     otlp_instrumentation_scope_version: Option<String>,
     output_to_log: bool,
     log_max_line_size: Option<usize>,
-    stats_cardinality_limit: Option<usize>,
+    stats_cardinality_limits: Option<CardinalityLimitConfig>,
 }
 
 #[no_mangle]
@@ -588,17 +589,24 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_sco
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
     config: Option<&mut TraceExporterConfig>,
-    limit: usize,
+    limits: CardinalityLimitConfig,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(handle) = config {
-            handle.stats_cardinality_limit = Some(limit);
+            handle.stats_cardinality_limits = Some(limits);
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
         },
         gen_error!(ErrorCode::Panic)
     )
+}
+
+/// Returns a `CardinalityLimitConfig` with default values
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit(
+) -> CardinalityLimitConfig {
+    CardinalityLimitConfig::default()
 }
 
 /// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
@@ -678,7 +686,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
 
-            if let Some(limit) = config.stats_cardinality_limit {
+            if let Some(limit) = config.stats_cardinality_limits {
                 builder.set_stats_cardinality_limit(limit);
             }
 
@@ -825,7 +833,7 @@ mod tests {
             assert!(cfg.connection_timeout.is_none());
             assert!(!cfg.output_to_log);
             assert_eq!(cfg.log_max_line_size, None);
-            assert_eq!(cfg.stats_cardinality_limit, None);
+            assert_eq!(cfg.stats_cardinality_limits, None);
             assert!(cfg.otlp_instrumentation_scope_name.is_none());
             assert!(cfg.otlp_instrumentation_scope_version.is_none());
 
@@ -1589,16 +1597,34 @@ mod tests {
     fn config_stats_cardinality_limit_test() {
         unsafe {
             // Null config → InvalidArgument
-            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(None, 100);
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(
+                None,
+                CardinalityLimitConfig {
+                    whole_key_limit: 100,
+                    ..Default::default()
+                },
+            );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(error);
 
             // Valid config → value stored
             let mut config = Some(TraceExporterConfig::default());
-            let error =
-                ddog_trace_exporter_config_set_stats_cardinality_limit(config.as_mut(), 500);
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(
+                config.as_mut(),
+                CardinalityLimitConfig {
+                    whole_key_limit: 500,
+                    ..Default::default()
+                },
+            );
             assert_eq!(error, None);
-            assert_eq!(config.unwrap().stats_cardinality_limit, Some(500));
+            assert_eq!(
+                config
+                    .unwrap()
+                    .stats_cardinality_limits
+                    .unwrap()
+                    .whole_key_limit,
+                500
+            );
         }
     }
 

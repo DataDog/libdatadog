@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::tracer_header_tags::TracerHeaderTags;
+use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use http::HeaderMap;
 
 #[derive(Clone, Default, Debug)]
@@ -32,9 +32,11 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
             lang_interpreter: &tags.language_interpreter,
             lang_vendor: &tags.language_interpreter_vendor,
             container_id: &tags.container_id,
-            client_computed_stats: tags.client_computed_stats,
-            client_computed_top_level: tags.client_computed_top_level,
-            ..Default::default()
+            generic: TracerGenericTags {
+                client_computed_stats: tags.client_computed_stats,
+                client_computed_top_level: tags.client_computed_top_level,
+                ..Default::default()
+            },
         }
     }
 }

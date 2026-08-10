@@ -17,7 +17,7 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 cargo_metadata = "0.18"
-clap = { version = "4.0", features = ["derive"] }
+clap = { workspace = true, default-features = true, features = ["derive"] }
 colored = "2"
 quick-xml = "0.37"
 libdd-common = { path = "../libdd-common", default-features = false }

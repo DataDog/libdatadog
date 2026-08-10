@@ -16,7 +16,7 @@
 //! `T: Serialize` bound — keeping the public exporter API free of that bound.
 
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::TraceData;
+use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;
@@ -102,7 +102,9 @@ impl<T: TraceData> Serialize for LogSpanLink<'_, T> {
             state.serialize_field("tracestate", &link.tracestate)?;
         }
         if has_flags {
-            state.serialize_field("flags", &link.flags)?;
+            // Mask off the internal "explicitly set" sentinel (bit 31): this JSON log field
+            // is consumer-facing and must not expose the internal wire encoding.
+            state.serialize_field("flags", &(link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL))?;
         }
         state.end()
     }

@@ -47,9 +47,11 @@ use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "telemetry")]
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -260,7 +262,7 @@ pub struct TraceExporter<
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     #[cfg(feature = "telemetry")]
-    telemetry: Option<TelemetryClient<C>>,
+    telemetry: ArcSwapOption<TelemetryClient<C>>,
     health_metrics_enabled: bool,
     capabilities: C,
     workers: TraceExporterWorkers,
@@ -280,6 +282,8 @@ pub struct TraceExporter<
     /// path) instead of being sent to an agent. Used in serverless environments
     /// where no agent is reachable.
     log_output: Option<usize>,
+    /// Whether background workers should be restarted in the child after a `fork()`.
+    restart_after_fork: bool,
 }
 
 impl<
@@ -290,6 +294,18 @@ impl<
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
         TraceExporterBuilder::new()
+    }
+
+    /// Re-point health-metric reporting at a different telemetry worker, or at none.
+    ///
+    /// Libraries might need to update the used telemetry worker at runtime. This allows doing so
+    /// without rebuilding the whole trace exporter.
+    ///
+    /// Pass `None` on telemetry shut down, so reporting stops rather than targeting a dead worker.
+    #[cfg(feature = "telemetry")]
+    pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
+        self.telemetry
+            .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
     }
 
     /// Stop the background workers owned by this exporter.
@@ -464,14 +480,19 @@ impl<
                     metadata: &self.metadata,
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
-                    stats_cardinality_limit: self.client_side_stats.stats_cardinality_limit,
+                    stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
+                    restart_after_fork: self.restart_after_fork,
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
                     } else {
                         None
                     },
                     #[cfg(feature = "telemetry")]
-                    telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
+                    telemetry: self
+                        .telemetry
+                        .load_full()
+                        .as_ref()
+                        .map(|t| t.clone_handle()),
                     #[cfg(not(feature = "telemetry"))]
                     _phantom: std::marker::PhantomData,
                 };
@@ -725,11 +746,12 @@ impl<
             mp_payload,
             &headers,
             &strategy,
+            CompressionStrategy::None,
         )
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = &self.telemetry {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
                 payload_len as u64,
@@ -800,7 +822,7 @@ impl<
             self.client_computed_top_level,
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
-            self.telemetry.as_ref(),
+            self.telemetry.load_full().as_deref(),
         );
 
         for chunk in &mut traces {
@@ -867,8 +889,8 @@ impl<
                     && self.v1_active.swap(false, Ordering::Relaxed)
                 {
                     warn!(
-                            "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                        );
+                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+                    );
                     self.info_response_observer.manual_trigger();
                 }
             }
@@ -1132,8 +1154,8 @@ mod tests {
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
         assert_eq!(tracer_header_tags.lang_vendor, "rust-lang");
-        assert!(tracer_header_tags.client_computed_stats);
-        assert!(tracer_header_tags.client_computed_top_level);
+        assert!(tracer_header_tags.generic.client_computed_stats);
+        assert!(tracer_header_tags.generic.client_computed_top_level);
     }
 
     #[test]
@@ -1366,6 +1388,12 @@ mod tests {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
             Self(NativeCapabilities::new_client())
         }
+
+        fn new_without_connection_pooling() -> Self {
+            LOG_CAPTURE.with(|c| c.borrow_mut().clear());
+            Self(NativeCapabilities::new_without_connection_pooling())
+        }
+
         fn request(
             &self,
             req: http::Request<bytes::Bytes>,
@@ -2262,16 +2290,31 @@ mod tests {
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/input")
-                .body_includes("\"traces\":")
-                .body_includes("\"spans\":")
-                .body_includes("\"hostname\":\"h-1\"")
-                .body_includes("\"languageName\":\"nodejs\"")
-                .body_includes("\"_dd.compute_stats\":\"1\"")
-                .body_includes("\"_top_level\":1")
-                .body_includes("\"_trace_root\":1")
-                .body_includes("\"parent_id\":\"0000000000000000\"");
+            fn check_body(body: &str) -> bool {
+                body.contains("\"traces\":")
+                    && body.contains("\"spans\":")
+                    && body.contains("\"hostname\":\"h-1\"")
+                    && body.contains("\"languageName\":\"nodejs\"")
+                    && body.contains("\"_dd.compute_stats\":\"1\"")
+                    && body.contains("\"_top_level\":1")
+                    && body.contains("\"_trace_root\":1")
+                    && body.contains("\"parent_id\":\"0000000000000000\"")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                let Ok(body) = zstd::decode_all(req.body_ref()) else {
+                    return false;
+                };
+                let body = String::from_utf8(body).unwrap();
+                check_body(&body)
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when.is_true(|req| {
+                let body = String::from_utf8(req.body_vec()).unwrap();
+                check_body(&body)
+            });
+            let _ = when;
             then.status(200).body("");
         });
 

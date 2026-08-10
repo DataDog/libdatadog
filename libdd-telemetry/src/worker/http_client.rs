@@ -59,11 +59,6 @@ pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
             );
             let mut builder =
                 e.to_request_builder(concat!("telemetry/", env!("CARGO_PKG_VERSION")));
-            // Telemetry sends are heartbeat-paced (tens of seconds apart), longer
-            // than the agent's HTTP keep-alive, so pooled connections are typically
-            // half-closed by the next send and EOF on reuse. `Connection: close`
-            // forces a fresh socket per request.
-            builder = Ok(builder?.header(http::header::CONNECTION, "close"));
             if c.debug_enabled {
                 debug!(
                     telemetry.debug_enabled = true,
