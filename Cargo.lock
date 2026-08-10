@@ -3114,6 +3114,7 @@ dependencies = [
  "chrono",
  "criterion",
  "env_logger",
+ "libdd-common",
  "libdd-ffe",
  "serde",
  "serde_json",

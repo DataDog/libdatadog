@@ -1,7 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use chrono::Utc;
 use libdd_ffe::rules_based::{
@@ -33,17 +38,20 @@ fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ffe-system-test-data")
 }
 
+fn load_configuration(root: &Path) -> Configuration {
+    let config_path = root.join("ufc-config.json");
+    let config = UniversalFlagConfig::from_json(fs::read(&config_path).unwrap()).unwrap();
+    Configuration::from_server_response(config)
+}
+
 #[test]
 #[cfg_attr(miri, ignore)] // this test is too slow on miri
 fn evaluates_canonical_json_fixtures() {
     let _ = env_logger::builder().is_test(true).try_init();
 
     let root = fixture_root();
-    let config_path = root.join("ufc-config.json");
     let cases_dir = root.join("evaluation-cases");
-
-    let config = UniversalFlagConfig::from_json(fs::read(&config_path).unwrap()).unwrap();
-    let config = Configuration::from_server_response(config);
+    let config = load_configuration(&root);
     let now = Utc::now();
 
     let mut fixture_count = 0;
@@ -54,63 +62,78 @@ fn evaluates_canonical_json_fixtures() {
         }
 
         fixture_count += 1;
-        let test_cases: Vec<TestCase> = serde_json::from_reader(fs::File::open(&path).unwrap())
-            .unwrap_or_else(|err| panic!("failed to parse fixture {}: {err}", path.display()));
-
-        for test_case in test_cases {
-            let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
-            let result = get_assignment(
-                Some(&config),
-                &test_case.flag,
-                &subject,
-                test_case.variation_type.into(),
-                now,
-            );
-
-            let (actual, actual_reason, actual_error_code) = match result {
-                Ok(assignment) => (
-                    assignment.value.variation_value(),
-                    reason_from_assignment(assignment.reason),
-                    None,
-                ),
-                Err(err) => (
-                    test_case.default_value.clone(),
-                    reason_from_error(&err),
-                    error_code_from_error(&err),
-                ),
-            };
-
-            assert_eq!(
-                actual,
-                test_case.result.value,
-                "unexpected value for flag {} in {}",
-                test_case.flag,
-                path.display()
-            );
-
-            if let Some(expected_reason) = test_case.result.reason.as_deref() {
-                assert_eq!(
-                    actual_reason,
-                    expected_reason,
-                    "unexpected reason for flag {} in {}",
-                    test_case.flag,
-                    path.display()
-                );
-            }
-
-            if let Some(expected_error_code) = test_case.result.error_code.as_deref() {
-                assert_eq!(
-                    actual_error_code,
-                    Some(expected_error_code),
-                    "unexpected error code for flag {} in {}",
-                    test_case.flag,
-                    path.display()
-                );
-            }
-        }
+        evaluate_fixture(&path, &config, now);
     }
 
     assert!(fixture_count > 0, "no canonical FFE fixtures loaded");
+}
+
+#[test]
+fn evaluates_regex_json_fixture() {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let root = fixture_root();
+    let config = load_configuration(&root);
+    let path = root.join("evaluation-cases/test-case-regex-flag.json");
+
+    evaluate_fixture(&path, &config, Utc::now());
+}
+
+fn evaluate_fixture(path: &Path, config: &Configuration, now: chrono::DateTime<Utc>) {
+    let test_cases: Vec<TestCase> = serde_json::from_reader(fs::File::open(path).unwrap())
+        .unwrap_or_else(|err| panic!("failed to parse fixture {}: {err}", path.display()));
+
+    for test_case in test_cases {
+        let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
+        let result = get_assignment(
+            Some(config),
+            &test_case.flag,
+            &subject,
+            test_case.variation_type.into(),
+            now,
+        );
+
+        let (actual, actual_reason, actual_error_code) = match result {
+            Ok(assignment) => (
+                assignment.value.variation_value(),
+                reason_from_assignment(assignment.reason),
+                None,
+            ),
+            Err(err) => (
+                test_case.default_value.clone(),
+                reason_from_error(&err),
+                error_code_from_error(&err),
+            ),
+        };
+
+        assert_eq!(
+            actual,
+            test_case.result.value,
+            "unexpected value for flag {} in {}",
+            test_case.flag,
+            path.display()
+        );
+
+        if let Some(expected_reason) = test_case.result.reason.as_deref() {
+            assert_eq!(
+                actual_reason,
+                expected_reason,
+                "unexpected reason for flag {} in {}",
+                test_case.flag,
+                path.display()
+            );
+        }
+
+        if let Some(expected_error_code) = test_case.result.error_code.as_deref() {
+            assert_eq!(
+                actual_error_code,
+                Some(expected_error_code),
+                "unexpected error code for flag {} in {}",
+                test_case.flag,
+                path.display()
+            );
+        }
+    }
 }
 
 fn reason_from_assignment(reason: AssignmentReason) -> &'static str {

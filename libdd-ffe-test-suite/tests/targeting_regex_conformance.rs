@@ -1,0 +1,99 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use std::{fs, path::PathBuf};
+
+use libdd_common::regex_engine::Regex;
+use serde::Deserialize;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConformanceFixture {
+    schema: String,
+    schema_version: u64,
+    contract_version: String,
+    cases: Vec<ConformanceCase>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConformanceCase {
+    id: String,
+    raw_pattern: String,
+    input: String,
+    expected_compile: Option<bool>,
+    expected_match: Option<bool>,
+    #[serde(default)]
+    engine_expectations: EngineExpectations,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EngineExpectations {
+    rust_rules_based: Option<RegexExpectation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegexExpectation {
+    compile: bool,
+    #[serde(rename = "match")]
+    matches: Option<bool>,
+}
+
+fn fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("ffe-system-test-data/regex-conformance/targeting-regex-conformance.json")
+}
+
+#[test]
+fn evaluates_targeting_regex_conformance_fixture() {
+    let path = fixture_path();
+    if !path.exists() {
+        eprintln!(
+            "targeting regex conformance fixture is unavailable in this fixture revision; skipping"
+        );
+        return;
+    }
+
+    let fixture: ConformanceFixture = serde_json::from_reader(fs::File::open(&path).unwrap())
+        .unwrap_or_else(|err| panic!("failed to parse fixture {}: {err}", path.display()));
+
+    assert_eq!(fixture.schema, "datadog.ffe.targeting-regex-conformance/v1");
+    assert_eq!(fixture.schema_version, 1);
+    assert_eq!(fixture.contract_version, "targeting-regex-v1");
+    assert!(
+        !fixture.cases.is_empty(),
+        "no regex conformance cases loaded"
+    );
+
+    for case in fixture.cases {
+        let (expected_compile, expected_match) = case
+            .engine_expectations
+            .rust_rules_based
+            .map(|expectation| (Some(expectation.compile), expectation.matches))
+            .unwrap_or((case.expected_compile, case.expected_match));
+        let expected_compile = expected_compile
+            .unwrap_or_else(|| panic!("{} has no Rust compile expectation", case.id));
+
+        let compiled = Regex::new(&case.raw_pattern);
+        assert_eq!(
+            compiled.is_ok(),
+            expected_compile,
+            "unexpected native compile result for {} ({:?})",
+            case.id,
+            case.raw_pattern
+        );
+
+        let actual_match = compiled
+            .as_ref()
+            .is_ok_and(|regex| regex.is_match(&case.input));
+        assert_eq!(
+            actual_match,
+            expected_match.unwrap_or(false),
+            "unexpected native match result for {} ({:?} against {:?})",
+            case.id,
+            case.raw_pattern,
+            case.input
+        );
+    }
+}
