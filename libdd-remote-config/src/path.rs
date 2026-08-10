@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
+use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
@@ -24,36 +25,21 @@ pub enum RemoteConfigSource {
     Deserialize,
     strum_macros::EnumIter,
     strum_macros::IntoStaticStr,
+    strum_macros::Display,
+    strum_macros::EnumString,
 )]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum RemoteConfigProduct {
     AgentConfig,
     AgentTask,
     ApmTracing,
     Asm,
     AsmData,
-    AsmDD,
+    AsmDd,
     AsmFeatures,
     FfeFlags,
-    LiveDebugger,
-    LiveDebuggerSymbolDb,
-}
-
-impl Display for RemoteConfigProduct {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            RemoteConfigProduct::AgentConfig => "AGENT_CONFIG",
-            RemoteConfigProduct::AgentTask => "AGENT_TASK",
-            RemoteConfigProduct::ApmTracing => "APM_TRACING",
-            RemoteConfigProduct::Asm => "ASM",
-            RemoteConfigProduct::AsmData => "ASM_DATA",
-            RemoteConfigProduct::AsmDD => "ASM_DD",
-            RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
-            RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
-            RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
-            RemoteConfigProduct::LiveDebuggerSymbolDb => "LIVE_DEBUGGING_SYMBOL_DB",
-        };
-        write!(f, "{str}")
-    }
+    LiveDebugging,
+    LiveDebuggingSymbolDb,
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -91,19 +77,8 @@ impl RemoteConfigPath {
                 }
                 source => anyhow::bail!("Unknown source {}", source),
             },
-            product: match parts[parts.len() - 3] {
-                "AGENT_CONFIG" => RemoteConfigProduct::AgentConfig,
-                "AGENT_TASK" => RemoteConfigProduct::AgentTask,
-                "APM_TRACING" => RemoteConfigProduct::ApmTracing,
-                "ASM" => RemoteConfigProduct::Asm,
-                "ASM_DATA" => RemoteConfigProduct::AsmData,
-                "ASM_DD" => RemoteConfigProduct::AsmDD,
-                "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
-                "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
-                "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
-                "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
-                product => anyhow::bail!("Unknown product {}", product),
-            },
+            product: RemoteConfigProduct::from_str(parts[parts.len() - 3])
+                .map_err(|_| anyhow::anyhow!("Unknown product {}", parts[parts.len() - 3]))?,
             config_id: parts[parts.len() - 2],
             name: parts[parts.len() - 1],
         })

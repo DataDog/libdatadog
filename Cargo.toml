@@ -7,13 +7,14 @@ members = [
   "libdd-alloc",
   "libdd-profiling-heap-sampler",
   "libdd-profiling-heap-allocator",
+  "libdd-gotter",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
-  "datadog-ffe",
-  "datadog-ffe-test-suite",
-  "datadog-ffe-ffi",
+  "libdd-ffe",
+  "libdd-ffe-test-suite",
+  "libdd-ffe-ffi",
   "datadog-ipc",
   "datadog-ipc-macros",
   "libdd-library-config",
@@ -79,7 +80,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.87.0"
 edition = "2021"
-version = "38.0.0"
+version = "40.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
