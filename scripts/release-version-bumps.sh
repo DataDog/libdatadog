@@ -78,8 +78,16 @@ append_row() {
     jq "$@" "$OUT_FILE" > "$tmp" && mv "$tmp" "$OUT_FILE"
 }
 
+# Materialize the rows before looping. `done < <(jq ...)` would run jq in a process
+# substitution, whose exit status no shell option reports: set -e and pipefail both
+# ignore it, so a jq that dies mid-stream would leave the loop with no input and this
+# script would exit 0 having released nothing.
+CRATE_ROWS=$(jq -c '.[]' "$COMMITS_BY_CRATE")
+
 # iterate over the commits and execute cargo release for each crate
 while read -r crate; do
+    # $ROWS is empty when there are no candidates; <<< still feeds one blank line.
+    [ -n "$crate" ] || continue
     NAME=$(echo "$crate" | jq -r '.name')
     TAG=$(echo "$crate" | jq -r '.tag')
     TAG_PREFIX="$NAME-v"
@@ -188,7 +196,7 @@ while read -r crate; do
         --arg path "$CRATE_PATH" \
         --arg initial_release "$INITIAL_RELEASE" \
         '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]'
-done < <(jq -c '.[]' "$COMMITS_BY_CRATE")
+done <<< "$CRATE_ROWS"
 
 # Output the results
 echo "API changes summary:"

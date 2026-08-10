@@ -53,7 +53,17 @@ jq -e 'type == "array"' "$API_CHANGES" >/dev/null \
 
 echo "Generating CHANGELOGS"
 
+# Materialize the rows before looping. `done < <(jq ...)` would run jq in a process
+# substitution, whose exit status no shell option reports: set -e and pipefail both
+# ignore it, so a jq that dies mid-stream would leave the loop with no input and this
+# script would exit 0 having written no CHANGELOG at all. The caller cannot catch that
+# either: its no-changes-to-push guard sees the version-bump commits from the previous
+# step and concludes there is something to release.
+RELEASE_ROWS=$(jq -c '.[]' "$API_CHANGES")
+
 while read -r bump; do
+    # $ROWS is empty when there are no candidates; <<< still feeds one blank line.
+    [ -n "$bump" ] || continue
     COMMITS=$(echo "$bump" | jq -r '.commits')
     RANGE=$(echo "$bump" | jq -r '.range')
     NAME=$(echo "$bump" | jq -r '.name')
@@ -161,4 +171,4 @@ while read -r bump; do
 
     git add "$CRATE_PATH/CHANGELOG.md"
     git commit -m "chore(release): update CHANGELOG.md for $NAME"
-done < <(jq -c '.[]' "$API_CHANGES")
+done <<< "$RELEASE_ROWS"

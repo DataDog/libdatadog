@@ -91,8 +91,16 @@ fi
 # only if they earn a major bump; those that do not stay out of the release entirely.
 jq '[.[] | select(.pending_release != "true") | del(.pending_release)]' "$AUDITED" > "$OUT_FILE"
 
+# Materialize the rows before looping. `done < <(jq ...)` would run jq in a process
+# substitution, whose exit status no shell option reports: set -e and pipefail both
+# ignore it, so a jq that dies mid-stream would leave the loop with no input and this
+# script would exit 0 having promoted nothing.
+AUDIT_ROWS=$(jq -c '.[]' "$AUDITED")
+
 # iterate over the crates and, where a direct libdd-* dependency had a major bump, update the version
 while read -r bump; do
+    # $ROWS is empty when there are no candidates; <<< still feeds one blank line.
+    [ -n "$bump" ] || continue
     NAME=$(echo "$bump" | jq -r '.name')
     LEVEL=$(echo "$bump" | jq -r '.level')
     PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
@@ -137,7 +145,7 @@ while read -r bump; do
          else . + [$row] end' \
         "$OUT_FILE" > "${OUT_FILE}.tmp" \
         && mv "${OUT_FILE}.tmp" "$OUT_FILE"
-done < <(jq -c '.[]' "$AUDITED")
+done <<< "$AUDIT_ROWS"
 
 # Output the results
 echo "API changes with major bumps summary:"
