@@ -58,6 +58,11 @@ done
 jq -e 'type == "array"' "$API_CHANGES" >/dev/null \
     || { echo "ERROR: $API_CHANGES is not a JSON array" >&2; exit 1; }
 
+# Resolve to an absolute path while we are still in the caller's directory. The audit
+# below runs in `cd "$MAJOR_BUMPS_WT"`, so a relative --api-changes would be looked up
+# from the throwaway worktree and fail there, having validated fine here.
+API_CHANGES="$(cd -- "$(dirname -- "$API_CHANGES")" && pwd)/$(basename -- "$API_CHANGES")"
+
 AUDITED=$(mktemp "${TMPDIR:-/tmp}/api-changes-with-major-bumps-pre-commit.XXXXXX.json")
 cleanup() { rm -f "$AUDITED"; }
 trap cleanup EXIT
