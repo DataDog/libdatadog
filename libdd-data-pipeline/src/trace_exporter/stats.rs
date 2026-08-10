@@ -50,6 +50,7 @@ pub(crate) struct StatsContext<
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    pub additional_metric_tag_keys: &'a [String],
     /// Configuration option to pass to [SharedRuntime::spawn_worker]
     pub restart_after_fork: bool,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
@@ -80,6 +81,7 @@ pub(crate) enum StatsComputationStatus {
 pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
     pub(crate) stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    pub(crate) additional_metric_tag_keys: Vec<String>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
     /// Builder-level opt-in. When false, stats obfuscation stays off
@@ -142,7 +144,7 @@ pub(crate) fn start_stats_computation<
             span_kinds,
             peer_tags,
             ctx.stats_cardinality_limits,
-            vec![],
+            ctx.additional_metric_tag_keys.to_vec(),
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));

@@ -275,6 +275,12 @@ fn build_resource_attributes(info: &OtlpResourceInfo) -> Vec<Value> {
     if !process_tags.is_empty() {
         attrs.push(kv_str_array("datadog.process_tags", process_tags));
     }
+    if !info.tracer_tags.is_empty() {
+        attrs.push(kv_str_array(
+            "datadog.tracer_tags",
+            info.tracer_tags.iter().map(String::as_str),
+        ));
+    }
     attrs
 }
 
@@ -486,6 +492,7 @@ mod tests {
         r.hostname = "my-host".to_string();
         r.runtime_id = "abc-123".to_string();
         r.process_tags = "entrypoint.name:server".to_string();
+        r.tracer_tags = vec!["team:apm".to_string(), "tier:backend".to_string()];
         let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r).unwrap();
         let m = metric(&req);
         assert_eq!(m["name"], "traces.span.sdk.metrics.duration");
@@ -502,6 +509,10 @@ mod tests {
         assert_eq!(
             str_array_at(a, "datadog.process_tags"),
             Some(vec!["entrypoint.name:server"])
+        );
+        assert_eq!(
+            str_array_at(a, "datadog.tracer_tags"),
+            Some(vec!["team:apm", "tier:backend"])
         );
     }
 
@@ -558,6 +569,26 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(str_at(custom, "span.kind"), Some("SPAN_KIND_INTERNAL"));
+    }
+
+    #[test]
+    fn empty_optional_data_point_attributes_are_omitted() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.http_method.clear();
+            g.http_endpoint.clear();
+            g.r#type.clear();
+            g.service_source.clear();
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
+        let attrs = points(&req)[0]["attributes"].as_array().unwrap();
+        for key in [
+            "http.request.method",
+            "http.route",
+            "datadog.span.type",
+            "datadog.svc_src",
+        ] {
+            assert!(!attrs.iter().any(|kv| kv["key"] == key));
+        }
     }
 
     #[test]

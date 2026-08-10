@@ -66,6 +66,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     instrumentation_scope_version: String,
     git_commit_sha: String,
     process_tags: String,
+    tracer_tags: Vec<String>,
     container_id: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
@@ -76,6 +77,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
     peer_tags: Vec<String>,
+    additional_metric_tag_keys: Vec<String>,
     stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     client_side_stats_obfuscation_enabled: bool,
@@ -141,6 +143,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
             process_tags: String::new(),
+            tracer_tags: Vec::new(),
             container_id: String::new(),
             input_format: TraceExporterInputFormat::default(),
             output_format: TraceExporterOutputFormat::default(),
@@ -149,6 +152,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             client_computed_top_level: false,
             stats_bucket_size: None,
             peer_tags: Vec::new(),
+            additional_metric_tag_keys: Vec::new(),
             stats_cardinality_limits: None,
             #[cfg(feature = "stats-obfuscation")]
             client_side_stats_obfuscation_enabled: false,
@@ -239,6 +243,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
         process_tags.clone_into(&mut self.process_tags);
+        self
+    }
+
+    pub fn set_tracer_tags(&mut self, tracer_tags: Vec<String>) -> &mut Self {
+        self.tracer_tags = tracer_tags;
         self
     }
 
@@ -336,6 +345,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// computation to be enabled).
     pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) -> &mut Self {
         self.peer_tags = peer_tags;
+        self
+    }
+
+    pub fn set_additional_metric_tag_keys(&mut self, tag_keys: Vec<String>) -> &mut Self {
+        self.additional_metric_tag_keys = tag_keys;
         self
     }
 
@@ -783,7 +797,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 span_kinds,
                 self.peer_tags.clone(),
                 self.stats_cardinality_limits,
-                vec![],
+                self.additional_metric_tag_keys.clone(),
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));
@@ -796,6 +810,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             resource.runtime_id = runtime_id.clone();
             resource.hostname = self.hostname.clone();
             resource.process_tags = self.process_tags.clone();
+            resource.tracer_tags = self.tracer_tags.clone();
             let worker = OtlpStatsExporter {
                 flush_interval: bucket_size,
                 concentrator: concentrator.clone(),
@@ -860,6 +875,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             client_side_stats: StatsComputationConfig {
                 status: ArcSwap::new(stats.into()),
                 stats_cardinality_limits: self.stats_cardinality_limits,
+                additional_metric_tag_keys: self.additional_metric_tag_keys,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_config: Arc::new(ArcSwap::from_pointee(
                     StatsComputationObfuscationConfig::default(),
