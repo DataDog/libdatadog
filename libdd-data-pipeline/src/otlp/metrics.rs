@@ -241,7 +241,9 @@ fn build_attributes(
     }
     for tag in &group.additional_metric_tags {
         if let Some((k, v)) = tag.split_once(':') {
-            push(&mut attrs, k, v);
+            if attrs.iter().all(|attr| attr["key"].as_str() != Some(k)) {
+                attrs.push(kv_str(k, v));
+            }
         }
     }
     attrs
@@ -700,6 +702,7 @@ mod tests {
                 // Only the first `:` is a delimiter; the value keeps any embedded `:`.
                 "endpoint:https://host:8080".into(),
                 "datadog.custom:dd".into(),
+                "status.code:custom".into(),
             ];
         });
         let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
@@ -708,15 +711,17 @@ mod tests {
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
         assert_eq!(str_at(a, "datadog.custom"), Some("dd"));
+        assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
+        assert_eq!(a.iter().filter(|kv| kv["key"] == "status.code").count(), 1);
 
-        // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
+        // Preserve the cardinality-overflow marker even though its value is empty.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {
-            g.additional_metric_tags = vec!["malformed".into(), "empty:".into()];
+            g.additional_metric_tags = vec!["malformed".into(), "tracer_blocked_value:".into()];
         });
         let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource()).unwrap();
         let a = points(&req)[0]["attributes"].as_array().unwrap();
         assert!(!a.iter().any(|kv| kv["key"] == "malformed"));
-        assert!(!a.iter().any(|kv| kv["key"] == "empty"));
+        assert_eq!(str_at(a, "tracer_blocked_value"), Some(""));
     }
 
     #[test]
