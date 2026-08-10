@@ -10,8 +10,6 @@ on:
         - release-testing/**
 
 env:
-  # dd-trace-rs tags to test the proposal against are resolved at run time: the newest tag of each
-  # of the DD_TRACE_RS_LINES most recent release lines matching DD_TRACE_RS_TAG_PREFIX.
   DD_TRACE_RS_REPO: https://github.com/DataDog/dd-trace-rs
   DD_TRACE_RS_TAG_PREFIX: datadog-opentelemetry-v
   DD_TRACE_RS_LINES: 3
