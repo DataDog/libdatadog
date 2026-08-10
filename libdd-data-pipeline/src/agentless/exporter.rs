@@ -10,6 +10,7 @@ use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    SendWithRetryResult,
 };
 use tracing::error;
 
@@ -21,12 +22,12 @@ const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
 /// `headers` should already contain all required headers (api key, content-type, meta-*,
 /// entity, trace-count, etc.). `test_token` is forwarded as `X-Datadog-Test-Session-Token`
 /// when set, enabling snapshot tests against a local mock.
-pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
+pub(crate) async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &AgentlessTraceConfig,
     headers: HeaderMap,
     json_body: Vec<u8>,
-) -> Result<(), TraceExporterError> {
+) -> Result<SendWithRetryResult, TraceExporterError> {
     let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
             "Invalid agentless endpoint URL: {e}"
@@ -51,7 +52,7 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
     #[cfg(not(feature = "compression"))]
     let compression_strategy = CompressionStrategy::None;
 
-    match send_with_retry(
+    Ok(send_with_retry(
         capabilities,
         &target,
         json_body,
@@ -59,14 +60,10 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
         &retry_strategy,
         compression_strategy,
     )
-    .await
-    {
-        Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e)),
-    }
+    .await)
 }
 
-fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
+pub(crate) fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
     match err {
         SendWithRetryError::Http(response, _) => {
             let status = response.status();

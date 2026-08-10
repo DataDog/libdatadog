@@ -212,6 +212,9 @@ pub struct SendPayloadTelemetry {
     chunks_sent: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
+    spans_enqueued_for_serialization: u64,
+    spans_dropped_serialization_error: u64,
+    spans_dropped_api_error: u64,
     responses_count_per_code: HashMap<u16, u64>,
 }
 
@@ -232,13 +235,35 @@ impl From<&SendDataResult> for SendPayloadTelemetry {
 }
 
 impl SendPayloadTelemetry {
-    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
+    /// Create telemetry for spans accepted by the trace-export serialization pipeline.
+    pub fn spans_enqueued(span_count: u64) -> Self {
+        Self {
+            spans_enqueued_for_serialization: span_count,
+            ..Default::default()
+        }
+    }
+
+    /// Create telemetry for spans dropped before an HTTP request could be built.
+    pub fn spans_dropped_serialization_error(span_count: u64) -> Self {
+        Self {
+            spans_dropped_serialization_error: span_count,
+            ..Default::default()
+        }
+    }
+
+    /// Create send telemetry and attribute a definitive failure to every span in the payload.
     ///
     /// # Arguments
     /// * `value` - The result of sending traces with retry
     /// * `bytes_sent` - The number of bytes in the payload
     /// * `chunks` - The number of trace chunks in the payload
-    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
+    /// * `spans` - The number of spans in the payload
+    pub fn from_retry_result_with_spans(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        spans: u64,
+    ) -> Self {
         let mut telemetry = Self::default();
         match value {
             Ok((response, attempts)) => {
@@ -252,6 +277,7 @@ impl SendPayloadTelemetry {
             Err(err) => match err {
                 SendWithRetryError::Http(response, attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.spans_dropped_api_error = spans;
                     telemetry.errors_status_code = 1;
                     telemetry
                         .responses_count_per_code
@@ -260,21 +286,25 @@ impl SendPayloadTelemetry {
                 }
                 SendWithRetryError::Timeout(attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.spans_dropped_api_error = spans;
                     telemetry.errors_timeout = 1;
                     telemetry.requests_count = *attempts as u64;
                 }
                 SendWithRetryError::Network(_, attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.spans_dropped_api_error = spans;
                     telemetry.errors_network = 1;
                     telemetry.requests_count = *attempts as u64;
                 }
                 SendWithRetryError::ResponseBody(attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
+                    telemetry.spans_dropped_api_error = spans;
                     telemetry.errors_network = 1;
                     telemetry.requests_count = *attempts as u64;
                 }
                 SendWithRetryError::Build(attempts) => {
                     telemetry.chunks_dropped_serialization_error = chunks;
+                    telemetry.spans_dropped_serialization_error = spans;
                     telemetry.requests_count = *attempts as u64;
                 }
             },
@@ -332,6 +362,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 .get(metrics::MetricKind::ChunksDroppedSendFailure);
             self.worker
                 .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
+        }
+        if data.spans_enqueued_for_serialization > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansEnqueuedForSerialization);
+            self.worker
+                .add_point(data.spans_enqueued_for_serialization as f64, key, vec![])?;
+        }
+        if data.spans_dropped_serialization_error > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansDroppedSerializationError);
+            self.worker
+                .add_point(data.spans_dropped_serialization_error as f64, key, vec![])?;
+        }
+        if data.spans_dropped_api_error > 0 {
+            let key = self.metrics.get(metrics::MetricKind::SpansDroppedApiError);
+            self.worker
+                .add_point(data.spans_dropped_api_error as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
@@ -701,6 +750,43 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
+    fn span_writer_metrics_test() {
+        let spans_enqueued = Regex::new(r#""metric":"spans_enqueued_for_serialization","points":\[\[\d+,2\.0\]\],"tags":\[\],"common":true,"type":"count"#).unwrap();
+        let serialization_error = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,3\.0\]\],"tags":\["reason:serialization_error"\],"common":true,"type":"count"#).unwrap();
+        let api_error = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,4\.0\]\],"tags":\["reason:api_error"\],"common":true,"type":"count"#).unwrap();
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
+        let server = MockServer::start();
+        let mut telemetry_srv = server.mock(|when, then| {
+            when.method(POST)
+                .body_matches(spans_enqueued)
+                .body_matches(serialization_error)
+                .body_matches(api_error);
+            then.status(200).body("");
+        });
+        let data = SendPayloadTelemetry {
+            spans_enqueued_for_serialization: 2,
+            spans_dropped_serialization_error: 3,
+            spans_dropped_api_error: 4,
+            ..Default::default()
+        };
+        let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+        shared_runtime
+            .block_on(async {
+                let _ = client.start();
+                let _ = client.send(&data);
+                sleep(Duration::from_millis(100)).await;
+
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
     fn send_client_side_stats_drops_test() {
         let payload_p0 = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,3\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
         let payload_trace_filter = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,5\.0\]\],"tags":\["src_library:libdatadog","reason:trace_filters"\],"common":true,"type":"count"#).unwrap();
@@ -769,7 +855,7 @@ mod tests {
                 .unwrap(),
             3,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 4, 5, 6);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -789,11 +875,12 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 3);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_dropped_api_error: 3,
                 requests_count: 5,
                 errors_status_code: 1,
                 responses_count_per_code: HashMap::from([(400, 1)]),
@@ -808,11 +895,12 @@ mod tests {
             HttpError::Network(anyhow::anyhow!("connection refused")),
             5,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 3);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_dropped_api_error: 3,
                 requests_count: 5,
                 errors_network: 1,
                 ..Default::default()
@@ -823,11 +911,12 @@ mod tests {
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 3);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_dropped_api_error: 3,
                 requests_count: 5,
                 errors_timeout: 1,
                 ..Default::default()
@@ -839,11 +928,12 @@ mod tests {
     #[test]
     fn telemetry_from_build_error_test() {
         let result = Err(SendWithRetryError::Build(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 3);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_serialization_error: 2,
+                spans_dropped_serialization_error: 3,
                 requests_count: 5,
                 ..Default::default()
             }
