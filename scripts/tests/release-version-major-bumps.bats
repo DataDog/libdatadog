@@ -201,6 +201,24 @@ crate_version() {
   assert_eq "$(git worktree list | tail -n +2 | wc -l)" "0"
 }
 
+@test "fails when the jq that streams the audited rows fails" {
+  # Regression: see release-version-bumps.bats. The audit itself succeeds here; the
+  # failure is in the read of its output, which used to be a process substitution and
+  # so exited 0 with nothing promoted.
+  printf '%s\n' "$(row libdd-beta minor 0.5.0 0.6.0)" | jq -s '.' > "${TEST_TMP}/api-changes.json"
+
+  use_failing_stream_jq
+  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+    --api-changes "${TEST_TMP}/api-changes.json" \
+    --out "${TEST_TMP}/api-changes-with-major-bumps.json" \
+    --branch proposal
+  assert_failure 5
+  assert_stderr_contains "simulated failure on the streaming read"
+  assert_eq "$(crate_version libdd-beta)" "0.6.0"
+  # The audit worktree is still cleaned up on the way out.
+  assert_eq "$(git worktree list | tail -n +2 | wc -l)" "0"
+}
+
 @test "rejects a missing or non-array input" {
   run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
     --api-changes "${TEST_TMP}/nope.json" --out "${TEST_TMP}/out.json" --branch proposal

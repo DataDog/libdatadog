@@ -103,6 +103,19 @@ assert_jq() {
   fi
 }
 
+# --- test doubles -----------------------------------------------------------
+
+# use_failing_stream_jq — put a jq on PATH that fails the `jq -c '.[]' FILE` call the
+# release scripts read their rows from, and forwards everything else to the real jq.
+# Call it immediately before the `run` under test: assertions that shell out to jq
+# themselves keep working, since only that one argument shape is intercepted.
+use_failing_stream_jq() {
+  STUB_REAL_JQ="$(command -v jq)"
+  export STUB_REAL_JQ
+  PATH="${TESTS_DIR}/helpers/jq-stub:${PATH}"
+  export PATH
+}
+
 # Fail unless the string is parseable JSON. Guards the scripts that build JSON by
 # string concatenation, where an unescaped commit subject can produce garbage.
 assert_valid_json() {

@@ -229,6 +229,25 @@ crate_version() {
   assert_stderr_contains "Could not dereference tag libdd-alpha-v1.2.3 to a commit"
 }
 
+@test "fails when the jq that streams the rows fails" {
+  # Regression: this loop used to read from `done < <(jq -c '.[]' ...)`. A process
+  # substitution's exit status is reported by neither set -e nor pipefail, so a jq
+  # that died mid-stream left the loop with no input and the script exited 0 having
+  # released nothing at all.
+  "${SCRIPTS_DIR}/commits-since-release.sh" "$(crates_input libdd-alpha:1.2.3)" \
+    > "${TEST_TMP}/commits-by-crate.json"
+
+  use_failing_stream_jq
+  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+    --commits-by-crate "${TEST_TMP}/commits-by-crate.json" \
+    --out "${TEST_TMP}/api-changes.json" \
+    --branch proposal
+  assert_failure 5
+  assert_stderr_contains "simulated failure on the streaming read"
+  # Nothing was released on the way out.
+  assert_eq "$(crate_version libdd-alpha)" "1.2.3"
+}
+
 @test "rejects a missing, unreadable or non-array input" {
   run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
     --commits-by-crate "${TEST_TMP}/nope.json" --out "${TEST_TMP}/out.json" --branch proposal

@@ -29,7 +29,8 @@ jobs:
           shellcheck --version
           shellcheck -e SC2086 --severity=warning scripts/*.sh scripts/tests/run.sh
           shellcheck -e SC2086 --severity=warning -s bash \
-            scripts/tests/helpers/*.bash scripts/tests/helpers/cargo-stub/cargo
+            scripts/tests/helpers/*.bash \
+            scripts/tests/helpers/cargo-stub/cargo scripts/tests/helpers/jq-stub/jq
 
   bats:
     runs-on: ubuntu-latest

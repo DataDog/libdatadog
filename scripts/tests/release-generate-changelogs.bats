@@ -224,6 +224,27 @@ MB='[{"dependency":"libdd-core","previous_req":"^1.0","current_req":"^2.0"}]'
 
 # --- argument handling ------------------------------------------------------
 
+@test "fails when the jq that streams the rows fails" {
+  # Regression, and the worst of the three: the caller's guard after this step is
+  # `git diff --quiet "$EPHEMERAL_BRANCH"`, which still sees the version-bump commits
+  # from the earlier step. A run that generated no CHANGELOG at all therefore looked
+  # exactly like a healthy one, and the proposal shipped without changelogs.
+  seed_changelog libdd-alpha 1.0.0
+  fixture_touch_crate libdd-alpha "feat(alpha): add a thing"
+  local commits before
+  commits="$(fixture_commits_json HEAD~1..HEAD -- libdd-alpha)"
+  before="$(git rev-parse HEAD)"
+  printf '%s\n' "$(row libdd-alpha 1.1.0 libdd-alpha-v1.0.0 libdd-alpha-v1.1.0 "$commits" '[]' false)" \
+    | jq -s '.' > "${TEST_TMP}/api-changes.json"
+
+  use_failing_stream_jq
+  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" \
+    --api-changes "${TEST_TMP}/api-changes.json"
+  assert_failure 5
+  assert_stderr_contains "simulated failure on the streaming read"
+  assert_eq "$(git rev-list --count "${before}..HEAD")" "0"
+}
+
 @test "rejects a missing, non-file or non-array input" {
   run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh"
   assert_failure 1

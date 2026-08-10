@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+# A `jq` shim that fails only the streaming row read -- `jq -c '.[]' FILE` -- and
+# forwards every other invocation to the real jq.
+#
+# The release scripts loop over their input with that one call. It used to be wired up
+# as `done < <(jq -c '.[]' FILE)`, and a process substitution's exit status is reported
+# by nothing: neither set -e nor pipefail sees it. A jq that died mid-stream left the
+# loop with no input and the script exited 0 having done nothing at all. This shim makes
+# that failure reproducible so the loops can be held to surfacing it.
+#
+#   STUB_JQ_STREAM_RC  exit code for the streaming call (default 5)
+#   STUB_REAL_JQ       path to the real jq
+
+set -uo pipefail
+
+if [ "${1:-}" = "-c" ] && [ "${2:-}" = ".[]" ]; then
+  echo "jq: simulated failure on the streaming read" >&2
+  exit "${STUB_JQ_STREAM_RC:-5}"
+fi
+
+exec "${STUB_REAL_JQ:?STUB_REAL_JQ is not set}" "$@"
