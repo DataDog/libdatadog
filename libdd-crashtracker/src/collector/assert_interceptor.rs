@@ -116,18 +116,13 @@ pub(crate) fn install_assert_hook() {
         return;
     }
 
-    let mut orig_addr: usize = 0;
     // SAFETY: hook_assert_fail has the same signature as __assert_fail.
-    let patched = unsafe {
-        libdd_gotter::hook_symbol(
-            c"__assert_fail",
-            hook_assert_fail as *const () as usize,
-            &mut orig_addr,
-        )
+    let result = unsafe {
+        libdd_gotter::hook_symbol(c"__assert_fail", hook_assert_fail as *const () as usize)
     };
 
-    if patched && orig_addr != 0 {
-        ORIG_ASSERT_FN.store(orig_addr, core::sync::atomic::Ordering::Release);
+    if let Ok(hook) = result {
+        ORIG_ASSERT_FN.store(hook.orig_addr, core::sync::atomic::Ordering::Release);
     }
 }
 
