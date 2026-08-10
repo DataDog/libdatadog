@@ -107,7 +107,12 @@ async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
     .await)
 }
 
-pub(crate) async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
+/// Send an OTLP trace payload to the configured endpoint with retries. The `Content-Type` is
+/// derived from `config.protocol`, which also selected the body encoding (JSON or protobuf).
+///
+/// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
+/// against the Datadog test agent's OTLP endpoint.
+pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
     test_token: Option<&str>,

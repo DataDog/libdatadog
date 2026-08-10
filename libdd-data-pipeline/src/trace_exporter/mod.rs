@@ -18,12 +18,10 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::{
-    map_send_error as map_agentless_send_error, send_agentless_traces_http,
-};
-use crate::agentless::AgentlessTraceConfig;
-use crate::otlp::exporter::{map_send_error as map_otlp_send_error, send_otlp_traces_http};
-use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+use crate::agentless::exporter::map_send_error as map_agentless_send_error;
+use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
+use crate::otlp::exporter::map_send_error as map_otlp_send_error;
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
