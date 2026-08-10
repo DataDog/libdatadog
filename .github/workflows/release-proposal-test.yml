@@ -151,6 +151,7 @@ jobs:
     needs: package-and-upload-crates
     if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
     strategy:
+      fail-fast: false
       matrix:
         version: ${{ fromJSON(needs.package-and-upload-crates.outputs.dd_trace_rs_versions) }}
     steps:
