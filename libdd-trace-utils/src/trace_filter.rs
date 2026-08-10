@@ -8,7 +8,8 @@ use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
-use crate::span::v1::{AttributeValue, TraceChunk};
+use crate::span::v1::{AttributeValue, SpanKind, TraceChunk};
+use crate::span::vec_map::VecMap;
 use crate::span::{self, trace_utils::get_root_span_index, trace_utils_v1, TraceData};
 
 trait TagFilter {
@@ -119,8 +120,44 @@ impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
         match self.attributes.get(key) {
             Some(AttributeValue::String(s)) => Some(s.borrow()),
-            _ => None,
+            // `env`, `version`, `component`, and `span.kind` are "promoted" to dedicated span
+            // fields rather than stored in `attributes` (see the V1 downgrade encoder). Empty
+            // text / the default `Internal` kind are treated as "unset" here.
+            _ => match key {
+                "env" if !self.env.borrow().is_empty() => Some(self.env.borrow()),
+                "version" if !self.version.borrow().is_empty() => Some(self.version.borrow()),
+                "component" if !self.component.borrow().is_empty() => Some(self.component.borrow()),
+                "span.kind" if self.span_kind != SpanKind::Internal => {
+                    Some(self.span_kind.as_meta_str())
+                }
+                _ => None,
+            },
         }
+    }
+}
+
+/// Wraps a V1 root span together with its enclosing chunk's attributes.
+///
+/// `TraceChunk.attributes` holds values common to every span in the chunk, so a tag lookup on
+/// the root span falls back to the chunk's attributes whenever the span doesn't have its own
+/// value for a given key.
+struct ChunkSpanView<'a, T: TraceData> {
+    span: &'a span::v1::Span<T>,
+    chunk_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
+}
+
+impl<'a, T: TraceData> Span<'a> for ChunkSpanView<'a, T> {
+    fn resource_normalized(&'a self) -> &'a str {
+        self.span.resource_normalized()
+    }
+
+    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
+        self.span
+            .get_meta(key)
+            .or_else(|| match self.chunk_attributes.get(key) {
+                Some(AttributeValue::String(s)) => Some(s.borrow()),
+                _ => None,
+            })
     }
 }
 
@@ -262,7 +299,11 @@ impl TraceFilterer {
             let Ok(root_span_index) = trace_utils_v1::get_root_span_index(&chunk.spans) else {
                 return true;
             };
-            let should_drop = self.should_drop(&chunk.spans[root_span_index]);
+            let root_span_view = ChunkSpanView {
+                span: &chunk.spans[root_span_index],
+                chunk_attributes: &chunk.attributes,
+            };
+            let should_drop = self.should_drop(&root_span_view);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
@@ -403,6 +444,27 @@ mod tests {
                     .collect(),
                 ..Default::default()
             }],
+            ..Default::default()
+        }
+    }
+
+    fn v1_chunk_with_chunk_attributes(
+        resource: &'static str,
+        chunk_attributes: &[(&'static str, &'static str)],
+    ) -> TraceChunk<crate::span::BytesData> {
+        TraceChunk {
+            spans: vec![SpanBytesV1 {
+                service: "svc".into(),
+                name: "op".into(),
+                resource: resource.into(),
+                span_id: 1,
+                parent_id: 0,
+                ..Default::default()
+            }],
+            attributes: chunk_attributes
+                .iter()
+                .map(|(k, v)| ((*k).into(), AttributeValueV1::String((*v).into())))
+                .collect(),
             ..Default::default()
         }
     }
@@ -752,5 +814,53 @@ mod tests {
         let mut traces = vec![v1_chunk_with("GET /health", &[])];
         ignore_resources(&["GET /health"]).filter_traces_v1(&mut traces);
         assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn v1_reject_matches_chunk_level_attribute() {
+        // The root span itself has no "env" tag, only the chunk does; the filter should still
+        // see it via the chunk-attributes fallback.
+        let mut traces = vec![v1_chunk_with_chunk_attributes("r", &[("env", "prod")])];
+        reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn v1_span_level_attribute_takes_precedence_over_chunk() {
+        // The span's own value should win over the chunk-level fallback.
+        let mut chunk = v1_chunk_with("r", &[("env", "staging")]);
+        chunk.attributes = [("env".into(), AttributeValueV1::String("prod".into()))]
+            .into_iter()
+            .collect();
+        let mut traces = vec![chunk];
+        reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
+        assert_eq!(traces.len(), 1, "span-level value should take precedence");
+    }
+
+    #[test]
+    fn v1_reject_matches_dedicated_promoted_fields() {
+        // env/version/component/span.kind are stored in dedicated fields rather than
+        // `attributes`; the filter must still see them there.
+        let mut traces = vec![TraceChunk {
+            spans: vec![SpanBytesV1 {
+                service: "svc".into(),
+                name: "op".into(),
+                resource: "r".into(),
+                span_id: 1,
+                parent_id: 0,
+                env: "prod".into(),
+                version: "1.2.3".into(),
+                component: "http".into(),
+                span_kind: crate::span::v1::SpanKind::Client,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+
+        reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
+        assert!(
+            traces.is_empty(),
+            "dedicated env field should be visible to the filter"
+        );
     }
 }

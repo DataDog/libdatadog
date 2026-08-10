@@ -17,7 +17,7 @@ use aggregation::BorrowedAggregationKey;
 pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
 
 pub mod stat_span;
-pub use stat_span::StatSpan;
+pub use stat_span::{ChunkSpanView, StatSpan};
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
 

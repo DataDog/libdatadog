@@ -15,7 +15,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
@@ -374,9 +374,12 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
-    let spans = traces.iter().flat_map(|chunk| chunk.spans.iter());
-    for span in spans {
-        stats_concentrator.add_span(span);
+    // Wrap each span with its enclosing chunk so common attributes (peer tags, origin) that are
+    // stored at the chunk level rather than on individual spans are still visible to stats.
+    for chunk in traces {
+        for span in &chunk.spans {
+            stats_concentrator.add_span(&ChunkSpanView { span, chunk });
+        }
     }
 }
 
@@ -528,10 +531,14 @@ mod tests {
         }
 
         fn new_concentrator() -> Mutex<SpanConcentrator> {
+            new_concentrator_with_span_kinds(vec![])
+        }
+
+        fn new_concentrator_with_span_kinds(span_kinds: Vec<String>) -> Mutex<SpanConcentrator> {
             Mutex::new(SpanConcentrator::new(
                 Duration::from_secs(10),
                 SystemTime::now(),
-                vec![],
+                span_kinds,
                 vec![],
                 None,
                 vec![],
@@ -588,6 +595,78 @@ mod tests {
             add_spans_to_stats_v1(&stats_concentrator, &traces);
 
             assert_eq!(total_hits(&stats_concentrator), 0);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_eligibility() {
+            // The span itself is not top-level/measured and has a dedicated span_kind of
+            // Internal (the default); it's only eligible because the chunk-level attributes
+            // carry "span.kind": "client". Note the dedicated `span_kind` field always takes
+            // precedence over chunk attributes for this key once it's set to a non-default
+            // value (see `add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility`).
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                attributes: vec![("span.kind".into(), AttributeValue::String("client".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_aggregation() {
+            // The span is eligible via `_top_level` and has no own "http.method" attribute; the
+            // chunk-level attributes carry it instead, and it should still show up on the
+            // aggregated stats group.
+            let stats_concentrator = new_concentrator();
+            let traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                attributes: vec![("http.method".into(), AttributeValue::String("POST".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            let flushed = stats_concentrator
+                .lock_or_panic()
+                .flush(SystemTime::now(), true);
+            let http_methods: Vec<&str> = flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.http_method.as_str())
+                .collect();
+            assert_eq!(http_methods, vec!["POST"]);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility() {
+            // The span itself is not top-level/measured and has no "span.kind" attribute; it's
+            // only eligible because its dedicated `span_kind` field is Client.
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    span_kind: libdd_trace_utils::span::v1::SpanKind::Client,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
         }
 
         #[test]

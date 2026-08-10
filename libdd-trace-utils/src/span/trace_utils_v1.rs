@@ -151,7 +151,17 @@ pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0St
         }
 
         // PrioritySampler and NoPrioritySampler
-        if chunk.priority.is_none_or(|p| p > 0) {
+        //
+        // `dropped_trace` signals the trace was rejected by samplers even when `priority` is
+        // absent or positive; treat it as an implicit negative priority (mirrors the
+        // v1-to-v0.4 encoder's handling of this flag), unless the chunk already carries a
+        // negative priority of its own.
+        let effective_priority = if chunk.dropped_trace {
+            chunk.priority.filter(|&p| p < 0).or(Some(-1))
+        } else {
+            chunk.priority
+        };
+        if effective_priority.is_none_or(|p| p > 0) {
             // We send chunks with positive priority or no priority
             return true;
         }
@@ -442,5 +452,55 @@ mod tests {
                 assert_eq!(traces[0].spans.len(), expected_count);
             }
         }
+    }
+
+    #[test]
+    fn test_drop_chunks_dropped_trace_overrides_missing_or_positive_priority() {
+        // `dropped_trace: true` should reject the chunk even though `priority` alone (absent or
+        // positive) would normally keep it.
+        let mut dropped_without_priority = chunk_with_spans(
+            None,
+            vec![SpanBytes {
+                span_id: 1,
+                ..Default::default()
+            }],
+        );
+        dropped_without_priority.dropped_trace = true;
+
+        let mut dropped_with_positive_priority = chunk_with_spans(
+            Some(1),
+            vec![SpanBytes {
+                span_id: 1,
+                ..Default::default()
+            }],
+        );
+        dropped_with_positive_priority.dropped_trace = true;
+
+        for chunk in [dropped_without_priority, dropped_with_positive_priority] {
+            let mut traces = vec![chunk];
+            drop_chunks(&mut traces);
+            assert!(
+                traces.is_empty(),
+                "dropped_trace should reject the chunk regardless of priority"
+            );
+        }
+    }
+
+    #[test]
+    fn test_drop_chunks_dropped_trace_keeps_existing_negative_priority() {
+        // dropped_trace shouldn't change behavior when the chunk already has a negative
+        // priority: the chunk is still rejected, same as without dropped_trace.
+        let mut chunk = chunk_with_spans(
+            Some(-5),
+            vec![SpanBytes {
+                span_id: 1,
+                ..Default::default()
+            }],
+        );
+        chunk.dropped_trace = true;
+
+        let mut traces = vec![chunk];
+        drop_chunks(&mut traces);
+        assert!(traces.is_empty());
     }
 }
