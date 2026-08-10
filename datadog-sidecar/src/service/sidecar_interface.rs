@@ -11,7 +11,6 @@ use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
-use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -143,40 +142,40 @@ pub trait SidecarInterface {
     /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
     /// `/v1.0/traces` endpoint. Use this when the SDK speaks V1 natively.
     ///
-    /// The V1 payload already carries the tracer identity (lang, version, ...) itself, so only
-    /// the generic bool/int tags are transferred here instead of the full
-    /// `SerializedTracerHeaderTags` envelope.
+    /// The V1 payload already carries lang/version/tracer-version itself, but `lang_interpreter`
+    /// and `lang_vendor` have no equivalent in the V1 payload model, so the full
+    /// `SerializedTracerHeaderTags` envelope is still transferred to preserve them.
     ///
     /// # Arguments
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `handle` - The handle to the shared memory.
     /// * `len` - The size of the shared memory data.
-    /// * `headers` - The generic (non-string) tracer header tags.
+    /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v1_shm(
         instance_id: InstanceId,
         #[SerializedHandle] handle: ShmHandle,
         len: usize,
-        headers: TracerGenericTags,
+        headers: SerializedTracerHeaderTags,
     );
 
     /// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 `TracerPayload`, can
     /// inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
     /// endpoint. Use this when the SDK speaks V1 natively.
     ///
-    /// The V1 payload already carries the tracer identity (lang, version, ...) itself, so only
-    /// the generic bool/int tags are transferred here instead of the full
-    /// `SerializedTracerHeaderTags` envelope.
+    /// The V1 payload already carries lang/version/tracer-version itself, but `lang_interpreter`
+    /// and `lang_vendor` have no equivalent in the V1 payload model, so the full
+    /// `SerializedTracerHeaderTags` envelope is still transferred to preserve them.
     ///
     /// # Arguments
     ///
     /// * `instance_id` - The ID of the instance.
     /// * `data` - The V1 trace data serialized as bytes.
-    /// * `headers` - The generic (non-string) tracer header tags.
+    /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v1_bytes(
         instance_id: InstanceId,
         data: Vec<u8>,
-        headers: TracerGenericTags,
+        headers: SerializedTracerHeaderTags,
     );
 
     /// Transfers raw data to a live-debugger endpoint.

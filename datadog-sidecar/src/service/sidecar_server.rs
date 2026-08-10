@@ -51,7 +51,7 @@ use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
-use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
+use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.
@@ -274,20 +274,43 @@ impl SidecarServer {
     /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
     /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
     ///
-    /// The V1 payload already carries the tracer identity (lang, version, ...) itself, so only
-    /// the generic bool/int tags need to be threaded through here.
+    /// The V1 payload already carries lang/version/tracer-version itself, but `lang_interpreter`
+    /// and `lang_vendor` have no equivalent in the V1 payload model, so the full header envelope
+    /// is still threaded through here to preserve them.
     fn send_trace_v1(
         &self,
-        generic_tags: TracerGenericTags,
+        headers: &SerializedTracerHeaderTags,
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
     ) {
-        let headers = TracerHeaderTags {
-            generic: generic_tags,
-            ..Default::default()
+        let headers: TracerHeaderTags = match headers.try_into() {
+            Ok(headers) => headers,
+            Err(e) => {
+                error!("Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}", e);
+                return;
+            }
         };
-        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
+        // Agentful sessions have their endpoint normalized to `/v0.4/traces` by
+        // `tracer::Config::set_endpoint`, since it doesn't know which encoding will be used.
+        // Redirect to the agent's `/v1.0/traces` route for the V1 payload we're about to send.
+        let target = if target.api_key.is_none() {
+            let mut parts = target.url.clone().into_parts();
+            parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/v1.0/traces"));
+            match http::Uri::from_parts(parts) {
+                Ok(url) => Cow::Owned(Endpoint {
+                    url,
+                    ..target.clone()
+                }),
+                Err(e) => {
+                    error!("Failed to build V1 trace endpoint with error {:?}", e);
+                    Cow::Borrowed(target)
+                }
+            }
+        } else {
+            Cow::Borrowed(target)
+        };
+        self.send_trace(headers, data, &target, retry_interval, TraceEncoding::V1)
     }
 
     fn send_trace(
@@ -972,7 +995,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
-        headers: TracerGenericTags,
+        headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
@@ -984,7 +1007,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v1(headers, bytes, &endpoint, retry_interval);
+                        server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -1001,7 +1024,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         &self,
         instance_id: InstanceId,
         data: Vec<u8>,
-        headers: TracerGenericTags,
+        headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
@@ -1012,7 +1035,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v1(headers, bytes, &endpoint, retry_interval);
+                server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
             });
         } else {
             warn!(
@@ -1485,6 +1508,102 @@ mod tests {
 
         assert_eq!(exposures_mock.calls_async().await, 0);
         assert_eq!(metrics_mock.calls_async().await, 0);
+    }
+
+    fn sample_v1_trace_payload_bytes() -> Vec<u8> {
+        use libdd_tinybytes::BytesString;
+        use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
+        use libdd_trace_utils::span::v1::{Span as V1Span, TraceChunkBytes, TracerPayloadBytes};
+
+        fn bs(s: &str) -> BytesString {
+            BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
+        }
+
+        let span = V1Span {
+            service: bs("svc"),
+            name: bs("GET /users"),
+            resource: bs("/users"),
+            span_id: 42,
+            start: 1_700_000_000_000,
+            duration: 1_500,
+            ..Default::default()
+        };
+
+        let chunk = TraceChunkBytes {
+            trace_id: [1u8; 16],
+            spans: vec![span],
+            ..Default::default()
+        };
+
+        let payload = TracerPayloadBytes {
+            language_name: bs("rust"),
+            language_version: bs("1.87"),
+            tracer_version: bs("9.9.9"),
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+
+        to_vec_from_v1(&payload)
+    }
+
+    /// Agentful sessions have their trace endpoint normalized to `/v0.4/traces` by
+    /// `tracer::Config::set_endpoint` since it doesn't know ahead of time which encoding will be
+    /// used. This exercises the full `send_trace_v1_bytes` chain to ensure V1 payloads are
+    /// redirected to the agent's `/v1.0/traces` route instead, and that `lang_interpreter`/
+    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_routes_to_v1_endpoint() {
+        let http_server = MockServer::start_async().await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1.0/traces")
+                    .header("datadog-meta-lang-interpreter", "cpython")
+                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        let headers: SerializedTracerHeaderTags = TracerHeaderTags {
+            lang_interpreter: "cpython",
+            lang_vendor: "cpython-vendor",
+            ..Default::default()
+        }
+        .try_into()
+        .unwrap();
+
+        handler
+            .send_trace_v1_bytes(instance_id, sample_v1_trace_payload_bytes(), headers)
+            .await;
+
+        // send_trace_v1_bytes spawns the actual send, so give it a chance to enqueue before
+        // forcing the flusher to flush and join.
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        v1_mock.assert_async().await;
+        assert_eq!(v04_mock.calls_async().await, 0);
     }
 }
 

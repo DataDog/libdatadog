@@ -826,16 +826,6 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerHeaderTags<'a>> for libdd_trace_utils::trace_utils::TracerGenericTags {
-    fn from(tags: &'a TracerHeaderTags<'a>) -> Self {
-        libdd_trace_utils::trace_utils::TracerGenericTags {
-            client_computed_top_level: tags.client_computed_top_level,
-            client_computed_stats: tags.client_computed_stats,
-            ..Default::default()
-        }
-    }
-}
-
 /// Enqueues a telemetry log action to be processed internally.
 /// Non-blocking. Logs might be dropped if the internal queue is full.
 ///
@@ -1169,17 +1159,25 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let generic_tags = tracer_header_tags.into();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tracer_header_tags = try_c!(tracer_header_tags.try_into());
 
-    try_c!(blocking::send_trace_v1_shm(
-        transport,
-        instance_id,
-        *shm_handle,
-        len,
-        generic_tags,
-    ));
+        try_c!(blocking::send_trace_v1_shm(
+            transport,
+            instance_id,
+            *shm_handle,
+            len,
+            tracer_header_tags,
+        ));
 
-    MaybeError::None
+        MaybeError::None
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_send_trace_v1_shm",
+        ))
+    })
 }
 
 /// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
@@ -1193,16 +1191,24 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let generic_tags = tracer_header_tags.into();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tracer_header_tags = try_c!(tracer_header_tags.try_into());
 
-    try_c!(blocking::send_trace_v1_bytes(
-        transport,
-        instance_id,
-        data.as_bytes().to_vec(),
-        generic_tags,
-    ));
+        try_c!(blocking::send_trace_v1_bytes(
+            transport,
+            instance_id,
+            data.as_bytes().to_vec(),
+            tracer_header_tags,
+        ));
 
-    MaybeError::None
+        MaybeError::None
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_send_trace_v1_bytes",
+        ))
+    })
 }
 
 #[no_mangle]

@@ -15,7 +15,6 @@ use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_telemetry::metrics::MetricContext;
-use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -326,7 +325,7 @@ pub fn send_trace_v1_bytes(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
     data: Vec<u8>,
-    headers: TracerGenericTags,
+    headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
     lock_sender(transport)?.send_trace_v1_bytes(instance_id.clone(), data, headers);
     Ok(())
@@ -339,7 +338,7 @@ pub fn send_trace_v1_shm(
     instance_id: &InstanceId,
     handle: ShmHandle,
     len: usize,
-    headers: TracerGenericTags,
+    headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
     lock_sender(transport)?.send_trace_v1_shm(instance_id.clone(), handle, len, headers);
     Ok(())

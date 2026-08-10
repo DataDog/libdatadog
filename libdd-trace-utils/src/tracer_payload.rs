@@ -4,7 +4,6 @@
 use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-use anyhow::Ok;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
