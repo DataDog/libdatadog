@@ -28,6 +28,37 @@ use core::slice;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 
+// Lossless integer conversion helpers for 64-bit platforms.
+//
+// This crate is cfg-gated to `target_pointer_width = "64"`, so
+// `u64 -> usize` and `u32 -> usize` are infallible.
+
+/// `u64 -> usize`: lossless on 64-bit platforms.
+const fn u64_to_usize(v: u64) -> usize {
+    v as usize
+}
+
+/// `u32 -> usize`: lossless on 64-bit platforms.
+const fn u32_to_usize(v: u32) -> usize {
+    v as usize
+}
+
+/// Build a slice from a possibly-null pointer and length. Returns `&[]`
+/// if the pointer is null or the length is zero, avoiding a call to
+/// `slice::from_raw_parts` with invalid arguments.
+///
+/// # Safety
+/// If `ptr` is non-null and `len > 0`, the pointer must be valid for
+/// `len * size_of::<T>()` bytes, properly aligned, and not mutated for
+/// lifetime `'a`.
+unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+    if ptr.is_null() || len == 0 {
+        &[]
+    } else {
+        slice::from_raw_parts(ptr, len)
+    }
+}
+
 use libc::{
     dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
     _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
@@ -92,22 +123,27 @@ impl<'a> DynamicInfo<'a> {
     /// to a symtab/strtab distance heuristic.
     ///
     /// # Safety
-    /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
+    /// - `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
+    /// - The ELF object described by `info` must remain mapped for lifetime `'a`. This is
+    ///   guaranteed when called from within a `dl_iterate_phdr` callback (loader lock held) or
+    ///   while a `dlopen` handle is live.
     pub unsafe fn from_phdr(info: &'a dl_phdr_info) -> Option<Self> {
-        // SAFETY: info is valid for the lifetime of the program.
-        let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize) };
+        // SAFETY: caller guarantees info is a valid dl_phdr_info for a
+        // mapped ELF object. dlpi_phnum is u16 so the conversion is lossless.
+        let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum)) };
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
-        let dyn_begin = (info.dlpi_addr as usize + dyn_phdr.p_vaddr as usize) as *const Elf64_Dyn;
-        let base = info.dlpi_addr as usize;
+        // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
+        let base = u64_to_usize(info.dlpi_addr);
+        let dyn_begin = (base + u64_to_usize(dyn_phdr.p_vaddr)) as *const Elf64_Dyn;
         let containing_load_segment_end = |addr: usize| -> Option<usize> {
             phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
-                let start = base.checked_add(p.p_vaddr as usize)?;
-                let end = start.checked_add(p.p_memsz as usize)?;
+                let start = base.checked_add(u64_to_usize(p.p_vaddr))?;
+                let end = start.checked_add(u64_to_usize(p.p_memsz))?;
                 (addr >= start && addr < end).then_some(end)
             })
         };
         let correct = |a: u64| -> usize {
-            let a = a as usize;
+            let a = u64_to_usize(a);
             if a > base {
                 a
             } else {
@@ -137,16 +173,18 @@ impl<'a> DynamicInfo<'a> {
             let v = d.d_un;
             match d.d_tag {
                 DT_STRTAB => strtab = correct(v) as *const c_char,
-                DT_STRSZ => strtab_size = v as usize,
+                // u64 -> usize: lossless on 64-bit
+                DT_STRSZ => strtab_size = u64_to_usize(v),
                 DT_SYMTAB => symtab = correct(v) as *const Elf64_Sym,
                 DT_GNU_HASH => gnu_hash = correct(v) as *const u32,
                 DT_HASH => sysv_hash = correct(v) as *const u32,
                 DT_REL => rels = correct(v) as *const Elf64_Rel,
                 DT_RELA => relas = correct(v) as *const Elf64_Rela,
                 DT_JMPREL => jmprels = correct(v) as *const Elf64_Rela,
-                DT_RELSZ => rels_size = v as usize,
-                DT_RELASZ => relas_size = v as usize,
-                DT_PLTRELSZ => jmprels_size = v as usize,
+                DT_RELSZ => rels_size = u64_to_usize(v),
+                DT_RELASZ => relas_size = u64_to_usize(v),
+                DT_PLTRELSZ => jmprels_size = u64_to_usize(v),
+                // u64 -> i64: reinterpret (tag values fit in i64).
                 DT_PLTREL => pltrel_type = v as i64,
                 _ => {}
             }
@@ -193,56 +231,26 @@ impl<'a> DynamicInfo<'a> {
             (sym_count_fallback(symtab, strtab, sysv_hash), 0)
         };
 
-        // SAFETY (applies to all `slice::from_raw_parts` calls below):
+        // SAFETY (applies to all `try_as_slice` calls below):
         //
-        // Each pointer (strtab, symtab, rels, relas, jmprels) was read
-        // from the PT_DYNAMIC segment of a currently-loaded ELF object
-        // and corrected for the glibc/musl absolute-vs-relative address
-        // quirk. The dynamic linker has already validated and mapped
-        // these sections, so:
-        // - Non-null: guarded by the `is_null()` check in each branch; the null/zero-length case
-        //   returns `&[]` without calling `from_raw_parts`.
-        // - Properly aligned: ELF sections are required by the spec to be aligned to their entry
-        //   size (e.g. `Elf64_Sym` is 8-byte aligned, `Elf64_Rela` is 8-byte aligned). The dynamic
-        //   linker enforces this at load time.
-        // - Valid for `len * size_of::<T>()` reads within a single allocation: the entire section
-        //   is mapped contiguously from the ELF file by the kernel via `mmap`. The size/count
-        //   values come from DT_STRSZ, sym_count (from DT_GNU_HASH or DT_HASH nchain), DT_RELSZ,
-        //   DT_RELASZ, and DT_PLTRELSZ respectively.
-        // - Not mutated for lifetime `'a`: the ELF object is held mapped by `dl_iterate_phdr`'s
-        //   loader lock (for the callback's duration) or by the caller's `dlopen` handle.
-        // - Total size does not overflow `isize::MAX`: ELF section sizes are bounded by the
-        //   file/mapping size, which the kernel validated at mmap time.
-        let strtab_slice = if strtab.is_null() || strtab_size == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(strtab as *const u8, strtab_size)
-        };
+        // Each pointer was read from the PT_DYNAMIC segment and
+        // corrected for the glibc/musl address quirk. The caller
+        // guarantees the ELF object remains mapped for lifetime `'a`
+        // (safety precondition of from_phdr). The dynamic linker
+        // enforces alignment and contiguous mapping at load time.
+        // Sizes come from DT_STRSZ, DT_RELSZ, DT_RELASZ, DT_PLTRELSZ,
+        // and sym_count (from DT_GNU_HASH or DT_HASH nchain).
 
         let rels_count = rels_size / core::mem::size_of::<Elf64_Rel>();
         let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
         let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
 
-        let symtab_slice = if symtab.is_null() || sym_count == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(symtab, sym_count as usize)
-        };
-        let rels_slice = if rels.is_null() || rels_count == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(rels, rels_count)
-        };
-        let relas_slice = if relas.is_null() || relas_count == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(relas, relas_count)
-        };
-        let jmprels_slice = if jmprels.is_null() || jmprels_count == 0 {
-            &[]
-        } else {
-            slice::from_raw_parts(jmprels, jmprels_count)
-        };
+        let strtab_slice = try_as_slice(strtab as *const u8, strtab_size);
+        // u32 -> usize: lossless on 64-bit (crate cfg gate).
+        let symtab_slice = try_as_slice(symtab, u32_to_usize(sym_count));
+        let rels_slice = try_as_slice(rels, rels_count);
+        let relas_slice = try_as_slice(relas, relas_count);
+        let jmprels_slice = try_as_slice(jmprels, jmprels_count);
 
         Some(Self {
             strtab: strtab_slice,
@@ -262,8 +270,8 @@ impl<'a> DynamicInfo<'a> {
     /// Returns the `Elf64_Sym` and its name from the string table,
     /// or `None` if the index is out of bounds or the name is invalid.
     pub fn sym_entry(&self, idx: u32) -> Option<(&Elf64_Sym, &CStr)> {
-        let sym = self.symtab.get(idx as usize)?;
-        let off = sym.st_name as usize;
+        let sym = self.symtab.get(u32_to_usize(idx))?;
+        let off = u32_to_usize(sym.st_name);
         let remaining = self.strtab.get(off..)?;
         let nul_pos = remaining.iter().position(|&b| b == 0)?;
         let name = CStr::from_bytes_with_nul(&remaining[..=nul_pos]).ok()?;
@@ -331,6 +339,9 @@ unsafe fn sym_count_fallback(
     let strtab_addr = strtab as usize;
     if strtab_addr > symtab_addr {
         let bytes = strtab_addr - symtab_addr;
+        // usize -> u32: may truncate in theory, but dynsym tables with
+        // >4 billion entries don't exist in practice. If it did truncate,
+        // sym_name bounds-checks via slice indexing would catch it safely.
         (bytes / core::mem::size_of::<Elf64_Sym>()) as u32
     } else {
         // Can't estimate; allow any index and rely on strtab bounds
@@ -344,7 +355,9 @@ unsafe fn sym_count_fallback(
 pub fn sysv_hash(name: &[u8]) -> u32 {
     let mut h: u32 = 0;
     for &c in name {
-        h = (h << 4).wrapping_add(c as u32);
+        // The algorithm is described in C in the spec, and C standard defines arithmetic
+        // to be defined modulo `2^N` for N-bits unsigned integers; that is, to be wrapping.
+        h = (h << 4).wrapping_add(u32::from(c));
         let g = h & 0xf000_0000;
         if g != 0 {
             h ^= g >> 24;
@@ -356,7 +369,9 @@ pub fn sysv_hash(name: &[u8]) -> u32 {
 
 /// Look up a symbol by name in an object's `DT_HASH` (sysv) table.
 ///
+/// ```text
 /// [nbucket] [nchain] [bucket[0..nbucket]] [chain[0..nchain]]
+/// ```
 ///
 /// Each bucket holds the index of the first symbol in that bucket's
 /// chain (or `STN_UNDEF` if empty). Each chain entry at position `i`
@@ -386,8 +401,8 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
     // Validate the table fits within the mapped region before computing
     // any pointers into the bucket/chain arrays.
     let buckets_start: usize = 2;
-    let chains_start = buckets_start.checked_add(nbucket as usize)?;
-    let table_end = chains_start.checked_add(nchain as usize)?;
+    let chains_start = buckets_start.checked_add(u32_to_usize(nbucket))?;
+    let table_end = chains_start.checked_add(u32_to_usize(nchain))?;
     if table_end > info.sysv_hash_words {
         return None;
     }
@@ -396,14 +411,14 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
     let chains = hashtab.add(chains_start);
 
     let h = sysv_hash(name);
-    let mut idx = *buckets.add((h % nbucket) as usize);
+    let mut idx = *buckets.add(u32_to_usize(h % nbucket));
 
     // Follow the chain from the bucket's head symbol, comparing names
     // at each step. The chain terminates at STN_UNDEF (0). We also
     // cap iterations at nchain to guard against malformed cycles.
     let mut steps = 0u32;
     while idx != STN_UNDEF && steps < nchain {
-        if (idx as usize) >= nchain as usize {
+        if (u32_to_usize(idx)) >= u32_to_usize(nchain) {
             break;
         }
         if let Some((sym, sname)) = info.sym_entry(idx) {
@@ -413,7 +428,7 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
         }
         // SAFETY: idx was bounds-checked above against nchain, and
         // chains points into the validated sysv hash table.
-        idx = *chains.add(idx as usize);
+        idx = *chains.add(u32_to_usize(idx));
         steps += 1;
     }
     None
@@ -424,7 +439,10 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
 pub fn gnu_hash(name: &[u8]) -> u32 {
     let mut h: u32 = 5381;
     for c in name {
-        h = h.wrapping_shl(5).wrapping_add(h).wrapping_add(*c as u32);
+        h = h
+            .wrapping_shl(5)
+            .wrapping_add(h)
+            .wrapping_add(u32::from(*c));
     }
     h
 }
@@ -446,9 +464,9 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
     let nbuckets = *hashtab;
     let symbias = *hashtab.add(1);
     let bloom_size = *hashtab.add(2);
-    let bloom_size_words = (bloom_size as usize).checked_mul(2)?;
+    let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
     let buckets_start = 4usize.checked_add(bloom_size_words)?;
-    let chains_start = buckets_start.checked_add(nbuckets as usize)?;
+    let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
 
     if bloom_size == 0 || buckets_start > hashtab_words || chains_start > hashtab_words {
         return None;
@@ -457,7 +475,7 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
         return None;
     }
 
-    let buckets = slice::from_raw_parts(hashtab.add(buckets_start), nbuckets as usize);
+    let buckets = slice::from_raw_parts(hashtab.add(buckets_start), u32_to_usize(nbuckets));
     let mut idx = *buckets.iter().max()?;
     // All buckets empty: hash covers zero defined symbols, but the
     // symtab may still have undefined imports. Signal the caller to
@@ -471,7 +489,7 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
 
     let chain_count = hashtab_words - chains_start;
     loop {
-        let chain_idx = (idx - symbias) as usize;
+        let chain_idx = u32_to_usize(idx - symbias);
         if chain_idx >= chain_count {
             return None;
         }
@@ -508,9 +526,9 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
     let symbias = *hashtab.add(1);
     let bloom_size = *hashtab.add(2);
     let bloom_shift = *hashtab.add(3);
-    let bloom_size_words = (bloom_size as usize).checked_mul(2)?;
+    let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
     let buckets_start = 4usize.checked_add(bloom_size_words)?;
-    let chains_start = buckets_start.checked_add(nbuckets as usize)?;
+    let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
 
     if nbuckets == 0
         || bloom_size == 0
@@ -522,7 +540,7 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
 
     let h = gnu_hash(name);
     let bloom = hashtab.add(4) as *const u64;
-    let word = *bloom.add(((h / 64) & (bloom_size - 1)) as usize);
+    let word = *bloom.add(u32_to_usize((h / 64) & (bloom_size - 1)));
     let bit1 = h & 63;
     let bit2 = (h >> bloom_shift) & 63;
     if ((word >> bit1) & (word >> bit2) & 1) == 0 {
@@ -530,7 +548,7 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
     }
 
     let buckets = hashtab.add(buckets_start);
-    let mut symidx = *buckets.add((h % nbuckets) as usize);
+    let mut symidx = *buckets.add(u32_to_usize(h % nbuckets));
     if symidx == STN_UNDEF {
         return None;
     }
@@ -540,7 +558,7 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
 
     let chain_count = info.gnu_hash_words - chains_start;
     loop {
-        let chain_idx = (symidx - symbias) as usize;
+        let chain_idx = u32_to_usize(symidx - symbias);
         if chain_idx >= chain_count {
             return None;
         }
@@ -790,10 +808,11 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
-    // SAFETY: the callback runs synchronously inside dl_iterate_phdr;
-    // `info` points to a valid dl_phdr_info for a currently-loaded
-    // library. CStr::from_ptr, DynamicInfo::from_phdr, and the hash
-    // lookups all operate on pointers from the mapped ELF object.
+    // SAFETY: iterate_libraries calls dl_iterate_phdr which guarantees
+    // each `info` is a valid dl_phdr_info for a currently-loaded and
+    // mapped library. from_phdr's safety precondition (mapped for 'a)
+    // is satisfied because the callback runs synchronously under the
+    // loader lock.
     iterate_libraries(|info, _is_exe| unsafe {
         let lib_name = if info.dlpi_name.is_null() {
             ""
@@ -815,7 +834,7 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
         };
         if let Some(sym) = sym {
             if sym.st_size > 0 {
-                let addr = sym.st_value as usize + dyn_info.base_address();
+                let addr = u64_to_usize(sym.st_value) + dyn_info.base_address();
                 if addr != not_this_symbol {
                     found = Some(LookupResult { address: addr });
                     return true;
@@ -966,7 +985,7 @@ unsafe fn patch_got_entries(
         let sym_idx = elf64_r_sym(r_info);
         if let Some(cstr) = dyn_info.sym_name(sym_idx) {
             if cstr.to_bytes() == symbol_name {
-                let addr = r_offset as usize + dyn_info.base_address();
+                let addr = u64_to_usize(r_offset) + dyn_info.base_address();
                 if guard.override_entry(addr, hook_fn) {
                     *patched += 1;
                 } else {
