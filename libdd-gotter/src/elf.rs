@@ -135,13 +135,8 @@ impl<'a> DynamicInfo<'a> {
         // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
         let base = u64_to_usize(info.dlpi_addr);
         let dyn_begin = (base + u64_to_usize(dyn_phdr.p_vaddr)) as *const Elf64_Dyn;
-        let containing_load_segment_end = |addr: usize| -> Option<usize> {
-            phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
-                let start = base.checked_add(u64_to_usize(p.p_vaddr))?;
-                let end = start.checked_add(u64_to_usize(p.p_memsz))?;
-                (addr >= start && addr < end).then_some(end)
-            })
-        };
+        let containing_load_segment_end =
+            |addr: usize| -> Option<usize> { find_containing_load_segment(phdrs, base, addr) };
         let correct = |a: u64| -> usize {
             let a = u64_to_usize(a);
             if a > base {
@@ -587,24 +582,36 @@ pub fn check_sym(sym: &Elf64_Sym) -> bool {
         matches!(stt, 0 | 1 | 2 | 10)
 }
 
+/// Find the `PT_LOAD` segment in `phdrs` that contains `addr` (using
+/// `base` as the ELF object's load bias) and return the segment's end
+/// address.
+///
+/// on non-PIE executables `base` is 0 but the segments still have
+/// the correct absolute virtual addresses once `base` is added.
+fn find_containing_load_segment(
+    phdrs: &[libc::Elf64_Phdr],
+    base: usize,
+    addr: usize,
+) -> Option<usize> {
+    phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
+        let start = base.checked_add(u64_to_usize(p.p_vaddr))?;
+        let end = start.checked_add(u64_to_usize(p.p_memsz))?;
+        (addr >= start && addr < end).then_some(end)
+    })
+}
+
 /// Check whether `addr` falls within any of a loaded ELF object's
-/// `PT_LOAD` segments. Works regardless of PIE vs non-PIE: on non-PIE
-/// executables `dlpi_addr` is 0 but the segments still have the correct
-/// absolute virtual addresses once `dlpi_addr` is added.
+/// `PT_LOAD` segments.
 ///
 /// # Safety
 /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
 unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
+    // SAFETY: caller guarantees `info` is a valid `dl_phdr_info` for a
+    // currently-loaded ELF object. `dlpi_phnum` is u16, so the
+    // conversion to usize is lossless.
     let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
-    let base = info.dlpi_addr as usize;
-    phdrs.iter().any(|p| {
-        if p.p_type != PT_LOAD {
-            return false;
-        }
-        let start = base + p.p_vaddr as usize;
-        let end = start + p.p_memsz as usize;
-        addr >= start && addr < end
-    })
+    let base = u64_to_usize(info.dlpi_addr);
+    find_containing_load_segment(phdrs, base, addr).is_some()
 }
 
 /// Visit each loaded ELF object once. `is_exe` is true only on the
@@ -1111,6 +1118,7 @@ unsafe fn patch_got_entries(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
         let guard = PageProtGuard {
@@ -1484,5 +1492,67 @@ mod tests {
             rejected > 0,
             "expected at least one non-GOT relocation to be filtered out"
         );
+    }
+
+    /// Helper to build a minimal `Elf64_Phdr` for testing.
+    fn make_load_phdr(vaddr: u64, memsz: u64) -> libc::Elf64_Phdr {
+        libc::Elf64_Phdr {
+            p_type: PT_LOAD,
+            p_flags: 0,
+            p_offset: 0,
+            p_vaddr: vaddr,
+            p_paddr: 0,
+            p_filesz: 0,
+            p_memsz: memsz,
+            p_align: 0,
+        }
+    }
+
+    #[test]
+    fn find_containing_load_segment_hit() {
+        let phdrs = [
+            make_load_phdr(0x1000, 0x2000), // [0x1000, 0x3000)
+            make_load_phdr(0x5000, 0x1000), // [0x5000, 0x6000)
+        ];
+        // Address inside the first segment returns its end.
+        assert_eq!(
+            find_containing_load_segment(&phdrs, 0, 0x2000),
+            Some(0x3000)
+        );
+        // Address inside the second segment.
+        assert_eq!(
+            find_containing_load_segment(&phdrs, 0, 0x5000),
+            Some(0x6000)
+        );
+    }
+
+    #[test]
+    fn find_containing_load_segment_miss() {
+        let phdrs = [make_load_phdr(0x1000, 0x2000)];
+        // Before the segment.
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x0FFF), None);
+        // At the end boundary (exclusive).
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x3000), None);
+    }
+
+    #[test]
+    fn find_containing_load_segment_with_base() {
+        let phdrs = [make_load_phdr(0x1000, 0x2000)];
+        let base = 0x4000_0000;
+        // Segment maps to [base + 0x1000, base + 0x3000).
+        assert_eq!(
+            find_containing_load_segment(&phdrs, base, base + 0x1000),
+            Some(base + 0x3000)
+        );
+        // Without base offset, miss.
+        assert_eq!(find_containing_load_segment(&phdrs, base, 0x1000), None);
+    }
+
+    #[test]
+    fn find_containing_load_segment_skips_non_load() {
+        let mut phdr = make_load_phdr(0x1000, 0x2000);
+        phdr.p_type = PT_DYNAMIC; // not PT_LOAD
+        let phdrs = [phdr];
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x1500), None);
     }
 }
