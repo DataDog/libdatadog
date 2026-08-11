@@ -1,6 +1,6 @@
 [package]
 name = "libdd-tracer-flare"
-version = "0.1.0"
+version = "1.0.0"
 description = "Rust library for collecting and transmitting Datadog tracer diagnostic flares via remote configuration."
 rust-version.workspace = true
 edition.workspace = true
@@ -12,9 +12,9 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare
 
 [dependencies]
 anyhow = "1.0"
-libdd-remote-config = { version = "2.0.0", path = "../libdd-remote-config", default-features = false }
-libdd-common = { version = "5.1.0", path = "../libdd-common" }
-libdd-trace-utils = { version = "9.0.0", path = "../libdd-trace-utils" }
+libdd-remote-config = { version = "3.0.0", path = "../libdd-remote-config", default-features = false }
+libdd-common = { version = "5.1.1", path = "../libdd-common" }
+libdd-trace-utils = { version = "10.0.0", path = "../libdd-trace-utils" }
 http = "1"
 bytes = "1.11.1"
 tokio = { workspace = true, features = ["time"] }
@@ -24,7 +24,7 @@ walkdir = "2.4"
 tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false
