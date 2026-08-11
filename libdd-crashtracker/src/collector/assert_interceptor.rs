@@ -62,6 +62,8 @@ unsafe fn cstr_to_str(ptr: *const libc::c_char, fallback: &str) -> &str {
     if ptr.is_null() {
         return fallback;
     }
+    // SAFETY: caller guarantees `ptr` is null or points to a valid
+    // NUL-terminated C string. The null case is handled above.
     unsafe { core::ffi::CStr::from_ptr(ptr) }
         .to_str()
         .unwrap_or(fallback)
@@ -88,6 +90,9 @@ unsafe extern "C" fn hook_assert_fail(
     line: libc::c_uint,
     function: *const libc::c_char,
 ) -> ! {
+    // SAFETY: these pointers come from libc's `__assert_fail` contract:
+    // `assertion`, `file`, and `function` are valid NUL-terminated C
+    // strings (or null), and remain valid for the duration of this call.
     let assertion_str = unsafe { cstr_to_str(assertion, "<unknown>") };
     let file_str = unsafe { cstr_to_str(file, "<unknown>") };
     let function_str = unsafe { cstr_to_str(function, "") };
@@ -97,9 +102,18 @@ unsafe extern "C" fn hook_assert_fail(
 
     let orig = ORIG_ASSERT_FN.load(core::sync::atomic::Ordering::Acquire);
     if orig != 0 {
+        // SAFETY: `orig` was stored by `install_assert_hook` from a
+        // successful `hook_symbol` call, which resolved the real
+        // `__assert_fail` address by `dlsym`/GOT lookup. The address
+        // points to libc's `__assert_fail` which has the `AssertFailFn`
+        // signature.
         let func: AssertFailFn = unsafe { core::mem::transmute::<usize, AssertFailFn>(orig) };
+        // SAFETY: `func` is the original `__assert_fail` with matching
+        // signature, and the arguments are forwarded unchanged from our
+        // caller
         unsafe { func(assertion, file, line, function) }
     } else {
+        // SAFETY: `abort` is always safe to call; it raises SIGABRT.
         unsafe { libc::abort() }
     }
 }
