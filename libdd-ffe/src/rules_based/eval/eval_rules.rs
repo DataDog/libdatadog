@@ -67,7 +67,7 @@ impl ConditionCheck {
             } => {
                 let attr_str = attribute?.as_str()?;
                 let attr_version = semver::Version::parse(attr_str.as_ref()).ok()?;
-                let ordering = attr_version.cmp(comparand);
+                let ordering = attr_version.cmp_precedence(comparand);
                 match operator {
                     SemverComparisonOperator::Eq => ordering.is_eq(),
                     SemverComparisonOperator::Neq => !ordering.is_eq(),
@@ -384,6 +384,15 @@ mod tests {
         assert!(check.eval(Some(&"1.0.0-alpha".into())));
         assert!(check.eval(Some(&"1.0.0-beta.1".into())));
         assert!(!check.eval(Some(&"1.0.0".into())));
+    }
+
+    #[test]
+    fn semver_build_metadata_does_not_affect_precedence() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Eq,
+            comparand: semver("1.0.0"),
+        };
+        assert!(check.eval(Some(&"1.0.0+build.42".into())));
     }
 
     #[test]
