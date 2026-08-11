@@ -833,8 +833,7 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
 ///
 /// Used by [`hook_symbol_excluding_self`] to ensure `orig_out` resolves
 /// to the external definition rather than a same-name export from the
-/// hook's own library. Uses segment containment rather than `dlpi_addr`
-/// comparison so it works for non-PIE executables (where `dlpi_addr` is 0).
+/// hook's own library.
 fn lookup_symbol_excluding_addr(
     name: &str,
     not_this_symbol: usize,
@@ -1409,7 +1408,8 @@ mod tests {
 
     /// Verify that `hook_symbol_excluding_self` skips the library
     /// containing the hook function. Uses `phdr_contains_addr` to identify
-    /// the hook's own library.
+    /// the hook's own library. Due to rust's testing infrastructure, this test only
+    /// covers PIE executables.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_hook_symbol_excluding_self_skips_own_library() {
