@@ -176,6 +176,32 @@ impl Allocation {
     }
 }
 
+impl Split {
+    /// Return `true` if `targeting_key` matches the given split.
+    ///
+    /// To match a split, subject must match all underlying shards.
+    fn matches(&self, targeting_key: Option<&str>) -> Result<bool, EvaluationError> {
+        if self.shards.is_empty() {
+            return Ok(true);
+        }
+
+        let Some(targeting_key) = targeting_key else {
+            return Err(EvaluationError::TargetingKeyMissing);
+        };
+
+        Ok(self.shards.iter().all(|shard| shard.matches(targeting_key)))
+    }
+}
+
+impl Shard {
+    /// Return `true` if `targeting_key` matches the given shard.
+    fn matches(&self, targeting_key: &str) -> bool {
+        let h = self.sharder.shard(&[targeting_key]);
+
+        self.ranges.iter().any(|range| range.contains(h))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
@@ -241,31 +267,5 @@ mod tests {
             AssignmentValue::String(ref value) if value.as_str() == "valid"
         ));
         assert_eq!(assignment.reason, AssignmentReason::Static);
-    }
-}
-
-impl Split {
-    /// Return `true` if `targeting_key` matches the given split.
-    ///
-    /// To match a split, subject must match all underlying shards.
-    fn matches(&self, targeting_key: Option<&str>) -> Result<bool, EvaluationError> {
-        if self.shards.is_empty() {
-            return Ok(true);
-        }
-
-        let Some(targeting_key) = targeting_key else {
-            return Err(EvaluationError::TargetingKeyMissing);
-        };
-
-        Ok(self.shards.iter().all(|shard| shard.matches(targeting_key)))
-    }
-}
-
-impl Shard {
-    /// Return `true` if `targeting_key` matches the given shard.
-    fn matches(&self, targeting_key: &str) -> bool {
-        let h = self.sharder.shard(&[targeting_key]);
-
-        self.ranges.iter().any(|range| range.contains(h))
     }
 }
