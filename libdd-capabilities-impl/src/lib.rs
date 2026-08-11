@@ -10,6 +10,7 @@
 pub mod env;
 pub mod file;
 mod http;
+pub mod regex;
 pub mod sleep;
 
 use core::future::Future;
@@ -20,12 +21,14 @@ pub use file::NativeFileCapability;
 pub use http::NativeHttpClient;
 use libdd_capabilities::{
     http::{BodySender, HttpError, ResponseFuture},
+    regex::{Captures, Match, RegexError},
     MaybeSend,
 };
 pub use libdd_capabilities::{
     EnvCapability, EnvError, FileCapability, FileError, FileMetadata, HttpClientCapability,
-    LogWriterCapability, SleepCapability,
+    LogWriterCapability, RegexCapability, SleepCapability,
 };
+pub use regex::NativeRegexCapability;
 pub use sleep::NativeSleepCapability;
 
 /// Bundle struct for native platform capabilities.
@@ -149,5 +152,37 @@ impl FileCapability for NativeCapabilities {
 
     fn exists(&self, path: &str) -> impl Future<Output = Result<bool, FileError>> + MaybeSend {
         self.file.exists(path)
+    }
+}
+
+impl RegexCapability for NativeCapabilities {
+    type Handle = <NativeRegexCapability as RegexCapability>::Handle;
+
+    fn compile(pattern: &str) -> Result<Self::Handle, RegexError> {
+        NativeRegexCapability::compile(pattern)
+    }
+
+    fn is_match(handle: &Self::Handle, haystack: &str) -> bool {
+        NativeRegexCapability::is_match(handle, haystack)
+    }
+
+    fn find(handle: &Self::Handle, haystack: &str) -> Option<Match> {
+        NativeRegexCapability::find(handle, haystack)
+    }
+
+    fn find_all(handle: &Self::Handle, haystack: &str) -> Vec<Match> {
+        NativeRegexCapability::find_all(handle, haystack)
+    }
+
+    fn captures(handle: &Self::Handle, haystack: &str) -> Option<Captures> {
+        NativeRegexCapability::captures(handle, haystack)
+    }
+
+    fn captures_all(handle: &Self::Handle, haystack: &str) -> Vec<Captures> {
+        NativeRegexCapability::captures_all(handle, haystack)
+    }
+
+    fn pattern(handle: &Self::Handle) -> &str {
+        NativeRegexCapability::pattern(handle)
     }
 }

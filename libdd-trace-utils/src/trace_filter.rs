@@ -4,13 +4,13 @@
 //! ignore_resources as published by the agent's /info endpoint).
 use std::borrow::Borrow as _;
 
-use libdd_common::regex_engine::Regex;
+use libdd_capabilities::regex::RegexCapability;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
 use crate::span::{self, trace_utils::get_root_span_index, TraceData};
 
-trait TagFilter {
+trait TagFilter<C: RegexCapability> {
     /// Returns true if the given tag value matches the Filterer.
     fn matches_tag_value(&self, value: &str) -> bool;
     // Getter to the key field
@@ -24,24 +24,25 @@ struct TagLiteralFilter {
 }
 
 #[derive(Debug)]
-struct TagRegexFilter {
+struct TagRegexFilter<H> {
     key: String,
-    value: Option<Regex>,
+    value: Option<H>,
 }
 
 /// Applies trace-level filters derived from the agent's `/info` endpoint configuration:
 /// `filter_tags`, `filter_tags_regex`, and `ignore_resources`.
 ///
-/// Filtering is evaluated on the root span of each trace.
-#[derive(Debug, Default)]
-pub struct TraceFilterer {
+/// Filtering is evaluated on the root span of each trace. Regex patterns are compiled once
+/// at construction through the [`RegexCapability`] so per-span filtering never recompiles.
+#[derive(Debug)]
+pub struct TraceFilterer<C: RegexCapability> {
     reject: Vec<TagLiteralFilter>,
-    reject_regex: Vec<TagRegexFilter>,
+    reject_regex: Vec<TagRegexFilter<C::Handle>>,
 
     require: Vec<TagLiteralFilter>,
-    require_regex: Vec<TagRegexFilter>,
+    require_regex: Vec<TagRegexFilter<C::Handle>>,
 
-    ignore_resources: Vec<Regex>,
+    ignore_resources: Vec<C::Handle>,
 }
 
 /// Minimal span interface required by [`TraceFilterer`].
@@ -52,7 +53,7 @@ pub trait Span<'a> {
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
 }
 
-impl TagFilter for TagLiteralFilter {
+impl<C: RegexCapability> TagFilter<C> for TagLiteralFilter {
     fn matches_tag_value(&self, value: &str) -> bool {
         match &self.value {
             None => true, // No value requirement => Any value is a match
@@ -65,11 +66,11 @@ impl TagFilter for TagLiteralFilter {
     }
 }
 
-impl TagFilter for TagRegexFilter {
+impl<C: RegexCapability> TagFilter<C> for TagRegexFilter<C::Handle> {
     fn matches_tag_value(&self, value: &str) -> bool {
         match &self.value {
             None => true, // No value requirement => Any value is a match
-            Some(pattern) => pattern.is_match(value),
+            Some(handle) => C::is_match(handle, value),
         }
     }
 
@@ -99,7 +100,7 @@ impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
     }
 }
 
-impl TraceFilterer {
+impl<C: RegexCapability> TraceFilterer<C> {
     fn compile_literal_filters(filters: &[String]) -> Vec<TagLiteralFilter> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
@@ -126,7 +127,7 @@ impl TraceFilterer {
         tag_regex_filters
     }
 
-    fn compile_regex_filters(filters: &[String]) -> Vec<TagRegexFilter> {
+    fn compile_regex_filters(filters: &[String]) -> Vec<TagRegexFilter<C::Handle>> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
             let (key, value) = match filter.split_once(":") {
@@ -142,8 +143,8 @@ impl TraceFilterer {
             }
 
             let value = match value {
-                Some(value) => match Regex::new(value) {
-                    Ok(regex) => Some(regex),
+                Some(value) => match C::compile(value) {
+                    Ok(handle) => Some(handle),
                     Err(err) => {
                         error!(
                             ?filter,
@@ -165,11 +166,11 @@ impl TraceFilterer {
         tag_regex_filters
     }
 
-    fn compile_resource_filters(ignore_resources: &[String]) -> Vec<Regex> {
+    fn compile_resource_filters(ignore_resources: &[String]) -> Vec<C::Handle> {
         ignore_resources
             .iter()
             .filter_map(|regex| {
-                Regex::new(regex)
+                C::compile(regex)
                     .inspect_err(|err| {
                         error!(
                             ?regex,
@@ -206,9 +207,16 @@ impl TraceFilterer {
             ignore_resources,
         }
     }
+
     /// Creates a no-op filterer that keeps all traces.
     pub fn with_empty_conf() -> Self {
-        Self::default()
+        Self {
+            reject: Vec::new(),
+            reject_regex: Vec::new(),
+            require: Vec::new(),
+            require_regex: Vec::new(),
+            ignore_resources: Vec::new(),
+        }
     }
 
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
@@ -248,7 +256,7 @@ impl TraceFilterer {
             if self
                 .ignore_resources
                 .iter()
-                .any(|resource_pattern| resource_pattern.is_match(span_resource))
+                .any(|handle| C::is_match(handle, span_resource))
             {
                 return true;
             }
@@ -290,7 +298,7 @@ impl TraceFilterer {
     }
 
     fn check_tag_filter_with_normalization<'a>(
-        filter: &impl TagFilter,
+        filter: &impl TagFilter<C>,
         root_span: &'a impl Span<'a>,
     ) -> bool {
         let Some(value) = root_span.get_meta(filter.key()) else {
@@ -315,8 +323,12 @@ impl TraceFilterer {
 
 #[cfg(test)]
 mod tests {
+    use libdd_capabilities_impl::NativeRegexCapability;
+
     use super::TraceFilterer;
     use crate::span::v04::{SpanBytes, VecMap};
+
+    type Filterer = TraceFilterer<NativeRegexCapability>;
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -343,24 +355,24 @@ mod tests {
         values.iter().map(|&s| s.to_owned()).collect()
     }
 
-    fn require_str(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&map_to_owned(tags), &[], &[], &[], &[])
+    fn require_str(tags: &[&str]) -> Filterer {
+        Filterer::new(&map_to_owned(tags), &[], &[], &[], &[])
     }
 
-    fn reject_str(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&[], &map_to_owned(tags), &[], &[], &[])
+    fn reject_str(tags: &[&str]) -> Filterer {
+        Filterer::new(&[], &map_to_owned(tags), &[], &[], &[])
     }
 
-    fn require_regex(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&[], &[], &map_to_owned(tags), &[], &[])
+    fn require_regex(tags: &[&str]) -> Filterer {
+        Filterer::new(&[], &[], &map_to_owned(tags), &[], &[])
     }
 
-    fn reject_regex(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&[], &[], &[], &map_to_owned(tags), &[])
+    fn reject_regex(tags: &[&str]) -> Filterer {
+        Filterer::new(&[], &[], &[], &map_to_owned(tags), &[])
     }
 
-    fn ignore_resources(patterns: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&[], &[], &[], &[], &map_to_owned(patterns))
+    fn ignore_resources(patterns: &[&str]) -> Filterer {
+        Filterer::new(&[], &[], &[], &[], &map_to_owned(patterns))
     }
 
     // ---- reject (TagStringFilter) ----
@@ -581,7 +593,7 @@ mod tests {
 
     #[test]
     fn no_filters_keeps_all_traces() {
-        let f = TraceFilterer::new(&[], &[], &[], &[], &[]);
+        let f = Filterer::new(&[], &[], &[], &[], &[]);
         let mut traces = vec![
             vec![span_with("r1", &[])],
             vec![span_with("r2", &[("env", "prod")])],

@@ -13,7 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{
+    HttpClientCapability, LogWriterCapability, MaybeSend, RegexCapability, SleepCapability,
+};
 use libdd_shared_runtime::{SharedRuntime, Worker};
 
 use crate::trace_exporter::{
@@ -803,7 +805,13 @@ pub trait Export<T>: Send + Debug {
 #[derive(Debug)]
 pub struct DefaultExport<C, R>
 where
-    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability
+        + SleepCapability
+        + LogWriterCapability
+        + RegexCapability
+        + MaybeSend
+        + Sync
+        + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     trace_exporter: TraceExporter<C, R>,
@@ -811,7 +819,13 @@ where
 
 impl<C, R> DefaultExport<C, R>
 where
-    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability
+        + SleepCapability
+        + LogWriterCapability
+        + RegexCapability
+        + MaybeSend
+        + Sync
+        + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     pub fn new(trace_exporter: TraceExporter<C, R>) -> Self {
@@ -821,7 +835,13 @@ where
 
 impl<C, R> Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C, R>
 where
-    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability
+        + SleepCapability
+        + LogWriterCapability
+        + RegexCapability
+        + MaybeSend
+        + Sync
+        + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     fn export_trace_chunks(
