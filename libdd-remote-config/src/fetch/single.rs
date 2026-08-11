@@ -7,11 +7,11 @@ use crate::fetch::{
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
-use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use std::sync::Arc;
 
 /// Simple implementation
-pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability> {
+pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     fetcher: ConfigFetcher<S, C>,
     target: Arc<Target>,
     product_capabilities: ConfigProductCapabilities,
@@ -27,7 +27,7 @@ pub struct ConfigOptions {
     pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
-impl<S: FileStorage, C: HttpClientCapability> SingleFetcher<S, C> {
+impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S, C> {
     pub fn new(
         sink: S,
         target: Target,
@@ -106,7 +106,7 @@ impl<S: FileStorage, C: HttpClientCapability> SingleFetcher<S, C> {
     }
 }
 
-pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability>
+pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability>
 where
     S::StoredFile: FilePath,
 {
@@ -114,7 +114,7 @@ where
     pub fetcher: SingleFetcher<S, C>,
 }
 
-impl<S: FileStorage, C: HttpClientCapability> SingleChangesFetcher<S, C>
+impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleChangesFetcher<S, C>
 where
     S::StoredFile: FilePath,
 {
