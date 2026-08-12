@@ -30,9 +30,9 @@
 USDT_DEFINE_SEMA(ddheap_alloc);
 
 /* Save / restore errno: an attached USDT consumer may perturb it. */
-void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
+void dd_probe_alloc(void *user, uint64_t size, uint64_t weighted_bytes) {
     int saved_errno = errno;
-    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, alloc, user, size, weight);
+    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, alloc, user, size, weighted_bytes);
     errno = saved_errno;
 }
 
