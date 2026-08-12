@@ -19,7 +19,7 @@ const VERSION: &str = "1.2.3";
 
 /// !! This method is here only to run the example, in order not to add a dependency
 /// for only the example. !!
-/// 
+///
 /// Users of the library should provide a hostname given by the runtime
 fn get_hostname() -> String {
     Command::new("hostname")
