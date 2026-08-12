@@ -17,7 +17,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
@@ -373,6 +373,88 @@ pub(crate) fn process_traces_for_stats<
     }
 }
 
+/// V1 counterpart of [`add_spans_to_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+///
+/// # Panic
+/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
+    stats_concentrator: &Mutex<SpanConcentrator>,
+    traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
+) {
+    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+
+    // Wrap each span with its enclosing chunk so common attributes (peer tags, origin) that are
+    // stored at the chunk level rather than on individual spans are still visible to stats.
+    for chunk in traces {
+        for span in &chunk.spans {
+            stats_concentrator.add_span(&ChunkSpanView { span, chunk });
+        }
+    }
+}
+
+/// V1 counterpart of [`process_traces_for_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+pub(crate) fn process_traces_for_stats_v1<
+    T: libdd_trace_utils::span::TraceData,
+    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+        + libdd_capabilities::SleepCapability
+        + libdd_capabilities::MaybeSend
+        + Sync
+        + 'static,
+>(
+    traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
+    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
+    client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client_computed_top_level: bool,
+    trace_filterer: &TraceFilterer,
+    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
+) {
+    let status = client_side_stats.load();
+    if let StatsComputationStatus::Enabled {
+        stats_concentrator, ..
+    } = &**status
+    {
+        let dropped_by_trace_filter = trace_filterer.filter_traces_v1(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
+
+        if !client_computed_top_level {
+            for chunk in traces.iter_mut() {
+                libdd_trace_utils::span::trace_utils_v1::compute_top_level_span(&mut chunk.spans);
+            }
+        }
+        add_spans_to_stats_v1(stats_concentrator, traces);
+        // Once stats have been computed we can drop all chunks that are not going to be
+        // sampled by the agent
+        let dropped_p0_stats = libdd_trace_utils::span::trace_utils_v1::drop_chunks(traces);
+
+        // Update the headers to indicate that stats have been computed and forward dropped
+        // traces counts
+        header_tags.generic.client_computed_top_level = true;
+        header_tags.generic.client_computed_stats = true;
+        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 /// Test only function to check if the stats computation is active and the worker is running
@@ -439,6 +521,195 @@ mod tests {
 
             let info = make_agent_info(Some(true), None);
             assert!(!is_stats_computation_supported(&info));
+        }
+    }
+
+    mod v1 {
+        use super::super::*;
+        use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+        use web_time::SystemTime;
+
+        fn top_level_span(span_id: u64, duration: i64) -> SpanBytes {
+            SpanBytes {
+                span_id,
+                service: "test-service".into(),
+                name: "test-name".into(),
+                resource: "test-resource".into(),
+                r#type: "web".into(),
+                duration,
+                attributes: vec![("_top_level".into(), AttributeValue::Float(1.0))].into(),
+                ..Default::default()
+            }
+        }
+
+        fn new_concentrator() -> Mutex<SpanConcentrator> {
+            new_concentrator_with_span_kinds(vec![])
+        }
+
+        fn new_concentrator_with_span_kinds(span_kinds: Vec<String>) -> Mutex<SpanConcentrator> {
+            Mutex::new(SpanConcentrator::new(
+                Duration::from_secs(10),
+                SystemTime::now(),
+                span_kinds,
+                vec![],
+                None,
+                vec![],
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            ))
+        }
+
+        /// Total number of spans aggregated across all flushed buckets, regardless of
+        /// obfuscation.
+        fn total_hits(concentrator: &Mutex<SpanConcentrator>) -> u64 {
+            let flushed = concentrator.lock_or_panic().flush(SystemTime::now(), true);
+            flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.hits)
+                .sum()
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_aggregates_eligible_spans_across_chunks() {
+            let stats_concentrator = new_concentrator();
+            let traces = vec![
+                TraceChunkBytes {
+                    spans: vec![top_level_span(1, 10)],
+                    ..Default::default()
+                },
+                TraceChunkBytes {
+                    spans: vec![top_level_span(2, 10)],
+                    ..Default::default()
+                },
+            ];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 2);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_skips_ineligible_spans() {
+            let stats_concentrator = new_concentrator();
+            // Not top-level, not measured, and no eligible span.kind: not eligible for stats.
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 0);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_eligibility() {
+            // The span itself is not top-level/measured and has a dedicated span_kind of
+            // Internal (the default); it's only eligible because the chunk-level attributes
+            // carry "span.kind": "client". Note the dedicated `span_kind` field always takes
+            // precedence over chunk attributes for this key once it's set to a non-default
+            // value (see `add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility`).
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                attributes: vec![("span.kind".into(), AttributeValue::String("client".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_aggregation() {
+            // The span is eligible via `_top_level` and has no own "http.method" attribute; the
+            // chunk-level attributes carry it instead, and it should still show up on the
+            // aggregated stats group.
+            let stats_concentrator = new_concentrator();
+            let traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                attributes: vec![("http.method".into(), AttributeValue::String("POST".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            let flushed = stats_concentrator
+                .lock_or_panic()
+                .flush(SystemTime::now(), true);
+            let http_methods: Vec<&str> = flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.http_method.as_str())
+                .collect();
+            assert_eq!(http_methods, vec!["POST"]);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility() {
+            // The span itself is not top-level/measured and has no "span.kind" attribute; it's
+            // only eligible because its dedicated `span_kind` field is Client.
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    span_kind: libdd_trace_utils::span::v1::SpanKind::Client,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
+        }
+
+        #[test]
+        fn process_traces_for_stats_v1_is_noop_when_disabled() {
+            let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
+            let mut traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                // Negative priority would normally make `drop_chunks` remove this chunk, so
+                // this also verifies drop_chunks is never reached while disabled.
+                priority: Some(-1),
+                ..Default::default()
+            }];
+            let mut header_tags = TracerHeaderTags::default();
+            let trace_filterer = TraceFilterer::default();
+
+            process_traces_for_stats_v1(
+                &mut traces,
+                &mut header_tags,
+                &client_side_stats,
+                false,
+                &trace_filterer,
+                #[cfg(feature = "telemetry")]
+                None::<
+                    &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,
+                >,
+            );
+
+            assert_eq!(traces.len(), 1);
+            assert!(!header_tags.generic.client_computed_top_level);
+            assert!(!header_tags.generic.client_computed_stats);
         }
     }
 }

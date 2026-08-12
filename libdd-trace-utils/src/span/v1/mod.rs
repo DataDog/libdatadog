@@ -30,6 +30,17 @@ impl SpanKind {
             _ => SpanKind::Internal,
         }
     }
+
+    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value.
+    pub fn as_meta_str(&self) -> &'static str {
+        match self {
+            SpanKind::Internal => "internal",
+            SpanKind::Server => "server",
+            SpanKind::Client => "client",
+            SpanKind::Producer => "producer",
+            SpanKind::Consumer => "consumer",
+        }
+    }
 }
 
 impl From<u32> for SpanKind {
