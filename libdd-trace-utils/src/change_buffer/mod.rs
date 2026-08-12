@@ -403,7 +403,7 @@ where
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
                     cache = None;
-                    self.interpret_operation(&mut index, &op)?;
+                    self.interpret_create_operation(&mut index, &op)?;
                 }
                 _ => {
                     // Safety: the pointer is valid as long as no new keys are inserted in the
