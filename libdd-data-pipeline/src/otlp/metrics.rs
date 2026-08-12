@@ -73,6 +73,13 @@ const EXPLICIT_BOUNDS_SECONDS: [f64; 16] = [
 fn kv_str(key: &str, value: &str) -> Value {
     json!({ "key": key, "value": { "stringValue": value } })
 }
+
+fn push_if_non_empty(attrs: &mut Vec<Value>, key: &str, value: &str) {
+    if !value.is_empty() {
+        attrs.push(kv_str(key, value));
+    }
+}
+
 fn kv_int(key: &str, value: i64) -> Value {
     json!({ "key": key, "value": { "intValue": value.to_string() } })
 }
@@ -173,12 +180,6 @@ fn build_attributes(
     is_error: bool,
     resource_info: &OtlpResourceInfo,
 ) -> Vec<Value> {
-    fn push(attrs: &mut Vec<Value>, k: &str, v: &str) {
-        if !v.is_empty() {
-            attrs.push(kv_str(k, v));
-        }
-    }
-
     let mut attrs = Vec::new();
 
     let group_service = if group.service.is_empty() {
@@ -196,14 +197,14 @@ fn build_attributes(
             STATUS_CODE_OK
         },
     ));
-    push(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
-    push(&mut attrs, "span.name", &group.resource);
+    push_if_non_empty(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
+    push_if_non_empty(&mut attrs, "span.name", &group.resource);
 
-    push(&mut attrs, "http.request.method", &group.http_method);
-    push(&mut attrs, "http.route", &group.http_endpoint);
+    push_if_non_empty(&mut attrs, "http.request.method", &group.http_method);
+    push_if_non_empty(&mut attrs, "http.route", &group.http_endpoint);
     // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
     if let Some(name) = grpc_status_code_to_name(&group.grpc_status_code) {
-        push(&mut attrs, "rpc.response.status_code", name);
+        push_if_non_empty(&mut attrs, "rpc.response.status_code", name);
     }
     if group.http_status_code != 0 {
         attrs.push(kv_int(
@@ -212,8 +213,8 @@ fn build_attributes(
         ));
     }
     attrs.push(kv_str("datadog.operation.name", &group.name));
-    push(&mut attrs, "datadog.span.type", &group.r#type);
-    push(&mut attrs, "datadog.svc_src", &group.service_source);
+    push_if_non_empty(&mut attrs, "datadog.span.type", &group.r#type);
+    push_if_non_empty(&mut attrs, "datadog.svc_src", &group.service_source);
     // Only `synthetics` is surfaced as `datadog.origin`: the aggregation key carries just a
     // boolean, not the full origin string, so other origins are lost upstream.
     if group.synthetics {
