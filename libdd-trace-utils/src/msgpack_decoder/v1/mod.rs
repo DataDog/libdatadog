@@ -693,4 +693,217 @@ mod tests {
                 },
             );
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // Forward-compatibility: unknown map keys must be skipped for every V1 map type. These tests
+    // hand-build wire bytes (the encoder never emits unknown keys) with `rmp::encode`, injecting a
+    // future/unknown key that older decoders don't recognize, and assert the surrounding known
+    // fields still decode correctly.
+    // ---------------------------------------------------------------------------------------------
+
+    use rmp::encode::{self, ByteBuf};
+
+    /// Writes a `u8` msgpack map key.
+    fn wkey(buf: &mut ByteBuf, k: u8) {
+        encode::write_uint(buf, k as u64).unwrap();
+    }
+
+    /// Wraps pre-encoded span map bytes into a full single-chunk V1 payload so the span decoder is
+    /// exercised through the real entry point.
+    fn payload_wrapping_span(span_bytes: &[u8]) -> Vec<u8> {
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 1).unwrap(); // payload: chunks only
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 2).unwrap(); // chunk: trace_id + spans
+        wkey(&mut buf, chunk_key::TRACE_ID);
+        encode::write_bin(&mut buf, &[0u8; 16]).unwrap();
+        wkey(&mut buf, chunk_key::SPANS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        let mut out = buf.into_vec();
+        out.extend_from_slice(span_bytes);
+        out
+    }
+
+    #[test]
+    fn unknown_payload_key_is_skipped() {
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 3).unwrap();
+        // known field before the unknown key
+        wkey(&mut buf, trace_key::ENV_REF);
+        encode::write_str(&mut buf, "prod").unwrap();
+        // future/unknown payload key -> arbitrary scalar
+        wkey(&mut buf, 99);
+        encode::write_uint(&mut buf, 123_456).unwrap();
+        // required chunks field after the unknown key
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 0).unwrap();
+        let buf = buf.into_vec();
+
+        let (decoded, consumed) =
+            from_bytes(Bytes::from(buf.clone())).expect("unknown payload key must be skipped");
+        assert_eq!(
+            consumed,
+            buf.len(),
+            "decoder must consume the skipped value"
+        );
+        assert_eq!(decoded.env.as_str(), "prod");
+        assert!(decoded.chunks.is_empty());
+    }
+
+    #[test]
+    fn unknown_payload_key_with_nested_value_is_skipped() {
+        // The skipped value is a nested array containing a map, exercising rmpv's recursive skip.
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 2).unwrap();
+        wkey(&mut buf, 120);
+        encode::write_array_len(&mut buf, 3).unwrap();
+        encode::write_uint(&mut buf, 1).unwrap();
+        encode::write_str(&mut buf, "x").unwrap();
+        encode::write_map_len(&mut buf, 1).unwrap();
+        encode::write_uint(&mut buf, 5).unwrap();
+        encode::write_bool(&mut buf, true).unwrap();
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 0).unwrap();
+        let buf = buf.into_vec();
+
+        let (decoded, consumed) = from_bytes(Bytes::from(buf.clone()))
+            .expect("nested unknown value must be fully skipped");
+        assert_eq!(consumed, buf.len());
+        assert!(decoded.chunks.is_empty());
+    }
+
+    #[test]
+    fn unknown_chunk_key_is_skipped() {
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 1).unwrap();
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 3).unwrap();
+        // unknown chunk key before the required fields
+        wkey(&mut buf, 77);
+        encode::write_bool(&mut buf, true).unwrap();
+        wkey(&mut buf, chunk_key::TRACE_ID);
+        encode::write_bin(&mut buf, &[9u8; 16]).unwrap();
+        wkey(&mut buf, chunk_key::SPANS);
+        encode::write_array_len(&mut buf, 0).unwrap();
+        let buf = buf.into_vec();
+
+        let (decoded, _) = from_bytes(Bytes::from(buf)).expect("unknown chunk key must be skipped");
+        assert_eq!(decoded.chunks.len(), 1);
+        assert_eq!(decoded.chunks[0].trace_id, [9u8; 16]);
+        assert!(decoded.chunks[0].spans.is_empty());
+    }
+
+    #[test]
+    fn unknown_span_key_is_skipped() {
+        let mut span = ByteBuf::new();
+        encode::write_map_len(&mut span, 4).unwrap();
+        wkey(&mut span, span_key::SPAN_ID);
+        encode::write_uint(&mut span, 42).unwrap();
+        wkey(&mut span, span_key::START);
+        encode::write_uint(&mut span, 100).unwrap();
+        // unknown span key between required and known optional fields
+        wkey(&mut span, 88);
+        encode::write_f64(&mut span, 2.5).unwrap();
+        wkey(&mut span, span_key::SERVICE);
+        encode::write_str(&mut span, "svc").unwrap();
+
+        let buf = payload_wrapping_span(&span.into_vec());
+        let (decoded, _) = from_bytes(Bytes::from(buf)).expect("unknown span key must be skipped");
+        let span = &decoded.chunks[0].spans[0];
+        assert_eq!(span.span_id, 42);
+        assert_eq!(span.start, 100);
+        assert_eq!(span.service.as_str(), "svc");
+    }
+
+    #[test]
+    fn unknown_span_link_key_is_skipped() {
+        let mut span = ByteBuf::new();
+        encode::write_map_len(&mut span, 3).unwrap();
+        wkey(&mut span, span_key::SPAN_ID);
+        encode::write_uint(&mut span, 1).unwrap();
+        wkey(&mut span, span_key::START);
+        encode::write_uint(&mut span, 1).unwrap();
+        wkey(&mut span, span_key::SPAN_LINKS);
+        encode::write_array_len(&mut span, 1).unwrap();
+        // span link map with an unknown key preceding a known one
+        encode::write_map_len(&mut span, 2).unwrap();
+        wkey(&mut span, 55);
+        encode::write_bool(&mut span, false).unwrap();
+        wkey(&mut span, span_link_key::SPAN_ID);
+        encode::write_uint(&mut span, 777).unwrap();
+
+        let buf = payload_wrapping_span(&span.into_vec());
+        let (decoded, _) =
+            from_bytes(Bytes::from(buf)).expect("unknown span_link key must be skipped");
+        let links = &decoded.chunks[0].spans[0].span_links;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].span_id, 777);
+    }
+
+    #[test]
+    fn unknown_span_event_key_is_skipped() {
+        let mut span = ByteBuf::new();
+        encode::write_map_len(&mut span, 3).unwrap();
+        wkey(&mut span, span_key::SPAN_ID);
+        encode::write_uint(&mut span, 1).unwrap();
+        wkey(&mut span, span_key::START);
+        encode::write_uint(&mut span, 1).unwrap();
+        wkey(&mut span, span_key::SPAN_EVENTS);
+        encode::write_array_len(&mut span, 1).unwrap();
+        // span event map with an unknown key preceding a known one
+        encode::write_map_len(&mut span, 2).unwrap();
+        wkey(&mut span, 66);
+        encode::write_uint(&mut span, 999).unwrap();
+        wkey(&mut span, span_event_key::TIME);
+        encode::write_uint(&mut span, 123).unwrap();
+
+        let buf = payload_wrapping_span(&span.into_vec());
+        let (decoded, _) =
+            from_bytes(Bytes::from(buf)).expect("unknown span_event key must be skipped");
+        let events = &decoded.chunks[0].spans[0].span_events;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].time_unix_nano, 123);
+    }
+
+    /// Forward-compatibility boundary. Skipping an unknown key advances the buffer correctly, but
+    /// it does NOT feed inline strings into the shared streaming intern table. So if a future field
+    /// carries a *first-occurrence* interned string that a later field back-references by ID, the
+    /// decoder's table is shifted and the reference no longer resolves. This pins the current
+    /// behavior — a loud error rather than silent corruption. If forward-compat is ever hardened to
+    /// record skipped strings, this test should be updated deliberately.
+    #[test]
+    fn unknown_key_with_interned_string_desyncs_table() {
+        // Simulate a future encoder whose intern table is: ""=0, "ghost"=1, "prod"=2.
+        let mut buf = ByteBuf::new();
+        encode::write_map_len(&mut buf, 3).unwrap();
+        // Future field 99: first occurrence of "ghost" (encoder id 1). The decoder skips it and
+        // never records it, so its table stays one entry short.
+        wkey(&mut buf, 99);
+        encode::write_str(&mut buf, "ghost").unwrap();
+        // ENV first occurrence "prod": encoder id 2, but the decoder records it as id 1.
+        wkey(&mut buf, trace_key::ENV_REF);
+        encode::write_str(&mut buf, "prod").unwrap();
+        // A span whose service references the encoder's id 2 ("prod").
+        wkey(&mut buf, trace_key::CHUNKS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 2).unwrap();
+        wkey(&mut buf, chunk_key::TRACE_ID);
+        encode::write_bin(&mut buf, &[0u8; 16]).unwrap();
+        wkey(&mut buf, chunk_key::SPANS);
+        encode::write_array_len(&mut buf, 1).unwrap();
+        encode::write_map_len(&mut buf, 3).unwrap();
+        wkey(&mut buf, span_key::SPAN_ID);
+        encode::write_uint(&mut buf, 1).unwrap();
+        wkey(&mut buf, span_key::START);
+        encode::write_uint(&mut buf, 1).unwrap();
+        wkey(&mut buf, span_key::SERVICE);
+        encode::write_uint(&mut buf, 2).unwrap(); // reference to encoder id 2 = "prod"
+        let buf = buf.into_vec();
+
+        let err = from_bytes(Bytes::from(buf))
+            .expect_err("skipping an interned string desyncs the table, so the ref must fail");
+        assert!(matches!(err, DecodeError::InvalidFormat(_)));
+    }
 }
