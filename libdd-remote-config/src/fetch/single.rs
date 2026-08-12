@@ -64,15 +64,15 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         runtime_id: String,
         options: ConfigOptions,
         http_client: C,
-    ) -> anyhow::Result<Self> {
-        Ok(SingleFetcher {
-            fetcher: futures::executor::block_on(ConfigFetcher::new(
+    ) -> Self {
+        SingleFetcher {
+            fetcher: ConfigFetcher::new_no_agentless(
                 sink,
                 Arc::new(ConfigFetcherState::with_client(
                     options.invariants,
                     http_client,
                 )),
-            ))?,
+            ),
             target: Arc::new(target),
             product_capabilities: ConfigProductCapabilities::new(
                 options.products,
@@ -81,7 +81,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
             runtime_id,
             client_id: uuid::Uuid::new_v4().to_string(),
             client_state: ConfigClientState::default(),
-        })
+        }
     }
 
     pub fn with_client_id(mut self, client_id: String) -> Self {
@@ -176,8 +176,8 @@ where
         runtime_id: String,
         options: ConfigOptions,
         http_client: C,
-    ) -> anyhow::Result<Self> {
-        Ok(SingleChangesFetcher {
+    ) -> Self {
+        SingleChangesFetcher {
             changes: ChangeTracker::default(),
             fetcher: SingleFetcher::new_no_agentless(
                 sink,
@@ -185,8 +185,8 @@ where
                 runtime_id,
                 options,
                 http_client,
-            )?,
-        })
+            ),
+        }
     }
 
     pub fn with_client_id(mut self, client_id: String) -> Self {

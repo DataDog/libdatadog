@@ -191,16 +191,13 @@ impl TracerFlareManager {
             capabilities: vec![],
         };
 
-        tracer_flare.listener = Some(
-            SingleChangesFetcher::new_no_agentless(
-                ParsedFileStorage::default(),
-                Target::new(service, env, app_version, vec![], vec![]),
-                runtime_id,
-                config_to_fetch,
-                NativeCapabilities::new_without_connection_pooling(),
-            )
-            .map_err(|e| FlareError::ListeningError(e.to_string()))?,
-        );
+        tracer_flare.listener = Some(SingleChangesFetcher::new_no_agentless(
+            ParsedFileStorage::default(),
+            Target::new(service, env, app_version, vec![], vec![]),
+            runtime_id,
+            config_to_fetch,
+            NativeCapabilities::new_without_connection_pooling(),
+        ));
 
         Ok(tracer_flare)
     }

@@ -289,9 +289,20 @@ impl ConfigClientState {
 }
 
 impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S, C> {
-    /// Create a new config fetcher
-    /// This is guaranteed to be immediate (no await point) if `state.invariants.agentless_enabled`
-    /// is false
+    /// Create a new config fetcher in agent mode.
+    /// Use this when you know agentless mode is disabled and you need a sync constructor.
+    pub fn new_no_agentless(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+    ) -> Self {
+        ConfigFetcher {
+            file_storage,
+            state,
+            mode: FetcherMode::Agent(PhantomData),
+        }
+    }
+
+    /// Create a new config fetcher.
     pub async fn new(
         file_storage: S,
         state: Arc<ConfigFetcherState<S::StoredFile, C>>,
