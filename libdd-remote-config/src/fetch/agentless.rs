@@ -659,7 +659,13 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
     /// verify it with tuf-rust and verify target files against the TUF signed information.
     ///
     /// After this function returns Ok, the TUF client trusted database should be in-sync
-    /// with data fetched from the backend
+    /// with data fetched from the backend.
+    ///
+    /// # Postcondition on error
+    ///
+    /// On `Err` the trusted databases may have been advanced in place and only
+    /// partially, leaving them inconsistent with the versions this client would
+    /// report on the next poll.
     async fn apply<S: FileStorage>(
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
