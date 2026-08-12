@@ -1170,25 +1170,17 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
 
-        try_c!(blocking::send_trace_v1_shm(
-            transport,
-            instance_id,
-            *shm_handle,
-            len,
-            tracer_header_tags,
-        ));
+    try_c!(blocking::send_trace_v1_shm(
+        transport,
+        instance_id,
+        *shm_handle,
+        len,
+        tracer_header_tags,
+    ));
 
-        MaybeError::None
-    }))
-    .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
-            panic,
-            "ddog_sidecar_send_trace_v1_shm",
-        ))
-    })
+    MaybeError::None
 }
 
 /// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
@@ -1202,24 +1194,16 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
 
-        try_c!(blocking::send_trace_v1_bytes(
-            transport,
-            instance_id,
-            data.as_bytes().to_vec(),
-            tracer_header_tags,
-        ));
+    try_c!(blocking::send_trace_v1_bytes(
+        transport,
+        instance_id,
+        data.as_bytes().to_vec(),
+        tracer_header_tags,
+    ));
 
-        MaybeError::None
-    }))
-    .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
-            panic,
-            "ddog_sidecar_send_trace_v1_bytes",
-        ))
-    })
+    MaybeError::None
 }
 
 #[no_mangle]

@@ -280,6 +280,10 @@ impl SidecarServer {
     /// The V1 payload already carries lang/version/tracer-version itself, but `lang_interpreter`
     /// and `lang_vendor` have no equivalent in the V1 payload model, so the full header envelope
     /// is still threaded through here to preserve them.
+    ///
+    /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
+    /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
+    /// `tracer::Config::set_endpoint`.
     fn send_trace_v1(
         &self,
         headers: &SerializedTracerHeaderTags,
@@ -294,26 +298,7 @@ impl SidecarServer {
                 return;
             }
         };
-        // Agentful sessions have their endpoint normalized to `/v0.4/traces` by
-        // `tracer::Config::set_endpoint`, since it doesn't know which encoding will be used.
-        // Redirect to the agent's `/v1.0/traces` route for the V1 payload we're about to send.
-        let target = if target.api_key.is_none() {
-            let mut parts = target.url.clone().into_parts();
-            parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/v1.0/traces"));
-            match http::Uri::from_parts(parts) {
-                Ok(url) => Cow::Owned(Endpoint {
-                    url,
-                    ..target.clone()
-                }),
-                Err(e) => {
-                    error!("Failed to build V1 trace endpoint with error {:?}", e);
-                    Cow::Borrowed(target)
-                }
-            }
-        } else {
-            Cow::Borrowed(target)
-        };
-        self.send_trace(headers, data, &target, retry_interval, TraceEncoding::V1)
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
     }
 
     fn send_trace(
@@ -1024,7 +1009,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
-        if let Some(endpoint) = trace_config.endpoint.clone() {
+        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
@@ -1054,7 +1039,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
 
-        if let Some(endpoint) = trace_config.endpoint.clone() {
+        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
