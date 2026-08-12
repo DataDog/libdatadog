@@ -33,6 +33,13 @@ pub trait TraceIdLike: Eq {
     fn to_u128(&self) -> u128;
 }
 
+/// `u128` is the canonical numeric trace-id representation.
+impl TraceIdLike for u128 {
+    fn to_u128(&self) -> u128 {
+        *self
+    }
+}
+
 /// A trait for accessing span attribute key-value pairs.
 ///
 /// Provides methods for retrieving the key and value of a span attribute.

@@ -863,6 +863,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)] // stalled async request cancellation is prohibitively slow under Miri
     #[tokio::test]
     async fn test_dropping_payload_sender_aborts_in_flight_request() {
         let cancelled = Arc::new(AtomicBool::new(false));
