@@ -155,7 +155,7 @@ pub trait BlockingRuntime: SharedRuntime {
         // executor cannot abort a process that calls block_on_with_timeout across the FFI
         // boundary.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.block_on(tokio::time::timeout(timeout, f))
+            self.block_on(async move { tokio::time::timeout(timeout, f).await })
         }));
         let outcome = match result {
             Ok(outcome) => outcome,
