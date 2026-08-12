@@ -210,8 +210,10 @@ fn parse_into_ref(path: &str) -> anyhow::Result<RemoteConfigPathRef<'_>> {
     let config_id_start = slash_positions[n_slashes - 2] + 1;
     let name_start = slash_positions[n_slashes - 1] + 1;
 
-    let product = RemoteConfigProduct::from_str(&path[product_start..product_end])
-        .map_err(|_| anyhow::format_err!("Unknown product {}", &path[product_start..product_end]))?;
+    let product =
+        RemoteConfigProduct::from_str(&path[product_start..product_end]).map_err(|_| {
+            anyhow::format_err!("Unknown product {}", &path[product_start..product_end])
+        })?;
 
     if name_start == config_id_start + 1 {
         anyhow::bail!("empty config_id in path {path}");

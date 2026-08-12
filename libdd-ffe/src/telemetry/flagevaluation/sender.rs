@@ -447,6 +447,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)] // hanging HTTP timeout is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
         let ep = Endpoint {

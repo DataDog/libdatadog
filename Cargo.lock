@@ -2849,7 +2849,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2861,7 +2861,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2875,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.1.0"
+version = "5.1.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2900,6 +2900,7 @@ dependencies = [
  "multer",
  "nix 0.29.0",
  "pin-project",
+ "proptest",
  "rand 0.8.5",
  "regex",
  "regex-lite",
@@ -3095,7 +3096,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -3151,11 +3152,12 @@ name = "libdd-gotter"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "tempfile",
 ]
 
 [[package]]
 name = "libdd-http-client"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3380,7 +3382,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3504,7 +3506,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3518,7 +3520,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3547,7 +3549,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "bolero",
  "prost",
@@ -3592,7 +3594,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3638,7 +3640,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
