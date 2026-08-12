@@ -10,7 +10,7 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 io-lifetimes = { workspace = true, features = ["close"] }
-fastrand = "2.0.1"
+fastrand = { workspace = true, features = ["std"] }
 libc.workspace = true
 
 [build-dependencies]
