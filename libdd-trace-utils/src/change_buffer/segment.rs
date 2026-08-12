@@ -91,18 +91,16 @@ impl<T> SmallSegmentMap<T> {
         // Hot path: inline slot matches this key or is empty.
         if self.inline_key == key || self.inline_val.is_none() {
             self.inline_key = key;
-            return self.inline_val.get_or_insert_with(Segment::default);
+            return self.inline_val.get_or_insert_default();
         }
 
         // Slow path: linear scan overflow
-        let pos = self.overflow.iter().position(|(k, _)| *k == key);
-        match pos {
-            Some(i) => &mut self.overflow[i].1,
-            None => {
-                self.overflow.push((key, Segment::default()));
-                let last = self.overflow.len() - 1;
-                &mut self.overflow[last].1
-            }
+        if let Some(pos) = self.overflow.iter().position(|(k, _)| *k == key) {
+            &mut self.overflow[pos].1
+        } else {
+            self.overflow.push((key, Segment::default()));
+            let last = self.overflow.len() - 1;
+            &mut self.overflow[last].1
         }
     }
 

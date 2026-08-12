@@ -39,7 +39,7 @@ pub enum ChangeBufferError {
         buffer_len: usize,
     },
     /// Unknown opcode.
-    UnknownOpcode(u32),
+    UnknownOpcode(u16),
 }
 
 impl std::fmt::Display for ChangeBufferError {
@@ -411,7 +411,7 @@ where
                     // pointers to null) before inserting, so by the time we use a cached pointer
                     // again, no rehash has occurred since it was obtained.
                     unsafe {
-                        self.interpret_operation_cached(&mut index, &op, &mut cache)?;
+                        self.interpret_update_operation(&mut index, &op, &mut cache)?;
                     }
                 }
             }
@@ -434,7 +434,7 @@ where
     /// `cache.span_ptr` must be a pointer valid for writes into `self.spans`. This method
     /// guarantees that it remains valid (it doesn't cause `self.spans` to invalidate the pointer,
     /// e.g. by causing re-allocation).
-    unsafe fn interpret_operation_cached(
+    unsafe fn interpret_update_operation(
         &mut self,
         index: &mut usize,
         op: &BufferedOperation,
@@ -537,7 +537,7 @@ where
             }
             OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
                 debug_assert!(false, "didn't expect Create, CreateSpan or CreateSpanFull in interpret_operation_cached");
-                return Err(ChangeBufferError::UnknownOpcode(u32::MAX));
+                return Err(ChangeBufferError::UnknownOpcode(u16::MAX));
             }
         }
 
@@ -578,7 +578,11 @@ where
         }
     }
 
-    fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
+    fn interpret_create_operation(
+        &mut self,
+        index: &mut usize,
+        op: &BufferedOperation,
+    ) -> Result<()> {
         let buf = &self.change_buffer;
 
         match op.opcode {
@@ -590,71 +594,6 @@ where
                     new_span_pooled(&mut self.span_pool, op.span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
                 self.insert_span(op.span_id, segment_id, span);
-            }
-            OpCode::SetMetaAttr => {
-                let key = buf.read_string(&self.string_table, index)?;
-                let val = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, op.span_id)?
-                    .meta
-                    .insert(key, val);
-            }
-            OpCode::SetMetricAttr => {
-                let key = buf.read_string(&self.string_table, index)?;
-                let val: f64 = buf.read(index)?;
-                span_at_mut(&mut self.spans, op.span_id)?
-                    .metrics
-                    .insert(key, val);
-            }
-            OpCode::SetServiceName => {
-                let service = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.service = service;
-            }
-            OpCode::SetResourceName => {
-                let resource = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.resource = resource;
-            }
-            OpCode::SetError => {
-                let error = buf.read(index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.error = error;
-            }
-            OpCode::SetStart => {
-                let start = buf.read(index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.start = start;
-            }
-            OpCode::SetDuration => {
-                let duration = buf.read(index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.duration = duration;
-            }
-            OpCode::SetType => {
-                let r#type = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.r#type = r#type;
-            }
-            OpCode::SetName => {
-                let name = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, op.span_id)?.name = name;
-            }
-            OpCode::SetTraceMetaAttr => {
-                let name = buf.read_string(&self.string_table, index)?;
-                let val = buf.read_string(&self.string_table, index)?;
-                let segment_id = self.spans.get(&op.span_id).map(|(_, id)| *id).unwrap_or(0);
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
-                    segment.meta.insert(name, val);
-                }
-            }
-            OpCode::SetTraceMetricsAttr => {
-                let name = buf.read_string(&self.string_table, index)?;
-                let val = buf.read(index)?;
-                let segment_id = self.spans.get(&op.span_id).map(|(_, id)| *id).unwrap_or(0);
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
-                    segment.metrics.insert(name, val);
-                }
-            }
-            OpCode::SetTraceOrigin => {
-                let origin = buf.read_string(&self.string_table, index)?;
-                let segment_id = self.spans.get(&op.span_id).map(|(_, id)| *id).unwrap_or(0);
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
-                    segment.origin = Some(origin);
-                }
             }
             OpCode::CreateSpan => {
                 let trace_id: u128 = buf.read(index)?;
@@ -688,23 +627,13 @@ where
                 self.apply_default_meta(&mut span);
                 self.insert_span(op.span_id, segment_id, span);
             }
-            OpCode::BatchSetMeta => {
-                let count: u32 = buf.read(index)?;
-                let span = span_at_mut(&mut self.spans, op.span_id)?;
-                for _ in 0..count {
-                    let key = buf.read_string(&self.string_table, index)?;
-                    let val = buf.read_string(&self.string_table, index)?;
-                    span.meta.insert(key, val);
-                }
-            }
-            OpCode::BatchSetMetric => {
-                let count: u32 = buf.read(index)?;
-                let span = span_at_mut(&mut self.spans, op.span_id)?;
-                for _ in 0..count {
-                    let key = buf.read_string(&self.string_table, index)?;
-                    let val: f64 = buf.read(index)?;
-                    span.metrics.insert(key, val);
-                }
+            _ => {
+                debug_assert!(
+                    false,
+                    "didn't expect opcode {:?} in interpret_create_operation",
+                    op.opcode
+                );
+                return Err(ChangeBufferError::UnknownOpcode(u16::MAX));
             }
         };
 

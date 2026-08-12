@@ -58,7 +58,7 @@ impl TryFrom<u16> for OpCode {
             14 => Ok(OpCode::CreateSpanFull),
             15 => Ok(OpCode::BatchSetMeta),
             16 => Ok(OpCode::BatchSetMetric),
-            _ => Err(ChangeBufferError::UnknownOpcode(val as u32)),
+            opcode => Err(ChangeBufferError::UnknownOpcode(opcode)),
         }
     }
 }
