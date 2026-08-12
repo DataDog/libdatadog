@@ -942,7 +942,7 @@ fn verify_director_against_config(
             );
         }
 
-        // Check that the director and config hases sets are equal
+        // Check that the director and config hash sets are equal
         if dir_desc.hashes() != cfg_desc.hashes() {
             bail!("hash set mismatch between director and config for {path}");
         }
