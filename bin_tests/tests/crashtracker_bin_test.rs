@@ -2161,6 +2161,12 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     while Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
                 let body = read_http_request_body(&mut stream);
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
                 if body.contains("receiver_issue:timeout") {
@@ -2309,6 +2315,12 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     while start.elapsed() < timeout && bodies.len() < 16 {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
                 let body = read_http_request_body(&mut stream);
                 bodies.push(body.clone());
                 // Update flags immediately to decide whether we can stop

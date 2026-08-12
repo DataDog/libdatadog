@@ -134,7 +134,7 @@ pub struct OtlpMetricsConfig {
     /// Protocol (for future use; currently only HttpJson is supported).
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
-    /// When `true`, emit only OTel attributes; omit `dd.*`/`_dd.*` ones
-    /// (`DD_TRACE_OTEL_SEMANTICS_ENABLED`).
+    /// Retained for downstream compatibility; OTLP trace metrics ignore this value.
+    #[allow(dead_code)]
     pub otel_trace_semantics_enabled: bool,
 }
