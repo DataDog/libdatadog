@@ -125,7 +125,9 @@ fn reason_from_assignment(reason: AssignmentReason) -> &'static str {
 fn reason_from_error(err: &EvaluationError) -> &'static str {
     match err {
         EvaluationError::FlagDisabled => "DISABLED",
-        EvaluationError::DefaultAllocationNull => "DEFAULT",
+        EvaluationError::DefaultAllocationNull | EvaluationError::FlagConfigurationInvalid => {
+            "DEFAULT"
+        }
         _ => "ERROR",
     }
 }
@@ -135,9 +137,8 @@ fn error_code_from_error(err: &EvaluationError) -> Option<&'static str> {
         EvaluationError::FlagDisabled | EvaluationError::DefaultAllocationNull => None,
         EvaluationError::TypeMismatch { .. } => Some("TYPE_MISMATCH"),
         EvaluationError::TargetingKeyMissing => Some("TARGETING_KEY_MISSING"),
-        EvaluationError::ConfigurationParseError | EvaluationError::FlagConfigurationInvalid => {
-            Some("PARSE_ERROR")
-        }
+        EvaluationError::ConfigurationParseError => Some("PARSE_ERROR"),
+        EvaluationError::FlagConfigurationInvalid => None,
         EvaluationError::ConfigurationMissing => Some("PROVIDER_NOT_READY"),
         EvaluationError::FlagUnrecognizedOrDisabled => Some("FLAG_NOT_FOUND"),
         EvaluationError::Internal(_) => Some("GENERAL"),

@@ -232,6 +232,21 @@ mod tests {
                     "splits": [{"variationKey": "trap", "shards": []}]
                   }]
                 },
+                "invalid-semver": {
+                  "key": "invalid-semver",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"trap": {"key": "trap", "value": "trap"}},
+                  "allocations": [{
+                    "key": "invalid",
+                    "rules": [{"conditions": [{
+                      "attribute": "version",
+                      "operator": "SEMVER_EQ",
+                      "value": "18446744073709551616.0.0"
+                    }]}],
+                    "splits": [{"variationKey": "trap", "shards": []}]
+                  }]
+                },
                 "valid": {
                   "key": "valid",
                   "enabled": true,
@@ -257,6 +272,13 @@ mod tests {
                 .eval_flag("invalid-regex", &context, ExpectedFlagType::String, now)
                 .unwrap_err(),
             EvaluationError::FlagConfigurationInvalid
+        );
+
+        assert_eq!(
+            config
+                .eval_flag("invalid-semver", &context, ExpectedFlagType::String, now)
+                .unwrap_err(),
+            EvaluationError::ConfigurationParseError
         );
 
         let assignment = config

@@ -77,6 +77,7 @@ impl ConditionCheck {
                     SemverComparisonOperator::Gte => ordering.is_ge(),
                 }
             }
+            ConditionCheck::InvalidSemverComparand { .. } => return None,
         };
 
         Some(result)

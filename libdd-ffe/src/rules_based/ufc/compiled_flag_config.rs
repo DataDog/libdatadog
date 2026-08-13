@@ -87,8 +87,7 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
                     key,
                     Option::from(flag)
                         .ok_or(EvaluationError::FlagConfigurationInvalid)
-                        .and_then(compile_flag)
-                        .map_err(per_flag_config_error),
+                        .and_then(compile_flag),
                 )
             })
             .collect();
@@ -98,13 +97,6 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             environment: config.environment,
             flags,
         }
-    }
-}
-
-fn per_flag_config_error(err: EvaluationError) -> EvaluationError {
-    match err {
-        EvaluationError::ConfigurationParseError => EvaluationError::FlagConfigurationInvalid,
-        err => err,
     }
 }
 
@@ -118,7 +110,7 @@ fn compile_flag(flag: FlagWire) -> Result<Flag, EvaluationError> {
         .into_values()
         .map(|variation| {
             let assignment_value = AssignmentValue::from_wire(flag.variation_type, variation.value)
-                .ok_or(EvaluationError::ConfigurationParseError)?;
+                .ok_or(EvaluationError::FlagConfigurationInvalid)?;
 
             Ok((variation.key, assignment_value))
         })
@@ -140,6 +132,19 @@ fn compile_allocation(
     allocation: AllocationWire,
     variation_values: &HashMap<Str, AssignmentValue>,
 ) -> Result<Allocation, EvaluationError> {
+    let rules = allocation.rules.unwrap_or_default();
+    let has_invalid_semver_comparand = rules.iter().any(|rule| {
+        rule.conditions.iter().any(|condition| {
+            matches!(
+                &condition.check,
+                super::ConditionCheck::InvalidSemverComparand { .. }
+            )
+        })
+    });
+    if has_invalid_semver_comparand {
+        return Err(EvaluationError::ConfigurationParseError);
+    }
+
     let splits = allocation
         .splits
         .into_iter()
@@ -149,7 +154,7 @@ fn compile_allocation(
         key: allocation.key,
         start_at: allocation.start_at,
         end_at: allocation.end_at,
-        rules: allocation.rules.unwrap_or_default(),
+        rules,
         splits,
         do_log: allocation.do_log,
     })
@@ -173,7 +178,7 @@ fn compile_split(
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
-        .ok_or(EvaluationError::ConfigurationParseError)?;
+        .ok_or(EvaluationError::FlagConfigurationInvalid)?;
 
     Ok(Split {
         shards,

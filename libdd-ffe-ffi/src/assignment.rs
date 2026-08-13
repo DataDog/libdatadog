@@ -369,7 +369,9 @@ impl From<&ResolutionDetails> for Reason {
         match value.as_ref() {
             Ok(assignment) => assignment.reason.into(),
             Err(EvaluationError::FlagDisabled) => Reason::Disabled,
-            Err(EvaluationError::DefaultAllocationNull) => Reason::Default,
+            Err(
+                EvaluationError::DefaultAllocationNull | EvaluationError::FlagConfigurationInvalid,
+            ) => Reason::Default,
             Err(_) => Reason::Error,
         }
     }
@@ -408,7 +410,7 @@ impl From<&EvaluationError> for ErrorCode {
             EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
             EvaluationError::TargetingKeyMissing => ErrorCode::TargetingKeyMissing,
             EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
-            EvaluationError::FlagConfigurationInvalid => ErrorCode::ParseError,
+            EvaluationError::FlagConfigurationInvalid => ErrorCode::Ok,
             EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
             EvaluationError::FlagUnrecognizedOrDisabled => ErrorCode::FlagNotFound,
             EvaluationError::FlagDisabled => ErrorCode::Ok,
@@ -491,10 +493,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejected_flag_is_exposed_as_parse_error() {
+    fn rejected_flag_returns_default_without_error() {
         let details = ResolutionDetails::from(EvaluationError::FlagConfigurationInvalid);
 
-        assert!(matches!(Reason::from(&details), Reason::Error));
-        assert_eq!(ErrorCode::from(&details), ErrorCode::ParseError);
+        assert!(matches!(Reason::from(&details), Reason::Default));
+        assert_eq!(ErrorCode::from(&details), ErrorCode::Ok);
     }
 }

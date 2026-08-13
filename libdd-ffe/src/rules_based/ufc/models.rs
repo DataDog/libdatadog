@@ -182,6 +182,10 @@ pub(crate) enum ConditionCheck {
         operator: SemverComparisonOperator,
         comparand: semver::Version,
     },
+    InvalidSemverComparand {
+        operator: SemverComparisonOperator,
+        value: ConditionValue,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -277,6 +281,7 @@ impl From<Condition> for ConditionWire {
                     comparand.to_string().as_str(),
                 ))),
             ),
+            ConditionCheck::InvalidSemverComparand { operator, value } => (operator.into(), value),
         };
         ConditionWire {
             attribute: condition.attribute,
@@ -394,26 +399,35 @@ impl TryFrom<ConditionWire> for Condition {
                     ConditionOperator::SemverGte => SemverComparisonOperator::Gte,
                     _ => unreachable!(),
                 };
-                let semver_string = match condition.value.singleton() {
-                    Some(SingleConditionValue::String(s)) => s,
+                match condition.value.singleton() {
+                    Some(SingleConditionValue::String(semver_string)) => {
+                        match semver::Version::parse(&semver_string) {
+                            Ok(comparand) => ConditionCheck::SemverComparison {
+                                operator,
+                                comparand,
+                            },
+                            Err(err) => {
+                                log::warn!(
+                                    "failed to parse condition: invalid semver {:?}: {err:?}",
+                                    semver_string
+                                );
+                                ConditionCheck::InvalidSemverComparand {
+                                    operator,
+                                    value: condition.value,
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         log::warn!(
                             "failed to parse condition: {:?} condition with non-string condition value",
                             condition.operator
                         );
-                        return Err(EvaluationError::ConfigurationParseError);
+                        ConditionCheck::InvalidSemverComparand {
+                            operator,
+                            value: condition.value,
+                        }
                     }
-                };
-                let comparand = semver::Version::parse(&semver_string).map_err(|err| {
-                    log::warn!(
-                        "failed to parse condition: invalid semver {:?}: {err:?}",
-                        semver_string
-                    );
-                    EvaluationError::ConfigurationParseError
-                })?;
-                ConditionCheck::SemverComparison {
-                    operator,
-                    comparand,
                 }
             }
         };
