@@ -61,9 +61,9 @@ pub struct AgentlessStatsTarget {
     /// carrying the Datadog API key. `send_with_retry` derives the `dd-api-key`
     /// header from [`Endpoint::api_key`].
     pub endpoint: Endpoint,
-    /// `agent_version` field of the `StatsPayload`. Hardcoded by the caller to
-    /// the libdatadog version in semver form with a `-libdatadog` suffix so the
-    /// backend can distinguish libdatadog from the Agent.
+    /// `agent_version` field of the `StatsPayload`. Set by the caller to the
+    /// library version suffixed with the language so the backend can
+    /// distinguish libdatadog-based tracers from the Agent.
     pub version: String,
 }
 

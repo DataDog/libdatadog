@@ -885,7 +885,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             };
             let target = AgentlessStatsTarget {
                 endpoint: stats_endpoint,
-                version: crate::agentless::stats::agentless_stats_version().to_owned(),
+                version: crate::agentless::stats::agentless_stats_version(
+                    &self.tracer_version,
+                    &self.language,
+                ),
             };
 
             let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
