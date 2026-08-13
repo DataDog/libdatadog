@@ -18,4 +18,10 @@ RUN sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo \
 ENV PATH="/opt/rh/devtoolset-11/root/usr/bin:$PATH"
 
 # use the musl binary for nextest since glibc isn't new enough on CentOS7 for nextest
-RUN curl -LsSf https://get.nexte.st/0.9.96/linux-musl | tar zxf - -C /usr/local/bin
+RUN set -eux; \
+    NEXTEST_URL="https://get.nexte.st/0.9.96/linux-musl"; \
+    NEXTEST_SHA256="4f98a0f8c0b0f1a335f17d6385b799ec23f953a54358d49358c2a39bd6fd7fa9"; \
+    curl -LsSf "$NEXTEST_URL" -o /tmp/cargo-nextest-linux-musl.tar.gz; \
+    echo "$NEXTEST_SHA256  /tmp/cargo-nextest-linux-musl.tar.gz" | sha256sum -c -; \
+    tar zxf /tmp/cargo-nextest-linux-musl.tar.gz -C /usr/local/bin; \
+    rm -f /tmp/cargo-nextest-linux-musl.tar.gz
