@@ -17,9 +17,7 @@
 //! The signal handler in `crash_handler.rs` checks this stored message
 //! when handling `SIGABRT` and includes it in the crash report.
 //!
-//! Currently only supported on 64-bit Linux.
-
-#![cfg(unix)]
+//! This module is gated on 64-bit Linux (`mod.rs`).
 
 use core::ptr;
 use core::sync::atomic::{
@@ -60,7 +58,6 @@ fn format_assert_message(assertion: &str, file: &str, line: u32, function: &str)
 
 /// # Safety
 /// `ptr` must be null or point to a valid null terminated C string.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 unsafe fn cstr_to_str(ptr: *const libc::c_char, fallback: &str) -> &str {
     if ptr.is_null() {
         return fallback;
@@ -72,7 +69,6 @@ unsafe fn cstr_to_str(ptr: *const libc::c_char, fallback: &str) -> &str {
         .unwrap_or(fallback)
 }
 
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 type AssertFailFn = unsafe extern "C" fn(
     *const libc::c_char,
     *const libc::c_char,
@@ -82,11 +78,9 @@ type AssertFailFn = unsafe extern "C" fn(
 
 /// Resolved address of the original `__assert_fail`, set once during
 /// [`install_assert_hook`].
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static ORIG_ASSERT_FN: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// Our replacement for `__assert_fail`, installed using GOT patching.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 unsafe extern "C" fn hook_assert_fail(
     assertion: *const libc::c_char,
     file: *const libc::c_char,
@@ -125,9 +119,6 @@ unsafe extern "C" fn hook_assert_fail(
 /// libraries.
 ///
 /// Safe to call multiple times; only the first call patches.
-///
-/// Only supported on 64-bit Linux. On other platforms this is a no-op.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub(crate) fn install_assert_hook() {
     if ORIG_ASSERT_FN.load(Relaxed) != 0 {
         return;
@@ -142,10 +133,6 @@ pub(crate) fn install_assert_hook() {
         ORIG_ASSERT_FN.store(hook.orig_addr, Release);
     }
 }
-
-/// No-op on unsupported platforms.
-#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
-pub(crate) fn install_assert_hook() {}
 
 #[cfg(test)]
 mod tests {
@@ -194,7 +181,6 @@ mod tests {
         assert!(take_assert_message_ptr().is_null());
     }
 
-    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_install_assert_hook() {

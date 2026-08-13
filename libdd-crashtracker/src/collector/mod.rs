@@ -3,6 +3,7 @@
 #![cfg(unix)]
 mod additional_tags;
 mod api;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod assert_interceptor;
 mod atomic_set;
 mod collector_manager;

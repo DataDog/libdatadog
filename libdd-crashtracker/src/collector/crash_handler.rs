@@ -328,7 +328,14 @@ fn handle_posix_signal_impl(
     // C assert() calls __assert_fail which we intercept to capture the
     // assertion expression before abort() raises SIGABRT.
     let message_ptr = if panic_message_ptr.is_null() {
-        super::assert_interceptor::take_assert_message_ptr()
+        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+        {
+            super::assert_interceptor::take_assert_message_ptr()
+        }
+        #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+        {
+            ptr::null_mut()
+        }
     } else {
         panic_message_ptr
     };
