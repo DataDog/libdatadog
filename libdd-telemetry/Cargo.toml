@@ -20,9 +20,9 @@ fips = ["libdd-common/fips", "libdd-shared-runtime/fips"]
 [dependencies]
 anyhow.workspace = true
 async-trait = "0.1"
-base64 = "0.22"
+base64 = { workspace = true, features = ["std"] }
 futures.workspace = true
-http = "1"
+http = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 strum = { version = "0.26", default-features = false }
@@ -32,7 +32,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "std"] }
 hashbrown = "0.15"
-bytes = "1.4"
+bytes = { workspace = true, features = ["std"] }
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "5.1.1", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
@@ -57,4 +57,4 @@ tracing-subscriber = "0.3.22"
 tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
-httpmock = "0.8.0-alpha.1"
+httpmock.workspace = true

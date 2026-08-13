@@ -78,7 +78,7 @@ libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false,
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
 futures.workspace = true
-http-body-util = "0.1"
+http-body-util.workspace = true
 hyper = { workspace = true, features = ["http1", "client"] }
 libc.workspace = true
 serde_json.workspace = true

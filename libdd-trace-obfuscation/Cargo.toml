@@ -15,7 +15,7 @@ authors.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
-percent-encoding = "2.1"
+percent-encoding = { workspace = true, features = ["std"] }
 log = "0.4"
 fluent-uri = "0.4.1"
 libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
