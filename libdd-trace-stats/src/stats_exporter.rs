@@ -20,7 +20,10 @@ use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
 };
-use libdd_trace_utils::stats_payload_encoder::{build_stats_payload, encode_stats_payload_msgpack};
+use libdd_trace_utils::stats_payload_encoder::{
+    build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
+    MAX_GROUPED_STATS_PER_PAYLOAD,
+};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
@@ -61,9 +64,8 @@ pub struct AgentlessStatsTarget {
     /// carrying the Datadog API key. `send_with_retry` derives the `dd-api-key`
     /// header from [`Endpoint::api_key`].
     pub endpoint: Endpoint,
-    /// `agent_version` field of the `StatsPayload`. Set by the caller to the
-    /// library version suffixed with the language so the backend can
-    /// distinguish libdatadog-based tracers from the Agent.
+    /// `agent_version` field of the `StatsPayload`: the library version suffixed
+    /// with the language, so the backend can tell libdatadog tracers from the Agent.
     pub version: String,
 }
 
@@ -331,22 +333,43 @@ impl<
         Ok(sent_stats)
     }
 
-    /// Encode the given buckets into a stats payload and send it to the agent.
+    /// Encode the buckets into stats payloads and send them.
     ///
-    /// `obfuscated` indicates whether the buckets were obfuscated client-side, in which case the
-    /// `datadog-obfuscation-version` header is added.
+    /// Buckets over [`MAX_GROUPED_STATS_PER_PAYLOAD`] are split into several payloads. Like the
+    /// Agent, all fragments of one flush share a sequence id, are flagged `split_payload`, and are
+    /// sent in separate requests.
+    ///
+    /// `obfuscated` adds the `datadog-obfuscation-version` header.
     async fn send_payload(
         &self,
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
     ) -> anyhow::Result<()> {
+        let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+        let split = groups.len() > 1;
+        // All fragments of one flush share a single sequence id, as the Agent does.
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+        for group in groups {
+            self.send_single_payload(group, obfuscated, split, sequence)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Encode a single (already split) group of buckets into a stats payload and send it.
+    async fn send_single_payload(
+        &self,
+        buckets: Vec<pb::ClientStatsBucket>,
+        obfuscated: bool,
+        split: bool,
+        sequence: u64,
+    ) -> anyhow::Result<()> {
         let request = match &self.destination {
             StatsDestination::Agent { endpoint } => {
                 self.build_agent_request(endpoint.clone(), sequence, buckets, obfuscated)?
             }
             StatsDestination::Agentless(target) => {
-                build_agentless_request(&self.meta, sequence, buckets, target)?
+                build_agentless_request(&self.meta, sequence, buckets, target, split)?
             }
         };
 
@@ -411,15 +434,18 @@ const AGENTLESS_STATS_RETRY_DELAY_MS: u64 = 1000;
 
 /// Build the request for the agentless intake `/api/v0.2/stats` destination.
 ///
-/// The flushed buckets are wrapped in a single `ClientStatsPayload`, then in the
-/// top-level `StatsPayload`, serialized as msgpack and compressed with zstd
-/// (`Content-Encoding: zstd` is added by `send_with_retry`). Authentication uses
-/// the `dd-api-key` header. This path shares no logic with the Agent transport.
+/// The buckets are wrapped in a `ClientStatsPayload`, then a `StatsPayload`,
+/// serialized as msgpack and compressed with zstd (`Content-Encoding: zstd` set
+/// by `send_with_retry`). Auth uses the `dd-api-key` header. Shares no logic
+/// with the Agent transport.
+///
+/// `split` marks this payload as one fragment of a split flush (see `send_payload`).
 fn build_agentless_request(
     meta: &StatsMetadata,
     sequence: u64,
     buckets: Vec<pb::ClientStatsBucket>,
     target: &AgentlessStatsTarget,
+    split: bool,
 ) -> anyhow::Result<StatsRequest> {
     let mut client_payload = encode_stats_payload(meta, sequence, buckets);
     // Unlike the Agent path, no Agent enriches the payload downstream, so populate the
@@ -431,6 +457,7 @@ fn build_agentless_request(
         meta.hostname.clone(),
         meta.env.clone(),
         target.version.clone(),
+        split,
     );
     let body = encode_stats_payload_msgpack(&payload)?;
 
