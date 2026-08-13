@@ -22,7 +22,10 @@
 #![cfg(unix)]
 
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
+use core::sync::atomic::{
+    AtomicPtr,
+    Ordering::{Acquire, Relaxed, Release},
+};
 
 static ASSERT_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
 
@@ -33,7 +36,7 @@ static ASSERT_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
 /// and calling `free` in the signal handler is not async-signal-safe.
 fn store_assert_message(message: String) {
     let new_ptr = Box::into_raw(Box::new(message));
-    let _ = ASSERT_MESSAGE.swap(new_ptr, SeqCst);
+    let _ = ASSERT_MESSAGE.swap(new_ptr, Release);
 }
 
 /// Atomically take the stored assert message pointer, leaving null.
@@ -42,7 +45,7 @@ fn store_assert_message(message: String) {
 /// returned pointer without reconstructing the `Box`, avoiding `free`
 /// inside the signal handler.
 pub(crate) fn take_assert_message_ptr() -> *mut String {
-    ASSERT_MESSAGE.swap(ptr::null_mut(), SeqCst)
+    ASSERT_MESSAGE.swap(ptr::null_mut(), Acquire)
 }
 
 fn format_assert_message(assertion: &str, file: &str, line: u32, function: &str) -> String {
@@ -126,7 +129,7 @@ unsafe extern "C" fn hook_assert_fail(
 /// Only supported on 64-bit Linux. On other platforms this is a no-op.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub(crate) fn install_assert_hook() {
-    if ORIG_ASSERT_FN.load(core::sync::atomic::Ordering::Acquire) != 0 {
+    if ORIG_ASSERT_FN.load(Relaxed) != 0 {
         return;
     }
 
@@ -136,7 +139,7 @@ pub(crate) fn install_assert_hook() {
     };
 
     if let Ok(hook) = result {
-        ORIG_ASSERT_FN.store(hook.orig_addr, core::sync::atomic::Ordering::Release);
+        ORIG_ASSERT_FN.store(hook.orig_addr, Release);
     }
 }
 
@@ -199,7 +202,7 @@ mod tests {
         // On statically linked binaries, __assert_fail won't appear in
         // the dynamic symbol table and dlsym returns null. Verify the
         // hook doesn't crash regardless.
-        let orig = ORIG_ASSERT_FN.load(core::sync::atomic::Ordering::Acquire);
+        let orig = ORIG_ASSERT_FN.load(Acquire);
         if orig == 0 {
             eprintln!(
                 "note: __assert_fail not found in dynamic symbol table \

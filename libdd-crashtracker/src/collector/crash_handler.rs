@@ -11,7 +11,7 @@ use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
 use core::ptr;
-use core::sync::atomic::Ordering::{Relaxed, SeqCst};
+use core::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 use errno::{errno, set_errno};
 use libc::{c_void, pid_t, siginfo_t, ucontext_t};
@@ -322,7 +322,7 @@ fn handle_posix_signal_impl(
     // Get the panic message pointer but don't dereference or deallocate in signal handler.
     // The collector child process will handle converting this to a String after forking.
     // Leak of the message pointer is ok here.
-    let panic_message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+    let panic_message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), Acquire);
 
     // If there is no panic message, check for a stored assert-failure message.
     // C assert() calls __assert_fail which we intercept to capture the
