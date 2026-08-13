@@ -20,7 +20,7 @@ arc-swap = { workspace = true, optional = true }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
@@ -29,7 +29,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
-libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics"] }
+libdd-ffe = { path = "../libdd-ffe", features = ["exposure-events", "evaluation-metrics", "flagevaluation-evp"] }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }

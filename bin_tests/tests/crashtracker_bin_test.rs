@@ -160,6 +160,42 @@ fn test_crash_tracking_bin_unhandled_exception() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when a C `assert()` fails, the crash report contains the assertion
+/// expression string in the error message.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_assert_fail() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::AssertFail,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload)
+            .validate_error_kind("UnixSignal")?
+            .validate_error_message_contains("test_value > 0")?
+            .validate_error_message_contains("trigger_c_assert")?;
+
+        // Validate SIGABRT signal info
+        let sig_info = &payload["sig_info"];
+        let signo_hr = sig_info["si_signo_human_readable"].as_str().unwrap_or("");
+        anyhow::ensure!(
+            signo_hr.contains("SIGABRT"),
+            "Expected SIGABRT in signal info, got: {signo_hr}"
+        );
+
+        validate_telemetry(&fixtures.crash_telemetry_path, "assert_fail")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via
 /// `report_unhandled_exception`, the crash report contains entries in `error.threads`
 /// for background threads with valid stack traces.
@@ -1772,6 +1808,10 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                     || sig_info.is_object() && sig_info.as_object().is_none_or(|m| m.is_empty())
             );
         }
+        "assert_fail" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
 }
@@ -1905,6 +1945,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }
         "unhandled_exception" => {
             // Unhandled exceptions have no signal info tags
+        }
+        "assert_fail" => {
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
         _ => panic!("{crash_typ}"),
     }
@@ -2161,6 +2205,12 @@ fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
     while Instant::now() < deadline {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
                 let body = read_http_request_body(&mut stream);
                 let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
                 if body.contains("receiver_issue:timeout") {
@@ -2309,6 +2359,12 @@ fn test_receiver_emits_debug_logs_on_receiver_issue() -> anyhow::Result<()> {
     while start.elapsed() < timeout && bodies.len() < 16 {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                // On macOS/BSD the accepted stream inherits the listener's non-blocking
+                // flag, so a read before the client flushes its body returns WouldBlock.
+                // read_http_request_body assumes a blocking stream, so restore that.
+                stream
+                    .set_nonblocking(false)
+                    .context("making accepted stream blocking")?;
                 let body = read_http_request_body(&mut stream);
                 bodies.push(body.clone());
                 // Update flags immediately to decide whether we can stop

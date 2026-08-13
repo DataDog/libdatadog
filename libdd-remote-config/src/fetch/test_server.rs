@@ -93,8 +93,8 @@ impl RemoteConfigServer {
                 && applied_files.len() == states.len()
                 && states.iter().all(|s| {
                     for (p, (_, v, _)) in applied_files.iter() {
-                        if p.product.to_string() == s.product
-                            && p.config_id == s.id
+                        if p.product().to_string() == s.product
+                            && p.config_id() == s.id
                             && *v == s.version
                         {
                             return true;
@@ -226,10 +226,11 @@ impl RemoteConfigServer {
                 language: "php".to_string(),
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::ApmTracing,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::LiveDebugging,
             ],
             capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         }

@@ -5,7 +5,7 @@ use crate::probe_defs::LiveDebuggingData;
 use libdd_remote_config::{ParseError, RemoteConfigContent, RemoteConfigProduct};
 
 impl RemoteConfigContent for LiveDebuggingData {
-    const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::LiveDebugger;
+    const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::LiveDebugging;
 
     fn parse(data: &[u8]) -> Result<Self, ParseError> {
         crate::parse_json::parse(&String::from_utf8_lossy(data))

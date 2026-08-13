@@ -22,8 +22,8 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tokio-util = "0.7.11"
 tracing.workspace = true
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
+libdd-common = { version = "5.1.1", path = "../libdd-common", default-features = false }
 
 [features]
 default = ["https"]
@@ -32,7 +32,7 @@ fips = ["libdd-capabilities-impl/fips"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "3.0.0", default-features = false }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "4.0.0", default-features = false }
 tokio = { version = "1.23", features = ["rt-multi-thread"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
