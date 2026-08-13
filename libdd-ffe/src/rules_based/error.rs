@@ -33,8 +33,10 @@ pub enum EvaluationError {
     ConfigurationParseError,
 
     /// A requested flag exists in the configuration payload, but its per-flag configuration is
-    /// invalid or unsupported by this SDK. The SDK should return the caller default and expose
-    /// this as a parse error for that flag without invalidating the rest of the configuration.
+    /// invalid or unsupported by this SDK. Failures encountered while compiling an individual
+    /// flag are converted to `FlagConfigurationInvalid` at the per-flag ingestion boundary. The
+    /// SDK should return the caller default and expose this as a parse error for that flag without
+    /// invalidating the rest of the configuration.
     #[error("flag configuration is invalid or unsupported")]
     FlagConfigurationInvalid,
 
