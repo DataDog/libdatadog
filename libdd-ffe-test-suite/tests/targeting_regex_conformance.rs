@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fs, path::PathBuf};
+use std::{collections::HashSet, fs, path::PathBuf};
 
 use libdd_common::regex_engine::Regex;
 use serde::Deserialize;
@@ -48,12 +48,11 @@ fn fixture_path() -> PathBuf {
 #[test]
 fn evaluates_targeting_regex_conformance_fixture() {
     let path = fixture_path();
-    if !path.exists() {
-        eprintln!(
-            "targeting regex conformance fixture is unavailable in this fixture revision; skipping"
-        );
-        return;
-    }
+    assert!(
+        path.exists(),
+        "targeting regex conformance fixture is missing at {}; initialize the submodule",
+        path.display()
+    );
 
     let fixture: ConformanceFixture = serde_json::from_reader(fs::File::open(&path).unwrap())
         .unwrap_or_else(|err| panic!("failed to parse fixture {}: {err}", path.display()));
@@ -61,10 +60,9 @@ fn evaluates_targeting_regex_conformance_fixture() {
     assert_eq!(fixture.schema, "datadog.ffe.targeting-regex-conformance/v1");
     assert_eq!(fixture.schema_version, 1);
     assert_eq!(fixture.contract_version, "targeting-regex-v1");
-    assert!(
-        !fixture.cases.is_empty(),
-        "no regex conformance cases loaded"
-    );
+    assert_eq!(fixture.cases.len(), 75, "unexpected fixture case count");
+    let unique_ids: HashSet<_> = fixture.cases.iter().map(|case| &case.id).collect();
+    assert_eq!(unique_ids.len(), 75, "fixture case IDs must be unique");
 
     let mut mismatches = Vec::new();
     for case in fixture.cases {
