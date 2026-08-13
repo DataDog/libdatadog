@@ -59,7 +59,7 @@ fn evaluates_targeting_regex_conformance_fixture() {
 
     assert_eq!(fixture.schema, "datadog.ffe.targeting-regex-conformance/v1");
     assert_eq!(fixture.schema_version, 1);
-    assert_eq!(fixture.contract_version, "targeting-regex-v1");
+    assert_eq!(fixture.contract_version, "targeting-regex-v2");
     assert_eq!(fixture.cases.len(), 75, "unexpected fixture case count");
     let unique_ids: HashSet<_> = fixture.cases.iter().map(|case| &case.id).collect();
     assert_eq!(unique_ids.len(), 75, "fixture case IDs must be unique");
