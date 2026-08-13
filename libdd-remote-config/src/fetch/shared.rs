@@ -278,7 +278,13 @@ impl SharedFetcher {
         S::StoredFile: RefcountedFile,
     {
         let state = storage.state.clone();
-        let mut fetcher = ConfigFetcher::new(storage, state);
+        let mut fetcher = match ConfigFetcher::new(storage, state).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("failed to create the fetcher: {:?}", e);
+                return;
+            }
+        };
 
         let mut opaque_state = ConfigClientState::default();
 
@@ -317,7 +323,9 @@ impl SharedFetcher {
             };
 
             match fetched {
-                Ok(None) => clean_inactive(), // nothing changed
+                Ok(None) => {
+                    clean_inactive();
+                }
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
@@ -350,6 +358,17 @@ impl SharedFetcher {
                     clean_inactive();
                     error!("{:?}", e);
                 }
+            }
+
+            if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
+                // Keep the run-loop interval in sync with the server-provided value.
+                // If the interval in nanoseconds is greater than u64::MAX, pick the max
+                // representable value. This is tolerable as u64::MAX nanoseconds
+                // still represents 35584 years.
+                self.interval.store(
+                    interval.as_nanos().min(u64::MAX as u128) as u64,
+                    Ordering::Relaxed,
+                );
             }
 
             select! {

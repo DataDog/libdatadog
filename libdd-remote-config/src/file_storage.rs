@@ -144,7 +144,7 @@ impl ParseFile for RegistryParser {
     type Parsed = anyhow::Result<Option<RemoteConfigParsed>>;
 
     fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed {
-        self.0.parse(path.product, &contents)
+        self.0.parse(path.product(), &contents)
     }
 }
 
