@@ -201,6 +201,9 @@ unsafe extern "C" fn hook_assert_fail(
 /// libraries.
 ///
 /// Safe to call multiple times; only the first call patches.
+///
+/// Not designed to be called concurrently from multiple threads, but
+/// contains a guard against accidental races
 pub(crate) fn install_assert_hook() {
     if ORIG_ASSERT_FN.load(Relaxed) != 0 {
         return;
@@ -212,7 +215,16 @@ pub(crate) fn install_assert_hook() {
     };
 
     if let Ok(hook) = result {
-        ORIG_ASSERT_FN.store(hook.orig_addr, Release);
+        // This seems unlikely to happen, but we check hook.orig_addr
+        // as a guard against a race where two threads call install_assert_hook
+        // concurrently: the second hook_symbol call would find our own
+        // hook_assert_fail already in the GOT and return its address as
+        // orig_addr. Storing that would create an infinite loop when the
+        // hook tries to tail-call the "original" function.
+        let our_hook = hook_assert_fail as *const () as usize;
+        if hook.orig_addr != our_hook {
+            ORIG_ASSERT_FN.store(hook.orig_addr, Release);
+        }
     }
 }
 
