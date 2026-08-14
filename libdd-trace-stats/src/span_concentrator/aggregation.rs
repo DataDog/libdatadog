@@ -176,9 +176,10 @@ fn float_to_u32(f: f64) -> Option<u32> {
 
 /// The HTTP method, under either naming convention, or "" when the span carries neither.
 ///
-/// The current OTel name is preferred, matching the Agent semantic registry.
+/// The Datadog name is canonical in the Agent semantic registry and is preferred when both names
+/// are present.
 fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
-    for key in [TAG_METHOD_OTEL, TAG_METHOD] {
+    for key in [TAG_METHOD, TAG_METHOD_OTEL] {
         if let Some(value) = span.get_meta(key) {
             if !value.is_empty() {
                 return value;
@@ -1231,8 +1232,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Both names present: status follows Datadog-first precedence while method follows
-            // the Agent semantic registry and prefers the current OTel name.
+            // Both names present: the canonical Datadog names win.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1256,7 +1256,7 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     http_status_code: 500,
-                    http_method: "POST".into(),
+                    http_method: "GET".into(),
                     ..Default::default()
                 }
                 .into_key(),
