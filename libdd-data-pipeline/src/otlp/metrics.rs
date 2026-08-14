@@ -63,7 +63,6 @@ fn span_kind_name(kind: &str) -> &'static str {
     }
 }
 
-const STATUS_CODE_OK: &str = "STATUS_CODE_OK";
 const STATUS_CODE_ERROR: &str = "STATUS_CODE_ERROR";
 /// Fixed bucket boundaries (seconds) mirroring the OTel spanmetrics-connector defaults.
 const EXPLICIT_BOUNDS_SECONDS: [f64; 16] = [
@@ -189,14 +188,9 @@ fn build_attributes(
     };
     attrs.push(kv_str("service.name", group_service));
 
-    attrs.push(kv_str(
-        "status.code",
-        if is_error {
-            STATUS_CODE_ERROR
-        } else {
-            STATUS_CODE_OK
-        },
-    ));
+    if is_error {
+        attrs.push(kv_str("status.code", STATUS_CODE_ERROR));
+    }
     push_if_non_empty(&mut attrs, "span.kind", span_kind_name(&group.span_kind));
     push_if_non_empty(&mut attrs, "span.name", &group.resource);
 
@@ -242,7 +236,7 @@ fn build_attributes(
     }
     for tag in &group.additional_metric_tags {
         if let Some((k, v)) = tag.split_once(':') {
-            if attrs.iter().all(|attr| attr["key"].as_str() != Some(k)) {
+            if k != "status.code" && attrs.iter().all(|attr| attr["key"].as_str() != Some(k)) {
                 attrs.push(kv_str(k, v));
             }
         }
@@ -562,7 +556,7 @@ mod tests {
             str_array_at(a, "datadog.peer_tags"),
             Some(vec!["db.hostname:prod-db-1", "db.name:orders"])
         );
-        assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
+        assert_eq!(str_at(a, "status.code"), None);
         let custom = pts
             .iter()
             .find(|p| {
@@ -712,8 +706,7 @@ mod tests {
         assert_eq!(str_at(a, "region"), Some("us-east"));
         assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
         assert_eq!(str_at(a, "datadog.custom"), Some("dd"));
-        assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
-        assert_eq!(a.iter().filter(|kv| kv["key"] == "status.code").count(), 1);
+        assert_eq!(str_at(a, "status.code"), None);
 
         // Preserve the cardinality-overflow marker even though its value is empty.
         let g = group_with_exact(&[1_000_000_000], &[], |g| {

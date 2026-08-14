@@ -167,12 +167,18 @@ fn float_to_int(f: f64) -> Option<u8> {
     Some(f as u8)
 }
 
+fn float_to_u32(f: f64) -> Option<u32> {
+    if !f.is_finite() || f.floor() != f || f < 0.0 || (u32::MAX as f64) < f {
+        return None;
+    }
+    Some(f as u32)
+}
+
 /// The HTTP method, under either naming convention, or "" when the span carries neither.
 ///
-/// The Datadog name is preferred so a tracer emitting both during a migration keeps reporting
-/// the dimension it already reports.
+/// The current OTel name is preferred, matching the Agent semantic registry.
 fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
-    for key in [TAG_METHOD, TAG_METHOD_OTEL] {
+    for key in [TAG_METHOD_OTEL, TAG_METHOD] {
         if let Some(value) = span.get_meta(key) {
             if !value.is_empty() {
                 return value;
@@ -191,8 +197,8 @@ fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
 /// so a stray `http.status_code: ""` cannot hide a valid `http.response.status_code`.
 fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
     for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(value) = span.get_metrics(key) {
-            return value as u32;
+        if let Some(code) = span.get_metrics(key).and_then(float_to_u32) {
+            return code;
         }
 
         if let Some(code) = span.get_meta(key).and_then(|value| value.parse().ok()) {
@@ -836,6 +842,18 @@ mod tests {
     }
 
     #[test]
+    fn test_float_to_u32_rejects_malformed_values() {
+        assert_eq!(float_to_u32(0.0), Some(0));
+        assert_eq!(float_to_u32(500.0), Some(500));
+        assert_eq!(float_to_u32(u32::MAX as f64), Some(u32::MAX));
+        assert_eq!(float_to_u32(f64::NAN), None);
+        assert_eq!(float_to_u32(f64::INFINITY), None);
+        assert_eq!(float_to_u32(-1.0), None);
+        assert_eq!(float_to_u32(1.5), None);
+        assert_eq!(float_to_u32((u32::MAX as f64) + 1.0), None);
+    }
+
+    #[test]
     fn test_aggregation_key_from_span() {
         let test_cases: Vec<(SpanBytes, OwnedAggregationKey)> = vec![
             // Root span
@@ -853,6 +871,29 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // A malformed numeric status must not shadow a valid fallback under the OTel name.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.response.status_code".into(), "418".into())].into(),
+                    metrics: vec![("http.status_code".into(), f64::NAN)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
                     ..Default::default()
                 }
                 .into_key(),
@@ -1141,6 +1182,29 @@ mod tests {
                 }
                 .into_key(),
             ),
+            // A malformed numeric value must not shadow valid metadata under the same key.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.status_code".into(), "500".into())].into(),
+                    metrics: vec![("http.status_code".into(), f64::NAN)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 500,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
             // An empty Datadog method counts as absent, so it cannot shadow the OTel name
             (
                 SpanBytes {
@@ -1167,8 +1231,8 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Both names present: the Datadog name wins, so a tracer that emits both during a
-            // migration cannot change the dimension it already reports
+            // Both names present: status follows Datadog-first precedence while method follows
+            // the Agent semantic registry and prefers the current OTel name.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1192,7 +1256,7 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     http_status_code: 500,
-                    http_method: "GET".into(),
+                    http_method: "POST".into(),
                     ..Default::default()
                 }
                 .into_key(),
