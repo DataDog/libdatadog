@@ -36,7 +36,7 @@ bytes = "1.4"
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
-libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
+libdd-ddsketch = { version = "1.1.1", path = "../libdd-ddsketch" }
 web-time = "1" # cross-platform Instant/SystemTime; shims via js-sys on wasm32
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
