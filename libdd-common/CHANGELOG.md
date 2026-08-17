@@ -2,6 +2,15 @@
 
 
 
+## [5.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.1..libdd-common-v5.2.0) - 2026-08-17
+
+### Added
+
+- Allocation-free tag validation and parsing ([#2329](https://github.com/datadog/libdatadog/issues/2329)) - ([acec90d](https://github.com/datadog/libdatadog/commit/acec90d515ddd2dd1b669cec1b04ef45d7c82b92))
+- Agentless RC fetcher ([#2112](https://github.com/datadog/libdatadog/issues/2112)) - ([20a3f4d](https://github.com/datadog/libdatadog/commit/20a3f4d67bba02004554be4c4e32a27ebe574fa7))
+
+
+
 ## [5.1.1](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.0..libdd-common-v5.1.1) - 2026-08-07
 
 ### Added
