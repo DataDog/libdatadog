@@ -70,7 +70,10 @@ fn generate_protobuf() {
     config.field_attribute("ContainerDebug.wasBuffered", "#[serde(default)]");
     config.field_attribute("ContainerDebug.bufferMs", "#[serde(default)]");
     config.field_attribute("ContainerDebug.bufferEvictionReason", "#[serde(default)]");
-    config.field_attribute("ContainerDebug.bufferEvictionReasonRef", "#[serde(default)]");
+    config.field_attribute(
+        "ContainerDebug.bufferEvictionReasonRef",
+        "#[serde(default)]",
+    );
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
