@@ -10,7 +10,7 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_ipc::platform::{
+use libdd_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
 use datadog_live_debugger::debugger_defs::DebuggerPayload;

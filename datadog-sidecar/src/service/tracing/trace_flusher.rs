@@ -3,7 +3,7 @@
 
 use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
-use datadog_ipc::platform::NamedShmHandle;
+use libdd_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};

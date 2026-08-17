@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::primary_sidecar_identifier;
-use datadog_ipc::rate_limiter::ShmLimiterMemory;
+use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use http::uri::PathAndQuery;
 use libdd_common::Endpoint;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;

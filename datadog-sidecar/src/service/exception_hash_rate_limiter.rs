@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::primary_sidecar_identifier;
-use datadog_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
 use libdd_common::{rate_limiter::Limiter, MutexExt};
 use std::ffi::CString;
 use std::io;

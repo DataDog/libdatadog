@@ -7,8 +7,8 @@ use super::{
 };
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::SidecarInterfaceChannel;
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
@@ -464,7 +464,7 @@ pub fn add_span_to_concentrator(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
-    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    span: libdd_ipc::shm_stats::OwnedShmSpanInput,
 ) -> io::Result<()> {
     lock_sender(transport)?.add_span_to_concentrator(env, version, span);
     Ok(())
@@ -496,7 +496,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use crate::service::blocking::SidecarTransport;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use tempfile::tempdir;
 

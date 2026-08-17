@@ -12,7 +12,7 @@
 use crate::service::RuntimeMetadata;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::shm_stats::{
+use libdd_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
 use futures::{future::join_all, TryFutureExt};

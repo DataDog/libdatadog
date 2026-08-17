@@ -3,8 +3,8 @@
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
-use datadog_ipc::platform::PIPE_PATH;
-use datadog_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
+use libdd_ipc::platform::PIPE_PATH;
+use libdd_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
 use libc::getpid;
 use std::io;
 
@@ -71,7 +71,7 @@ pub type DefaultLiason = NamedPipeLiaison;
 #[cfg(test)]
 mod tests {
     use super::Liaison;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     #[test]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
@@ -99,7 +99,7 @@ mod tests {
             let srv: SeqpacketConn = srv_thread.join().unwrap();
             client.send_raw_blocking(&mut vec![255], &[]).unwrap();
             let mut buf =
-                vec![0u8; datadog_ipc::max_message_size() + datadog_ipc::HANDLE_SUFFIX_SIZE];
+                vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
             assert_eq!(buf[0], 255);
