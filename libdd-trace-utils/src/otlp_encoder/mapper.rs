@@ -90,6 +90,22 @@ fn chunk_trace_id_high<T: TraceData>(chunk: &[Span<T>]) -> u64 {
         .unwrap_or(0)
 }
 
+/// Resolve the chunk's trace-level sampling decision, preferring the local root when present.
+fn chunk_sampling_flags<T: TraceData>(chunk: &[Span<T>]) -> u32 {
+    let valid_priority = |span: &Span<T>| {
+        span.metrics
+            .get("_sampling_priority_v1")
+            .copied()
+            .filter(|priority| priority.is_finite())
+    };
+    let priority = chunk
+        .iter()
+        .find(|span| span.parent_id == 0)
+        .and_then(valid_priority)
+        .or_else(|| chunk.iter().find_map(valid_priority));
+    priority.is_some_and(|priority| priority >= 1.0) as u32
+}
+
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
 fn tag_to_otlp_kind(t: &str) -> i32 {
     // Case-insensitive match without allocating: these are ASCII keywords, so
@@ -312,11 +328,15 @@ pub fn map_traces_to_otlp<T: TraceData>(
         // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
         // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
         let high = chunk_trace_id_high(chunk);
+        // Sampling priority is a trace-level decision but may be attached to only one span in the
+        // chunk. OTLP requires the sampled flag on every span in the trace.
+        let flags = chunk_sampling_flags(chunk);
         for span in chunk {
             all_spans.push(map_span(
                 span,
                 &resource_info.service,
                 high,
+                flags,
                 otel_trace_semantics_enabled,
             ));
         }
@@ -392,6 +412,7 @@ fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
     chunk_trace_id_high: u64,
+    flags: u32,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoSpan {
     // Reconstruct the full 128-bit trace ID. The caller resolves the high 64 bits once per
@@ -406,11 +427,6 @@ fn map_span<T: TraceData>(
     let (attributes, dropped_attributes_count) =
         collect_span_attributes(span, resource_service, otel_trace_semantics_enabled);
     let (code, message) = span_status(span);
-    let flags = span
-        .metrics
-        .get("_sampling_priority_v1")
-        .map(|p| (*p >= 1.0) as u32)
-        .unwrap_or(0);
     let trace_state = span
         .meta
         .get("tracestate")
@@ -1336,5 +1352,59 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.flags, 0);
+    }
+
+    #[test]
+    fn sampled_trace_sets_sampled_flag_on_every_span() {
+        let resource_info = OtlpResourceInfo::default();
+        let root: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let mut child: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 3,
+            parent_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("child"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        child.metrics.insert("_sampling_priority_v1".into(), 1.0);
+        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, false);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert!(spans.iter().all(|span| span.flags == 1));
+    }
+
+    #[test]
+    fn root_sampling_priority_wins_over_conflicting_child_priority() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut root: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root.metrics.insert("_sampling_priority_v1".into(), -1.0);
+        let mut child: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 3,
+            parent_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("child"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        child.metrics.insert("_sampling_priority_v1".into(), 1.0);
+
+        let req = map_traces_to_otlp(vec![vec![child, root]], &resource_info, false);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert!(spans.iter().all(|span| span.flags == 0));
     }
 }

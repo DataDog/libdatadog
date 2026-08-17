@@ -3,8 +3,11 @@
 #[cfg(test)]
 mod otlp_export_tests {
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
-    use libdd_trace_utils::test_utils::create_test_json_span;
+    use libdd_data_pipeline::trace_exporter::{
+        TraceExporterBuilder, TraceExporterInputFormat, TraceExporterOutputFormat,
+    };
+    use libdd_trace_utils::span::v05::dict::SharedDict;
+    use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
     use tokio::task;
 
@@ -13,11 +16,26 @@ mod otlp_export_tests {
         span_1["name"] = json!(format!("{name_prefix}_01"));
         span_1["metrics"] = json!({
             "_dd_metric1": 1.0,
-            "_dd_metric2": 2.0
+            "_dd_metric2": 2.0,
+            "_sampling_priority_v1": 1.0
         });
         let mut span_2 = create_test_json_span(1234, 12343, 12341, 1, false);
         span_2["name"] = json!(format!("{name_prefix}_02"));
         rmp_serde::to_vec_named(&vec![vec![span_1, span_2]]).unwrap()
+    }
+
+    fn get_v05_sampled_trace_payload() -> Vec<u8> {
+        let mut dict = SharedDict::default();
+        let span = create_test_v05_span(
+            1234,
+            12342,
+            0,
+            1,
+            true,
+            &mut dict,
+            Some(vec![("_sampling_priority_v1".to_string(), 1.0)]),
+        );
+        rmp_serde::to_vec(&(dict, vec![vec![span]])).unwrap()
     }
 
     #[cfg_attr(miri, ignore)]
@@ -46,6 +64,16 @@ mod otlp_export_tests {
                             }]
                         })
                         .to_string(),
+                    )
+                    .json_body_includes(
+                        serde_json::json!({
+                            "resourceSpans": [{
+                                "scopeSpans": [{
+                                    "spans": [{"flags": 1}]
+                                }]
+                            }]
+                        })
+                        .to_string(),
                     );
                 then.status(200).body("{}");
             })
@@ -70,6 +98,48 @@ mod otlp_export_tests {
                 .expect("Unable to build TraceExporter");
             let data = get_v04_trace_snapshot_test_payload("test_otlp_export");
             let response = trace_exporter.send(data.as_ref());
+            assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
+        })
+        .await;
+
+        assert!(task_result.is_ok());
+        assert_eq!(mock.calls_async().await, 1);
+        mock.delete();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn otlp_v05_export_sets_sampled_flag() {
+        use httpmock::MockServer;
+
+        let server = MockServer::start_async().await;
+        let mut mock = server
+            .mock_async(|when, then| {
+                when.method("POST").path("/v1/traces").json_body_includes(
+                    serde_json::json!({
+                        "resourceSpans": [{
+                            "scopeSpans": [{
+                                "spans": [{"flags": 1}]
+                            }]
+                        }]
+                    })
+                    .to_string(),
+                );
+                then.status(200).body("{}");
+            })
+            .await;
+
+        let otlp_endpoint = format!("http://localhost:{}/v1/traces", server.port());
+        let task_result = task::spawn_blocking(move || {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .set_otlp_endpoint(&otlp_endpoint)
+                .set_input_format(TraceExporterInputFormat::V05)
+                .set_output_format(TraceExporterOutputFormat::V05);
+            let trace_exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("Unable to build TraceExporter");
+            let response = trace_exporter.send(&get_v05_sampled_trace_payload());
             assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
         })
         .await;
