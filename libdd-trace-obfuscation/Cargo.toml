@@ -18,9 +18,9 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 percent-encoding = "2.1"
 log = "0.4"
 fluent-uri = "0.4.1"
-libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "9.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "10.1.0", path = "../libdd-trace-utils", default-features = false }
+libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 
 [features]
 default = ["https"]
@@ -30,7 +30,7 @@ regex-lite = ["libdd-common/regex-lite"]
 
 [dev-dependencies]
 duplicate = "0.4.1"
-criterion = { version = "0.5", features = [ "csv_output"] }
+criterion = { workspace = true, features = ["csv_output"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lib]

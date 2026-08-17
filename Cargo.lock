@@ -397,10 +397,10 @@ dependencies = [
  "axum-core",
  "bytes",
  "futures-util",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
- "itoa",
+ "itoa 1.0.11",
  "matchit",
  "memchr",
  "mime",
@@ -421,7 +421,7 @@ checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
 dependencies = [
  "bytes",
  "futures-core",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
  "mime",
@@ -715,7 +715,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1246,7 +1246,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac574ff4d437a7b5ad237ef331c17ccca63c46479e5b5453eb8e10bb99a759fe"
 dependencies = [
  "csv-core",
- "itoa",
+ "itoa 1.0.11",
  "ryu",
  "serde",
 ]
@@ -1370,53 +1370,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
-name = "datadog-ffe"
-version = "1.0.0"
-dependencies = [
- "chrono",
- "derive_more",
- "faststr",
- "libdd-common",
- "libdd-remote-config",
- "libdd-trace-protobuf",
- "log",
- "lru",
- "md5",
- "prost",
- "pyo3",
- "semver",
- "serde",
- "serde-bool",
- "serde_json",
- "serde_with",
- "thiserror 2.0.17",
- "url",
-]
-
-[[package]]
-name = "datadog-ffe-ffi"
-version = "1.0.2"
-dependencies = [
- "anyhow",
- "build_common",
- "datadog-ffe",
- "function_name",
- "libdd-common-ffi",
-]
-
-[[package]]
-name = "datadog-ffe-test-suite"
-version = "37.0.0"
-dependencies = [
- "chrono",
- "criterion",
- "datadog-ffe",
- "env_logger",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "datadog-ipc"
 version = "0.1.0"
 dependencies = [
@@ -1467,7 +1420,7 @@ dependencies = [
  "bytes",
  "constcat",
  "futures",
- "http",
+ "http 1.1.0",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
@@ -1477,6 +1430,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "strum",
+ "strum_macros",
  "sys-info",
  "tokio",
  "uuid",
@@ -1500,7 +1455,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1521,13 +1476,12 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-ffe",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "httpmock",
  "libc",
@@ -1539,6 +1493,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-ffe",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1579,7 +1534,7 @@ dependencies = [
  "datadog-ipc",
  "datadog-live-debugger",
  "datadog-sidecar",
- "http",
+ "http 1.1.0",
  "libc",
  "libdd-common",
  "libdd-common-ffi",
@@ -1655,6 +1610,15 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "derp"
+version = "0.0.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c9b84cfd9b6fa437e498215e5625e9e3ae3bf9bb54d623028a181c40820db169"
+dependencies = [
+ "untrusted 0.7.1",
 ]
 
 [[package]]
@@ -1955,9 +1919,9 @@ checksum = "673464e1e314dd67a0fd9544abc99e8eb28d0c7e3b69b033bcff9b2d00b87333"
 
 [[package]]
 name = "futures"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -1970,9 +1934,9 @@ dependencies = [
 
 [[package]]
 name = "futures-channel"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
+checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -1980,15 +1944,15 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
 
 [[package]]
 name = "futures-executor"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d"
+checksum = "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
 dependencies = [
  "futures-core",
  "futures-task",
@@ -1997,9 +1961,9 @@ dependencies = [
 
 [[package]]
 name = "futures-io"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
+checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "futures-lite"
@@ -2016,9 +1980,9 @@ dependencies = [
 
 [[package]]
 name = "futures-macro"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2027,15 +1991,15 @@ dependencies = [
 
 [[package]]
 name = "futures-sink"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893"
+checksum = "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
 
 [[package]]
 name = "futures-task"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
+checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
 
 [[package]]
 name = "futures-timer"
@@ -2045,9 +2009,9 @@ checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
 
 [[package]]
 name = "futures-util"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
+checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2057,6 +2021,7 @@ dependencies = [
  "futures-task",
  "memchr",
  "pin-project-lite",
+ "pin-utils",
  "slab",
 ]
 
@@ -2161,7 +2126,7 @@ dependencies = [
  "fnv",
  "futures-core",
  "futures-sink",
- "http",
+ "http 1.1.0",
  "indexmap 2.12.1",
  "slab",
  "tokio",
@@ -2249,7 +2214,7 @@ dependencies = [
  "base64 0.21.7",
  "bytes",
  "headers-core",
- "http",
+ "http 1.1.0",
  "httpdate",
  "mime",
  "sha1",
@@ -2261,7 +2226,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
 dependencies = [
- "http",
+ "http 1.1.0",
 ]
 
 [[package]]
@@ -2342,13 +2307,24 @@ dependencies = [
 
 [[package]]
 name = "http"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "601cbb57e577e2f5ef5be8e7b83f0f63994f25aa94d673e54a92d5c516d101f1"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa 1.0.11",
+]
+
+[[package]]
+name = "http"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21b9ddb458710bc376481b842f5da65cdf31522de232c1ca8146abce2a358258"
 dependencies = [
  "bytes",
  "fnv",
- "itoa",
+ "itoa 1.0.11",
 ]
 
 [[package]]
@@ -2358,7 +2334,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
 dependencies = [
  "bytes",
- "http",
+ "http 1.1.0",
 ]
 
 [[package]]
@@ -2369,7 +2345,7 @@ checksum = "793429d76616a256bcb62c2a2ec2bed781c8307e797e2598c50010f2bee2544f"
 dependencies = [
  "bytes",
  "futures-util",
- "http",
+ "http 1.1.0",
  "http-body",
  "pin-project-lite",
 ]
@@ -2403,7 +2379,7 @@ dependencies = [
  "futures-timer",
  "futures-util",
  "headers",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2438,11 +2414,11 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "h2",
- "http",
+ "http 1.1.0",
  "http-body",
  "httparse",
  "httpdate",
- "itoa",
+ "itoa 1.0.11",
  "pin-project-lite",
  "smallvec",
  "tokio",
@@ -2455,7 +2431,7 @@ version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
 dependencies = [
- "http",
+ "http 1.1.0",
  "hyper",
  "hyper-util",
  "rustls",
@@ -2490,7 +2466,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "http",
+ "http 1.1.0",
  "http-body",
  "hyper",
  "ipnet",
@@ -2761,6 +2737,12 @@ dependencies = [
 
 [[package]]
 name = "itoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71991ff56294aa922b450139ee08b3bfc70982c6b2c7562771375cf73542dd4"
+
+[[package]]
+name = "itoa"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"
@@ -2833,13 +2815,13 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.178"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdd-agent-client"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2867,23 +2849,23 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "futures-channel",
  "futures-util",
- "http",
+ "http 1.1.0",
  "thiserror 1.0.68",
 ]
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
@@ -2893,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.1.0"
+version = "5.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2904,7 +2886,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hex",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
  "httparse",
@@ -2918,6 +2900,7 @@ dependencies = [
  "multer",
  "nix 0.29.0",
  "pin-project",
+ "proptest",
  "rand 0.8.5",
  "regex",
  "regex-lite",
@@ -2938,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2965,11 +2948,12 @@ dependencies = [
  "cxx-build",
  "errno",
  "goblin",
- "http",
+ "http 1.1.0",
  "libc",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-gotter",
  "libdd-libunwind-sys",
  "libdd-telemetry",
  "nix 0.29.0",
@@ -2993,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3024,7 +3008,7 @@ dependencies = [
  "either",
  "futures",
  "getrandom 0.2.15",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "httpmock",
  "libdd-capabilities",
@@ -3054,11 +3038,12 @@ dependencies = [
  "tracing",
  "uuid",
  "web-time",
+ "zstd",
 ]
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3068,6 +3053,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-utils",
+ "rmp",
  "rmp-serde",
  "tokio-util",
  "tracing",
@@ -3087,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3101,7 +3087,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "cadence",
- "http",
+ "http 1.1.0",
  "libdd-common",
  "libdd-shared-runtime",
  "serde",
@@ -3110,8 +3096,69 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-ffe"
+version = "1.0.0"
+dependencies = [
+ "bincode",
+ "chrono",
+ "derive_more",
+ "faststr",
+ "http 1.1.0",
+ "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
+ "libdd-common",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
+ "log",
+ "lru",
+ "md5",
+ "prost",
+ "pyo3",
+ "semver",
+ "serde",
+ "serde-bool",
+ "serde_json",
+ "serde_with",
+ "thiserror 2.0.17",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "libdd-ffe-ffi"
+version = "1.0.2"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libdd-common-ffi",
+ "libdd-ffe",
+]
+
+[[package]]
+name = "libdd-ffe-test-suite"
+version = "41.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "env_logger",
+ "libdd-ffe",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "libdd-gotter"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
+]
+
+[[package]]
 name = "libdd-http-client"
-version = "37.0.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3182,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3226,7 +3273,7 @@ dependencies = [
  "cxx-build",
  "futures",
  "hashbrown 0.16.1",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "httparse",
  "indexmap 2.12.1",
@@ -3261,7 +3308,6 @@ dependencies = [
  "allocator-api2",
  "anyhow",
  "build_common",
- "datadog-ffe-ffi",
  "function_name",
  "futures",
  "http-body-util",
@@ -3272,6 +3318,7 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
+ "libdd-ffe-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-otel-thread-ctx-ffi",
@@ -3297,13 +3344,14 @@ name = "libdd-profiling-heap-gotter"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "libdd-gotter",
  "libdd-profiling-heap-sampler",
  "serial_test",
 ]
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3335,15 +3383,16 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bytes",
+ "chrono",
  "futures",
  "futures-util",
  "hashbrown 0.15.1",
- "http",
+ "http 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -3353,6 +3402,8 @@ dependencies = [
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "manual_future",
+ "prost",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "serde_with",
@@ -3364,12 +3415,13 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tuf",
  "uuid",
 ]
 
 [[package]]
 name = "libdd-sampling"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3397,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3415,7 +3467,7 @@ dependencies = [
  "futures",
  "getrandom 0.2.15",
  "hashbrown 0.15.1",
- "http",
+ "http 1.1.0",
  "httpmock",
  "libc",
  "libdd-capabilities",
@@ -3425,6 +3477,8 @@ dependencies = [
  "libdd-shared-runtime",
  "serde",
  "serde_json",
+ "strum",
+ "strum_macros",
  "sys-info",
  "tokio",
  "tokio-util",
@@ -3437,7 +3491,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3453,7 +3507,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3467,7 +3521,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3496,7 +3550,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "bolero",
  "prost",
@@ -3518,7 +3572,7 @@ dependencies = [
  "criterion",
  "futures",
  "hashbrown 0.15.1",
- "http",
+ "http 1.1.0",
  "httpmock",
  "libdd-capabilities",
  "libdd-capabilities-impl",
@@ -3541,7 +3595,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "9.0.0"
+version = "10.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3554,13 +3608,13 @@ dependencies = [
  "futures",
  "getrandom 0.2.15",
  "hex",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
- "itoa",
+ "itoa 1.0.11",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
@@ -3587,11 +3641,11 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
- "http",
+ "http 1.1.0",
  "httpmock",
  "libdd-capabilities-impl",
  "libdd-common",
@@ -3868,7 +3922,7 @@ dependencies = [
  "bytes",
  "encoding_rs",
  "futures-util",
- "http",
+ "http 1.1.0",
  "httparse",
  "memchr",
  "mime",
@@ -4866,7 +4920,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "hickory-resolver",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
  "hyper",
@@ -4909,7 +4963,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.15",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -5073,7 +5127,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -5326,7 +5380,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d726bfaff4b320266d395898905d0eba0345aae23b54aee3a737e260fd46db03"
 dependencies = [
  "indexmap 2.12.1",
- "itoa",
+ "itoa 1.0.11",
  "memchr",
  "ryu",
  "serde",
@@ -5388,7 +5442,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
 dependencies = [
  "indexmap 2.12.1",
- "itoa",
+ "itoa 1.0.11",
  "ryu",
  "serde",
  "unsafe-libyaml",
@@ -5647,7 +5701,7 @@ version = "2.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fe17b8deb33a9441280b4266c2d257e166bafbaea6e66b4b34ca139c91766d9"
 dependencies = [
- "itoa",
+ "itoa 1.0.11",
  "ryu",
  "sval",
 ]
@@ -5658,7 +5712,7 @@ version = "2.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "854addb048a5bafb1f496c98e0ab5b9b581c3843f03ca07c034ae110d3b7c623"
 dependencies = [
- "itoa",
+ "itoa 1.0.11",
  "ryu",
  "sval",
 ]
@@ -5720,7 +5774,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5948,7 +6002,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7619e19bc266e0f9c5e6686659d394bc57973859340060a69221e57dbc0c40"
 dependencies = [
  "deranged",
- "itoa",
+ "itoa 1.0.11",
  "num-conv",
  "powerfmt",
  "serde",
@@ -6137,7 +6191,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "h2",
- "http",
+ "http 1.1.0",
  "http-body",
  "http-body-util",
  "hyper",
@@ -6168,7 +6222,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "37.0.0"
+version = "41.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
@@ -6208,7 +6262,7 @@ dependencies = [
  "bitflags",
  "bytes",
  "futures-util",
- "http",
+ "http 1.1.0",
  "http-body",
  "iri-string",
  "pin-project-lite",
@@ -6322,6 +6376,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "tuf"
+version = "0.3.0-beta10"
+source = "git+https://github.com/DataDog/rust-tuf/?rev=eb129ccad320b11e8bf99d2f0ff2c415a0795ccb#eb129ccad320b11e8bf99d2f0ff2c415a0795ccb"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "derp",
+ "futures-io",
+ "futures-util",
+ "http 0.2.12",
+ "itoa 0.4.8",
+ "log",
+ "percent-encoding",
+ "ring",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.68",
+ "untrusted 0.7.1",
+ "url",
+]
+
+[[package]]
 name = "twox-hash"
 version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6378,6 +6456,12 @@ name = "unsafe-libyaml"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"
@@ -6481,7 +6565,7 @@ checksum = "9170e001f458781e92711d2ad666110f153e4e50bfd5cbd02db6547625714187"
 dependencies = [
  "float-cmp",
  "halfbrown",
- "itoa",
+ "itoa 1.0.11",
  "ryu",
 ]
 

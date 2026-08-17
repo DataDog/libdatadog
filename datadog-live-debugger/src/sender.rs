@@ -218,7 +218,19 @@ pub fn agent_info_supports_debugger_v2_endpoint(info: &AgentInfoStruct) -> bool 
         .unwrap_or(false)
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 #[repr(C)]
 pub enum DebuggerType {
     Diagnostics,
@@ -240,6 +252,32 @@ impl DebuggerType {
         }
     }
 }
+
+/// The agent or intake answered with a >= 400 status.
+///
+/// Carried inside the [`anyhow::Error`] returned by [`send`], [`send_symdb`] and
+/// [`PayloadSender::finish`], so callers can `downcast_ref` to recover the status
+/// code and tell an unsupported endpoint (e.g. 404 from an agent that does not
+/// proxy `/debugger/v2/input`) apart from a transport failure.
+#[derive(Debug)]
+pub struct PayloadRejected {
+    pub status: u16,
+    pub body: String,
+    /// The payload flavour, as it appears in the error message ("debugger" or "symdb").
+    pub kind: &'static str,
+}
+
+impl Display for PayloadRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Server did not accept {} payload ({}): {}",
+            self.kind, self.status, self.body
+        )
+    }
+}
+
+impl std::error::Error for PayloadRejected {}
 
 pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     #[allow(clippy::unwrap_used)]
@@ -267,12 +305,22 @@ pub fn generate_tags(
     percent_encode(tags.as_bytes(), CONTROLS).to_string()
 }
 
+/// Owns the spawned request task and aborts it when dropped.
+struct AbortOnDrop(JoinHandle<anyhow::Result<http::Response<Bytes>>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        // A no-op once the task has completed, so the success path is unaffected.
+        self.0.abort();
+    }
+}
+
 #[derive(Default)]
 enum SenderFuture {
     #[default]
     Error,
     Outstanding(ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<http::Response<Bytes>>>),
+    Submitted(AbortOnDrop),
 }
 
 pub struct PayloadSender {
@@ -284,7 +332,7 @@ pub struct PayloadSender {
 }
 
 const BOUNDARY: &str = "------------------------44617461646f67";
-const BOUNDARY_LINE: &str = concat!("--", BOUNDARY, "\r\n");
+const BOUNDARY_LINE: &str = concat!("--", BOUNDARY);
 
 impl PayloadSender {
     pub fn new(
@@ -388,18 +436,19 @@ impl PayloadSender {
             SenderFuture::Outstanding(future) => {
                 if self.needs_boundary {
                     let header = concat!(
-                        BOUNDARY_LINE,
-                        "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
-                        "Content-Type: application/json\r\n",
-                        "\r\n",
+                    BOUNDARY_LINE,
+                    "\r\n",
+                    "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
+                    "Content-Type: application/json\r\n",
+                    "\r\n",
                     );
                     self.sender.send_chunk(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(async move {
+                self.future = SenderFuture::Submitted(AbortOnDrop(tokio::spawn(async move {
                     let resp = future.await?;
                     Ok(resp)
-                }));
+                })));
                 true
             }
             future => {
@@ -425,7 +474,7 @@ impl PayloadSender {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
-                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE, "--\r\n").into())
                     .await?;
             } else {
                 self.sender.send_chunk(Bytes::from_static(b"]")).await?;
@@ -434,24 +483,25 @@ impl PayloadSender {
             drop(self.sender);
             // Once the body is fully sent, bound the wait for the response headers and (if
             // needed) the response body under a single timeout - a slow/stalled server must
-            // not be able to hang this indefinitely. Abort the spawned task on timeout so the
-            // underlying request is actually cancelled instead of left running detached.
+            // not be able to hang this indefinitely. Returning here drops `future`, whose
+            // `AbortOnDrop` cancels the underlying request rather than detaching it.
             let response =
-                match tokio::time::timeout(Duration::from_millis(self.timeout_ms), &mut future)
+                match tokio::time::timeout(Duration::from_millis(self.timeout_ms), &mut future.0)
                     .await
                 {
                     Ok(joined) => joined??,
-                    Err(_) => {
-                        future.abort();
-                        return Err(anyhow::anyhow!("debugger payload request timed out"));
-                    }
+                    Err(_) => return Err(anyhow::anyhow!("debugger payload request timed out")),
                 };
 
             let status = response.status().as_u16();
             if status >= 400 {
                 let response_body =
                     String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
-                anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
+                anyhow::bail!(PayloadRejected {
+                    status,
+                    body: response_body,
+                    kind: "debugger",
+                });
             }
             Ok(self.payloads)
         } else {
@@ -615,7 +665,11 @@ async fn send_symdb_to_endpoint<C: HttpClientCapability>(
 
     if status >= 400 {
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-        anyhow::bail!("Server did not accept symdb payload ({status}): {response_body}");
+        anyhow::bail!(PayloadRejected {
+            status,
+            body: response_body,
+            kind: "symdb",
+        });
     }
     Ok(())
 }
@@ -627,7 +681,10 @@ pub fn generate_new_id() -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};
     use std::borrow::Cow;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn agent_endpoint() -> Endpoint {
         Endpoint::from_slice("http://localhost:8126")
@@ -738,6 +795,122 @@ mod tests {
         for endpoint in diagnostics {
             assert_eq!(endpoint.url.path(), "/api/v2/debugger");
         }
+    }
+
+    struct SetOnDrop(Arc<AtomicBool>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// A response that never arrives, holding `guard` for as long as it lives.
+    ///
+    /// The guard is captured by move rather than constructed in the body, because an
+    /// async block does not run its body until first polled: a task aborted before
+    /// its first poll would otherwise never arm the observer.
+    async fn stalled_response(guard: SetOnDrop) -> Result<http::Response<Bytes>, HttpError> {
+        let _guard = guard;
+        future::pending::<()>().await;
+        unreachable!()
+    }
+
+    /// Accepts and discards body chunks, so the test's stalled response future is the
+    /// only thing the spawned task ever waits on.
+    struct DiscardingBodySender;
+
+    impl StreamingBodySender for DiscardingBodySender {
+        fn send_chunk(&mut self, _data: Bytes) -> ChunkFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// A client whose requests never complete, so a test can observe what happens to
+    /// the in-flight task once the sender goes away. The flag is set when the
+    /// response future is dropped, which happens only if the spawned task was
+    /// aborted rather than detached.
+    ///
+    /// `request_streamed` is overridden rather than relying on the default
+    /// implementation: that one parks on the body channel until the `BodySender` is
+    /// dropped, so a task abandoned before `finish()` would be cancelled before it
+    /// ever reached `request()` and the flag would never be armed.
+    #[derive(Clone, Debug)]
+    struct StalledClient(Arc<AtomicBool>);
+
+    impl HttpClientCapability for StalledClient {
+        fn new_client() -> Self {
+            Self(Arc::new(AtomicBool::new(false)))
+        }
+
+        fn new_without_connection_pooling() -> Self {
+            Self::new_client()
+        }
+
+        fn request(
+            &self,
+            _req: http::Request<Bytes>,
+        ) -> impl std::future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
+        {
+            stalled_response(SetOnDrop(self.0.clone()))
+        }
+
+        fn request_streamed(&self, _req: http::Request<()>) -> (BodySender, ResponseFuture) {
+            (
+                Box::new(DiscardingBodySender),
+                Box::pin(stalled_response(SetOnDrop(self.0.clone()))),
+            )
+        }
+    }
+
+    #[cfg_attr(miri, ignore)] // stalled async request cancellation is prohibitively slow under Miri
+    #[tokio::test]
+    async fn test_dropping_payload_sender_aborts_in_flight_request() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        let mut config = Config::default();
+        config.set_endpoint(agent_endpoint()).unwrap();
+
+        let mut sender = PayloadSender::new_to_endpoint_with_client(
+            config.snapshots_endpoint.as_ref().unwrap(),
+            DebuggerType::Snapshots,
+            "",
+            StalledClient(cancelled.clone()),
+        )
+        .unwrap();
+
+        // Spawns the request task, which then never completes.
+        sender.append(b"[{}]").await.unwrap();
+
+        // Abandoning the sender (an enclosing timeout, a `select!`, a cancelled task)
+        // must cancel that request instead of leaving it running with its connection.
+        drop(sender);
+
+        for _ in 0..100 {
+            if cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        assert!(
+            cancelled.load(Ordering::SeqCst),
+            "in-flight request was detached instead of aborted"
+        );
+    }
+
+    #[test]
+    fn test_payload_rejected_display_is_downcastable() {
+        let err: anyhow::Error = anyhow::Error::from(PayloadRejected {
+            status: 404,
+            body: "Not Found".to_string(),
+            kind: "debugger",
+        });
+        assert_eq!(
+            err.to_string(),
+            "Server did not accept debugger payload (404): Not Found"
+        );
+        assert_eq!(err.downcast_ref::<PayloadRejected>().unwrap().status, 404);
     }
 
     #[test]

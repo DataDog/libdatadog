@@ -24,10 +24,11 @@ live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 test-support = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
+libc.workspace = true
+libdd-gotter = { version = "0.1.0", path = "../libdd-gotter" }
 libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-libc = "0.2"
+libc.workspace = true
 libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 serial_test = "3.2"

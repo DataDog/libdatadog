@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod trace_utils;
+pub mod trace_utils_v1;
 pub mod v04;
 pub mod v05;
 pub mod v1;
@@ -18,6 +19,20 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
+
+/// A `SpanLink`'s `flags` field reserves bit 31 to mean "a value was explicitly set", separate
+/// from the sampling decision carried in the low bits. The sentinel bit distinguishes
+/// `flags == 0` (never set) from an explicit decision of `0`, for example a dropped context.
+/// Without the sentinel, both cases look identical on the wire.
+///
+/// Every non-JSON wire format keeps this bit raw, except OTLP. The native v0.4 msgpack format
+/// (`msgpack_encoder::v04::span_v04`), the v1 msgpack format, and the native protobuf format
+/// (`libdd_trace_protobuf::pb::SpanLink`) all keep the sentinel raw in `flags`. Tracers already
+/// send the bit set in these formats. JSON formats and OTLP protobuf must mask this bit before
+/// they emit `flags`, because those consumers treat `flags` as the real W3C trace-flags value.
+/// The JSON formats are the v0.5 `_dd.span_links` dictionary, agentless JSON, and structured
+/// JSON logging.
+pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
 
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements

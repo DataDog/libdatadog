@@ -2,6 +2,20 @@
 
 
 
+## [4.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.0..libdd-trace-protobuf-v4.0.1) - 2026-08-07
+
+### Added
+
+- Implement additional metric tags in libdd-trace-stats ([#2170](https://github.com/datadog/libdatadog/issues/2170)) - ([63ecad5](https://github.com/datadog/libdatadog/commit/63ecad56152f675fb74761d60adf5a861dafb1e1))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.2..libdd-trace-protobuf-v4.0.0) - 2026-07-07
 
 ### Added

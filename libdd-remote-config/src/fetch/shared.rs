@@ -6,7 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
-use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -127,7 +127,7 @@ impl RunnersGeneration {
     }
 }
 
-pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability>
+pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -161,7 +161,8 @@ impl Add for RefcountingStorageStats {
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> Clone for RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> Clone
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -175,7 +176,7 @@ where
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -223,7 +224,8 @@ where
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> FileStorage for RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> FileStorage
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -268,7 +270,7 @@ impl SharedFetcher {
     /// On successful fetches on_fetch() is called with the new configuration.
     /// Should not be called more than once.
     #[allow(clippy::type_complexity)]
-    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability>(
+    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>(
         &self,
         storage: RefcountingStorage<S, C>,
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
@@ -276,7 +278,13 @@ impl SharedFetcher {
         S::StoredFile: RefcountedFile,
     {
         let state = storage.state.clone();
-        let mut fetcher = ConfigFetcher::new(storage, state);
+        let mut fetcher = match ConfigFetcher::new(storage, state).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("failed to create the fetcher: {:?}", e);
+                return;
+            }
+        };
 
         let mut opaque_state = ConfigClientState::default();
 
@@ -315,7 +323,9 @@ impl SharedFetcher {
             };
 
             match fetched {
-                Ok(None) => clean_inactive(), // nothing changed
+                Ok(None) => {
+                    clean_inactive();
+                }
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
@@ -350,6 +360,17 @@ impl SharedFetcher {
                 }
             }
 
+            if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
+                // Keep the run-loop interval in sync with the server-provided value.
+                // If the interval in nanoseconds is greater than u64::MAX, pick the max
+                // representable value. This is tolerable as u64::MAX nanoseconds
+                // still represents 35584 years.
+                self.interval.store(
+                    interval.as_nanos().min(u64::MAX as u128) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+
             select! {
                 _ = self.cancellation.cancelled() => { break; }
                 _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
@@ -378,7 +399,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::Target;
     use futures::future::join_all;
-    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use std::sync::{Arc, LazyLock};
 
     pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -439,7 +460,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             ),
         );
 
@@ -504,7 +525,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_without_connection_pooling(),
             ),
         );
 
