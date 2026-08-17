@@ -54,8 +54,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - name: diff pb.rs
+      - name: diff generated protobuf files
         working-directory: libdd-trace-protobuf
         run: |
           cargo build --features generate-protobuf
-          git diff --exit-code -- src/pb.rs
+          git diff --exit-code -- src/pb.rs src/pb.idx.rs
