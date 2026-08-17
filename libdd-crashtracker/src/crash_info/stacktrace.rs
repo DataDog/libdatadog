@@ -6,7 +6,10 @@ use crate::CachedElfResolvers;
 #[cfg(unix)]
 use blazesym::{
     normalize::Normalizer,
-    symbolize::{source::Source, Input, Symbolized, Symbolizer, TranslateFileOffset},
+    symbolize::{
+        source::{Elf, Source},
+        Input, Symbolized, Symbolizer, TranslateFileOffset,
+    },
     Pid,
 };
 
@@ -212,25 +215,50 @@ impl StackFrame {
     }
 
     pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
-        if let Some(ip) = &self.ip {
-            let ip = ip.trim_start_matches("0x");
-            let ip = u64::from_str_radix(ip, 16)?;
-            let input = Input::AbsAddr(ip);
-            match symbolizer.symbolize_single(src, input)? {
-                Symbolized::Sym(s) => {
-                    if let Some(c) = s.code_info {
-                        self.column = c.column.map(u32::from);
-                        self.file = Some(c.to_path().display().to_string());
-                        self.line = c.line;
-                    }
-                    self.function = Some(s.name.into_owned());
-                }
-                Symbolized::Unknown(reason) => {
-                    anyhow::bail!("Couldn't symbolize {ip}: {reason}");
+        let Some(ip) = self.ip.as_deref() else {
+            return Ok(());
+        };
+        let ip = u64::from_str_radix(ip.trim_start_matches("0x"), 16)?;
+
+        let mut symbolized = symbolizer.symbolize_single(src, Input::AbsAddr(ip));
+
+        // A process source needs /proc/<pid> to still exist. The crashing process can
+        // be gone by the time we symbolize (the sidecar receiver outlives it), so fall
+        // back to the ELF file and virtual offset that normalize_ip already recorded,
+        // which needs nothing from the live process.
+        if !matches!(symbolized, Ok(Symbolized::Sym(_))) {
+            if let Some((path, virt_offset)) = self.normalized_elf_location() {
+                let elf = Source::Elf(Elf::new(path));
+                let fallback = symbolizer.symbolize_single(&elf, Input::VirtOffset(virt_offset));
+                if matches!(fallback, Ok(Symbolized::Sym(_))) {
+                    symbolized = fallback;
                 }
             }
         }
+
+        match symbolized? {
+            Symbolized::Sym(s) => {
+                if let Some(c) = s.code_info {
+                    self.column = c.column.map(u32::from);
+                    self.file = Some(c.to_path().display().to_string());
+                    self.line = c.line;
+                }
+                self.function = Some(s.name.into_owned());
+            }
+            Symbolized::Unknown(reason) => {
+                anyhow::bail!("Couldn't symbolize {ip:#x}: {reason}");
+            }
+        }
         Ok(())
+    }
+
+    /// The ELF file and the virtual offset inside it, as recorded by `normalize_ip`.
+    fn normalized_elf_location(&self) -> Option<(&str, u64)> {
+        let path = self.path.as_deref()?;
+        let relative_address = self.relative_address.as_deref()?;
+        let virt_offset =
+            u64::from_str_radix(relative_address.trim_start_matches("0x"), 16).ok()?;
+        Some((path, virt_offset))
     }
 }
 
@@ -547,6 +575,47 @@ mod unix_test {
         let parent_dir = test_so.parent().unwrap();
         let c_file = parent_dir.join("libtest.c");
         assert_eq!(frame.file, Some(c_file.to_string_lossy().to_string()));
+    }
+
+    /// Symbolization must still work when the target process is gone, which happens
+    /// whenever the receiver outlives it. `normalize_ip` runs while the process is
+    /// alive, then `resolve_names` falls back to the recorded ELF file and offset.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_symbolization_after_process_exit() {
+        let test_so = get_tests_folder_path()
+            .expect("Failed to get the tests folder path")
+            .join("libtest.so")
+            .canonicalize()
+            .unwrap();
+
+        let libtest_so =
+            SharedLibrary::open(test_so.to_str().unwrap()).expect("Failed to open library");
+        let address = libtest_so.get_symbol_address("my_function").unwrap();
+        let mut frame = StackFrame::new();
+        frame.ip = Some(address);
+
+        let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+        frame
+            .normalize_ip(
+                &Normalizer::new(),
+                Pid::from(std::process::id()),
+                &mut CachedElfResolvers::new(&mut symbolizer),
+            )
+            .unwrap();
+
+        // A pid that cannot exist, standing in for a process that has already exited:
+        // pid_max caps live pids well below u32::MAX (2^22 at most on Linux), and
+        // Pid::from keeps the value as-is for anything non-zero, so this never resolves
+        // to a live process or to Pid::Slf.
+        let mut process = blazesym::symbolize::source::Process::new(Pid::from(u32::MAX));
+        process.map_files = false;
+        let src = blazesym::symbolize::source::Source::Process(process);
+        frame
+            .resolve_names(&src, &blazesym::symbolize::Symbolizer::new())
+            .unwrap();
+
+        assert_eq!(frame.function, Some("my_function".to_string()));
     }
 
     #[test]
