@@ -53,7 +53,10 @@ use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_utils::span::{
+    v04::{Span, SpanSlice},
+    TraceData,
+};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -402,19 +405,33 @@ impl<
             self.check_agent_info().await;
         }
 
-        let format: DeserInputFormat = self.input_format.into();
+        let traces = self.deserialize_traces(data, self.input_format.into())?;
 
+        let res = self.send_trace_chunks_inner(traces).await?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+        Ok(res)
+    }
+
+    fn deserialize_traces<'a>(
+        &self,
+        data: &'a [u8],
+        format: DeserInputFormat,
+    ) -> Result<Vec<Vec<SpanSlice<'a>>>, TraceExporterError> {
         let (traces, _) = match format {
             DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
             DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
         }
-        .map_err(|e| {
-            error!("Error deserializing trace from request body: {e}");
+        .map_err(|error| {
+            error!("Error deserializing trace from request body: {error}");
             self.emit_metric(
                 HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
                 None,
             );
-            TraceExporterError::Deserialization(e)
+            TraceExporterError::Deserialization(error)
         })?;
         debug!(
             trace_count = traces.len(),
@@ -424,14 +441,53 @@ impl<
             HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
         );
+        Ok(traces)
+    }
 
-        let res = self.send_trace_chunks_inner(traces).await?;
-        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
-            return Err(TraceExporterError::Agent(
-                error::AgentErrorKind::EmptyResponse,
-            ));
+    /// Send an already encoded v0.4 trace payload.
+    ///
+    /// The payload is forwarded without decoding when the exporter can preserve it exactly.
+    /// Configurations that consume or transform spans use the regular decoded path instead.
+    /// `chunk_count` must match the number of trace chunks in `data`.
+    pub async fn send_v04_payload_async(
+        &self,
+        data: Vec<u8>,
+        chunk_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if self.log_output.is_none() {
+            self.check_agent_info().await;
         }
-        Ok(res)
+
+        if !self.can_forward_v04_payload() {
+            let traces = self.deserialize_traces(&data, DeserInputFormat::V04)?;
+            return self.send_trace_chunks_inner(traces).await;
+        }
+
+        let header_tags: TracerHeaderTags = self.metadata.borrow().into();
+        let headers = self.serializer.build_traces_headers(
+            header_tags,
+            chunk_count,
+            self.agent_payload_response_version.as_ref(),
+        );
+        let endpoint = Endpoint {
+            url: TraceExporterOutputFormat::V04.add_path(&self.endpoint.url),
+            ..self.endpoint.clone()
+        };
+
+        self.send_traces_with_telemetry(&endpoint, data, headers, chunk_count)
+            .await
+    }
+
+    fn can_forward_v04_payload(&self) -> bool {
+        self.output_format == TraceExporterOutputFormat::V04
+            && self.log_output.is_none()
+            && self.agentless_config.is_none()
+            && self.otlp_config.is_none()
+            && matches!(
+                &**self.client_side_stats.status.load(),
+                StatsComputationStatus::Disabled
+            )
+            && self.trace_filterer.load().is_empty()
     }
 
     /// Check if agent info state has changed
@@ -1371,6 +1427,75 @@ mod tests {
         }
 
         builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_v04_payload_forwards_bytes_without_reserializing() {
+        let fake_agent = MockServer::start();
+        let traces = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"raw-payload").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let expected = data.clone();
+        let mock_traces = fake_agent.mock(move |when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "1")
+                .is_true(move |request| request.body_ref() == expected.as_slice());
+            then.status(200).body("{}");
+        });
+        let exporter = build_test_exporter(
+            fake_agent.url("/"),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+            false,
+        );
+
+        exporter
+            .shared_runtime
+            .block_on(exporter.send_v04_payload_async(data, 1))
+            .unwrap()
+            .unwrap();
+
+        mock_traces.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_v04_payload_decodes_when_output_requires_transformation() {
+        let fake_agent = MockServer::start();
+        let traces = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"transformed-payload").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let original = data.clone();
+        let mock_traces = fake_agent.mock(move |when, then| {
+            when.method(POST)
+                .path(V05_TRACES_ENDPOINT)
+                .is_true(move |request| request.body_ref() != original.as_slice());
+            then.status(200).body("{}");
+        });
+        let exporter = build_test_exporter(
+            fake_agent.url("/"),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V05,
+            false,
+            false,
+        );
+
+        exporter
+            .shared_runtime
+            .block_on(exporter.send_v04_payload_async(data, 1))
+            .unwrap()
+            .unwrap();
+
+        mock_traces.assert_calls(1);
     }
 
     // Capturing capabilities: delegate HTTP/sleep to the native impls, but capture
