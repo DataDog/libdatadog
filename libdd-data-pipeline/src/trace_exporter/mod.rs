@@ -7,6 +7,7 @@ mod log_writer;
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
+pub mod span_pool;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
@@ -28,6 +29,7 @@ use crate::trace_exporter::agent_response::{
 use crate::trace_exporter::error::{
     InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
 };
+use crate::trace_exporter::span_pool::SpanPool;
 use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
     agent_info::{self, schema::AgentInfo},
