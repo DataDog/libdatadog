@@ -40,7 +40,6 @@ datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/libdatadog
-docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
 libdd-agent-client                   @DataDog/apm-common-components-core
