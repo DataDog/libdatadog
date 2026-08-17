@@ -140,6 +140,8 @@ pub enum CrashType {
     RaiseSigSegv,
     /// Unhandled Exception
     UnhandledException,
+    /// C assert() failure (calls __assert_fail, triggers SIGABRT)
+    AssertFail,
 }
 
 impl CrashType {
@@ -156,6 +158,7 @@ impl CrashType {
             Self::RaiseSigBus => "raise_sigbus",
             Self::RaiseSigSegv => "raise_sigsegv",
             Self::UnhandledException => "unhandled_exception",
+            Self::AssertFail => "assert_fail",
         }
     }
 
@@ -178,7 +181,7 @@ impl CrashType {
     pub const fn signal_number(self) -> i32 {
         match self {
             Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv => 11, // SIGSEGV
-            Self::KillSigAbrt | Self::RaiseSigAbrt => 6,                    // SIGABRT
+            Self::KillSigAbrt | Self::RaiseSigAbrt | Self::AssertFail => 6, // SIGABRT
             Self::KillSigIll | Self::RaiseSigIll => 4,                      // SIGILL
             Self::KillSigBus | Self::RaiseSigBus => 7,                      // SIGBUS
             Self::UnhandledException => 0,                                  // no signal
@@ -189,7 +192,7 @@ impl CrashType {
     pub const fn signal_name(self) -> &'static str {
         match self {
             Self::NullDeref | Self::KillSigSegv | Self::RaiseSigSegv => "SIGSEGV",
-            Self::KillSigAbrt | Self::RaiseSigAbrt => "SIGABRT",
+            Self::KillSigAbrt | Self::RaiseSigAbrt | Self::AssertFail => "SIGABRT",
             Self::KillSigIll | Self::RaiseSigIll => "SIGILL",
             Self::KillSigBus | Self::RaiseSigBus => "SIGBUS",
             Self::UnhandledException => "Unhandled Exception",
@@ -218,6 +221,7 @@ impl std::str::FromStr for CrashType {
             "raise_sigbus" => Ok(Self::RaiseSigBus),
             "raise_sigsegv" => Ok(Self::RaiseSigSegv),
             "unhandled_exception" => Ok(Self::UnhandledException),
+            "assert_fail" => Ok(Self::AssertFail),
             _ => Err(format!("Unknown crash type: {}", s)),
         }
     }

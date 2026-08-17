@@ -67,7 +67,7 @@ impl ConditionCheck {
             } => {
                 let attr_str = attribute?.as_str()?;
                 let attr_version = semver::Version::parse(attr_str.as_ref()).ok()?;
-                let ordering = attr_version.cmp(comparand);
+                let ordering = attr_version.cmp_precedence(comparand);
                 match operator {
                     SemverComparisonOperator::Eq => ordering.is_eq(),
                     SemverComparisonOperator::Neq => !ordering.is_eq(),
@@ -315,6 +315,7 @@ mod tests {
             comparand: semver("1.2.3"),
         };
         assert!(check.eval(Some(&"1.2.3".into())));
+        assert!(check.eval(Some(&"1.2.3+build.42".into())));
         assert!(!check.eval(Some(&"1.2.4".into())));
         assert!(!check.eval(Some(&"1.2.2".into())));
         assert!(!check.eval(None));
@@ -327,6 +328,7 @@ mod tests {
             comparand: semver("1.2.3"),
         };
         assert!(!check.eval(Some(&"1.2.3".into())));
+        assert!(!check.eval(Some(&"1.2.3+build.42".into())));
         assert!(check.eval(Some(&"1.2.4".into())));
         assert!(!check.eval(None));
     }
