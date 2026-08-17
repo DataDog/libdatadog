@@ -300,6 +300,7 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
     use std::thread;
     use std::time::Duration;
 
@@ -408,16 +409,23 @@ mod tests {
     fn test_rate_limiter_thread_safety_no_panic() {
         // Frozen clock: no replenishment, no window rollover. The only thing this
         // test asserts is that a shared limiter does not panic under contention —
-        // `join().unwrap()` propagates any panic from the spawned thread.
+        // `join().unwrap()` propagates any panic from the spawned thread. A
+        // barrier makes both threads reach the start gate before either begins
+        // issuing requests, maximizing the chance that `is_allowed` calls
+        // overlap rather than running sequentially.
         let clock = Clock::mock();
         let limiter = RateLimiter::new_with_clock(clock.clone(), 100, None);
         let limiter_clone = limiter.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let start = barrier.clone();
 
         let handle = thread::spawn(move || {
+            start.wait();
             for _ in 0..100 {
                 let _ = limiter_clone.is_allowed();
             }
         });
+        barrier.wait();
         for _ in 0..100 {
             let _ = limiter.is_allowed();
         }
@@ -431,13 +439,20 @@ mod tests {
         // resets. Four threads race on a shared limiter with a budget of 100; the
         // total number of allowed requests must be exactly 100, and the next
         // request must be denied. No timing slack: this is an exact invariant.
+        // A barrier gates all workers so they begin issuing requests
+        // simultaneously, maximizing `is_allowed` overlap; without it a
+        // scheduler could run each worker to completion before the next starts,
+        // reducing the test to sequential access.
         let clock = Clock::mock();
         let limiter = Arc::new(RateLimiter::new_with_clock(clock.clone(), 100, None));
+        let barrier = Arc::new(Barrier::new(4));
 
         let mut handles = Vec::new();
         for _ in 0..4 {
             let l = limiter.clone();
+            let start = barrier.clone();
             handles.push(thread::spawn(move || {
+                start.wait();
                 let mut allowed = 0;
                 for _ in 0..50 {
                     if l.is_allowed() {
@@ -459,9 +474,14 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_rate_limiter_window_reset_under_contention() {
-        // Deterministic window reset: drain the first window, advance the mock
-        // clock past the window boundary, then race on the fresh window. The
-        // second window must have a full budget again.
+        // Deterministic window rollover: the first window is drained with an
+        // asymmetric allow/deny ratio so its rate is distinguishable from the
+        // second window. After advancing the mock clock past the window
+        // boundary, `update_rate_counts_locked` must roll over: it stores the
+        // first window's rate as `prev_window_rate` and resets the running
+        // counts. The second window then starts fresh. Asserting `effective_rate`
+        // after the reset proves the rollover happened — `replenish` alone
+        // (which just restores the token bucket) cannot produce this value.
         let clock = Clock::mock();
         let limiter = Arc::new(RateLimiter::new_with_clock(
             clock.clone(),
@@ -469,29 +489,30 @@ mod tests {
             Some(1_000_000),
         ));
 
-        // Drain the first window (10 tokens, 1ms window).
-        let drainer = {
-            let l = limiter.clone();
-            thread::spawn(move || {
-                let mut n = 0;
-                for _ in 0..10 {
-                    if l.is_allowed() {
-                        n += 1;
-                    }
-                }
-                n
-            })
-        };
-        assert_eq!(drainer.join().unwrap(), 10);
-        assert!(!limiter.is_allowed(), "first window must be exhausted");
+        // First window: 10 allowed, then 90 denied. rate = 10/100 = 0.1.
+        for _ in 0..10 {
+            assert!(limiter.is_allowed(), "initial budget must allow 10");
+        }
+        for _ in 0..90 {
+            assert!(!limiter.is_allowed(), "first window budget is exhausted");
+        }
+        assert!(
+            (0.099..=0.101).contains(&limiter.effective_rate()),
+            "first window rate must be 10/100 before rollover"
+        );
 
         // Advance the clock past the 1ms window. Deterministic reset.
         clock.advance(Duration::from_millis(2));
 
-        // Race on the fresh window: 5 + 5 = 10 requests, budget is 10 again.
+        // Race on the fresh window with a barrier so both sides start together.
+        // 5 + 5 = 10 requests, budget is 10 again, so all are allowed and the
+        // second window rate is 1.0.
+        let barrier = Arc::new(Barrier::new(2));
         let b = {
             let l = limiter.clone();
+            let start = barrier.clone();
             thread::spawn(move || {
+                start.wait();
                 let mut n = 0;
                 for _ in 0..5 {
                     if l.is_allowed() {
@@ -501,6 +522,7 @@ mod tests {
                 n
             })
         };
+        barrier.wait();
         let mut main_n = 0;
         for _ in 0..5 {
             if limiter.is_allowed() {
@@ -512,6 +534,16 @@ mod tests {
             b_allowed + main_n,
             10,
             "second window must have a full budget after deterministic reset"
+        );
+
+        // Rollover assertion: `effective_rate` averages the current window rate
+        // (1.0) with the previous window rate (0.1) ⇒ 0.55. If the rollover
+        // logic were broken, `prev_window_rate` would stay `None` and the
+        // counts would accumulate across windows (20/110 ≈ 0.182), so this
+        // assertion would fail — proving the test now covers the rollover.
+        assert!(
+            (0.549..=0.551).contains(&limiter.effective_rate()),
+            "window rollover must set prev_window_rate and reset counts"
         );
         assert!(!limiter.is_allowed(), "second window must be exhausted");
     }
