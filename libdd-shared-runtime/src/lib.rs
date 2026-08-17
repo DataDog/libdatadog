@@ -40,6 +40,8 @@ pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::BasicRuntime;
 #[cfg(not(target_arch = "wasm32"))]
+pub use shared_runtime::BlockOnTimeoutError;
+#[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::BlockingRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::ForkSafeRuntime;
