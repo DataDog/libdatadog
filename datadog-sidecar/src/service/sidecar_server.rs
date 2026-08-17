@@ -52,7 +52,7 @@ use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
-use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.
@@ -277,26 +277,28 @@ impl SidecarServer {
     /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
     /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
     ///
-    /// The V1 payload already carries lang/version/tracer-version itself, but `lang_interpreter`
-    /// and `lang_vendor` have no equivalent in the V1 payload model, so the full header envelope
-    /// is still threaded through here to preserve them.
+    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so unlike
+    /// `send_trace_v04`, only the generic bool/int flags plus `lang_interpreter`/`lang_vendor`
+    /// (which have no equivalent in the V1 payload model) cross the IPC boundary — no full
+    /// `TracerHeaderTags`/`SerializedTracerHeaderTags` envelope.
     ///
     /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
     /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
     /// `tracer::Config::set_endpoint`.
     fn send_trace_v1(
         &self,
-        headers: &SerializedTracerHeaderTags,
+        generic: TracerGenericTags,
+        lang_interpreter: &str,
+        lang_vendor: &str,
         data: tinybytes::Bytes,
         target: &Endpoint,
         retry_interval: u64,
     ) {
-        let headers: TracerHeaderTags = match headers.try_into() {
-            Ok(headers) => headers,
-            Err(e) => {
-                error!("Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}", e);
-                return;
-            }
+        let headers = TracerHeaderTags {
+            lang_interpreter,
+            lang_vendor,
+            generic,
+            ..Default::default()
         };
         self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
     }
@@ -1004,7 +1006,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
-        headers: SerializedTracerHeaderTags,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
     ) {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
@@ -1016,7 +1020,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
+                        server.send_trace_v1(
+                            generic,
+                            &lang_interpreter,
+                            &lang_vendor,
+                            bytes,
+                            &endpoint,
+                            retry_interval,
+                        );
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -1033,7 +1044,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         &self,
         instance_id: InstanceId,
         data: Vec<u8>,
-        headers: SerializedTracerHeaderTags,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
     ) {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
@@ -1044,7 +1057,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
+                server.send_trace_v1(
+                    generic,
+                    &lang_interpreter,
+                    &lang_vendor,
+                    bytes,
+                    &endpoint,
+                    retry_interval,
+                );
             });
         } else {
             warn!(
@@ -1686,16 +1706,14 @@ mod tests {
                 cfg.set_endpoint(endpoint).unwrap();
             });
 
-        let headers: SerializedTracerHeaderTags = TracerHeaderTags {
-            lang_interpreter: "cpython",
-            lang_vendor: "cpython-vendor",
-            ..Default::default()
-        }
-        .try_into()
-        .unwrap();
-
         handler
-            .send_trace_v1_bytes(instance_id, sample_v1_trace_payload_bytes(), headers)
+            .send_trace_v1_bytes(
+                instance_id,
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
             .await;
 
         // send_trace_v1_bytes spawns the actual send, so give it a chance to enqueue before

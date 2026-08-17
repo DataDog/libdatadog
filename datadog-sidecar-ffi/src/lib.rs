@@ -51,6 +51,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1170,14 +1171,23 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     len: usize,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
 
     try_c!(blocking::send_trace_v1_shm(
         transport,
         instance_id,
         *shm_handle,
         len,
-        tracer_header_tags,
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
     ));
 
     MaybeError::None
@@ -1194,13 +1204,22 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     data: ffi::CharSlice,
     tracer_header_tags: &TracerHeaderTags,
 ) -> MaybeError {
-    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
 
     try_c!(blocking::send_trace_v1_bytes(
         transport,
         instance_id,
         data.as_bytes().to_vec(),
-        tracer_header_tags,
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
     ));
 
     MaybeError::None
