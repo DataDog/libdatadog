@@ -2,6 +2,15 @@
 
 
 
+## [10.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.0.0..libdd-trace-utils-v10.1.0) - 2026-08-17
+
+### Added
+
+- Adds new attributes to OTLP trace metrics export ([#2316](https://github.com/datadog/libdatadog/issues/2316)) - ([0b8ca65](https://github.com/datadog/libdatadog/commit/0b8ca652d3dde2db589324ec71d8f100a8285887))
+- Add v1 isolated bricks for trace exporter ([#2280](https://github.com/datadog/libdatadog/issues/2280)) - ([7ba36d7](https://github.com/datadog/libdatadog/commit/7ba36d7a2ea868e2c0a6a9e68c9583acc2bbda74))
+
+
+
 ## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v9.0.0..libdd-trace-utils-v10.0.0) - 2026-08-07
 
 ### Added
