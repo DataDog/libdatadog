@@ -303,7 +303,7 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: default
+          shared-key: centos7
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Build CentOS 7 Docker image
