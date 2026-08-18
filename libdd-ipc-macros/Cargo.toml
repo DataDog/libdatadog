@@ -1,0 +1,19 @@
+[package]
+name = "libdd-ipc-macros"
+version = "0.0.1"
+description = "IPC macros for libdatadog"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+bench = false
+
+[dependencies]
+proc-macro2 = "1"
+quote = "^1"
+syn = { workspace = true, default-features = true, features = ["full"] }
+heck = "0.5"
