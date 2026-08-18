@@ -112,7 +112,7 @@ where
 
     /// Returns a [FileSystemBatchUpdate] for manipulating this repository. This allows callers to
     /// stage a number of mutations, and optionally write them all at once.
-    pub fn batch_update(&mut self) -> FileSystemBatchUpdate<D> {
+    pub fn batch_update(&mut self) -> FileSystemBatchUpdate<'_, D> {
         FileSystemBatchUpdate {
             repo: self,
             metadata: HashMap::new(),
@@ -138,7 +138,7 @@ where
         version: MetadataVersion,
         path: &Path,
     ) -> BoxFuture<'_, Result<Box<dyn AsyncRead + Send + Unpin + '_>>> {
-        let reader = File::open(&path).map_err(|err| {
+        let reader = File::open(path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 Error::MetadataNotFound {
                     path: meta_path.clone(),
@@ -165,7 +165,7 @@ where
         target_path: &TargetPath,
         path: &Path,
     ) -> BoxFuture<'_, Result<Box<dyn AsyncRead + Send + Unpin + '_>>> {
-        let reader = File::open(&path).map_err(|err| {
+        let reader = File::open(path).map_err(|err| {
             if err.kind() == io::ErrorKind::NotFound {
                 Error::TargetNotFound(target_path.clone())
             } else {

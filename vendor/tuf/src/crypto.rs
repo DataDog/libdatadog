@@ -110,8 +110,8 @@ fn python_tuf_compatibility_keyid_hash_algorithms() -> Option<Vec<String>> {
 ///     ],
 /// );
 /// ```
-pub fn retain_supported_hashes<'a>(
-    hashes: &'a HashMap<HashAlgorithm, HashValue>,
+pub fn retain_supported_hashes(
+    hashes: &HashMap<HashAlgorithm, HashValue>,
 ) -> Vec<(&'static HashAlgorithm, HashValue)> {
     let mut data = vec![];
     for alg in HASH_ALG_PREFS {
@@ -943,7 +943,7 @@ impl Ord for PublicKey {
 
 impl PartialOrd for PublicKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.key_id.cmp(&other.key_id))
+        Some(self.cmp(other))
     }
 }
 
@@ -1096,7 +1096,7 @@ impl Signature {
 
 impl PartialOrd for Signature {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        (&self.key_id, &self.value).partial_cmp(&(&other.key_id, &other.value))
+        Some(self.cmp(other))
     }
 }
 
@@ -1773,16 +1773,10 @@ mod test {
     }
 
     fn check_public_key_hash(key1: &PublicKey, key2: &PublicKey) {
-        use std::hash::{BuildHasher, Hash, Hasher};
+        use std::hash::BuildHasher;
 
         let state = std::collections::hash_map::RandomState::new();
-        let mut hasher1 = state.build_hasher();
-        key1.hash(&mut hasher1);
-
-        let mut hasher2 = state.build_hasher();
-        key2.hash(&mut hasher2);
-
-        assert_ne!(hasher1.finish(), hasher2.finish());
+        assert_ne!(state.hash_one(key1), state.hash_one(key2));
     }
 
     #[cfg(feature = "unstable_rsa")]

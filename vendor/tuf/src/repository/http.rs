@@ -208,7 +208,7 @@ where
     C: Connect + Clone + Send + Sync + 'static,
     D: DataInterchange,
 {
-    async fn get<'a>(&'a self, uri: &Uri) -> Result<Response<Body>> {
+    async fn get(&self, uri: &Uri) -> Result<Response<Body>> {
         match Request::builder()
             .uri(uri)
             .header("User-Agent", &*self.user_agent)
@@ -253,7 +253,7 @@ where
             if status == StatusCode::OK {
                 let reader = resp
                     .into_body()
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+                    .map_err(io::Error::other)
                     .into_async_read()
                     .enforce_minimum_bitrate(self.min_bytes_per_second);
 
@@ -292,7 +292,7 @@ where
             if status == StatusCode::OK {
                 let reader = resp
                     .into_body()
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+                    .map_err(io::Error::other)
                     .into_async_read()
                     .enforce_minimum_bitrate(self.min_bytes_per_second);
 

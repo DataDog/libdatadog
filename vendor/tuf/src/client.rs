@@ -116,7 +116,7 @@ where
     /// let root_version = 1;
     /// let root = RootMetadataBuilder::new()
     ///     .version(root_version)
-    ///     .expires(Utc.ymd(2038, 1, 1).and_hms(0, 0, 0))
+    ///     .expires(Utc.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap())
     ///     .root_key(public_key.clone())
     ///     .snapshot_key(public_key.clone())
     ///     .targets_key(public_key.clone())
@@ -185,7 +185,7 @@ where
     /// let root_threshold = 1;
     /// let raw_root = RootMetadataBuilder::new()
     ///     .version(root_version)
-    ///     .expires(Utc.ymd(2038, 1, 1).and_hms(0, 0, 0))
+    ///     .expires(Utc.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap())
     ///     .root_key(public_key.clone())
     ///     .root_threshold(root_threshold)
     ///     .snapshot_key(public_key.clone())
@@ -248,7 +248,7 @@ where
     /// let root_threshold = 1;
     /// let root = RootMetadataBuilder::new()
     ///     .version(root_version)
-    ///     .expires(Utc.ymd(2038, 1, 1).and_hms(0, 0, 0))
+    ///     .expires(Utc.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap())
     ///     .root_key(public_key.clone())
     ///     .root_threshold(root_threshold)
     ///     .snapshot_key(public_key.clone())
@@ -1454,7 +1454,7 @@ mod test {
             .trusted_timestamp_keys(&[&KEYS[0]])
             .stage_root_with_builder(|bld| {
                 bld.consistent_snapshot(true)
-                    .expires(Utc.ymd(1970, 1, 1).and_hms(0, 0, 0))
+                    .expires(Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
             })
             .unwrap()
             .commit_skip_validation()
@@ -1730,7 +1730,7 @@ mod test {
                 .stage_root_with_builder(|bld| {
                     bld.version(1)
                         .consistent_snapshot(true)
-                        .expires(Utc.ymd(1970, 1, 1).and_hms(0, 0, 0))
+                        .expires(Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
                 })
                 .unwrap()
                 .commit_skip_validation()
@@ -1745,7 +1745,7 @@ mod test {
                 .stage_root_with_builder(|bld| {
                     bld.version(2)
                         .consistent_snapshot(true)
-                        .expires(Utc.ymd(1970, 1, 1).and_hms(0, 0, 0))
+                        .expires(Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).unwrap())
                 })
                 .unwrap()
                 .stage_targets_with_builder(|bld| bld.version(2))
@@ -1796,7 +1796,7 @@ mod test {
                 .stage_root_with_builder(|bld| {
                     bld.version(3)
                         .consistent_snapshot(true)
-                        .expires(Utc.ymd(2038, 1, 1).and_hms(0, 0, 0))
+                        .expires(Utc.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap())
                 })
                 .unwrap()
                 .stage_targets_with_builder(|bld| bld.version(2))

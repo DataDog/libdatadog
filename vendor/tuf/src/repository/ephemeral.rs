@@ -165,11 +165,11 @@ where
     pub fn commit(self) {
         self.parent_repo
             .metadata
-            .extend(self.staging_repo.metadata.into_iter());
+            .extend(self.staging_repo.metadata);
 
         self.parent_repo
             .targets
-            .extend(self.staging_repo.targets.into_iter());
+            .extend(self.staging_repo.targets);
     }
 }
 
