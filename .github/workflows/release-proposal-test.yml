@@ -13,6 +13,8 @@ env:
   DD_TRACE_RS_REPO: https://github.com/DataDog/dd-trace-rs
   DD_TRACE_RS_TAG_PREFIX: datadog-opentelemetry-v
   DD_TRACE_RS_LINES: 3
+  DD_TRACE_PY_REPO: DataDog/dd-trace-py
+  DD_TRACE_PY_REF: julio/switch-to-independent-versions
 
 jobs:
   package-and-upload-crates:
@@ -217,4 +219,62 @@ jobs:
           echo "Building workspace:"
           cargo build --release --workspace --all-features "${PATCH_ARGS[@]}"
 
+  compile-ddtrace-native:
+    runs-on: ubuntu-latest
+    needs: package-and-upload-crates
+    if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
+    steps:
+      - name: Checkout dd-trace-py src/native
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          repository: ${{ env.DD_TRACE_PY_REPO }}
+          ref: ${{ env.DD_TRACE_PY_REF }}
+          sparse-checkout: src/native
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+
+      # pyo3-build-config needs an interpreter to resolve the extension-module build config.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-proposal-test-crates
+          path: /tmp/release-proposal-test-crates
+
+      - name: Compile ddtrace-native
+        working-directory: src/native
+        run: |
+          CRATES_DIR="/tmp/release-proposal-test-crates"
+
+          PATCH_ARGS=()
+
+          # Unzip crates and build a patch expression for local path overrides.
+          for crate in "$CRATES_DIR"/*.crate; do
+            tar -xzvf "$crate" -C "$CRATES_DIR" > /dev/null
+
+            CRATE_PATH=$(basename "$crate" .crate)
+            CRATE_TOML_FILE="$CRATES_DIR/$CRATE_PATH/Cargo.toml"
+
+            CRATE_NAME=$(cargo metadata --manifest-path "$CRATE_TOML_FILE" --format-version=1 --no-deps | jq -r '[.packages[].name][0]')
+
+            echo "Patching crate: $CRATE_NAME"
+            PATCH_ARGS+=("--config" "patch.crates-io.$CRATE_NAME.path=\"$CRATES_DIR/$CRATE_PATH\"")
+          done
+
+          echo "Build ddtrace-native with patch args: ${PATCH_ARGS[*]}"
+
+          cargo update "${PATCH_ARGS[@]}"
+
+          echo "--------------------------------"
+          echo "Duplicated dependencies: "
+          cargo tree -d -e normal --all-features --prefix none "${PATCH_ARGS[@]}" | grep "libdd-" | grep -vF '(*)' | sort | uniq
+          echo ""
+
+          echo "--------------------------------"
+          echo "Building ddtrace-native:"
+          cargo build --release --all-features "${PATCH_ARGS[@]}"
