@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use tokio::runtime;
 
-use datadog_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
-use datadog_ipc::SeqpacketConn;
+use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
+use libdd_ipc::SeqpacketConn;
 
 #[test]
 #[cfg_attr(miri, ignore)]

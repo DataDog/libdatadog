@@ -282,7 +282,7 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
     // subsequent try_accept calls also use the right size.
     #[cfg(windows)]
     if cfg.pipe_buffer_size > 0 {
-        datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
+        libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
