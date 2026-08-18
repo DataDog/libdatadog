@@ -72,6 +72,7 @@ tracing-subscriber = { version = "0.3.22", default-features = false, features = 
 ], optional = true }
 chrono = { workspace = true, features = ["clock", "std"] }
 console-subscriber = { version = "0.5", optional = true }
+crossbeam-utils = "0.8.21"
 libc.workspace = true
 
 # watchdog and self telemetry

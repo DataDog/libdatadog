@@ -1996,6 +1996,66 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     let _ = transport.send_garbage();
 }
 
+/// Raw AppSec response returned by `ddog_sidecar_send_appsec_message`.
+///
+/// When `ptr` is non-null, the response must be freed by calling
+/// `ddog_sidecar_appsec_response_drop`.
+#[cfg(unix)]
+#[repr(C)]
+pub struct AppsecCResponse {
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub capacity: usize,
+    /// If true, the extension session should be disconnected after this response.
+    pub disconnect: bool,
+}
+
+/// Sends an AppSec message from the PHP extension through the sidecar to the registered helper.
+///
+/// The response is allocated by the sidecar and must be freed with
+/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
+///
+/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
+#[cfg(unix)]
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
+    transport: &mut Box<SidecarTransport>,
+    client_id: u64,
+    data: ffi::CharSlice,
+) -> AppsecCResponse {
+    match blocking::send_appsec_message(transport, client_id, data.as_bytes()) {
+        Ok((bytes, disconnect)) => {
+            let mut bytes = std::mem::ManuallyDrop::new(bytes);
+            AppsecCResponse {
+                ptr: bytes.as_mut_ptr(),
+                len: bytes.len(),
+                capacity: bytes.capacity(),
+                disconnect,
+            }
+        }
+        Err(_) => AppsecCResponse {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+            disconnect: false,
+        },
+    }
+}
+
+/// Frees an `AppsecCResponse` that was returned by `ddog_sidecar_send_appsec_message`.
+#[cfg(unix)]
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
+    if !response.ptr.is_null() {
+        // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
+        // ddog_sidecar_send_appsec_message and use the sidecar's allocator.
+        unsafe {
+            let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
