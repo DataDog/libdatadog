@@ -2,6 +2,21 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v5.0.0..libdd-trace-obfuscation-v6.0.0) - 2026-08-17
+
+### Changed
+
+- Update nightly ([#2281](https://github.com/datadog/libdatadog/issues/2281)) - ([ddef629](https://github.com/datadog/libdatadog/commit/ddef629242c5288137987a1babfee0c588fe2533))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- New clippy lints ([#2219](https://github.com/datadog/libdatadog/issues/2219)) - ([e026a3c](https://github.com/datadog/libdatadog/commit/e026a3c76cfdd1959e4e1e30b7d234eeffe830c6))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v4.0.0..libdd-trace-obfuscation-v5.0.0) - 2026-07-07
 
 ### Changed
