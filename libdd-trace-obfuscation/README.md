@@ -14,3 +14,9 @@ This crate provides trace obfuscation functionality, implementing the same obfus
 - Stack traces
 
 For more details on trace obfuscation, see the [Datadog documentation](https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation).
+
+## Configuration
+
+`ObfuscationConfig::new()` reads the process environment. Embedded runtimes can use
+`ObfuscationConfig::from_env()` with an `EnvCapability` implementation to apply the same option
+names, defaults, and replacement-rule validation through their platform environment provider.

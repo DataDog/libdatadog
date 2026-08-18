@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use std::{collections::HashSet, env};
 
-use libdd_common::config::parse_env;
+use libdd_capabilities::env::EnvCapability;
 
 use crate::{
     replacer::{self, ReplaceRule},
@@ -106,21 +106,35 @@ impl ObfuscationConfig {
     ///
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     pub fn new() -> Result<Self, Box<dyn core::error::Error>> {
-        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
-            Ok(replace_rules) => Some(replacer::parse_rules_from_string(&replace_rules)?),
-            Err(_) => None,
-        };
-        let http_remove_query_string =
-            parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
-        let http_remove_path_digits =
-            parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS").unwrap_or(false);
-        let obfuscation_redis_enabled =
-            parse_env::bool("DD_APM_OBFUSCATION_REDIS_ENABLED").unwrap_or(false);
-        let obfuscation_redis_remove_all_args =
-            parse_env::bool("DD_APM_OBFUSCATION_REDIS_REMOVE_ALL_ARGS").unwrap_or(false);
+        Self::from_getter(|name| Ok::<_, env::VarError>(env::var(name).ok()))
+    }
 
-        let obfuscate_memcached =
-            parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
+    /// Builds the obfuscation config from a platform environment capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an environment value cannot be read or a replacement rule is invalid.
+    pub fn from_env<C: EnvCapability>(source: &C) -> Result<Self, Box<dyn core::error::Error>> {
+        Self::from_getter(|name| source.get(name))
+    }
+
+    fn from_getter<F, E>(mut get: F) -> Result<Self, Box<dyn core::error::Error>>
+    where
+        F: FnMut(&str) -> Result<Option<String>, E>,
+        E: core::error::Error + 'static,
+    {
+        let tag_replace_rules = get("DD_APM_REPLACE_TAGS")?
+            .map(|rules| replacer::parse_rules_from_string(&rules))
+            .transpose()?;
+        let http_remove_query_string =
+            enabled(get("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING")?.as_deref());
+        let http_remove_path_digits =
+            enabled(get("DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS")?.as_deref());
+        let obfuscation_redis_enabled =
+            enabled(get("DD_APM_OBFUSCATION_REDIS_ENABLED")?.as_deref());
+        let obfuscation_redis_remove_all_args =
+            enabled(get("DD_APM_OBFUSCATION_REDIS_REMOVE_ALL_ARGS")?.as_deref());
+        let obfuscate_memcached = enabled(get("DD_APM_OBFUSCATION_MEMCACHED_ENABLED")?.as_deref());
 
         Ok(Self {
             tag_replace_rules,
@@ -146,24 +160,98 @@ impl ObfuscationConfig {
     }
 }
 
+fn enabled(value: Option<&str>) -> bool {
+    matches!(value, Some("true" | "1"))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::collections::HashMap;
 
-    use libdd_common::test_utils::EnvGuard;
+    use libdd_capabilities::env::{EnvCapability, EnvError};
 
     use super::ObfuscationConfig;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    #[derive(Clone, Debug, Default)]
+    struct TestEnv(HashMap<String, String>);
+
+    impl EnvCapability for TestEnv {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn get(&self, name: &str) -> Result<Option<String>, EnvError> {
+            Ok(self.0.get(name).cloned())
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct BrokenEnv;
+
+    impl EnvCapability for BrokenEnv {
+        fn new() -> Self {
+            Self
+        }
+
+        fn get(&self, _name: &str) -> Result<Option<String>, EnvError> {
+            Err(EnvError::Io(anyhow::anyhow!("environment unavailable")))
+        }
+    }
+
+    #[test]
+    fn reads_from_environment_capability() {
+        let source = TestEnv(HashMap::from([
+            (
+                "DD_APM_REPLACE_TAGS".to_owned(),
+                r#"[{"name":"custom.tag","pattern":"secret","repl":"?"}]"#.to_owned(),
+            ),
+            (
+                "DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING".to_owned(),
+                "true".to_owned(),
+            ),
+            (
+                "DD_APM_OBFUSCATION_HTTP_REMOVE_PATHS_WITH_DIGITS".to_owned(),
+                "1".to_owned(),
+            ),
+            (
+                "DD_APM_OBFUSCATION_REDIS_ENABLED".to_owned(),
+                "true".to_owned(),
+            ),
+            (
+                "DD_APM_OBFUSCATION_REDIS_REMOVE_ALL_ARGS".to_owned(),
+                "1".to_owned(),
+            ),
+            (
+                "DD_APM_OBFUSCATION_MEMCACHED_ENABLED".to_owned(),
+                "true".to_owned(),
+            ),
+        ]));
+
+        let config = ObfuscationConfig::from_env(&source).unwrap();
+
+        assert_eq!(config.tag_replace_rules.unwrap().len(), 1);
+        assert!(config.http.remove_query_string);
+        assert!(config.http.remove_paths_with_digits);
+        assert!(config.redis.enabled);
+        assert!(config.redis.remove_all_args);
+        assert!(config.memcached.enabled);
+        assert!(config.memcached.keep_command);
+    }
 
     #[test]
     fn rejects_invalid_replacement_rules() {
-        let _lock = ENV_LOCK.lock().unwrap();
-        let _replace_tags = EnvGuard::set(
-            "DD_APM_REPLACE_TAGS",
-            r#"[{"name":"custom.tag","pattern":"[","repl":"?"}]"#,
-        );
+        let source = TestEnv(HashMap::from([(
+            "DD_APM_REPLACE_TAGS".to_owned(),
+            r#"[{"name":"custom.tag","pattern":"[","repl":"?"}]"#.to_owned(),
+        )]));
 
-        assert!(ObfuscationConfig::new().is_err());
+        assert!(ObfuscationConfig::from_env(&source).is_err());
+    }
+
+    #[test]
+    fn propagates_environment_errors() {
+        let error = ObfuscationConfig::from_env(&BrokenEnv).unwrap_err();
+
+        assert_eq!(error.to_string(), "IO error: environment unavailable");
     }
 }

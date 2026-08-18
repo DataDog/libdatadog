@@ -3539,6 +3539,7 @@ dependencies = [
  "criterion",
  "duplicate 0.4.1",
  "fluent-uri",
+ "libdd-capabilities",
  "libdd-common",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
