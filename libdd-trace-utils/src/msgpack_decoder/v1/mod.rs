@@ -225,7 +225,8 @@ where
 {
     // Snapshot the buffer's owning handle *before* advancing past the skipped value: any string
     // found inside it will be a substring of this exact allocation, so this is what
-    // `T::intern_skipped_str` must derive ownership from.
+    // `T::intern_skipped_str` must derive ownership from. Cloning is cheap (a refcount bump for
+    // `T::Bytes = Bytes`), unaffected by the lied `'static` lifetime `as_mut_slice` exposes.
     let owner = buf.bytes().clone();
     let value = rmpv::decode::read_value_ref(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;

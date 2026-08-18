@@ -45,10 +45,7 @@ impl<T: DeserializableTraceData> Buffer<T> {
         self.0.borrow()
     }
 
-    /// Returns the underlying owned bytes buffer, unaffected by the lied `'static` lifetime
-    /// `as_mut_slice` exposes. Cloning this (cheap: a refcount bump for `T::Bytes = Bytes`)
-    /// before advancing the buffer lets callers keep the backing allocation alive for data
-    /// borrowed from a since-advanced position.
+    /// Returns the underlying owned bytes buffer.
     pub fn bytes(&self) -> &T::Bytes {
         &self.0
     }
