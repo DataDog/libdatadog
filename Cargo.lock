@@ -2996,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "criterion",
  "prost",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3433,7 +3433,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3458,7 +3458,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3533,7 +3533,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3564,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",

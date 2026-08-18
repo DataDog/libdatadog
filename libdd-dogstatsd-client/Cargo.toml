@@ -5,7 +5,7 @@ homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-clie
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-dogstatsd-client"
 rust-version.workspace = true
 edition.workspace = true
-version = "4.0.0"
+version = "5.0.0"
 license.workspace = true
 
 [lib]
@@ -18,7 +18,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true
 anyhow.workspace = true
 http = "1.1"
-libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
+libdd-shared-runtime = { version = "3.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 tokio = { version = "1.23", features = ["sync"], optional = true }
 async-trait = { version = "0.1", optional = true }
 
