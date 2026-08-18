@@ -3,10 +3,10 @@
 
 use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
-use libdd_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
+use libdd_ipc::platform::NamedShmHandle;
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::trace_utils::SendDataResult;

@@ -10,9 +10,9 @@ use crate::service::{
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
     SidecarInterface,
 };
+use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
-use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -44,11 +44,11 @@ use crate::service::stats_flusher::{
 };
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
-use libdd_ipc::ipc_server::OwnedServerConn;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
+use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;

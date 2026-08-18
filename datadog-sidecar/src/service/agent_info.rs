@@ -11,8 +11,6 @@
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
-use libdd_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
@@ -20,6 +18,8 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
+use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_ipc::platform::NamedShmHandle;
 use manual_future::ManualFuture;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};

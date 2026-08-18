@@ -3,9 +3,9 @@
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
+use libc::getpid;
 use libdd_ipc::platform::PIPE_PATH;
 use libdd_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
-use libc::getpid;
 use std::io;
 
 pub type IpcClient = AsyncConn;
@@ -98,8 +98,7 @@ mod tests {
             let client: SeqpacketConn = liaison.connect_to_server().unwrap();
             let srv: SeqpacketConn = srv_thread.join().unwrap();
             client.send_raw_blocking(&mut vec![255], &[]).unwrap();
-            let mut buf =
-                vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
+            let mut buf = vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
             assert_eq!(buf[0], 255);

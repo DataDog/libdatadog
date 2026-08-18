@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::primary_sidecar_identifier;
+use libdd_common::Endpoint;
 use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
-use libdd_common::Endpoint;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;

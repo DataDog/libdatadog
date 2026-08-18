@@ -10,9 +10,6 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use libdd_ipc::platform::{
-    FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
-};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
@@ -41,6 +38,7 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle};
 use libdd_remote_config::fetch::ConfigInvariants;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
