@@ -210,6 +210,53 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
     }
 }
 
+/// Prototype: an honest-lifetime counterpart to [`DeserializableTraceData`].
+///
+/// `get_mut_slice`/`intern_skipped_str` report `'static` for every implementor, even though for
+/// `BytesData` the backing `Bytes` is heap-owned and never truly `'static` — the lifetime is
+/// erased via `transmute` and "laundered" by immediately deriving an owned `Self::Text` before
+/// it can escape into safe code. For `SliceData<'a>` this erasure is pure overhead: `Self::Bytes`
+/// is already `&'a [u8]`, the real target type, so the transmute exists only to satisfy a trait
+/// signature that can't express `'a` generically.
+///
+/// This trait carries the genuine lifetime `'x` explicitly, so `SliceData<'a>` can implement it
+/// with no unsafe code at all. It extends `DeserializableTraceData` rather than replacing it, and
+/// `Buffer<T>` gains an additive method (`as_mut_slice_lt`) in a new `impl` block — every existing
+/// call site on `DeserializableTraceData`/`Buffer::as_mut_slice` is untouched.
+pub trait DeserializableTraceDataLt<'x>: DeserializableTraceData {
+    fn get_mut_slice_lt(buf: &mut Self::Bytes) -> &mut &'x [u8];
+
+    /// Same contract as [`DeserializableTraceData::intern_skipped_str`], but `s` carries the
+    /// real lifetime `'x` instead of an erased `'static`.
+    fn intern_skipped_str_lt(owner: &Self::Bytes, s: &'x str) -> Self::Text;
+}
+
+impl DeserializableTraceDataLt<'static> for BytesData {
+    #[inline]
+    fn get_mut_slice_lt(buf: &mut Bytes) -> &mut &'static [u8] {
+        Self::get_mut_slice(buf)
+    }
+
+    #[inline]
+    fn intern_skipped_str_lt(owner: &Bytes, s: &'static str) -> BytesString {
+        Self::intern_skipped_str(owner, s)
+    }
+}
+
+impl<'a> DeserializableTraceDataLt<'a> for SliceData<'a> {
+    #[inline]
+    fn get_mut_slice_lt<'b>(buf: &'b mut Self::Bytes) -> &'b mut &'a [u8] {
+        // No transmute needed: `Self::Bytes` is already `&'a [u8]`, the exact type this method
+        // claims to return — the `'static` version above only needed unsafe code to lie about it.
+        buf
+    }
+
+    #[inline]
+    fn intern_skipped_str_lt(_owner: &&'a [u8], s: &'a str) -> Cow<'a, str> {
+        Cow::Borrowed(s)
+    }
+}
+
 #[derive(Debug)]
 pub struct SpanKeyParseError {
     pub message: String,
