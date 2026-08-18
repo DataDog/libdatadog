@@ -45,6 +45,20 @@ jobs:
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
 
+      - name: diff idx/tracer_payload.proto
+        working-directory: libdd-trace-protobuf/src/pb
+        id: idx_tracer_payload_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file idx/tracer_payload.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
+      - name: diff idx/span.proto
+        working-directory: libdd-trace-protobuf/src/pb
+        id: idx_span_proto
+        if: always()
+        run: |
+          ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+
       - name: report failure
         id: slack
         if: failure()
