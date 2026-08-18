@@ -1,0 +1,9 @@
+{"_type":"root","consistent_snapshot":true,"expires":"2099-01-01T00:00:00Z","keys":{"bf650e59197a14d12e521a1d7657f7d52fa01e1b3539aa01bab7c99d4278791d":{"keyid_hash_algorithms":["sha256","sha512"],"keytype":"ecdsa","keyval":{"public":"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgqM1Wy2mqv8jaK43314CglNrw2dO
+PFFdBVgNjMto5Us0Rny5c7dlRpYHMGm8T6cAkUEZpuRiFyGsdtQEKceeKg==
+-----END PUBLIC KEY-----
+"},"scheme":"ecdsa-sha2-nistp256"},"e58379d2785859f8df7e47273c331880a81aae0af7a2ec382a276593123aede2":{"keyid_hash_algorithms":["sha256","sha512"],"keytype":"ecdsa","keyval":{"public":"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEkVu9OBGGly9YhA5MDdyJODThPkFZ
++7QOJnjYjQ14NuSQCTB3iPth8k7r5BXj6cvfoqOoeFU1mGfDL7wXGorETw==
+-----END PUBLIC KEY-----
+"},"scheme":"ecdsa-sha2-nistp256"}},"roles":{"root":{"keyids":["e58379d2785859f8df7e47273c331880a81aae0af7a2ec382a276593123aede2","bf650e59197a14d12e521a1d7657f7d52fa01e1b3539aa01bab7c99d4278791d"],"threshold":2},"snapshot":{"keyids":["e58379d2785859f8df7e47273c331880a81aae0af7a2ec382a276593123aede2","bf650e59197a14d12e521a1d7657f7d52fa01e1b3539aa01bab7c99d4278791d"],"threshold":2},"targets":{"keyids":["e58379d2785859f8df7e47273c331880a81aae0af7a2ec382a276593123aede2","bf650e59197a14d12e521a1d7657f7d52fa01e1b3539aa01bab7c99d4278791d"],"threshold":2},"timestamp":{"keyids":["e58379d2785859f8df7e47273c331880a81aae0af7a2ec382a276593123aede2","bf650e59197a14d12e521a1d7657f7d52fa01e1b3539aa01bab7c99d4278791d"],"threshold":2}},"spec_version":"1.0","version":1}
