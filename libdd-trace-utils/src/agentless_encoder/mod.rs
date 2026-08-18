@@ -24,7 +24,7 @@
 //!   `metrics["_trace_root"]=1` where applicable.
 //! - **Non-finite metrics** (NaN/Inf) are dropped (JSON can't represent them).
 //!
-//! TODO: span normalization (service/name/resource/type truncation + defaults)
+//! The trace exporter normalizes and obfuscates spans before calling this encoder.
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};

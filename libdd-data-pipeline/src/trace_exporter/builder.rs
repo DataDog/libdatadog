@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
+#[cfg(feature = "agentless")]
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
@@ -10,15 +11,20 @@ use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
+#[cfg(feature = "agentless")]
+use crate::trace_exporter::ObfuscationConfig;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
+#[cfg(feature = "telemetry")]
+use crate::trace_exporter::TelemetryInstrumentationSessions;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
+    TraceExporterOutputFormat, TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
+#[cfg(feature = "telemetry")]
+use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
@@ -92,9 +98,14 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    #[cfg(feature = "agentless")]
     agentless_endpoint: Option<String>,
+    #[cfg(feature = "agentless")]
     agentless_api_key: Option<String>,
+    #[cfg(feature = "agentless")]
     agentless_timeout: Option<Duration>,
+    #[cfg(feature = "agentless")]
+    agentless_obfuscation: Option<ObfuscationConfig>,
     otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
@@ -172,9 +183,14 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_metrics_headers: Vec::new(),
             otel_trace_semantics_enabled: false,
             runtime_id: None,
+            #[cfg(feature = "agentless")]
             agentless_endpoint: None,
+            #[cfg(feature = "agentless")]
             agentless_api_key: None,
+            #[cfg(feature = "agentless")]
             agentless_timeout: None,
+            #[cfg(feature = "agentless")]
+            agentless_obfuscation: None,
             output_to_log: false,
             log_max_line_size: None,
             restart_after_fork: true,
@@ -474,23 +490,32 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     /// Enables agentless APM trace export and sets the intake URL and API key.
     ///
-    /// When set, APM trace spans are sent directly to the Datadog HTTP intake in JSON format
-    /// (`POST /v1/input`) instead of through the Datadog Agent. The host language is responsible
-    /// for resolving the endpoint URL (default
+    /// When set, APM trace spans are normalized, obfuscated, and sent directly to the Datadog HTTP
+    /// intake in JSON format (`POST /v1/input`) instead of through the Datadog Agent. The host
+    /// language is responsible for resolving the endpoint URL (default
     /// `https://public-trace-http-intake.logs.{DD_SITE}` or a custom override) and the API key
-    /// from its configuration. This crate does not read environment variables.
+    /// from its configuration. The exporter does not resolve these values from the environment.
     ///
     /// Agentless trace export is mutually exclusive with both OTLP trace export
     /// ([`Self::set_otlp_endpoint`]) and a configured agent URL ([`Self::set_url`]);
     /// combining either with this method causes [`Self::build`]/[`Self::build_async`]
     /// to return [`BuilderErrorKind::InvalidConfiguration`].
-    /// the output format is ignored in agentless mode; payloads are always
-    /// JSON
+    /// The output format is ignored in agentless mode; payloads are always JSON.
     ///
-    /// Example: `set_agentless_endpoint("https://public-trace-http-intake.logs.datadoghq.com/v1/input", "<api-key>")`
-    pub fn set_agentless_endpoint(&mut self, url: &str, api_key: &str) -> &mut Self {
+    /// [`ObfuscationConfig::new`] reads the standard Datadog obfuscation environment variables.
+    /// Callers that already own configuration can construct the value directly instead.
+    ///
+    /// The `send-traces-agentless` crate example shows complete setup.
+    #[cfg(feature = "agentless")]
+    pub fn set_agentless_endpoint(
+        &mut self,
+        url: &str,
+        api_key: &str,
+        obfuscation: ObfuscationConfig,
+    ) -> &mut Self {
         self.agentless_endpoint = Some(url.to_owned());
         self.agentless_api_key = Some(api_key.to_owned());
+        self.agentless_obfuscation = Some(obfuscation);
         self
     }
 
@@ -499,6 +524,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Defaults to 15 seconds when not set. Calling this method without also calling
     /// [`Self::set_agentless_endpoint`] causes [`Self::build`]/[`Self::build_async`] to
     /// return [`BuilderErrorKind::InvalidConfiguration`].
+    #[cfg(feature = "agentless")]
     pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.agentless_timeout = Some(timeout);
         self
@@ -646,7 +672,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         // Agentless mode has no Datadog Agent to poll, so we skip
         // starting the `/info` fetcher
+        #[cfg(feature = "agentless")]
         let agentless_enabled = self.agentless_endpoint.is_some();
+        #[cfg(not(feature = "agentless"))]
+        let agentless_enabled = false;
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
@@ -735,18 +764,20 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         // rules are enforced by `validate_export_targets` above, so we can just move the
         // fields out here.
         let otlp_endpoint = self.otlp_endpoint;
-        let agentless_endpoint = self.agentless_endpoint;
-        let agentless_api_key = self.agentless_api_key;
-
-        let agentless_config = match (agentless_endpoint, agentless_api_key) {
-            (Some(url), Some(api_key)) => Some(AgentlessTraceConfig {
+        #[cfg(feature = "agentless")]
+        let agentless_config = match (
+            self.agentless_endpoint,
+            self.agentless_api_key,
+            self.agentless_obfuscation,
+        ) {
+            (Some(url), Some(api_key), Some(obfuscation)) => Some(AgentlessTraceConfig {
                 endpoint_url: url,
                 api_key,
                 timeout: self.agentless_timeout.unwrap_or(DEFAULT_AGENTLESS_TIMEOUT),
+                obfuscation,
             }),
             _ => None,
         };
-
         let otlp_timeout = self
             .connection_timeout
             .map(Duration::from_millis)
@@ -897,6 +928,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+            #[cfg(feature = "agentless")]
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
@@ -922,7 +954,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// agent endpoints (info, stats) even when trace payloads are routed to OTLP.
     fn validate_export_targets(&self) -> Result<(), TraceExporterError> {
         let otlp_set = self.otlp_endpoint.is_some();
+        #[cfg(feature = "agentless")]
         let agentless_set = self.agentless_endpoint.is_some();
+        #[cfg(not(feature = "agentless"))]
+        let agentless_set = false;
         let agent_url_set = self.url.is_some();
         let log_output_set = self.output_to_log;
 
@@ -959,6 +994,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             ));
         }
 
+        #[cfg(feature = "agentless")]
         if !agentless_set && self.agentless_timeout.is_some() {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -1164,6 +1200,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "agentless")]
     fn assert_invalid_config(
         result: Result<TraceExporter<NativeCapabilities, ForkSafeRuntime>, TraceExporterError>,
     ) -> String {
@@ -1175,6 +1212,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     #[test]
     fn test_otlp_and_agentless_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1183,6 +1221,7 @@ mod tests {
             .set_agentless_endpoint(
                 "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
                 "api-key",
+                ObfuscationConfig::default(),
             );
         let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
         assert!(
@@ -1192,6 +1231,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     #[test]
     fn test_agentless_and_agent_url_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1200,6 +1240,7 @@ mod tests {
             .set_agentless_endpoint(
                 "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
                 "api-key",
+                ObfuscationConfig::default(),
             );
         let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
         assert!(
@@ -1209,6 +1250,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     #[test]
     fn test_agentless_timeout_without_endpoint_rejected() {
         let mut builder = TraceExporterBuilder::default();
@@ -1221,6 +1263,7 @@ mod tests {
     }
 
     #[cfg(feature = "telemetry")]
+    #[cfg(feature = "agentless")]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agentless_skips_info_fetcher_and_telemetry() {
@@ -1229,6 +1272,7 @@ mod tests {
             .set_agentless_endpoint(
                 "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
                 "api-key",
+                ObfuscationConfig::default(),
             )
             .enable_telemetry(TelemetryConfig {
                 heartbeat: 1000,
@@ -1242,7 +1286,7 @@ mod tests {
         // Telemetry talks to the agent base URL and is also skipped.
         assert!(exporter.workers.telemetry.is_none());
         assert!(exporter.telemetry.load().is_none());
-        // Sanity: the agentless transport is actually configured.
+        assert!(!exporter.should_check_agent_info());
         assert!(exporter.agentless_config.is_some());
     }
 

@@ -3542,7 +3542,6 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
- "log",
  "percent-encoding",
  "serde",
  "serde_json",

@@ -43,6 +43,15 @@ configure the communication.
 
 See [`trace_exporter.rs`](src/trace_exporter.rs).
 
+### Agentless trace export
+
+Enable the `agentless` Cargo feature to send traces directly to the Datadog HTTP intake. Agentless
+setup requires an explicit `ObfuscationConfig`; the exporter normalizes and obfuscates every span
+before encoding the request as JSON. `ObfuscationConfig::new()` reads the standard Datadog
+obfuscation environment variables and rejects invalid replacement rules.
+
+See [`send-traces-agentless.rs`](examples/send-traces-agentless.rs) for a complete setup.
+
 ## Integrating the TraceExporter in the tracers
 ### \[WIP\]Importing a binary into an existing project
 In case you want to use a binary to hook C-like functions in your language we will provide a crate to build such binary.

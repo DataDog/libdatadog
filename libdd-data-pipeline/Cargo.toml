@@ -65,6 +65,10 @@ name = "trace_buffer"
 harness = false
 path = "benches/trace_buffer.rs"
 
+[[example]]
+name = "send-traces-agentless"
+required-features = ["agentless"]
+
 [dev-dependencies]
 libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
@@ -89,6 +93,7 @@ zstd = { version = "0.13", default-features = false }
 
 [features]
 default = ["https", "telemetry"]
+agentless = ["dep:libdd-trace-obfuscation"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
 https = [
     "libdd-common/https",
@@ -100,7 +105,7 @@ https = [
     "libdd-dogstatsd-client/https",
 ]
 stats-obfuscation = [
-    "libdd-trace-obfuscation",
+    "dep:libdd-trace-obfuscation",
     "libdd-trace-stats/stats-obfuscation"
 ]
 fips = [

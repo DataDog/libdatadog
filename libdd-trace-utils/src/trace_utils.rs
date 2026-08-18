@@ -484,7 +484,8 @@ pub fn set_serverless_root_span_tags(
     }
 }
 
-fn update_tracer_top_level(span: &mut pb::Span) {
+/// Converts the tracer's top-level marker into the marker expected by intake.
+pub fn update_tracer_top_level(span: &mut pb::Span) {
     if span.metrics.contains_key(TRACER_TOP_LEVEL_KEY) {
         span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
     }

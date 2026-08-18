@@ -14,7 +14,7 @@
 use clap::Parser;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_data_pipeline::trace_exporter::{
-    TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    ObfuscationConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
@@ -79,6 +79,8 @@ fn main() {
         .unwrap_or_else(|| format!("https://public-trace-http-intake.logs.{site}/v1/input"));
 
     let shared_runtime = Arc::new(ForkSafeRuntime::new().expect("Failed to create runtime"));
+    let obfuscation =
+        ObfuscationConfig::new().expect("Failed to configure agentless trace obfuscation");
 
     let mut builder = TraceExporter::<NativeCapabilities, _>::builder();
     builder
@@ -92,7 +94,7 @@ fn main() {
         .set_input_format(TraceExporterInputFormat::V04)
         .set_output_format(TraceExporterOutputFormat::V04)
         .set_shared_runtime(shared_runtime.clone())
-        .set_agentless_endpoint(&intake_url, &api_key);
+        .set_agentless_endpoint(&intake_url, &api_key, obfuscation);
 
     let exporter = builder
         .build::<NativeCapabilities>()

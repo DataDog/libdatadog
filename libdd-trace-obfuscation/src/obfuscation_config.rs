@@ -1,7 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use log::{debug, error};
 use serde::Deserialize;
 use std::{collections::HashSet, env};
 
@@ -108,16 +107,7 @@ impl ObfuscationConfig {
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     pub fn new() -> Result<Self, Box<dyn core::error::Error>> {
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
-            Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
-                Ok(res) => {
-                    debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
-                    Some(res)
-                }
-                Err(e) => {
-                    error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-                    None
-                }
-            },
+            Ok(replace_rules) => Some(replacer::parse_rules_from_string(&replace_rules)?),
             Err(_) => None,
         };
         let http_remove_query_string =
@@ -153,5 +143,27 @@ impl ObfuscationConfig {
             },
             ..Default::default()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use libdd_common::test_utils::EnvGuard;
+
+    use super::ObfuscationConfig;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn rejects_invalid_replacement_rules() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _replace_tags = EnvGuard::set(
+            "DD_APM_REPLACE_TAGS",
+            r#"[{"name":"custom.tag","pattern":"[","repl":"?"}]"#,
+        );
+
+        assert!(ObfuscationConfig::new().is_err());
     }
 }
