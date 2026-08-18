@@ -1,3 +1,9 @@
+// When the crate itself is the Miri test target (cfg(test) is only set on
+// the root crate under test, not on dependencies) every item in lib.rs –
+// including all #[cfg(test)] modules – is stripped, so Miri finds no unit
+// tests to run.  Integration tests in tests/ carry their own #![cfg(not(miri))].
+#![cfg(not(all(test, miri)))]
+
 //! This crate provides an API for talking to repositories that implement The Update Framework
 //! (TUF).
 //!

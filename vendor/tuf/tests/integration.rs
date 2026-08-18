@@ -1,3 +1,6 @@
+// This crate uses ring and other libraries that are not compatible with Miri.
+#![cfg(not(miri))]
+
 use assert_matches::assert_matches;
 use chrono::offset::Utc;
 use futures_executor::block_on;

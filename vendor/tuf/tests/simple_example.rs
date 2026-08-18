@@ -1,3 +1,6 @@
+// This crate uses ring and other libraries that are not compatible with Miri.
+#![cfg(not(miri))]
+
 use futures_executor::block_on;
 use futures_util::io::Cursor;
 use tuf::client::{Client, Config};
