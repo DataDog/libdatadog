@@ -420,26 +420,30 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
 ///   - OR its parent belongs to another service (in that case it's a "local root" being the highest
 ///     ancestor of other spans belonging to this service and attached to it).
 pub fn compute_top_level_span(trace: &mut [pb::Span]) {
-    let mut span_id_to_service: HashMap<u64, String> = HashMap::new();
-    for span in trace.iter() {
-        span_id_to_service.insert(span.span_id, span.service.clone());
-    }
-    for span in trace.iter_mut() {
-        if span.parent_id == 0 {
+    if trace.len() == 1 {
+        let span = &mut trace[0];
+        if span.parent_id == 0 || span.parent_id != span.span_id {
             set_top_level_span(span);
-            continue;
         }
-        match span_id_to_service.get(&span.parent_id) {
-            Some(parent_span_service) => {
-                if !parent_span_service.eq(&span.service) {
-                    // parent is not in the same service
-                    set_top_level_span(span)
-                }
+        return;
+    }
+
+    let mut span_id_to_index = HashMap::with_capacity(trace.len());
+    for (index, span) in trace.iter().enumerate() {
+        span_id_to_index.insert(span.span_id, index);
+    }
+    for index in 0..trace.len() {
+        let parent_id = trace[index].parent_id;
+        let is_top_level = if parent_id == 0 {
+            true
+        } else {
+            match span_id_to_index.get(&parent_id) {
+                Some(parent_index) => trace[*parent_index].service != trace[index].service,
+                None => true,
             }
-            None => {
-                // span has no parent in chunk
-                set_top_level_span(span)
-            }
+        };
+        if is_top_level {
+            set_top_level_span(&mut trace[index]);
         }
     }
 }
@@ -1125,6 +1129,21 @@ mod tests {
             })
             .collect();
         assert_eq!(spans_marked_as_top_level, [1, 4, 5])
+    }
+
+    #[test]
+    fn test_compute_top_level_for_short_traces() {
+        let mut empty = [];
+        compute_top_level_span(&mut empty);
+        assert!(empty.is_empty());
+
+        let mut trace = [create_test_span(123, 1, 42, 1, false)];
+        compute_top_level_span(&mut trace);
+        assert!(has_top_level(&trace[0]));
+
+        let mut self_parented = [create_test_span(123, 1, 1, 1, false)];
+        compute_top_level_span(&mut self_parented);
+        assert!(!has_top_level(&self_parented[0]));
     }
 
     #[test]
