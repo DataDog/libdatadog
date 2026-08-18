@@ -115,7 +115,7 @@ mod tests {
     use libdd_trace_protobuf::pb;
     use rand::Rng;
     use std::collections::HashMap;
-    use std::time::SystemTime;
+    use web_time::SystemTime;
 
     fn new_test_span() -> pb::Span {
         let mut rng = rand::thread_rng();

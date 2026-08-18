@@ -3529,6 +3529,7 @@ dependencies = [
  "duplicate 0.4.1",
  "libdd-trace-protobuf",
  "rand 0.8.5",
+ "web-time",
 ]
 
 [[package]]
