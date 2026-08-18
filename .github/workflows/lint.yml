@@ -168,7 +168,7 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-          shared-key: all-features
+          shared-key: clippy-${{ matrix.rust_version }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
