@@ -52,6 +52,8 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
+#[cfg(feature = "agentless")]
+use libdd_trace_utils::agentless_encoder::encode_protobuf_payload;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -747,11 +749,7 @@ impl<
                     ))
                 })?;
         let trace_count = traces.len();
-        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-            &traces,
-            &self.metadata,
-        )
-        .map_err(|e| {
+        let json_body = encode_protobuf_payload(&traces, &self.metadata).map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;

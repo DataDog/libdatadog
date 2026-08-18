@@ -3,8 +3,8 @@
 
 //! Agentless APM JSON encoder.
 //!
-//! Encodes Datadog v04 trace chunks to the JSON body
-//! accepted by the Datadog HTTP trace intake (`POST /v1/input`).
+//! Encodes Datadog v04 trace chunks or normalized protobuf spans to the JSON body accepted by the
+//! Datadog HTTP trace intake (`POST /v1/input`).
 //!
 //! ## Differences from the regular agent (msgpack v04) encoding
 //!
@@ -29,8 +29,9 @@
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use crate::tracer_metadata::TracerMetadata;
+use libdd_trace_protobuf::pb;
 use serde::{
-    ser::{SerializeMap, SerializeSeq},
+    ser::{Error as _, SerializeMap, SerializeSeq},
     Serializer,
 };
 use std::borrow::Borrow;
@@ -85,11 +86,340 @@ macro_rules! ser_fn {
     }
 }
 
+trait AgentlessSpan {
+    type Event: AgentlessSpanEvent;
+    type Link: AgentlessSpanLink;
+
+    fn service(&self) -> &str;
+    fn name(&self) -> &str;
+    fn resource(&self) -> &str;
+    fn span_type(&self) -> &str;
+    fn trace_id(&self) -> u64;
+    fn trace_id_high(&self) -> u64;
+    fn span_id(&self) -> u64;
+    fn parent_id(&self) -> u64;
+    fn start(&self) -> i64;
+    fn duration(&self) -> i64;
+    fn error(&self) -> i32;
+    fn meta(&self) -> impl Iterator<Item = (&str, &str)>;
+    fn metrics(&self) -> impl Iterator<Item = (&str, f64)>;
+    fn meta_struct(&self) -> impl Iterator<Item = (&str, &[u8])>;
+    fn meta_struct_is_empty(&self) -> bool;
+    fn span_links(&self) -> &[Self::Link];
+    fn span_events(&self) -> &[Self::Event];
+}
+
+impl<T: TraceData> AgentlessSpan for Span<T> {
+    type Event = SpanEvent<T>;
+    type Link = SpanLink<T>;
+
+    fn service(&self) -> &str {
+        self.service.borrow()
+    }
+
+    fn name(&self) -> &str {
+        self.name.borrow()
+    }
+
+    fn resource(&self) -> &str {
+        self.resource.borrow()
+    }
+
+    fn span_type(&self) -> &str {
+        self.r#type.borrow()
+    }
+
+    fn trace_id(&self) -> u64 {
+        self.trace_id as u64
+    }
+
+    fn trace_id_high(&self) -> u64 {
+        (self.trace_id >> 64) as u64
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn parent_id(&self) -> u64 {
+        self.parent_id
+    }
+
+    fn start(&self) -> i64 {
+        self.start
+    }
+
+    fn duration(&self) -> i64 {
+        self.duration
+    }
+
+    fn error(&self) -> i32 {
+        self.error
+    }
+
+    fn meta(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.meta
+            .iter()
+            .map(|(key, value)| (key.borrow(), value.borrow()))
+    }
+
+    fn metrics(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.metrics
+            .iter()
+            .map(|(key, value)| (key.borrow(), *value))
+    }
+
+    fn meta_struct(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.meta_struct
+            .iter()
+            .map(|(key, value)| (key.borrow(), value.borrow()))
+    }
+
+    fn meta_struct_is_empty(&self) -> bool {
+        self.meta_struct.is_empty()
+    }
+
+    fn span_links(&self) -> &[Self::Link] {
+        &self.span_links
+    }
+
+    fn span_events(&self) -> &[Self::Event] {
+        &self.span_events
+    }
+}
+
+impl AgentlessSpan for pb::Span {
+    type Event = pb::SpanEvent;
+    type Link = pb::SpanLink;
+
+    fn service(&self) -> &str {
+        &self.service
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn resource(&self) -> &str {
+        &self.resource
+    }
+
+    fn span_type(&self) -> &str {
+        &self.r#type
+    }
+
+    fn trace_id(&self) -> u64 {
+        self.trace_id
+    }
+
+    fn trace_id_high(&self) -> u64 {
+        0
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn parent_id(&self) -> u64 {
+        self.parent_id
+    }
+
+    fn start(&self) -> i64 {
+        self.start
+    }
+
+    fn duration(&self) -> i64 {
+        self.duration
+    }
+
+    fn error(&self) -> i32 {
+        self.error
+    }
+
+    fn meta(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.meta
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+    }
+
+    fn metrics(&self) -> impl Iterator<Item = (&str, f64)> {
+        self.metrics
+            .iter()
+            .map(|(key, value)| (key.as_str(), *value))
+    }
+
+    fn meta_struct(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.meta_struct
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_slice()))
+    }
+
+    fn meta_struct_is_empty(&self) -> bool {
+        self.meta_struct.is_empty()
+    }
+
+    fn span_links(&self) -> &[Self::Link] {
+        &self.span_links
+    }
+
+    fn span_events(&self) -> &[Self::Event] {
+        &self.span_events
+    }
+}
+
+trait AgentlessSpanLink {
+    fn trace_id(&self) -> u64;
+    fn trace_id_high(&self) -> u64;
+    fn span_id(&self) -> u64;
+    fn attributes(&self) -> impl Iterator<Item = (&str, &str)>;
+    fn attributes_len(&self) -> usize;
+    fn tracestate(&self) -> &str;
+    fn flags(&self) -> u32;
+}
+
+impl<T: TraceData> AgentlessSpanLink for SpanLink<T> {
+    fn trace_id(&self) -> u64 {
+        self.trace_id
+    }
+
+    fn trace_id_high(&self) -> u64 {
+        self.trace_id_high
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn attributes(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.attributes
+            .iter()
+            .map(|(key, value)| (key.borrow(), value.borrow()))
+    }
+
+    fn attributes_len(&self) -> usize {
+        self.attributes.len()
+    }
+
+    fn tracestate(&self) -> &str {
+        self.tracestate.borrow()
+    }
+
+    fn flags(&self) -> u32 {
+        self.flags
+    }
+}
+
+impl AgentlessSpanLink for pb::SpanLink {
+    fn trace_id(&self) -> u64 {
+        self.trace_id
+    }
+
+    fn trace_id_high(&self) -> u64 {
+        self.trace_id_high
+    }
+
+    fn span_id(&self) -> u64 {
+        self.span_id
+    }
+
+    fn attributes(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.attributes
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+    }
+
+    fn attributes_len(&self) -> usize {
+        self.attributes.len()
+    }
+
+    fn tracestate(&self) -> &str {
+        &self.tracestate
+    }
+
+    fn flags(&self) -> u32 {
+        self.flags
+    }
+}
+
+trait AgentlessSpanEvent {
+    type Attribute: AgentlessAttribute;
+
+    fn time_unix_nano(&self) -> u64;
+    fn name(&self) -> &str;
+    fn attributes(&self) -> impl Iterator<Item = (&str, &Self::Attribute)>;
+    fn attributes_len(&self) -> usize;
+}
+
+impl<T: TraceData> AgentlessSpanEvent for SpanEvent<T> {
+    type Attribute = AttributeAnyValue<T>;
+
+    fn time_unix_nano(&self) -> u64 {
+        self.time_unix_nano
+    }
+
+    fn name(&self) -> &str {
+        self.name.borrow()
+    }
+
+    fn attributes(&self) -> impl Iterator<Item = (&str, &Self::Attribute)> {
+        self.attributes
+            .iter()
+            .map(|(key, value)| (key.borrow(), value))
+    }
+
+    fn attributes_len(&self) -> usize {
+        self.attributes.len()
+    }
+}
+
+impl AgentlessSpanEvent for pb::SpanEvent {
+    type Attribute = pb::AttributeAnyValue;
+
+    fn time_unix_nano(&self) -> u64 {
+        self.time_unix_nano
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn attributes(&self) -> impl Iterator<Item = (&str, &Self::Attribute)> {
+        self.attributes
+            .iter()
+            .map(|(key, value)| (key.as_str(), value))
+    }
+
+    fn attributes_len(&self) -> usize {
+        self.attributes.len()
+    }
+}
+
+trait AgentlessAttribute {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error>;
+}
+
 /// Encode the given `traces` to the agentless JSON payload (`/v1/input` body).
 ///
 /// Returns the serialized JSON bytes on success.
 pub fn encode_payload<T: TraceData>(
     traces: &[Vec<Span<T>>],
+    metadata: &TracerMetadata,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_payload_inner(traces, metadata)
+}
+
+/// Encode normalized protobuf spans to the agentless JSON payload (`/v1/input` body).
+///
+/// Returns the serialized JSON bytes on success.
+pub fn encode_protobuf_payload(
+    traces: &[Vec<pb::Span>],
+    metadata: &TracerMetadata,
+) -> Result<Vec<u8>, serde_json::Error> {
+    encode_payload_inner(traces, metadata)
+}
+
+fn encode_payload_inner<T: AgentlessSpan>(
+    traces: &[Vec<T>],
     metadata: &TracerMetadata,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let mut bytes = Vec::new();
@@ -98,10 +428,10 @@ pub fn encode_payload<T: TraceData>(
     let mut map_ser = serializer.serialize_map(Some(1))?;
     map_ser.serialize_entry(
         "traces",
-        &ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata| {
+        &ser_fn!(<T: AgentlessSpan> |ser, traces: &'a [Vec<T>], metadata: &'a TracerMetadata| {
             let mut traces_serializer = ser.serialize_seq(Some(traces.len()))?;
             for chunk in traces {
-                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a Vec<Span<T>>, metadata: &'a TracerMetadata| {
+                traces_serializer.serialize_element(&ser_fn!(<T: AgentlessSpan> |ser, chunk: &'a Vec<T>, metadata: &'a TracerMetadata| {
                     encode_trace(ser, chunk, metadata)
                 }))?;
             }
@@ -112,9 +442,9 @@ pub fn encode_payload<T: TraceData>(
     Ok(bytes)
 }
 
-fn encode_trace<T: TraceData, S: Serializer>(
+fn encode_trace<T: AgentlessSpan, S: Serializer>(
     ser: S,
-    chunk: &[Span<T>],
+    chunk: &[T],
     metadata: &TracerMetadata,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
@@ -142,11 +472,11 @@ fn encode_trace<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "spans",
-        &ser_fn!(<T: TraceData> |ser, chunk: &'a [Span<T>]| {
+        &ser_fn!(<T: AgentlessSpan> |ser, chunk: &'a [T]| {
             let mut seq = ser.serialize_seq(Some(chunk.len()))?;
             for (i, span) in chunk.iter().enumerate() {
                 let is_first = i == 0;
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first: bool| {
+                seq.serialize_element(&ser_fn!(<T: AgentlessSpan> |ser, span: &'a T, is_first: bool| {
                     encode_span(ser, span, is_first)
                 }))?;
             }
@@ -157,37 +487,33 @@ fn encode_trace<T: TraceData, S: Serializer>(
     map.end()
 }
 
-fn encode_span<T: TraceData, S: Serializer>(
+fn encode_span<T: AgentlessSpan, S: Serializer>(
     ser: S,
-    span: &Span<T>,
+    span: &T,
     is_first_in_trace: bool,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
 
-    let trace_id = span.trace_id;
+    let trace_id = span.trace_id();
     map.serialize_entry(
         "trace_id",
-        &ser_fn!(|ser, trace_id: u128| {
-            ser.collect_str(&format_args!("{:016x}", trace_id as u64))
-        }),
+        &ser_fn!(|ser, trace_id: u64| { ser.collect_str(&format_args!("{trace_id:016x}")) }),
     )?;
-    let span_id = span.span_id;
+    let span_id = span.span_id();
     map.serialize_entry(
         "span_id",
-        &ser_fn!(|ser, span_id: u64| { ser.collect_str(&format_args!("{:016x}", span_id as u64)) }),
+        &ser_fn!(|ser, span_id: u64| { ser.collect_str(&format_args!("{span_id:016x}")) }),
     )?;
-    let parent_id = span.parent_id;
+    let parent_id = span.parent_id();
     map.serialize_entry(
         "parent_id",
-        &ser_fn!(|ser, parent_id: u64| {
-            ser.collect_str(&format_args!("{:016x}", parent_id as u64))
-        }),
+        &ser_fn!(|ser, parent_id: u64| { ser.collect_str(&format_args!("{parent_id:016x}")) }),
     )?;
 
     // Resource defaults to name when empty.
-    let name_str: &str = span.name.borrow();
-    let resource_str: &str = span.resource.borrow();
-    let service_str: &str = span.service.borrow();
+    let name_str = span.name();
+    let resource_str = span.resource();
+    let service_str = span.service();
     map.serialize_entry("name", name_str)?;
     map.serialize_entry(
         "resource",
@@ -198,27 +524,26 @@ fn encode_span<T: TraceData, S: Serializer>(
         },
     )?;
     map.serialize_entry("service", service_str)?;
-    map.serialize_entry("error", &span.error)?;
-    map.serialize_entry("start", &span.start.max(0))?;
-    map.serialize_entry("duration", &span.duration)?;
+    map.serialize_entry("error", &span.error())?;
+    map.serialize_entry("start", &span.start().max(0))?;
+    map.serialize_entry("duration", &span.duration())?;
 
-    let type_str: &str = span.r#type.borrow();
+    let type_str = span.span_type();
     if !type_str.is_empty() {
         map.serialize_entry("type", type_str)?;
     }
 
     map.serialize_entry(
         "meta",
-        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first_in_trace: bool| {
-            let upper_bits = (span.trace_id >> 64) as u64;
+        &ser_fn!(<T: AgentlessSpan> |ser, span: &'a T, is_first_in_trace: bool| {
+            let upper_bits = span.trace_id_high();
             let mut p_tid_seen = false;
             let mut span_links_seen = false;
             let mut events_seen = false;
             let mut compute_stats_seen = false;
 
             let mut meta = ser.serialize_map(None)?;
-            for (k, v) in span.meta.iter() {
-                let key: &str = k.borrow();
+            for (key, value) in span.meta() {
                 match key {
                     "_dd.p.tid" => p_tid_seen = true,
                     "_dd.span_links" => span_links_seen = true,
@@ -226,8 +551,7 @@ fn encode_span<T: TraceData, S: Serializer>(
                     "_dd.compute_stats"=> compute_stats_seen = true,
                     _ => {}
                 };
-                let val: &str = v.borrow();
-                meta.serialize_entry(key, val)?;
+                meta.serialize_entry(key, value)?;
             }
             if !p_tid_seen && upper_bits != 0 {
                 meta.serialize_entry(
@@ -237,13 +561,13 @@ fn encode_span<T: TraceData, S: Serializer>(
                     }),
                 )?;
             }
-            if !span_links_seen && !span.span_links.is_empty() {
-                if let Some(s) = serialize_span_links(&span.span_links) {
+            if !span_links_seen && !span.span_links().is_empty() {
+                if let Some(s) = serialize_span_links(span.span_links()) {
                     meta.serialize_entry("_dd.span_links", &s)?;
                 }
             }
-            if !events_seen && !span.span_events.is_empty() {
-                if let Some(s) = serialize_span_events(&span.span_events) {
+            if !events_seen && !span.span_events().is_empty() {
+                if let Some(s) = serialize_span_events(span.span_events()) {
                     meta.serialize_entry("events", &s)?;
                 }
             }
@@ -256,40 +580,36 @@ fn encode_span<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "metrics",
-        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
+        &ser_fn!(<T: AgentlessSpan> |ser, span: &'a T| {
             let mut metrics = ser.serialize_map(None)?;
             let mut trace_root_seen = false;
-            for (k, v) in span.metrics.iter() {
-                let key: &str = k.borrow();
+            for (key, value) in span.metrics() {
                 // serde_json refuses to serialize NaN/Inf; drop them silently.
-                if v.is_finite() {
+                if value.is_finite() {
                     match key {
                         "_trace_root" => trace_root_seen = true,
                         "_top_level" => {
-                            metrics.serialize_entry(key, &(*v as u32))?;
+                            metrics.serialize_entry(key, &(value as u32))?;
                             continue
                         },
                         _ => {},
                     }
-                    metrics.serialize_entry(key, v)?
+                    metrics.serialize_entry(key, &value)?
                 }
             }
-            if !trace_root_seen && span.parent_id == 0 {
+            if !trace_root_seen && span.parent_id() == 0 {
                 metrics.serialize_entry("_trace_root", &1u32)?;
             }
             metrics.end()
         }),
     )?;
 
-    if !span.meta_struct.is_empty() {
+    if !span.meta_struct_is_empty() {
         map.serialize_entry(
             "meta_struct",
-            &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
+            &ser_fn!(<T: AgentlessSpan> |ser, span: &'a T| {
                 let mut ms = ser.serialize_map(None)?;
-                for (k, v) in span.meta_struct.iter() {
-                    let key: &str = k.borrow();
-                    let bytes: &[u8] = v.borrow();
-
+                for (key, bytes) in span.meta_struct() {
                     // abort whole payload on malformed entry
                     ms.serialize_entry(key, &MsgpackAsJson(bytes))?;
                 }
@@ -305,11 +625,11 @@ fn encode_span<T: TraceData, S: Serializer>(
 /// Returns `None` if serialization fails. The result is truncated to
 /// [`MAX_META_VALUE_LEN`] characters with a trailing `"..."` if it would
 /// otherwise exceed that limit.
-fn serialize_span_links<T: TraceData>(links: &[SpanLink<T>]) -> Option<String> {
-    let s = serde_json::to_string(&ser_fn!(<T: TraceData> |ser, links: &'a [SpanLink<T>]| {
+fn serialize_span_links<T: AgentlessSpanLink>(links: &[T]) -> Option<String> {
+    let s = serde_json::to_string(&ser_fn!(<T: AgentlessSpanLink> |ser, links: &'a [T]| {
         let mut seq = ser.serialize_seq(Some(links.len()))?;
         for link in links {
-            seq.serialize_element(&ser_fn!(<T: TraceData> |ser, link: &'a SpanLink<T>| {
+            seq.serialize_element(&ser_fn!(<T: AgentlessSpanLink> |ser, link: &'a T| {
                 encode_span_link(ser, link)
             }))?;
         }
@@ -319,23 +639,21 @@ fn serialize_span_links<T: TraceData>(links: &[SpanLink<T>]) -> Option<String> {
     Some(truncate_with_ellipsis(s, MAX_META_VALUE_LEN))
 }
 
-fn encode_span_link<T: TraceData, S: Serializer>(
+fn encode_span_link<T: AgentlessSpanLink, S: Serializer>(
     ser: S,
-    link: &SpanLink<T>,
+    link: &T,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
-    let trace_id_128: u128 = ((link.trace_id_high as u128) << 64) | (link.trace_id as u128);
+    let trace_id_128: u128 = ((link.trace_id_high() as u128) << 64) | (link.trace_id() as u128);
     map.serialize_entry("trace_id", &format!("{:032x}", trace_id_128))?;
-    map.serialize_entry("span_id", &format!("{:016x}", link.span_id))?;
-    if !link.attributes.is_empty() {
+    map.serialize_entry("span_id", &format!("{:016x}", link.span_id()))?;
+    if link.attributes_len() != 0 {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, link: &'a SpanLink<T>| {
-                let mut attrs = ser.serialize_map(Some(link.attributes.len()))?;
-                for (k, v) in link.attributes.iter() {
-                    let key: &str = k.borrow();
-                    let val: &str = v.borrow();
-                    attrs.serialize_entry(key, val)?;
+            &ser_fn!(<T: AgentlessSpanLink> |ser, link: &'a T| {
+                let mut attrs = ser.serialize_map(Some(link.attributes_len()))?;
+                for (key, value) in link.attributes() {
+                    attrs.serialize_entry(key, value)?;
                 }
                 attrs.end()
             }),
@@ -344,13 +662,13 @@ fn encode_span_link<T: TraceData, S: Serializer>(
     // When `flags` is 0, no sampling decision exists, so omit the field. Before emission,
     // mask off the internal "explicitly set" sentinel (bit 31), because this JSON field uses
     // the same `_dd.span_links` key that the v0.5 encoder produces and must match its output.
-    if link.flags != 0 {
+    if link.flags() != 0 {
         map.serialize_entry(
             "flags",
-            &((link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL) as u64),
+            &((link.flags() & !SPAN_LINK_FLAGS_SET_SENTINEL) as u64),
         )?;
     }
-    let tracestate: &str = link.tracestate.borrow();
+    let tracestate = link.tracestate();
     if !tracestate.is_empty() {
         map.serialize_entry("tracestate", tracestate)?;
     }
@@ -358,11 +676,11 @@ fn encode_span_link<T: TraceData, S: Serializer>(
 }
 
 /// Serialize span events to a JSON string suitable for `meta['events']`.
-fn serialize_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> Option<String> {
-    let s = serde_json::to_string(&ser_fn!(<T: TraceData> |ser, events: &'a [SpanEvent<T>]| {
+fn serialize_span_events<T: AgentlessSpanEvent>(events: &[T]) -> Option<String> {
+    let s = serde_json::to_string(&ser_fn!(<T: AgentlessSpanEvent> |ser, events: &'a [T]| {
         let mut seq = ser.serialize_seq(Some(events.len()))?;
         for event in events {
-            seq.serialize_element(&ser_fn!(<T: TraceData> |ser, event: &'a SpanEvent<T>| {
+            seq.serialize_element(&ser_fn!(<T: AgentlessSpanEvent> |ser, event: &'a T| {
                 encode_span_event(ser, event)
             }))?;
         }
@@ -372,34 +690,21 @@ fn serialize_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> Option<String
     Some(truncate_with_ellipsis(s, MAX_META_VALUE_LEN))
 }
 
-fn encode_span_event<T: TraceData, S: Serializer>(
+fn encode_span_event<T: AgentlessSpanEvent, S: Serializer>(
     ser: S,
-    event: &SpanEvent<T>,
+    event: &T,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
-    let name: &str = event.name.borrow();
-    map.serialize_entry("name", name)?;
-    map.serialize_entry("time_unix_nano", &event.time_unix_nano)?;
-    if !event.attributes.is_empty() {
+    map.serialize_entry("name", event.name())?;
+    map.serialize_entry("time_unix_nano", &event.time_unix_nano())?;
+    if event.attributes_len() != 0 {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, event: &'a SpanEvent<T>| {
-                let mut attrs = ser.serialize_map(Some(event.attributes.len()))?;
-                for (k, v) in event.attributes.iter() {
-                    let key: &str = k.borrow();
-                    attrs.serialize_entry(key, &ser_fn!(<T: TraceData> |ser, v: &'a AttributeAnyValue<T> | {
-                        match v {
-                            AttributeAnyValue::SingleValue(v) => serialize_scalar(ser, v),
-                            AttributeAnyValue::Array(values) => {
-                                let mut seq = ser.serialize_seq(Some(values.len()))?;
-                                for v in values {
-                                    seq.serialize_element(&ser_fn!(<T: TraceData> |ser, v: &'a AttributeArrayValue<T>| {
-                                        serialize_scalar(ser, v)
-                                    }))?;
-                                }
-                                seq.end()
-                            }
-                        }
+            &ser_fn!(<T: AgentlessSpanEvent> |ser, event: &'a T| {
+                let mut attrs = ser.serialize_map(Some(event.attributes_len()))?;
+                for (key, value) in event.attributes() {
+                    attrs.serialize_entry(key, &ser_fn!(<A: AgentlessAttribute> |ser, value: &'a A| {
+                        value.serialize(ser)
                     }))?;
                 }
                 attrs.end()
@@ -409,25 +714,87 @@ fn encode_span_event<T: TraceData, S: Serializer>(
     map.end()
 }
 
-fn serialize_scalar<S: serde::Serializer, T: TraceData>(
-    ser: S,
-    s: &AttributeArrayValue<T>,
-) -> Result<S::Ok, S::Error> {
-    match s {
-        AttributeArrayValue::String(s) => {
-            let s: &str = s.borrow();
-            ser.serialize_str(s)
-        }
-        AttributeArrayValue::Boolean(b) => ser.serialize_bool(*b),
-        AttributeArrayValue::Integer(i) => ser.serialize_i64(*i),
-        AttributeArrayValue::Double(d) => {
-            if d.is_finite() {
-                ser.serialize_f64(*d)
-            } else {
-                // NaN/Inf become JSON null.
-                ser.serialize_unit()
+impl<T: TraceData> AgentlessAttribute for AttributeAnyValue<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AttributeAnyValue::SingleValue(value) => serialize_scalar(serializer, value),
+            AttributeAnyValue::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(
+                        &ser_fn!(<T: TraceData> |ser, value: &'a AttributeArrayValue<T>| {
+                            serialize_scalar(ser, value)
+                        }),
+                    )?;
+                }
+                sequence.end()
             }
         }
+    }
+}
+
+impl AgentlessAttribute for pb::AttributeAnyValue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use pb::attribute_any_value::AttributeAnyValueType;
+
+        match self.r#type() {
+            AttributeAnyValueType::StringValue => serializer.serialize_str(&self.string_value),
+            AttributeAnyValueType::BoolValue => serializer.serialize_bool(self.bool_value),
+            AttributeAnyValueType::IntValue => serializer.serialize_i64(self.int_value),
+            AttributeAnyValueType::DoubleValue => serialize_f64(serializer, self.double_value),
+            AttributeAnyValueType::ArrayValue => {
+                let values = self.array_value.as_ref().ok_or_else(|| {
+                    S::Error::custom("agentless span event array is missing its values")
+                })?;
+                let mut sequence = serializer.serialize_seq(Some(values.values.len()))?;
+                for value in &values.values {
+                    sequence.serialize_element(&ser_fn!(
+                        |ser, value: &'a pb::AttributeArrayValue| {
+                            serialize_protobuf_scalar(ser, value)
+                        }
+                    ))?;
+                }
+                sequence.end()
+            }
+        }
+    }
+}
+
+fn serialize_scalar<S: Serializer, T: TraceData>(
+    serializer: S,
+    value: &AttributeArrayValue<T>,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        AttributeArrayValue::String(value) => {
+            let value: &str = value.borrow();
+            serializer.serialize_str(value)
+        }
+        AttributeArrayValue::Boolean(value) => serializer.serialize_bool(*value),
+        AttributeArrayValue::Integer(value) => serializer.serialize_i64(*value),
+        AttributeArrayValue::Double(value) => serialize_f64(serializer, *value),
+    }
+}
+
+fn serialize_protobuf_scalar<S: Serializer>(
+    serializer: S,
+    value: &pb::AttributeArrayValue,
+) -> Result<S::Ok, S::Error> {
+    use pb::attribute_array_value::AttributeArrayValueType;
+
+    match value.r#type() {
+        AttributeArrayValueType::StringValue => serializer.serialize_str(&value.string_value),
+        AttributeArrayValueType::BoolValue => serializer.serialize_bool(value.bool_value),
+        AttributeArrayValueType::IntValue => serializer.serialize_i64(value.int_value),
+        AttributeArrayValueType::DoubleValue => serialize_f64(serializer, value.double_value),
+    }
+}
+
+fn serialize_f64<S: Serializer>(serializer: S, value: f64) -> Result<S::Ok, S::Error> {
+    if value.is_finite() {
+        serializer.serialize_f64(value)
+    } else {
+        // NaN/Inf become JSON null.
+        serializer.serialize_unit()
     }
 }
 

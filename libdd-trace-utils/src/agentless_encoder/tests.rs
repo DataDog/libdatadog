@@ -1,11 +1,12 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::encode_payload;
+use super::{encode_payload, encode_protobuf_payload};
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::span::BytesData;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_protobuf::pb;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -28,6 +29,185 @@ fn base_metadata() -> TracerMetadata {
 
 fn json_from_bytes(b: &[u8]) -> Value {
     serde_json::from_slice(b).expect("payload must be valid JSON")
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn protobuf_spans_match_v04_spans() {
+    let trace_id_high = 0x0011_2233_4455_6677_u64;
+    let trace_id = 0x8899_aabb_ccdd_eeff_u64;
+    let meta_struct =
+        rmp_serde::to_vec_named(&serde_json::json!({ "rule_id": "crs-913-110" })).unwrap();
+    let span_link = SpanLink::<BytesData> {
+        trace_id: 0x9abc_def0_1234_5678,
+        trace_id_high: 0x0011_2233_4455_6677,
+        span_id: 0xfeed_face_dead_beef,
+        attributes: HashMap::from([(bs("link.name"), bs("scheduled_by"))]),
+        flags: 1,
+        tracestate: bs("dd=s:1"),
+    };
+    let span_event = SpanEvent::<BytesData> {
+        time_unix_nano: 1_700_000_000_000_000_000,
+        name: bs("exception"),
+        attributes: HashMap::from([
+            (
+                bs("exception.message"),
+                AttributeAnyValue::SingleValue(AttributeArrayValue::String(bs("timeout"))),
+            ),
+            (
+                bs("bool"),
+                AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(true)),
+            ),
+            (
+                bs("int"),
+                AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(42)),
+            ),
+            (
+                bs("double"),
+                AttributeAnyValue::SingleValue(AttributeArrayValue::Double(1.5)),
+            ),
+            (
+                bs("array"),
+                AttributeAnyValue::Array(vec![
+                    AttributeArrayValue::String(bs("value")),
+                    AttributeArrayValue::Boolean(false),
+                    AttributeArrayValue::Integer(7),
+                    AttributeArrayValue::Double(2.5),
+                ]),
+            ),
+        ]),
+    };
+    let span: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        resource: bs("res"),
+        r#type: bs("web"),
+        trace_id: ((trace_id_high as u128) << 64) | trace_id as u128,
+        span_id: 1,
+        parent_id: 0,
+        start: 2_500_000_000,
+        duration: 1_000_000,
+        error: 1,
+        meta: VecMap::from_iter([("some.tag".into(), "kept".into())]),
+        metrics: VecMap::from_iter([("_top_level".into(), 1.0)]),
+        meta_struct: VecMap::from_iter([(
+            "_dd.appsec.json".into(),
+            Bytes::from(meta_struct.clone()),
+        )]),
+        span_links: vec![span_link],
+        span_events: vec![span_event],
+    };
+    let protobuf_span = pb::Span {
+        service: "svc".to_string(),
+        name: "op".to_string(),
+        resource: "res".to_string(),
+        r#type: "web".to_string(),
+        trace_id,
+        span_id: 1,
+        parent_id: 0,
+        start: 2_500_000_000,
+        duration: 1_000_000,
+        error: 1,
+        meta: HashMap::from([
+            ("some.tag".to_string(), "kept".to_string()),
+            ("_dd.p.tid".to_string(), format!("{trace_id_high:016x}")),
+        ]),
+        metrics: HashMap::from([("_top_level".to_string(), 1.0)]),
+        meta_struct: HashMap::from([("_dd.appsec.json".to_string(), meta_struct)]),
+        span_links: vec![pb::SpanLink {
+            trace_id: 0x9abc_def0_1234_5678,
+            trace_id_high: 0x0011_2233_4455_6677,
+            span_id: 0xfeed_face_dead_beef,
+            attributes: HashMap::from([("link.name".to_string(), "scheduled_by".to_string())]),
+            flags: 1,
+            tracestate: "dd=s:1".to_string(),
+        }],
+        span_events: vec![pb::SpanEvent {
+            time_unix_nano: 1_700_000_000_000_000_000,
+            name: "exception".to_string(),
+            attributes: HashMap::from([
+                (
+                    "exception.message".to_string(),
+                    pb::AttributeAnyValue {
+                        r#type: pb::attribute_any_value::AttributeAnyValueType::StringValue as i32,
+                        string_value: "timeout".to_string(),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "bool".to_string(),
+                    pb::AttributeAnyValue {
+                        r#type: pb::attribute_any_value::AttributeAnyValueType::BoolValue as i32,
+                        bool_value: true,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "int".to_string(),
+                    pb::AttributeAnyValue {
+                        r#type: pb::attribute_any_value::AttributeAnyValueType::IntValue as i32,
+                        int_value: 42,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "double".to_string(),
+                    pb::AttributeAnyValue {
+                        r#type: pb::attribute_any_value::AttributeAnyValueType::DoubleValue as i32,
+                        double_value: 1.5,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "array".to_string(),
+                    pb::AttributeAnyValue {
+                        r#type: pb::attribute_any_value::AttributeAnyValueType::ArrayValue as i32,
+                        array_value: Some(pb::AttributeArray {
+                            values: vec![
+                                pb::AttributeArrayValue {
+                                    r#type: pb::attribute_array_value::AttributeArrayValueType::StringValue as i32,
+                                    string_value: "value".to_string(),
+                                    ..Default::default()
+                                },
+                                pb::AttributeArrayValue {
+                                    r#type: pb::attribute_array_value::AttributeArrayValueType::BoolValue as i32,
+                                    bool_value: false,
+                                    ..Default::default()
+                                },
+                                pb::AttributeArrayValue {
+                                    r#type: pb::attribute_array_value::AttributeArrayValueType::IntValue as i32,
+                                    int_value: 7,
+                                    ..Default::default()
+                                },
+                                pb::AttributeArrayValue {
+                                    r#type: pb::attribute_array_value::AttributeArrayValueType::DoubleValue as i32,
+                                    double_value: 2.5,
+                                    ..Default::default()
+                                },
+                            ],
+                        }),
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        }],
+    };
+
+    let mut v04 = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let mut protobuf = json_from_bytes(
+        &encode_protobuf_payload(&[vec![protobuf_span]], &base_metadata()).unwrap(),
+    );
+    for payload in [&mut v04, &mut protobuf] {
+        let meta = payload["traces"][0]["spans"][0]["meta"]
+            .as_object_mut()
+            .unwrap();
+        for key in ["_dd.span_links", "events"] {
+            let nested = serde_json::from_str(meta[key].as_str().unwrap()).unwrap();
+            meta.insert(key.to_string(), nested);
+        }
+    }
+
+    assert_eq!(protobuf, v04);
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
