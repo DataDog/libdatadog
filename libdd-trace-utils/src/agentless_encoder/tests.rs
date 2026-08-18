@@ -250,7 +250,7 @@ fn top_level_payload_shape_and_metadata() {
     assert_eq!(s["resource"], "res");
     assert_eq!(s["service"], "svc");
     assert_eq!(s["error"], 0);
-    assert_eq!(s["start"], 2_500_000_000_i64);
+    assert_eq!(s["start"], 2_i64);
     assert_eq!(s["duration"], 1_000_000);
 
     // Root span gets `_trace_root`, top-level (no parent), and first span gets
@@ -260,6 +260,28 @@ fn top_level_payload_shape_and_metadata() {
     assert_eq!(metrics["_top_level"], 1);
     let meta = s["meta"].as_object().unwrap();
     assert_eq!(meta["_dd.compute_stats"], "1");
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn span_start_is_encoded_in_whole_seconds() {
+    let spans = [-1, 999_999_999, 1_000_000_000]
+        .into_iter()
+        .enumerate()
+        .map(|(index, start)| Span::<BytesData> {
+            trace_id: 1,
+            span_id: index as u64 + 1,
+            start,
+            ..Default::default()
+        })
+        .collect();
+    let bytes = encode_payload(&[spans], &base_metadata()).unwrap();
+    let value = json_from_bytes(&bytes);
+    let spans = value["traces"][0]["spans"].as_array().unwrap();
+
+    assert_eq!(spans[0]["start"], 0);
+    assert_eq!(spans[1]["start"], 0);
+    assert_eq!(spans[2]["start"], 1);
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri

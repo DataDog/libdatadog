@@ -13,6 +13,7 @@
 //!   inlined on each trace instead of being carried in request headers. Hostname is always emitted
 //! - **IDs**: `trace_id`, `span_id`, `parent_id` are lowercase hex strings (16 chars; 32 for
 //!   span-link trace IDs)
+//! - **Time**: span `start` is whole seconds since Unix epoch; `duration` remains nanoseconds
 //! - **128-bit trace IDs**: only the low 64 bits go into `trace_id`; the `_dd.p.tid` meta tag
 //!   carries upper 64 bits
 //! - **Span links / events**: not top-level fields. They are JSON-stringified into
@@ -525,7 +526,7 @@ fn encode_span<T: AgentlessSpan, S: Serializer>(
     )?;
     map.serialize_entry("service", service_str)?;
     map.serialize_entry("error", &span.error())?;
-    map.serialize_entry("start", &span.start().max(0))?;
+    map.serialize_entry("start", &(span.start().max(0) / 1_000_000_000))?;
     map.serialize_entry("duration", &span.duration())?;
 
     let type_str = span.span_type();
