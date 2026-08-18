@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened ]
 env:
-  DATADOG_AGENT_TAG: "fdc29d4428db855950228a642c43a5595e56bb09"
+  DATADOG_AGENT_TAG: "14f65ca3802739e69ea2951a60c87814c21f7161"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 jobs:
@@ -54,8 +54,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - name: diff pb.rs
+      - name: diff generated protobuf files
         working-directory: libdd-trace-protobuf
         run: |
           cargo build --features generate-protobuf
-          git diff --exit-code -- src/pb.rs
+          git diff --exit-code -- src/pb.rs src/pb.idx.rs

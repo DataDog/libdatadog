@@ -165,8 +165,8 @@ fn gen_transfer_handles(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro
         .collect();
 
     quote! {
-        impl datadog_ipc::handles::TransferHandles for #enum_name {
-            fn copy_handles<Transport: datadog_ipc::handles::HandlesTransport>(
+        impl libdd_ipc::handles::TransferHandles for #enum_name {
+            fn copy_handles<Transport: libdd_ipc::handles::HandlesTransport>(
                 &self,
                 __transport: Transport,
             ) -> ::std::result::Result<(), Transport::Error> {
@@ -176,7 +176,7 @@ fn gen_transfer_handles(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro
                 }
             }
 
-            fn receive_handles<Transport: datadog_ipc::handles::HandlesTransport>(
+            fn receive_handles<Transport: libdd_ipc::handles::HandlesTransport>(
                 &mut self,
                 __transport: Transport,
             ) -> ::std::result::Result<(), Transport::Error> {
@@ -223,7 +223,7 @@ fn gen_handler_trait(
             fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
 
             /// Storage for the connection to read from.
-            fn connection(&self) -> &datadog_ipc::ipc_server::OwnedServerConn;
+            fn connection(&self) -> &libdd_ipc::ipc_server::OwnedServerConn;
 
             #(#handler_methods)*
         }
@@ -262,12 +262,12 @@ fn gen_serve_fn(
                 quote! {
                     #[cfg(target_os = "linux")]
                     if __pending_acks > 0 {
-                        datadog_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
+                        libdd_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
                         __pending_acks = 0;
                     }
                     let result = handler.#name(#(#field_names),*).await;
-                    let __resp_data = datadog_ipc::codec::encode(&result);
-                    datadog_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
+                    let __resp_data = libdd_ipc::codec::encode(&result);
+                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
                 }
             } else {
                 // On Linux, buffer up to 20 acks and flush in a single
@@ -277,14 +277,14 @@ fn gen_serve_fn(
                     #[cfg(target_os = "linux")]
                     {
                         __pending_acks += 1;
-                        if #force_flush || __pending_acks >= datadog_ipc::ACK_BUFFER_SIZE {
-                            datadog_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
+                        if #force_flush || __pending_acks >= libdd_ipc::ACK_BUFFER_SIZE {
+                            libdd_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
                             __pending_acks = 0;
                         }
                     }
                     #[cfg(not(target_os = "linux"))]
                     // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
-                    datadog_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
+                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
                 }
             };
 
@@ -304,9 +304,9 @@ fn gen_serve_fn(
             #[cfg(target_os = "linux")]
             let mut __pending_acks: u32 = 0;
             loop {
-                let (mut req, fds) = match datadog_ipc::recv_raw_async(
+                let (mut req, fds) = match libdd_ipc::recv_raw_async(
                     &handler.connection().async_conn(),
-                    |buf| datadog_ipc::codec::decode::<#enum_name>(buf),
+                    |buf| libdd_ipc::codec::decode::<#enum_name>(buf),
                 ).await {
                     Ok((Ok(req), fds)) => (req, fds),
                     Ok((Err(_), _)) => {
@@ -318,8 +318,8 @@ fn gen_serve_fn(
                         break;
                     }
                 };
-                let mut __source = datadog_ipc::handles::FdSource::new(fds);
-                if datadog_ipc::handles::TransferHandles::receive_handles(
+                let mut __source = libdd_ipc::handles::FdSource::new(fds);
+                if libdd_ipc::handles::TransferHandles::receive_handles(
                     &mut req,
                     &mut __source,
                 ).is_err() {
@@ -366,14 +366,14 @@ fn gen_channel(
             // Build the request and collect fds via TransferHandles.
             let build_req_and_fds = quote! {
                 let __req = #enum_name::#variant { #(#field_names),* };
-                let mut __sink = datadog_ipc::handles::FdSink::new();
-                datadog_ipc::handles::TransferHandles::copy_handles(
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(
                     &__req, &mut __sink
                 ).ok();
-                let mut __data = datadog_ipc::codec::encode(&__req);
+                let mut __data = libdd_ipc::codec::encode(&__req);
                 let __fds = __sink.into_fds();
                 {
-                    let __max = datadog_ipc::max_message_size();
+                    let __max = libdd_ipc::max_message_size();
                     if __data.len() > __max {
                         ::tracing::warn!(?__req, len = __data.len(), max = __max, "IPC message too large");
                     }
@@ -401,11 +401,11 @@ fn gen_channel(
                 let method_name = format_ident!("call_{}", name);
                 let ret_ty = m.return_type.as_ref().unwrap();
                 quote! {
-                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, datadog_ipc::codec::DecodeError> {
+                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
                         #build_req_and_fds
                         let (__resp, _) = self.0.call(&mut __data, &__fds)
-                            .map_err(datadog_ipc::codec::DecodeError::Io)?;
-                        datadog_ipc::codec::decode::<#ret_ty>(&__resp)
+                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
                     }
                 }
             }
@@ -413,22 +413,22 @@ fn gen_channel(
         .collect();
 
     quote! {
-        #vis struct #channel_name(pub datadog_ipc::IpcClientConn);
+        #vis struct #channel_name(pub libdd_ipc::IpcClientConn);
 
         impl #channel_name {
-            pub fn new(conn: datadog_ipc::SeqpacketConn) -> Self {
-                Self(datadog_ipc::IpcClientConn::new(conn))
+            pub fn new(conn: libdd_ipc::SeqpacketConn) -> Self {
+                Self(libdd_ipc::IpcClientConn::new(conn))
             }
 
             #(#channel_methods)*
 
             /// Generic fire-and-forget send (used by SidecarSender outbox drain).
             pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
-                let mut __sink = datadog_ipc::handles::FdSink::new();
-                datadog_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = datadog_ipc::codec::encode(req);
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
-                let __max = datadog_ipc::max_message_size();
+                let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
@@ -440,11 +440,11 @@ fn gen_channel(
                 &mut self,
                 req: &#enum_name,
             ) -> ::std::io::Result<()> {
-                let mut __sink = datadog_ipc::handles::FdSink::new();
-                datadog_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = datadog_ipc::codec::encode(req);
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
-                let __max = datadog_ipc::max_message_size();
+                let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
