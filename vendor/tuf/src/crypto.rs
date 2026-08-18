@@ -624,7 +624,7 @@ impl RsaPrivateKey {
     /// Note: `openssl` needs to the on the `$PATH`.
     pub fn pkcs8() -> Result<Vec<u8>> {
         let gen = Command::new("openssl")
-            .args(&[
+            .args([
                 "genpkey",
                 "-algorithm",
                 "RSA",
@@ -638,7 +638,7 @@ impl RsaPrivateKey {
             .output()?;
 
         let mut pk8 = Command::new("openssl")
-            .args(&[
+            .args([
                 "pkcs8", "-inform", "der", "-topk8", "-nocrypt", "-outform", "der",
             ])
             .stdin(Stdio::piped())
@@ -678,10 +678,10 @@ impl RsaPrivateKey {
         let key = RsaKeyPair::from_pkcs8(der_key)
             .map_err(|_| Error::Encoding("Could not parse key as PKCS#8v2".into()))?;
 
-        if key.public_modulus_len() < 256 {
+        if key.public().modulus_len() < 256 {
             return Err(Error::IllegalArgument(format!(
                 "RSA public modulus must be 2048 or greater. Found {}",
-                key.public_modulus_len() * 8
+                key.public().modulus_len() * 8
             )));
         }
 
@@ -703,7 +703,7 @@ impl RsaPrivateKey {
 impl PrivateKey for RsaPrivateKey {
     fn sign(&self, msg: &[u8]) -> Result<Signature> {
         let rng = SystemRandom::new();
-        let mut buf = vec![0; self.private.public_modulus_len()];
+        let mut buf = vec![0; self.private.public().modulus_len()];
         let scheme = match &self.public.scheme {
             SignatureScheme::RsaSsaPssSha256 => &RSA_PSS_SHA256,
             SignatureScheme::RsaSsaPssSha512 => &RSA_PSS_SHA512,
