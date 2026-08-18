@@ -26,7 +26,9 @@
 //! let local = FileSystemRepository::<Json>::new(PathBuf::from("~/.rustup"))?;
 //!
 //! let remote = HttpRepositoryBuilder::new_with_uri(
-//!     "https://static.rust-lang.org/".parse::<http::Uri>().unwrap(),
+//!     "https://static.rust-lang.org/"
+//!         .parse::<http::Uri>()
+//!         .unwrap(),
 //!     HttpClient::new(),
 //! )
 //! .user_agent("rustup/1.4.0")
@@ -39,7 +41,8 @@
 //!     &root_public_keys,
 //!     local,
 //!     remote,
-//! ).await?;
+//! )
+//! .await?;
 //!
 //! let _ = client.update().await?;
 //! # Ok(())
@@ -126,17 +129,15 @@ where
     /// let root_path = MetadataPath::root();
     /// let root_version = MetadataVersion::Number(root_version);
     ///
-    /// local.store_metadata(
-    ///     &root_path,
-    ///     root_version,
-    ///     &mut root.to_raw().unwrap().as_bytes()
-    /// ).await?;
+    /// local
+    ///     .store_metadata(
+    ///         &root_path,
+    ///         root_version,
+    ///         &mut root.to_raw().unwrap().as_bytes(),
+    ///     )
+    ///     .await?;
     ///
-    /// let client = Client::with_trusted_local(
-    ///     Config::default(),
-    ///     local,
-    ///     remote,
-    /// ).await?;
+    /// let client = Client::with_trusted_local(Config::default(), local, remote).await?;
     /// # Ok(())
     /// # })
     /// # }
@@ -196,12 +197,7 @@ where
     ///     .to_raw()
     ///     .unwrap();
     ///
-    /// let client = Client::with_trusted_root(
-    ///     Config::default(),
-    ///     &raw_root,
-    ///     local,
-    ///     remote,
-    /// ).await?;
+    /// let client = Client::with_trusted_root(Config::default(), &raw_root, local, remote).await?;
     /// # Ok(())
     /// # })
     /// # }
@@ -218,8 +214,8 @@ where
         Self::new(config, tuf, local, remote).await
     }
 
-    /// Create a new TUF client. It will attempt to load initial root metadata from the local and remote
-    /// repositories using the provided keys to pin the verification.
+    /// Create a new TUF client. It will attempt to load initial root metadata from the local and
+    /// remote repositories using the provided keys to pin the verification.
     ///
     /// # Examples
     ///
@@ -259,11 +255,13 @@ where
     /// let root_path = MetadataPath::root();
     /// let root_version = MetadataVersion::Number(root_version);
     ///
-    /// remote.store_metadata(
-    ///     &root_path,
-    ///     root_version,
-    ///     &mut root.to_raw().unwrap().as_bytes()
-    /// ).await?;
+    /// remote
+    ///     .store_metadata(
+    ///         &root_path,
+    ///         root_version,
+    ///         &mut root.to_raw().unwrap().as_bytes(),
+    ///     )
+    ///     .await?;
     ///
     /// let client = Client::with_trusted_root_keys(
     ///     Config::default(),
@@ -272,7 +270,8 @@ where
     ///     once(&public_key),
     ///     local,
     ///     remote,
-    /// ).await?;
+    /// )
+    /// .await?;
     /// # Ok(())
     /// # })
     /// # }
@@ -594,8 +593,8 @@ where
         //     attack. On the next update cycle, begin at step 5.0 and version N of the root
         //     metadata file.
 
-        // TODO: Consider moving the root metadata expiration check into `tuf::Database`, since that's
-        // where we check timestamp/snapshot/targets/delegations for expiration.
+        // TODO: Consider moving the root metadata expiration check into `tuf::Database`, since
+        // that's where we check timestamp/snapshot/targets/delegations for expiration.
         if tuf.trusted_root().expires() <= start_time {
             error!("Root metadata expired, potential freeze attack");
             return Err(Error::ExpiredMetadata(MetadataPath::root()));
@@ -2037,8 +2036,8 @@ mod test {
         assert_eq!(client.tuf.trusted_root().version(), 3);
 
         // Make sure we fetched and stored the metadata in the expected order. Note that we
-        // re-fetch snapshot and targets because we rotated keys, which caused `tuf::Database` to delete
-        // the metadata.
+        // re-fetch snapshot and targets because we rotated keys, which caused `tuf::Database` to
+        // delete the metadata.
         assert_eq!(
             client.remote_repo().take_tracks(),
             vec![
@@ -2415,8 +2414,8 @@ mod test {
             .await
             .unwrap();
 
-            // Create a snapshot metadata description, and deliberately don't set the metadata length
-            // or hashes.
+            // Create a snapshot metadata description, and deliberately don't set the metadata
+            // length or hashes.
             let timestamp_description = MetadataDescription::new(1, None, HashMap::new()).unwrap();
 
             let timestamp =

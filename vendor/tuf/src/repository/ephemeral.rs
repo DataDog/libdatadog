@@ -163,13 +163,9 @@ where
     /// Write all the metadata and targets in the [EphemeralBatchUpdate] to the source
     /// [EphemeralRepository] in a single batch operation.
     pub fn commit(self) {
-        self.parent_repo
-            .metadata
-            .extend(self.staging_repo.metadata);
+        self.parent_repo.metadata.extend(self.staging_repo.metadata);
 
-        self.parent_repo
-            .targets
-            .extend(self.staging_repo.targets);
+        self.parent_repo.targets.extend(self.staging_repo.targets);
     }
 }
 

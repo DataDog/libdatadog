@@ -43,7 +43,9 @@ where
     /// Create a new repository with the given `Url` and `Client`.
     pub fn new(url: Url, client: Client<C>) -> Self {
         HttpRepositoryBuilder {
-            uri: url.to_string().parse::<Uri>().unwrap(), // This is dangerous, but will only exist for a short time as we migrate APIs.
+            uri: url.to_string().parse::<Uri>().unwrap(), /* This is dangerous, but will only
+                                                           * exist for a short time as we migrate
+                                                           * APIs. */
             client,
             user_agent: None,
             metadata_prefix: None,
@@ -70,7 +72,6 @@ where
     ///
     /// Callers *should* include a custom User-Agent prefix to help maintainers of TUF repositories
     /// keep track of which client versions exist in the field.
-    ///
     pub fn user_agent<T: Into<String>>(mut self, user_agent: T) -> Self {
         self.user_agent = Some(user_agent.into());
         self

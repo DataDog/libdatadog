@@ -320,7 +320,8 @@ impl<D: DataInterchange> Database<D> {
             /////////////////////////////////////////
             // TUF-1.0.5 §5.1.5:
             //
-            //     Note that the expiration of the new (intermediate) root metadata file does not matter yet, because we will check for it in step 1.8.
+            //     Note that the expiration of the new (intermediate) root metadata file does not
+            // matter yet, because we will check for it in step 1.8.
 
             /////////////////////////////////////////
             // TUF-1.0.5 §5.1.8:
@@ -370,8 +371,8 @@ impl<D: DataInterchange> Database<D> {
     ) -> Result<Option<&Verified<TimestampMetadata>>> {
         let verified = {
             // FIXME(https://github.com/theupdateframework/specification/issues/113) Should we
-            // check if the root metadata is expired here? We do that in the other `Database::update_*`
-            // methods, but not here.
+            // check if the root metadata is expired here? We do that in the other
+            // `Database::update_*` methods, but not here.
             let trusted_root = &self.trusted_root;
 
             /////////////////////////////////////////
@@ -427,8 +428,8 @@ impl<D: DataInterchange> Database<D> {
             // FIXME(#294): Implement this section.
 
             /////////////////////////////////////////
-            // FIXME(#297): forgetting the trusted snapshot here is not part of the spec. Do we need to
-            // do it?
+            // FIXME(#297): forgetting the trusted snapshot here is not part of the spec. Do we need
+            // to do it?
 
             if let Some(trusted_snapshot) = &self.trusted_snapshot {
                 if trusted_snapshot.version() != new_timestamp.snapshot().version() {

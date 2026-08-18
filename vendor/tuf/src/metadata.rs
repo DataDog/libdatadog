@@ -1036,10 +1036,14 @@ impl MetadataPath {
     /// # use tuf::metadata::{MetadataPath, MetadataVersion};
     /// #
     /// let path = MetadataPath::new("foo/bar").unwrap();
-    /// assert_eq!(path.components::<Json>(MetadataVersion::None),
-    ///            ["foo".to_string(), "bar.json".to_string()]);
-    /// assert_eq!(path.components::<Json>(MetadataVersion::Number(1)),
-    ///            ["foo".to_string(), "1.bar.json".to_string()]);
+    /// assert_eq!(
+    ///     path.components::<Json>(MetadataVersion::None),
+    ///     ["foo".to_string(), "bar.json".to_string()]
+    /// );
+    /// assert_eq!(
+    ///     path.components::<Json>(MetadataVersion::Number(1)),
+    ///     ["foo".to_string(), "1.bar.json".to_string()]
+    /// );
     /// ```
     pub fn components<D>(&self, version: MetadataVersion) -> Vec<String>
     where
@@ -1673,21 +1677,26 @@ impl TargetDescription {
     /// #
     /// let bytes: &[u8] = b"it was a pleasure to burn";
     ///
-    /// let target_description = TargetDescription::from_slice(
-    ///     bytes,
-    ///     &[HashAlgorithm::Sha256, HashAlgorithm::Sha512],
-    /// ).unwrap();
+    /// let target_description =
+    ///     TargetDescription::from_slice(bytes, &[HashAlgorithm::Sha256, HashAlgorithm::Sha512])
+    ///         .unwrap();
     ///
     /// let s = "Rd9zlbzrdWfeL7gnIEi05X-Yv2TCpy4qqZM1N72ZWQs=";
     /// let sha256 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
-    /// let s ="tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
+    /// let s = "tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
     ///     BU1zKP8GShoJuXEtCf5NkDTCEJgQ==";
     /// let sha512 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
     /// assert_eq!(target_description.length(), bytes.len() as u64);
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha256), Some(&sha256));
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha512), Some(&sha512));
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha256),
+    ///     Some(&sha256)
+    /// );
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha512),
+    ///     Some(&sha512)
+    /// );
     /// ```
     pub fn from_slice(buf: &[u8], hash_algs: &[HashAlgorithm]) -> Result<Self> {
         Self::from_slice_with_custom(buf, hash_algs, HashMap::new())
@@ -1712,19 +1721,29 @@ impl TargetDescription {
     ///     bytes,
     ///     &[HashAlgorithm::Sha256, HashAlgorithm::Sha512],
     ///     custom,
-    /// ).unwrap();
+    /// )
+    /// .unwrap();
     ///
     /// let s = "Rd9zlbzrdWfeL7gnIEi05X-Yv2TCpy4qqZM1N72ZWQs=";
     /// let sha256 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
-    /// let s ="tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
+    /// let s = "tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
     ///     BU1zKP8GShoJuXEtCf5NkDTCEJgQ==";
     /// let sha512 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
     /// assert_eq!(target_description.length(), bytes.len() as u64);
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha256), Some(&sha256));
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha512), Some(&sha512));
-    /// assert_eq!(target_description.custom().get("Hello"), Some(&"World".into()));
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha256),
+    ///     Some(&sha256)
+    /// );
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha512),
+    ///     Some(&sha512)
+    /// );
+    /// assert_eq!(
+    ///     target_description.custom().get("Hello"),
+    ///     Some(&"World".into())
+    /// );
     /// ```
     pub fn from_slice_with_custom(
         buf: &[u8],
@@ -1750,21 +1769,27 @@ impl TargetDescription {
     /// # block_on(async {
     /// let bytes: &[u8] = b"it was a pleasure to burn";
     ///
-    /// let target_description = TargetDescription::from_reader(
-    ///     bytes,
-    ///     &[HashAlgorithm::Sha256, HashAlgorithm::Sha512],
-    /// ).await.unwrap();
+    /// let target_description =
+    ///     TargetDescription::from_reader(bytes, &[HashAlgorithm::Sha256, HashAlgorithm::Sha512])
+    ///         .await
+    ///         .unwrap();
     ///
     /// let s = "Rd9zlbzrdWfeL7gnIEi05X-Yv2TCpy4qqZM1N72ZWQs=";
     /// let sha256 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
-    /// let s ="tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
+    /// let s = "tuIxwKybYdvJpWuUj6dubvpwhkAozWB6hMJIRzqn2jOUdtDTBg381brV4K\
     ///     BU1zKP8GShoJuXEtCf5NkDTCEJgQ==";
     /// let sha512 = HashValue::new(BASE64URL.decode(s.as_bytes()).unwrap());
     ///
     /// assert_eq!(target_description.length(), bytes.len() as u64);
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha256), Some(&sha256));
-    /// assert_eq!(target_description.hashes().get(&HashAlgorithm::Sha512), Some(&sha512));
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha256),
+    ///     Some(&sha256)
+    /// );
+    /// assert_eq!(
+    ///     target_description.hashes().get(&HashAlgorithm::Sha512),
+    ///     Some(&sha512)
+    /// );
     /// # })
     /// ```
     pub async fn from_reader<R>(read: R, hash_algs: &[HashAlgorithm]) -> Result<Self>

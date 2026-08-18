@@ -10,10 +10,8 @@
 //! Additionally, the following two papers are valuable supplements in understanding how to
 //! actually implement TUF for a community repository.
 //!
-//! - [The Diplomat paper
-//!   (2016)](https://www.usenix.org/conference/nsdi16/technical-sessions/presentation/kuppusamy)
-//! - [The Mercury paper
-//!   (2017)](https://www.usenix.org/conference/atc17/technical-sessions/presentation/kuppusamy)
+//! - [The Diplomat paper (2016)](https://www.usenix.org/conference/nsdi16/technical-sessions/presentation/kuppusamy)
+//! - [The Mercury paper (2017)](https://www.usenix.org/conference/atc17/technical-sessions/presentation/kuppusamy)
 //!
 //! Failure to read the spec and the above papers will likely lead to an implementation that does
 //! not take advantage of all the security guarantees that TUF offers.

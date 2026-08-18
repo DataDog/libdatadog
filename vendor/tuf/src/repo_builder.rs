@@ -393,8 +393,8 @@ where
     /// # ).unwrap();
     /// #
     /// # block_on(async {
-    ///  let mut repo = EphemeralRepository::<Json>::new();
-    ///  let metadata1 = RepoBuilder::create(&mut repo)
+    /// let mut repo = EphemeralRepository::<Json>::new();
+    /// let metadata1 = RepoBuilder::create(&mut repo)
     ///     .trusted_root_keys(&[&key])
     ///     .trusted_targets_keys(&[&key])
     ///     .trusted_snapshot_keys(&[&key])
@@ -789,8 +789,8 @@ where
         )
         .await?;
 
-        // According to TUF section 5.5.2, when consistent snapshot is enabled, target files should be
-        // stored at `$HASH.FILENAME.EXT`. Otherwise it is stored at `FILENAME.EXT`.
+        // According to TUF section 5.5.2, when consistent snapshot is enabled, target files should
+        // be stored at `$HASH.FILENAME.EXT`. Otherwise it is stored at `FILENAME.EXT`.
         if consistent_snapshot {
             for digest in target_description.hashes().values() {
                 reader.seek(SeekFrom::Start(0)).await?;
@@ -1186,9 +1186,9 @@ where
         }
     }
 
-    /// Initialize a [TimestampMetadataBuilder] and pass it to the closure for further configuration.
-    /// This builder will then be used to generate and stage a new [TimestampMetadata] for eventual
-    /// commitment to the repository.
+    /// Initialize a [TimestampMetadataBuilder] and pass it to the closure for further
+    /// configuration. This builder will then be used to generate and stage a new
+    /// [TimestampMetadata] for eventual commitment to the repository.
     ///
     /// This builder will be initialized with:
     ///
@@ -2410,30 +2410,28 @@ mod tests {
             assert!(metadata2.snapshot().is_some());
             assert!(metadata2.timestamp().is_some());
 
-            expected_metadata.extend(
-                vec![
-                    (
-                        (MetadataPath::targets(), MetadataVersion::Number(2)),
-                        metadata2.targets().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::targets(), MetadataVersion::None),
-                        metadata2.targets().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::snapshot(), MetadataVersion::Number(2)),
-                        metadata2.snapshot().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::snapshot(), MetadataVersion::None),
-                        metadata2.snapshot().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::timestamp(), MetadataVersion::None),
-                        metadata2.timestamp().unwrap().as_bytes(),
-                    ),
-                ],
-            );
+            expected_metadata.extend(vec![
+                (
+                    (MetadataPath::targets(), MetadataVersion::Number(2)),
+                    metadata2.targets().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::targets(), MetadataVersion::None),
+                    metadata2.targets().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::snapshot(), MetadataVersion::Number(2)),
+                    metadata2.snapshot().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::snapshot(), MetadataVersion::None),
+                    metadata2.snapshot().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::timestamp(), MetadataVersion::None),
+                    metadata2.timestamp().unwrap().as_bytes(),
+                ),
+            ]);
 
             assert_repo(&remote, &expected_metadata);
 
@@ -2460,22 +2458,20 @@ mod tests {
             assert!(metadata3.snapshot().is_some());
             assert!(metadata3.timestamp().is_some());
 
-            expected_metadata.extend(
-                vec![
-                    (
-                        (MetadataPath::snapshot(), MetadataVersion::Number(3)),
-                        metadata3.snapshot().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::snapshot(), MetadataVersion::None),
-                        metadata3.snapshot().unwrap().as_bytes(),
-                    ),
-                    (
-                        (MetadataPath::timestamp(), MetadataVersion::None),
-                        metadata3.timestamp().unwrap().as_bytes(),
-                    ),
-                ],
-            );
+            expected_metadata.extend(vec![
+                (
+                    (MetadataPath::snapshot(), MetadataVersion::Number(3)),
+                    metadata3.snapshot().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::snapshot(), MetadataVersion::None),
+                    metadata3.snapshot().unwrap().as_bytes(),
+                ),
+                (
+                    (MetadataPath::timestamp(), MetadataVersion::None),
+                    metadata3.timestamp().unwrap().as_bytes(),
+                ),
+            ]);
 
             assert_repo(&remote, &expected_metadata);
 
@@ -2500,12 +2496,10 @@ mod tests {
             assert!(metadata4.snapshot().is_none());
             assert!(metadata4.timestamp().is_some());
 
-            expected_metadata.extend(
-                vec![(
-                    (MetadataPath::timestamp(), MetadataVersion::None),
-                    metadata4.timestamp().unwrap().as_bytes(),
-                )],
-            );
+            expected_metadata.extend(vec![(
+                (MetadataPath::timestamp(), MetadataVersion::None),
+                metadata4.timestamp().unwrap().as_bytes(),
+            )]);
 
             assert_repo(&remote, &expected_metadata);
         })

@@ -76,7 +76,7 @@ fn python_tuf_compatibility_keyid_hash_algorithms() -> Option<Vec<String>> {
 ///
 /// ```
 /// use std::collections::HashMap;
-/// use tuf::crypto::{retain_supported_hashes, HashValue, HashAlgorithm};
+/// use tuf::crypto::{retain_supported_hashes, HashAlgorithm, HashValue};
 ///
 /// let mut map = HashMap::new();
 /// assert!(retain_supported_hashes(&map).is_empty());
@@ -85,9 +85,7 @@ fn python_tuf_compatibility_keyid_hash_algorithms() -> Option<Vec<String>> {
 /// let _ = map.insert(HashAlgorithm::Sha512, sha512_value.clone());
 /// assert_eq!(
 ///     retain_supported_hashes(&map),
-///     vec![
-///         (&HashAlgorithm::Sha512, sha512_value.clone()),
-///     ],
+///     vec![(&HashAlgorithm::Sha512, sha512_value.clone()),],
 /// );
 ///
 /// let sha256_value = HashValue::new(vec![0x02, 0x03]);
@@ -223,7 +221,8 @@ fn shim_public_key(
                 .to_string()
         }
         (_, _) => {
-            // We don't understand this key type and/or signature scheme, so we left it as a UTF-8 string.
+            // We don't understand this key type and/or signature scheme, so we left it as a UTF-8
+            // string.
             std::str::from_utf8(public_key)
                 .map_err(|err| {
                     Error::Encoding(format!(
