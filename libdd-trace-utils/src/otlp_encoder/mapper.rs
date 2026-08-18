@@ -90,20 +90,13 @@ fn chunk_trace_id_high<T: TraceData>(chunk: &[Span<T>]) -> u64 {
         .unwrap_or(0)
 }
 
-/// Resolve the chunk's trace-level sampling decision, preferring the local root when present.
+/// Resolve the chunk's trace-level sampling decision using the same first-priority policy as
+/// v04 `drop_chunks`.
 fn chunk_sampling_flags<T: TraceData>(chunk: &[Span<T>]) -> u32 {
-    let valid_priority = |span: &Span<T>| {
-        span.metrics
-            .get("_sampling_priority_v1")
-            .copied()
-            .filter(|priority| priority.is_finite())
-    };
     let priority = chunk
         .iter()
-        .find(|span| span.parent_id == 0)
-        .and_then(valid_priority)
-        .or_else(|| chunk.iter().find_map(valid_priority));
-    priority.is_some_and(|priority| priority >= 1.0) as u32
+        .find_map(|span| span.metrics.get("_sampling_priority_v1"));
+    priority.is_none_or(|priority| *priority > 0.0) as u32
 }
 
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
@@ -1355,6 +1348,32 @@ mod tests {
     }
 
     #[test]
+    fn trace_without_sampling_priority_sets_sampled_flag_on_every_span() {
+        let resource_info = OtlpResourceInfo::default();
+        let root: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let child: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 3,
+            parent_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("child"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+
+        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, false);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert!(spans.iter().all(|span| span.flags == 1));
+    }
+
+    #[test]
     fn sampled_trace_sets_sampled_flag_on_every_span() {
         let resource_info = OtlpResourceInfo::default();
         let root: Span<BytesData> = Span {
@@ -1381,7 +1400,7 @@ mod tests {
     }
 
     #[test]
-    fn root_sampling_priority_wins_over_conflicting_child_priority() {
+    fn first_sampled_priority_sets_sampled_flag_on_every_span() {
         let resource_info = OtlpResourceInfo::default();
         let mut root: Span<BytesData> = Span {
             trace_id: 1,
@@ -1404,6 +1423,34 @@ mod tests {
         child.metrics.insert("_sampling_priority_v1".into(), 1.0);
 
         let req = map_traces_to_otlp(vec![vec![child, root]], &resource_info, false);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert!(spans.iter().all(|span| span.flags == 1));
+    }
+
+    #[test]
+    fn first_unsampled_priority_clears_sampled_flag_on_every_span() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut first: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("first"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        first.metrics.insert("_sampling_priority_v1".into(), -1.0);
+        let mut second: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 3,
+            parent_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("second"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        second.metrics.insert("_sampling_priority_v1".into(), 1.0);
+
+        let req = map_traces_to_otlp(vec![vec![first, second]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.iter().all(|span| span.flags == 0));
     }
