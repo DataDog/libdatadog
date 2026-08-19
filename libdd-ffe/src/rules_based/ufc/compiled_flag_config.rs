@@ -26,6 +26,9 @@ pub(crate) struct CompiledFlagsConfig {
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
+    /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation data may
+    /// contain PII; defaults to `false` for privacy.
+    pub observe_full_evaluation_data: bool,
     /// Flags configuration.
     ///
     /// For flags that failed to parse or are disabled, we store the evaluation failure directly.
@@ -96,6 +99,7 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
         CompiledFlagsConfig {
             created_at: config.created_at,
             environment: config.environment,
+            observe_full_evaluation_data: config.observe_full_evaluation_data,
             flags,
         }
     }

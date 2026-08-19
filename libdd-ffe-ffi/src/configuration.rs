@@ -48,3 +48,19 @@ pub unsafe extern "C" fn ddog_ffe_configuration_drop(config: *mut Handle<Configu
     // SAFETY: the caller must ensure that config is a valid handle
     unsafe { Handle::free(config) };
 }
+
+/// Get the config-level `observeFullEvaluationData` flag.
+///
+/// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation data may 
+/// contain PII; defaults to `false` for privacy.
+///
+/// # Safety
+///
+/// `config` must be a valid `Configuration` handle created by `ddog_ffe_configuration_new`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_configuration_get_observe_full_evaluation_data(
+    config: Handle<Configuration>,
+) -> bool {
+    // SAFETY: the caller must ensure that config is a valid handle.
+    unsafe { config.as_ref() }.observe_full_evaluation_data()
+}

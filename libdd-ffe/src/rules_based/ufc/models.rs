@@ -16,6 +16,10 @@ pub(crate) struct UniversalFlagConfigWire {
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
+    /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation data may
+    /// contain PII; defaults to `false` for privacy.
+    #[serde(default)]
+    pub observe_full_evaluation_data: bool,
     /// Flags configuration.
     ///
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
@@ -557,6 +561,37 @@ impl ShardRange {
 #[cfg(test)]
 mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
+
+    #[test]
+    fn observe_full_evaluation_data_defaults_to_false_when_absent() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(!ufc.observe_full_evaluation_data);
+    }
+
+    #[test]
+    fn observe_full_evaluation_data_parses_when_present() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "observeFullEvaluationData": true,
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(ufc.observe_full_evaluation_data);
+    }
 
     #[test]
     fn parse_partially_if_unexpected() {
