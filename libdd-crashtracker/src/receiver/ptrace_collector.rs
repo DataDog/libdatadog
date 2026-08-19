@@ -16,7 +16,6 @@
 //!    - unw_create_addr_space()         create address space with ptrace accessors
 //!    - unw_init_remote()               initialize remote cursor
 //!    - unw_step_remote() loop          walk frames
-//!    - unw_get_proc_name_remote()      resolve symbol names
 //!    - _UPT_destroy() + cleanup        clean up
 //! 4. Detach from the thread via PTRACE_DETACH
 //!
@@ -32,8 +31,8 @@ use std::time::{Duration, Instant};
 
 use libdd_libunwind_sys::{
     _UPT_accessors, _UPT_create, _UPT_destroy, unw_create_addr_space, unw_destroy_addr_space,
-    unw_get_proc_name_remote, unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpaceT,
-    UnwCursor, UnwWord, UNW_REG_IP, UNW_REG_SP,
+    unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpaceT, UnwCursor, UnwWord,
+    UNW_REG_IP, UNW_REG_SP,
 };
 
 use crate::crash_info::{StackFrame, StackTrace};
@@ -290,11 +289,12 @@ fn create_addr_space() -> Option<UnwAddrSpaceT> {
 ///
 /// `addr_space` is a pre-created address space shared across threads; this
 /// function does *not* destroy it.
-fn unwind_remote_thread(
-    tid: libc::pid_t,
-    addr_space: UnwAddrSpaceT,
-    resolve_frames: crate::StacktraceCollection,
-) -> StackTrace {
+///
+/// Only instruction and stack pointers are collected here. Under
+/// `StacktraceCollection::EnabledWithSymbolsInReceiver` the receiver is the
+/// single place that resolves symbols, and blazesym in `CrashInfo::enrich_callstacks`
+/// will symbolize the frames.
+fn unwind_remote_thread(tid: libc::pid_t, addr_space: UnwAddrSpaceT) -> StackTrace {
     // SAFETY: _UPT_create allocates a ptrace unwinding context for the given tid.
     // The thread must already be stopped via ptrace for this to succeed.
     let upt_info = unsafe { _UPT_create(tid) };
@@ -323,7 +323,7 @@ fn unwind_remote_thread(
         }
         let _ = unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_SP, &mut sp) };
 
-        let mut frame = StackFrame {
+        let frame = StackFrame {
             ip: Some(format!("0x{:x}", ip)),
             sp: Some(format!("0x{:x}", sp)),
             module_base_address: None,
@@ -341,28 +341,6 @@ fn unwind_remote_thread(
             mangled_name: None,
             comments: vec![],
         };
-
-        // Resolve the function name if in process symbol resolution is enabled.
-        if resolve_frames == crate::StacktraceCollection::EnabledWithSymbolsInReceiver {
-            let mut name_buf = [0 as libc::c_char; 256];
-            let mut offset: UnwWord = 0;
-            // SAFETY: cursor is valid; unw_get_proc_name_remote reads symbol info via ptrace
-            if unsafe {
-                unw_get_proc_name_remote(
-                    &mut cursor,
-                    name_buf.as_mut_ptr().cast(),
-                    name_buf.len(),
-                    &mut offset,
-                )
-            } == 0
-            {
-                // SAFETY: libunwind wrote a null-terminated string into name_buf
-                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
-                if let Ok(s) = name.to_str() {
-                    frame.function = Some(s.to_string());
-                }
-            }
-        }
 
         frames.push(frame);
 
@@ -387,13 +365,12 @@ fn unwind_remote_thread(
 /// `stop_deadline` bounds how long we poll for the thread to enter ptrace-stop.
 pub fn capture_thread_context(
     tid: libc::pid_t,
-    resolve_frames: crate::StacktraceCollection,
     addr_space: UnwAddrSpaceT,
     stop_deadline: Instant,
 ) -> Result<CapturedThreadContext, PtraceError> {
     attach_thread(tid, stop_deadline)?;
 
-    let stack_trace = unwind_remote_thread(tid, addr_space, resolve_frames);
+    let stack_trace = unwind_remote_thread(tid, addr_space);
 
     // Best-effort detach: if this fails the thread stays in ptrace-stop, but the
     // receiver exiting will clean it up. Don't discard a good stack trace over it.
@@ -434,14 +411,13 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 /// transient issue.
 fn capture_with_retry(
     tid: libc::pid_t,
-    resolve_frames: crate::StacktraceCollection,
     addr_space: UnwAddrSpaceT,
     overall_deadline: Instant,
 ) -> Option<CapturedThreadContext> {
     for attempt in 0..=MAX_RETRIES {
         let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
 
-        match capture_thread_context(tid, resolve_frames, addr_space, thread_deadline) {
+        match capture_thread_context(tid, addr_space, thread_deadline) {
             Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Some(ctx),
             Ok(_) => {}                                      // 0 frames -- retry
             Err(ref e) if is_transient_ptrace_error(e) => {} // ETIMEDOUT -- retry
@@ -486,7 +462,6 @@ pub fn stream_thread_contexts<F>(
     crashing_tid: libc::pid_t,
     max_threads: usize,
     timeout: Duration,
-    resolve_frames: crate::StacktraceCollection,
     mut callback: F,
 ) -> Result<bool, PtraceError>
 where
@@ -507,8 +482,7 @@ where
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let context =
-            capture_with_retry(crashing_tid, resolve_frames, addr_space, overall_deadline);
+        let context = capture_with_retry(crashing_tid, addr_space, overall_deadline);
         callback(crashing_tid, context.as_ref());
         processed += 1;
     }
@@ -521,7 +495,7 @@ where
             break;
         }
 
-        let context = capture_with_retry(tid, resolve_frames, addr_space, overall_deadline);
+        let context = capture_with_retry(tid, addr_space, overall_deadline);
         callback(tid, context.as_ref());
         processed += 1;
     }
@@ -603,12 +577,7 @@ mod tests {
             handle.join().unwrap();
             return;
         };
-        match capture_thread_context(
-            tid,
-            crate::StacktraceCollection::Disabled,
-            addr_space,
-            Instant::now() + Duration::from_secs(5),
-        ) {
+        match capture_thread_context(tid, addr_space, Instant::now() + Duration::from_secs(5)) {
             Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
             Ok(ctx) => assert!(
                 !ctx.stack_trace.frames.is_empty(),
@@ -642,7 +611,6 @@ mod tests {
             current_tid(),
             2,
             Duration::from_secs(5),
-            crate::StacktraceCollection::Disabled,
             |_tid, _ctx| collected += 1,
         );
 
@@ -675,7 +643,6 @@ mod tests {
             self_tid,
             64,
             Duration::from_secs(5),
-            crate::StacktraceCollection::Disabled,
             |tid, _ctx| {
                 if tid == worker_tid {
                     seen_worker = true;

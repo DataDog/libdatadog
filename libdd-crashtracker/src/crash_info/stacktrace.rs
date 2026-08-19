@@ -6,7 +6,10 @@ use crate::CachedElfResolvers;
 #[cfg(unix)]
 use blazesym::{
     normalize::Normalizer,
-    symbolize::{source::Source, Input, Symbolized, Symbolizer, TranslateFileOffset},
+    symbolize::{
+        source::{Elf, Source},
+        Input, Sym, Symbolized, Symbolizer, TranslateFileOffset,
+    },
     Pid,
 };
 
@@ -211,19 +214,43 @@ impl StackFrame {
         Ok(())
     }
 
+    /// Resolve the frame's function name, and file/line when debug info is
+    /// available.
+    ///
+    /// When `normalize_ip` has already run, this symbolizes against the
+    /// normalized ELF file rather than `src`. Reading the binary directly
+    /// avoids `/proc/<pid>/maps`, which the process source needs, so names are
+    /// still resolved after the crashing process has exited. That matters for a
+    /// sidecar receiver, which outlives the process it collects from and would
+    /// otherwise produce reports with no symbols at all.
+    ///
+    /// Falls back to `src` for frames that were never normalized.
     pub fn resolve_names(&mut self, src: &Source, symbolizer: &Symbolizer) -> anyhow::Result<()> {
+        let elf_input = match (&self.path, &self.relative_address) {
+            (Some(path), Some(relative_address)) => {
+                let virt_offset =
+                    u64::from_str_radix(relative_address.trim_start_matches("0x"), 16)?;
+                Some((Source::Elf(Elf::new(path.as_str())), virt_offset))
+            }
+            _ => None,
+        };
+
+        if let Some((elf_src, virt_offset)) = elf_input {
+            if let Symbolized::Sym(s) =
+                symbolizer.symbolize_single(&elf_src, Input::VirtOffset(virt_offset))?
+            {
+                self.set_symbol(s);
+                return Ok(());
+            }
+        }
+
         if let Some(ip) = &self.ip {
             let ip = ip.trim_start_matches("0x");
             let ip = u64::from_str_radix(ip, 16)?;
             let input = Input::AbsAddr(ip);
             match symbolizer.symbolize_single(src, input)? {
                 Symbolized::Sym(s) => {
-                    if let Some(c) = s.code_info {
-                        self.column = c.column.map(u32::from);
-                        self.file = Some(c.to_path().display().to_string());
-                        self.line = c.line;
-                    }
-                    self.function = Some(s.name.into_owned());
+                    self.set_symbol(s);
                 }
                 Symbolized::Unknown(reason) => {
                     anyhow::bail!("Couldn't symbolize {ip}: {reason}");
@@ -231,6 +258,15 @@ impl StackFrame {
             }
         }
         Ok(())
+    }
+
+    fn set_symbol(&mut self, sym: Sym<'_>) {
+        if let Some(c) = sym.code_info {
+            self.column = c.column.map(u32::from);
+            self.file = Some(c.to_path().display().to_string());
+            self.line = c.line;
+        }
+        self.function = Some(sym.name.into_owned());
     }
 }
 

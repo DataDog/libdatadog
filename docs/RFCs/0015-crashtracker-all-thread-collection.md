@@ -24,8 +24,9 @@ as a crash on one thread caused by state corruption on another.
 
 ## Goals
 
-- **Collect all thread stacks near crash time** with function names,
-  IPs, and SPs for every active thread in the process
+- **Collect all thread stacks near crash time** with IPs and SPs for
+  every active thread in the process, and with function names when
+  `StacktraceCollection::EnabledWithSymbolsInReceiver` is configured
 - **Preserve signal-handler safety:** No thread enumeration, ptrace, or
   heap allocation in the signal handler
 - **Bounded resource usage:** Configurable caps on thread count and time
@@ -50,16 +51,26 @@ as a crash on one thread caused by state corruption on another.
 | `collect_all_threads` | `bool` | `false` | Enable multi-thread collection. |
 | `max_threads` | `usize` | `256` | Maximum number of background threads to collect. |
 | `timeout` | `Duration` | receiver timeout | Time budget for the entire receiver phase (shared with other post-processing). |
+| `resolve_frames` | `StacktraceCollection` | `Disabled` | Where — and whether — symbols are resolved. |
 
 When `collect_all_threads` is `false`, only the crashing thread's stack
 trace is collected and the receiver does not attempt ptrace.
 
+`collect_all_threads` and `resolve_frames` are independent. Thread
+collection is gated solely on the former, so enabling it with
+`resolve_frames` set to anything other than
+`EnabledWithSymbolsInReceiver` yields thread stacks that are never
+symbolized. Conversely, `resolve_frames = Disabled` combined with
+`collect_all_threads` populates `error.threads` while leaving
+`error.stack` empty, because the crashing thread's unwind happens in the
+collector child and the thread walk happens in the receiver.
+
 ## Design
 
-### Two-Phase, Two-Process Architecture (Linux)
+### Three-Process Architecture (Linux)
 
-Multi-thread collection is split across three actors (crashing process, fork, receiver) to maintain
-signal-handler safety:
+Multi-thread collection is split across three processes (crashing
+process, collector child, receiver) to maintain signal-handler safety:
 
 ### Phase 1: Signal Handler (Async-Signal-Safe)
 
@@ -81,7 +92,8 @@ alive as a ptrace target) until the receiver signals completion.
 After fork, the collector child:
 
 1. Unwinds the **crashing thread only** using the kernel-saved
-   `ucontext`:
+   `ucontext`, unless `resolve_frames` is `Disabled`, in which case no
+   stack is emitted at all:
    - **Linux:** `unw_init_local2(cursor, ucontext, UNW_INIT_SIGNAL_FRAME)`
      seeded from the saved CPU state at the moment of the crash. The
      signal-frame flag (`1`) is required so that libunwind knows the
@@ -91,10 +103,27 @@ After fork, the collector child:
      Then `unw_step()`/`unw_get_reg()` loop up to 512 frames.
    - **macOS:** Frame-pointer walk from `__ss.__pc`/`__rip` and
      `__ss.__rbp`/`__fp`, validated against pthread stack bounds
+
+   Every frame carries `ip`, and on Linux also `sp` and `fp`. `dladdr`
+   is called unconditionally on both platforms for
+   `module_base_address` and `symbol_address`; it is async-signal-safe
+   enough here because it only reads the dynamic loader's internal
+   tables. On Linux a `function` name is added only under
+   `EnabledWithInprocessSymbols`, via `unw_get_proc_name()`; on macOS
+   `dladdr`'s `dli_sname` is used as the name for every mode that emits
+   a stack.
 2. Emits `ProcInfo` containing parent PID and crashing TID
    (`SYS_gettid` on Linux)
-3. Emits `/proc/self/maps` contents for later symbolization
+3. Emits `/proc/self/maps` contents, which are attached to the report as
+   a file. Symbolization does not read this attachment; the receiver
+   reads the live `/proc/{pid}/maps` instead.
 4. Streams all data to the receiver over the pipe/socket
+
+For an unhandled exception reported through `report_unhandled_exception`
+there is no `ucontext` and no native unwind in the collector child. The
+runtime-supplied stack is written to `error.stack` verbatim, and the
+native view of every thread — the reporting thread included — comes from
+the receiver's ptrace walk.
 
 ### Phase 3: Receiver — Thread Collection
 
@@ -104,25 +133,46 @@ background thread collection if `collect_all_threads()` is enabled:
 #### 3a. Thread Enumeration
 
 The receiver MUST enumerate threads by reading
-`/proc/{parent_pid}/task/`. Each entry is a numeric TID. The crashing
-TID (from `ProcInfo`) is filtered out since its stack is already in
-`error.stack`.
+`/proc/{parent_pid}/task/`. Each entry is a numeric TID.
+
+The crashing TID (from `ProcInfo`) is **included**, and MUST be
+processed first so that the `max_threads` cap can never drop it. It
+appears in `error.threads` marked `crashed: true`, giving consumers a
+uniform native view of every thread. For a signal crash this means the
+crashing thread is represented twice: `error.stack` holds the unwind
+seeded from the kernel-saved `ucontext`, while its `error.threads` entry
+holds the ptrace walk taken with the thread parked inside the signal
+handler.
 
 #### 3b. Thread Suspension via Ptrace
 
 For each thread (up to `max_threads`), the receiver:
 
-1. **Attaches** with `PTRACE_SEIZE(tid, PTRACE_O_TRACESYSGOOD)` —
-   unlike `PTRACE_ATTACH`, this does not deliver SIGSTOP
+1. **Attaches** with `PTRACE_SEIZE(tid)` (no options)
 2. **Interrupts** with `PTRACE_INTERRUPT(tid)` — causes the thread to
    enter a ptrace-stop without a signal
-3. **Waits** with `waitpid(tid, WNOHANG | __WALL)` in a polling loop
-   with a per-thread timeout (50 ms)
+3. **Waits** with `waitpid(tid, WNOHANG | __WALL)` in a 2 ms polling
+   loop, bounded by a per-thread stop timeout of 200 ms (itself capped
+   by the overall budget)
+4. **Confirms registers are committed** by polling
+   `PTRACE_PEEKUSER` for a non-zero instruction pointer. On older
+   kernels `waitpid` can report the stop before register state is
+   readable, which would otherwise yield an empty stack. `EIO` means the
+   architecture does not support the probe and the check is skipped;
+   libunwind uses `PTRACE_GETREGSET`, which works regardless
 
 The use of `PTRACE_SEIZE` + `PTRACE_INTERRUPT` rather than
 `PTRACE_ATTACH` + `SIGSTOP` is deliberate: it avoids delivering
 user-visible signals to threads and does not interact with the target's
 signal handlers.
+
+Attachment is retried up to three times with exponential backoff
+(10 ms, 20 ms, 40 ms) on timeout, and each attempt gets a fresh
+per-thread budget. A capture that succeeds but yields zero frames is
+also retried, since a running thread with a confirmed non-zero IP should
+always produce at least one frame. `EPERM` (Yama denial or a missing
+`PR_SET_PTRACER`) and `ESRCH` (thread already exited) are permanent and
+are not retried.
 
 #### 3c. Remote Stack Unwinding
 
@@ -131,11 +181,41 @@ While a thread is ptrace-stopped, the receiver unwinds its stack:
 1. A single `unw_create_addr_space(&_UPT_accessors)` is created once
    and shared across all threads (DWARF `.eh_frame` cache reuse)
 2. Per thread: `_UPT_create(tid)` → `unw_init_remote(cursor, space,
-   upt_info)` → `unw_step()` loop collecting IP and SP per frame
-3. If `StacktraceCollection::EnabledWithSymbolsInReceiver` is
-   configured, `unw_get_proc_name_remote()` resolves function names
-   during the unwind
-4. `_UPT_destroy(upt_info)` releases per-thread state
+   upt_info)` → `unw_step_remote()` loop collecting IP and SP per frame,
+   up to 512 frames
+3. `_UPT_destroy(upt_info)` releases per-thread state
+
+Only instruction and stack pointers are collected during the unwind.
+Under `StacktraceCollection::EnabledWithSymbolsInReceiver` the receiver
+is the single place that resolves symbols, and it does so for every
+thread — the crashing one included — via blazesym in
+`CrashInfo::enrich_callstacks`. libunwind's remote symbol lookup
+(`unw_get_proc_name_remote()`) MUST NOT be used: it can segfault the
+receiver, which costs the entire crash report rather than a single
+function name.
+
+`enrich_callstacks` has two phases and shares one `Symbolizer` between
+them:
+
+1. **Normalize.** Each frame's absolute IP is translated into a file
+   `path` plus `relative_address` by reading `/proc/{pid}/maps`. Opening
+   a mapped file also registers an `ElfResolver` with the symbolizer,
+   keyed by that path.
+2. **Resolve.** A frame carrying `path` and `relative_address` is
+   symbolized through `Source::Elf` with `Input::VirtOffset`, which
+   reuses the resolver registered in phase 1. Frames lacking either fall
+   back to `Source::Process` with `Input::AbsAddr`.
+
+Resolution therefore reads on-disk binaries and does not depend on the
+crashing process. Normalization does depend on it, and a frame that
+fails to normalize has no path to resolve against and stays
+unsymbolized.
+
+The crashing process is alive for both phases on the normal path: it
+blocks in `wait_for_pollhup` on the socket while the receiver holds the
+stream through symbolization and upload. That wait is bounded by the
+collector's time budget, so a receiver that overruns it can find the
+process gone.
 
 #### 3d. Thread Metadata
 
@@ -150,9 +230,15 @@ After unwinding, `PTRACE_DETACH(tid)` releases the thread. The receiver
 MUST detach all threads before signaling completion to the parent,
 regardless of errors during unwinding.
 
+Detach is best-effort: a failure is not allowed to discard an otherwise
+good stack trace, and `ESRCH` is treated as success because the thread
+has already exited. Any pending `waitpid` event is drained afterwards so
+the kernel fully releases the thread; without that, a rapid re-attach
+can fail with `EPERM` under CPU pressure.
+
 ### Windows Implementation
 
-Windows does not use the two-process model. In the WER
+Windows does not use the multi-process model. In the WER
 `exception_event_callback`:
 
 1. **Enumerate:** `CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, pid)` +
@@ -174,19 +260,41 @@ forked collector child. Multi-thread collection is not implemented.
 
 ### Output Format
 
-Non-crashing threads appear in `error.threads[]` (see RFC 0011 v1.7+):
+On Linux every collected thread appears in `error.threads[]` (see RFC
+0011 v1.7+), including the crashing one, which is marked `crashed:
+true`. On Windows the crashing thread is placed in `error.stack` and
+only the others become `ThreadData` entries.
+
+`format` is always the `StackTrace` format string, `"Datadog
+Crashtracker 1.0"`, regardless of how the frames were captured.
+
+The `function`, `path`, `relative_address`, and `build_id` fields below
+are present only under `EnabledWithSymbolsInReceiver`; in the other
+modes thread frames carry `ip` and `sp` alone.
 
 ```json
 {
   "error": {
-    "stack": { "...crashing thread..." },
+    "stack": { "...crashing thread, unwound from ucontext..." },
     "threads": [
+      {
+        "crashed": true,
+        "name": "main",
+        "state": "S",
+        "stack": {
+          "format": "Datadog Crashtracker 1.0",
+          "frames": [
+            { "ip": "0x55a3f2c05678", "sp": "0x7ffd1c002a40", "function": "faulting_fn" }
+          ],
+          "incomplete": false
+        }
+      },
       {
         "crashed": false,
         "name": "worker-pool-3",
         "state": "S",
         "stack": {
-          "format": "libunwind-ptrace",
+          "format": "Datadog Crashtracker 1.0",
           "frames": [
             { "ip": "0x7f2a1b3c4d50", "sp": "0x7f2a0c001e80", "function": "pthread_cond_wait" },
             { "ip": "0x55a3f2c01234", "sp": "0x7f2a0c001ec0", "function": "worker_loop" }
@@ -218,9 +326,11 @@ pub struct CapturedThreadContext {
 
 ### Ptrace Permission Scoping
 
-On Linux, the signal handler calls `prctl(PR_SET_PTRACER, receiver_pid)`
-to grant ptrace permission **only** to the receiver process. This is the
-minimum privilege needed.
+On Linux, both crash entry points — the signal handler and
+`report_unhandled_exception` — call `prctl(PR_SET_PTRACER,
+receiver_pid)` to grant ptrace permission **only** to the receiver
+process. This is the minimum privilege needed. The grant is made only
+when `collect_all_threads` is enabled.
 
 ### Sidecar Mode Verification
 
@@ -242,10 +352,11 @@ Collection is **best-effort**. The receiver uses the remaining time
 budget after parsing the crash stream from stdin. Collection stops early
 if:
 
-- The per-thread timeout (50 ms waitpid polling) expires for a given
-  thread — that thread is skipped
+- The per-thread stop timeout (200 ms of waitpid polling) expires for a
+  given thread across all three attempts — that thread is skipped
 - The overall time budget is exhausted
-- `max_threads` is reached
+- `max_threads` is reached. The crashing thread is collected first and
+  so is never the one dropped
 
 When collection is cut short, the receiver:
 - Emits all threads that were successfully collected
