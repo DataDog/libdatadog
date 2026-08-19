@@ -49,60 +49,70 @@ mod otlp_export_tests {
         let body_valid = Arc::new(AtomicBool::new(false));
         let matcher_flag = body_valid.clone();
 
-        // Inspect the complete span array so a child without its own sampling priority must still
-        // carry the chunk-level sampled decision.
+        // Assert the request structure with json_body_includes, then inspect the complete span
+        // array so a child without its own sampling priority must still carry the chunk-level
+        // sampled decision.
         let mock = server
             .mock_async(move |when, then| {
                 let flag = matcher_flag.clone();
                 when.method("POST")
                     .path("/v1/traces")
                     .header("content-type", "application/json")
+                    .header("datadog-client-computed-stats", "yes")
+                    .json_body_includes(
+                        serde_json::json!({
+                            "resourceSpans": [{
+                                "resource": {
+                                    "attributes": [
+                                        {"key": "service.name", "value": {"stringValue": "test"}},
+                                        {"key": "deployment.environment.name", "value": {"stringValue": "test_env"}},
+                                        {"key": "telemetry.sdk.name", "value": {"stringValue": "datadog"}},
+                                        {"key": "telemetry.sdk.language", "value": {"stringValue": "test-lang"}},
+                                        {"key": "telemetry.sdk.version", "value": {"stringValue": "1.0"}},
+                                        {"key": "runtime-id", "value": {"stringValue": "test-runtime-id"}},
+                                        {"key": "_dd.stats_computed", "value": {"stringValue": "true"}},
+                                    ]
+                                }
+                            }]
+                        })
+                        .to_string(),
+                    )
                     .is_true(move |req: &httpmock::prelude::HttpMockRequest| {
                         let Ok(body) = serde_json::from_slice::<serde_json::Value>(req.body_ref())
                         else {
                             return false;
                         };
-                        let service_is_test = body["resourceSpans"][0]["resource"]["attributes"]
-                            .as_array()
-                            .is_some_and(|attributes| {
-                                attributes.iter().any(|attribute| {
-                                    attribute["key"] == "service.name"
-                                        && attribute["value"]["stringValue"] == "test"
-                                })
-                            });
-                        let spans = body["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array();
-                        let spans_are_uniformly_sampled = spans.is_some_and(|spans| {
-                            let has_attribute =
-                                |span: &serde_json::Value,
-                                 key: &str,
-                                 string_value: Option<&str>| {
-                                    span["attributes"].as_array().is_some_and(|attributes| {
-                                        attributes.iter().any(|attribute| {
-                                            attribute["key"] == key
-                                                && string_value.is_none_or(|value| {
-                                                    attribute["value"]["stringValue"] == value
-                                                })
-                                        })
+                        let has_attribute =
+                            |span: &serde_json::Value, key: &str, string_value: Option<&str>| {
+                                span["attributes"].as_array().is_some_and(|attributes| {
+                                    attributes.iter().any(|attribute| {
+                                        attribute["key"] == key
+                                            && string_value.is_none_or(|value| {
+                                                attribute["value"]["stringValue"] == value
+                                            })
                                     })
-                                };
-                            spans.len() == 2
-                                && spans.iter().all(|span| span["flags"] == 1)
-                                && spans.iter().any(|span| {
-                                    has_attribute(
-                                        span,
-                                        "operation.name",
-                                        Some("test_otlp_export_01"),
-                                    ) && has_attribute(span, "_sampling_priority_v1", None)
                                 })
-                                && spans.iter().any(|span| {
-                                    has_attribute(
-                                        span,
-                                        "operation.name",
-                                        Some("test_otlp_export_02"),
-                                    ) && !has_attribute(span, "_sampling_priority_v1", None)
-                                })
-                        });
-                        let valid = service_is_test && spans_are_uniformly_sampled;
+                            };
+                        let valid = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
+                            .as_array()
+                            .is_some_and(|spans| {
+                                spans.len() == 2
+                                    && spans.iter().all(|span| span["flags"] == 1)
+                                    && spans.iter().any(|span| {
+                                        has_attribute(
+                                            span,
+                                            "operation.name",
+                                            Some("test_otlp_export_01"),
+                                        ) && has_attribute(span, "_sampling_priority_v1", None)
+                                    })
+                                    && spans.iter().any(|span| {
+                                        has_attribute(
+                                            span,
+                                            "operation.name",
+                                            Some("test_otlp_export_02"),
+                                        ) && !has_attribute(span, "_sampling_priority_v1", None)
+                                    })
+                            });
                         if valid {
                             flag.store(true, Ordering::SeqCst);
                         }
@@ -124,7 +134,9 @@ mod otlp_export_tests {
                 .set_language_interpreter("interpreter")
                 .set_tracer_version("1.0")
                 .set_env("test_env")
-                .set_service("test");
+                .set_service("test")
+                .set_runtime_id("test-runtime-id")
+                .set_client_computed_stats();
 
             let trace_exporter = builder
                 .build::<NativeCapabilities>()

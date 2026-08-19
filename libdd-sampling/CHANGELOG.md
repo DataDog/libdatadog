@@ -2,6 +2,24 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v5.0.0..libdd-sampling-v6.0.0) - 2026-08-17
+
+### Added
+
+- OTel consistent-probability rv/th derivation (APMAPI-2181) ([#2276](https://github.com/datadog/libdatadog/issues/2276)) - ([ed5af0e](https://github.com/datadog/libdatadog/commit/ed5af0e21d0e4f2f5ccf85bd4d5eb9266054b15e))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Record rate limiter's effective rate on allow, not just drop ([#2288](https://github.com/datadog/libdatadog/issues/2288)) - ([ef1bfe4](https://github.com/datadog/libdatadog/commit/ef1bfe4d2391d08b9c0cd05b264db0adb75fa6c2))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v4.0.0..libdd-sampling-v5.0.0) - 2026-07-07
 
 ### Changed

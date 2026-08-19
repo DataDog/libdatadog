@@ -2,6 +2,46 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v7.0.0..libdd-data-pipeline-v8.0.0) - 2026-08-17
+
+### Added
+
+- Adds new attributes to OTLP trace metrics export ([#2316](https://github.com/datadog/libdatadog/issues/2316)) - ([0b8ca65](https://github.com/datadog/libdatadog/commit/0b8ca652d3dde2db589324ec71d8f100a8285887))
+- Add flush_and_close to the trace buffer ([#2313](https://github.com/datadog/libdatadog/issues/2313)) - ([fbdace3](https://github.com/datadog/libdatadog/commit/fbdace36f6dea4f38737a2089df54f01381e7e17))
+- Add compression option for agentless export ([#2205](https://github.com/datadog/libdatadog/issues/2205)) - ([fd59f6d](https://github.com/datadog/libdatadog/commit/fd59f6da4cb6b40e2040b3d15d5fb354b29367ba))
+- Emit additional_metric_tags on OTLP span duration metric ([#2264](https://github.com/datadog/libdatadog/issues/2264)) - ([be0b543](https://github.com/datadog/libdatadog/commit/be0b54394a07825ef7dd8ffeb35a3102a6ef0580))
+- Add shared_runtime buffered sink ([#2224](https://github.com/datadog/libdatadog/issues/2224)) - ([919c275](https://github.com/datadog/libdatadog/commit/919c275cdabdb5c1a300d605793908e219d1a22c))
+- Add instrumentation scope metadata ([#2235](https://github.com/datadog/libdatadog/issues/2235)) - ([a7ec21d](https://github.com/datadog/libdatadog/commit/a7ec21d8e135fed13515dd612a31df5808144691))
+- Per-field cardinality limits ([#2211](https://github.com/datadog/libdatadog/issues/2211)) - ([72fa868](https://github.com/datadog/libdatadog/commit/72fa86854c823361b7d234545f1a2f2d21f944fe))
+- String field length limit ([#2267](https://github.com/datadog/libdatadog/issues/2267)) - ([42045b9](https://github.com/datadog/libdatadog/commit/42045b9d5156ff923c4db6c9c1abcd5283a6c1bb))
+- Implement additional metric tags in libdd-trace-stats ([#2170](https://github.com/datadog/libdatadog/issues/2170)) - ([63ecad5](https://github.com/datadog/libdatadog/commit/63ecad56152f675fb74761d60adf5a861dafb1e1))
+- Add Installation signature and AppProduct changes payloads ([#2213](https://github.com/datadog/libdatadog/issues/2213)) - ([f3d3d80](https://github.com/datadog/libdatadog/commit/f3d3d80b807b82d2a49d57df99a0eb02a800a978))
+- Make telemetry worker wasm-compatible for the TraceExporter ([#2172](https://github.com/datadog/libdatadog/issues/2172)) - ([73f23a2](https://github.com/datadog/libdatadog/commit/73f23a2c03be39971c966e444785d63b6fd52e81))
+- Add v1 decoder ([#2174](https://github.com/datadog/libdatadog/issues/2174)) - ([d7980db](https://github.com/datadog/libdatadog/commit/d7980db6be51fe821f4547512bc51d67654b99a9))
+- Add encoder v1 to v04 + refactor ([#2145](https://github.com/datadog/libdatadog/issues/2145)) - ([407f8f2](https://github.com/datadog/libdatadog/commit/407f8f238621508bfd5a10ac846ec36c9c2045e2))
+- Add `restart_after_fork` configuration option [APMSP-3843] ([#2263](https://github.com/datadog/libdatadog/issues/2263)) - ([3f4be28](https://github.com/datadog/libdatadog/commit/3f4be2892202624702243d3f32c12fa39f21dbd6))
+- Remove deprecated methods ([#2250](https://github.com/datadog/libdatadog/issues/2250)) - ([6b078e7](https://github.com/datadog/libdatadog/commit/6b078e75d3375d8982b4898b7e80426b9f76d708))
+- Add v1 isolated bricks for trace exporter ([#2280](https://github.com/datadog/libdatadog/issues/2280)) - ([7ba36d7](https://github.com/datadog/libdatadog/commit/7ba36d7a2ea868e2c0a6a9e68c9583acc2bbda74))
+
+### Changed
+
+- Gate telemetry-only tests behind the telemetry feature ([#2204](https://github.com/datadog/libdatadog/issues/2204)) - ([980438f](https://github.com/datadog/libdatadog/commit/980438f67ae25db0fd829b061094d0758d07c52d))
+- Make client clonable ([#2222](https://github.com/datadog/libdatadog/issues/2222)) - ([b9fae6d](https://github.com/datadog/libdatadog/commit/b9fae6d5365be2ddce0d11d6d771481de5c47c27))
+- Split generic TracerHeaderTags ([#2279](https://github.com/datadog/libdatadog/issues/2279)) - ([79eff2f](https://github.com/datadog/libdatadog/commit/79eff2fa1f9866441309ca28a648529206e60f97))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Stop sending Connection: close to the Agent ([#2286](https://github.com/datadog/libdatadog/issues/2286)) - ([8dfe721](https://github.com/datadog/libdatadog/commit/8dfe721a5b24fe225ed4cab66b2e07cb0f2ff6dd))
+- Mark OTLP client-computed stats ([#2245](https://github.com/datadog/libdatadog/issues/2245)) - ([1b9b7a2](https://github.com/datadog/libdatadog/commit/1b9b7a26f54f116a0f6525abdcd2013b341921a7))
+- Serialize v0.5 span links and events into meta ([#980](https://github.com/datadog/libdatadog/issues/980)) - ([ade7821](https://github.com/datadog/libdatadog/commit/ade7821b1633dea675a1c92c58b176e3de081a35))
+- Css obfuscation logic ([#2203](https://github.com/datadog/libdatadog/issues/2203)) - ([25d90c8](https://github.com/datadog/libdatadog/commit/25d90c84be91f9547c74ec060a9427c35c0ecf94))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v6.0.0..libdd-data-pipeline-v7.0.0) - 2026-07-07
 
 ### Added
