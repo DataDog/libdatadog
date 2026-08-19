@@ -75,8 +75,7 @@ serde_with = "3"
 rand = { version = "0.8.5", optional = true }
 thiserror = "2"
 hashbrown = "0.15"
-# branch = "opw-develop"
-tuf = { package = "libdd-tuf-rust", path = "../vendor/tuf", version = "0.3.0-beta10", default-features = false, optional = true }
+tuf = { package = "libdd-tuf", version = "0.3.1", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
 ], optional = true }

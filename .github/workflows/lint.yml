@@ -70,6 +70,30 @@ jobs:
         uses: devops-actions/actionlint@c6744a34774e4e1c1df0ff66bdb07ec7ee480ca0 # 0.1.9
         with:
           shellcheck_opts: '-e SC2086'
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      codeowners: ${{ steps.filter.outputs.codeowners }}
+      licensecheck: ${{ steps.filter.outputs.licensecheck }}
+      license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            codeowners:
+              - '.github/CODEOWNERS'
+              - added|deleted: '**'
+            licensecheck:
+              - '**/*.rs'
+              - '**/*.c'
+              - '**/*.sh'
+            license_3rdparty:
+              - 'Cargo.lock'
+              - '**/Cargo.toml'
+
   rustfmt:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
@@ -159,8 +183,8 @@ jobs:
           fi
 
   licensecheck:
-    needs: setup
-    if: needs.setup.outputs.crates-count != '0'
+    needs: [setup, changes]
+    if: needs.setup.outputs.crates-count != '0' && (github.event_name != 'pull_request' || needs.changes.outputs.licensecheck == 'true')
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
     steps:
@@ -173,8 +197,8 @@ jobs:
         run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./vendor/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   license-3rdparty:
-    needs: setup
-    if: needs.setup.outputs.crates-count != '0'
+    needs: [setup, changes]
+    if: needs.setup.outputs.crates-count != '0' && (github.event_name != 'pull_request' || needs.changes.outputs.license_3rdparty == 'true')
     runs-on: ubuntu-latest
     name: "Valid LICENSE-3rdparty.csv"
     steps:
@@ -214,6 +238,8 @@ jobs:
           overwrite: true
 
   codeowners-validator:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.codeowners == 'true'
     runs-on: ubuntu-latest
     name: "Validate CODEOWNERS"
     steps:
