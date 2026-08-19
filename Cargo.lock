@@ -3206,7 +3206,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc-macros"
-version = "0.0.1"
+version = "1.0.0"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
