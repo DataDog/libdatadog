@@ -2,6 +2,12 @@
 
 
 
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.1.0..libdd-trace-utils-v11.0.0) - 2026-08-19
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+
 ## [10.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.0.0..libdd-trace-utils-v10.1.0) - 2026-08-17
 
 ### Added
