@@ -195,30 +195,39 @@ impl<'a> DynamicInfo<'a> {
         // Validate every raw pointer read from PT_DYNAMIC actually falls within one of this
         // object's own PT_LOAD segments before trusting it for dereferencing.
         // This is a sanity check to avoid crashing due to odd/corrupted dynamic entries.
-        let in_bounds =
-            |addr: *const c_void| -> bool { containing_load_segment_end(addr as usize).is_some() };
-        if strtab.is_null() || !in_bounds(strtab as *const c_void) {
+        let in_bounds = |addr: *const c_void, len: usize| -> bool {
+            let addr = addr as usize;
+            match containing_load_segment_end(addr) {
+                Some(end) => addr.checked_add(len).is_some_and(|limit| limit <= end),
+                None => false,
+            }
+        };
+        if strtab.is_null() || !in_bounds(strtab as *const c_void, strtab_size) {
             strtab = core::ptr::null();
         }
-        if symtab.is_null() || !in_bounds(symtab as *const c_void) {
+        if symtab.is_null()
+            || !in_bounds(symtab as *const c_void, core::mem::size_of::<Elf64_Sym>())
+        {
             symtab = core::ptr::null();
         }
-        if rels.is_null() || !in_bounds(rels as *const c_void) {
+        if rels.is_null() || !in_bounds(rels as *const c_void, rels_size) {
             rels = core::ptr::null();
             rels_size = 0;
         }
-        if relas.is_null() || !in_bounds(relas as *const c_void) {
+        if relas.is_null() || !in_bounds(relas as *const c_void, relas_size) {
             relas = core::ptr::null();
             relas_size = 0;
         }
-        if jmprels.is_null() || !in_bounds(jmprels as *const c_void) {
+        if jmprels.is_null() || !in_bounds(jmprels as *const c_void, jmprels_size) {
             jmprels = core::ptr::null();
             jmprels_size = 0;
         }
-        if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void) {
+        const GNU_HASH_MIN_BYTES: usize = 4 * core::mem::size_of::<u32>();
+        if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void, GNU_HASH_MIN_BYTES) {
             gnu_hash = core::ptr::null();
         }
-        if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void) {
+        const SYSV_HASH_MIN_BYTES: usize = 2 * core::mem::size_of::<u32>();
+        if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void, SYSV_HASH_MIN_BYTES) {
             sysv_hash = core::ptr::null();
         }
 
@@ -255,6 +264,11 @@ impl<'a> DynamicInfo<'a> {
         } else {
             (sym_count_fallback(symtab, strtab, sysv_hash), 0)
         };
+
+        let max_syms = containing_load_segment_end(symtab as usize)
+            .map(|end| end.saturating_sub(symtab as usize) / core::mem::size_of::<Elf64_Sym>())
+            .unwrap_or(0);
+        let sym_count = sym_count.min(u32::try_from(max_syms).unwrap_or(u32::MAX));
 
         // SAFETY (applies to all `try_as_slice` calls below):
         //
@@ -654,10 +668,31 @@ unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
 /// `"linux-vdso.so.1"`, but musl can report an empty name, indistinguishable
 /// from `dlpi_name` simply being absent. Checking also for `is_exe` here,
 /// as the main executable can also have an empty `dlpi_name`.
-pub fn is_vdso_or_dynamic_linker(lib_name: &str, is_exe: bool) -> bool {
-    (lib_name.is_empty() && !is_exe)
-        || lib_name.contains("linux-vdso")
-        || lib_name.contains("/ld-linux")
+///
+/// `lib_name` must be `None` only when the name is genuinely absent (null
+/// or zero-length), as produced by [`dlpi_name`].
+pub fn is_vdso_or_dynamic_linker(lib_name: Option<&str>, is_exe: bool) -> bool {
+    match lib_name {
+        None => !is_exe,
+        Some(name) => name.contains("linux-vdso") || name.contains("/ld-linux"),
+    }
+}
+
+/// Convert a `dl_phdr_info::dlpi_name` to `None` if the pointer is null or the name is empty.
+/// This helps to distinguish invalid UTF-8 from empty.
+///
+/// # Safety
+/// `ptr` must be null or point to a valid NUL-terminated C string, valid
+/// for the lifetime `'a` the caller assigns to the result.
+pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, str>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let cstr = CStr::from_ptr(ptr);
+    if cstr.to_bytes().is_empty() {
+        return None;
+    }
+    Some(cstr.to_string_lossy())
 }
 
 /// Visit each loaded ELF object once. `is_exe` is true only on the
@@ -908,12 +943,8 @@ fn lookup_symbol_impl(
     // is satisfied because the callback runs synchronously under the
     // loader lock.
     iterate_libraries(|info, is_exe| unsafe {
-        let lib_name = if info.dlpi_name.is_null() {
-            ""
-        } else {
-            CStr::from_ptr(info.dlpi_name).to_str().unwrap_or("")
-        };
-        if is_vdso_or_dynamic_linker(lib_name, is_exe) {
+        let lib_name = dlpi_name(info.dlpi_name);
+        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
             return false;
         }
         // Skip the library containing skip_addr (the hook function).
@@ -1059,16 +1090,10 @@ unsafe fn hook_symbol_impl(
     let failed_ptr = &mut entries_failed as *mut usize;
 
     iterate_libraries(|info, is_exe| {
-        let lib_name = if info.dlpi_name.is_null() {
-            ""
-        } else {
-            // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
-            // NUL-terminated C string for the callback's duration.
-            unsafe { CStr::from_ptr(info.dlpi_name) }
-                .to_str()
-                .unwrap_or("")
-        };
-        if is_vdso_or_dynamic_linker(lib_name, is_exe) {
+        // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
+        // NUL-terminated C string for the callback's duration.
+        let lib_name = unsafe { dlpi_name(info.dlpi_name) };
+        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
             return false;
         }
 
@@ -1477,14 +1502,8 @@ mod tests {
         let mut libs_excluding_self = 0usize;
 
         iterate_libraries(|info, is_exe| {
-            let lib_name = if info.dlpi_name.is_null() {
-                ""
-            } else {
-                unsafe { CStr::from_ptr(info.dlpi_name) }
-                    .to_str()
-                    .unwrap_or("")
-            };
-            if is_vdso_or_dynamic_linker(lib_name, is_exe) {
+            let lib_name = unsafe { dlpi_name(info.dlpi_name) };
+            if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
                 return false;
             }
             if unsafe { DynamicInfo::from_phdr(info) }.is_none() {
