@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "5.1.0"
+version = "5.2.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -79,12 +79,13 @@ features = [
 nix = { version = "0.29", features = ["process"] }
 
 [dev-dependencies]
+bytes = "1.11.1"
 httparse = "1.9"
 indexmap = "2.11"
 maplit = "1.0"
 mime = "0.3.16"
 multer = "3.1"
-bytes = "1.11.1"
+proptest = "1"
 rand = "0.8"
 tempfile.workspace = true
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }

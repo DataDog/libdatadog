@@ -28,19 +28,26 @@ mod otlp_export_tests {
         let server = MockServer::start_async().await;
 
         // Assert the OTLP request structure using json_body_includes matchers.
-        // resourceSpans must be present with the correct service.name and environment resource
-        // attributes, and spans must contain the expected name prefix.
+        // resourceSpans must be present with the expected resource attributes, including
+        // client-computed-stats, and the redundant header must be set for direct Agent requests.
         let mut mock = server
             .mock_async(|when, then| {
                 when.method("POST")
                     .path("/v1/traces")
                     .header("content-type", "application/json")
+                    .header("datadog-client-computed-stats", "yes")
                     .json_body_includes(
                         serde_json::json!({
                             "resourceSpans": [{
                                 "resource": {
                                     "attributes": [
                                         {"key": "service.name", "value": {"stringValue": "test"}},
+                                        {"key": "deployment.environment.name", "value": {"stringValue": "test_env"}},
+                                        {"key": "telemetry.sdk.name", "value": {"stringValue": "datadog"}},
+                                        {"key": "telemetry.sdk.language", "value": {"stringValue": "test-lang"}},
+                                        {"key": "telemetry.sdk.version", "value": {"stringValue": "1.0"}},
+                                        {"key": "runtime-id", "value": {"stringValue": "test-runtime-id"}},
+                                        {"key": "_dd.stats_computed", "value": {"stringValue": "true"}},
                                     ]
                                 }
                             }]
@@ -63,7 +70,9 @@ mod otlp_export_tests {
                 .set_language_interpreter("interpreter")
                 .set_tracer_version("1.0")
                 .set_env("test_env")
-                .set_service("test");
+                .set_service("test")
+                .set_runtime_id("test-runtime-id")
+                .set_client_computed_stats();
 
             let trace_exporter = builder
                 .build::<NativeCapabilities>()
