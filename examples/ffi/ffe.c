@@ -226,6 +226,13 @@ int main(int argc, char* argv[]) {
     bool observe_full_evaluation_data = ddog_ffe_configuration_get_observe_full_evaluation_data(config);
     printf("  observeFullEvaluationData: %s\n", observe_full_evaluation_data ? "true" : "false");
 
+    // The test fixture omits `observeFullEvaluationData`, so the privacy-preserving default applies.
+    if (observe_full_evaluation_data) {
+        fprintf(stderr, "Expected observeFullEvaluationData to default to false\n");
+        ddog_ffe_configuration_drop(&config);
+        return 1;
+    }
+
     // Step 2: Create evaluation context with targeting key and attributes
     printf("\nStep 2: Creating evaluation context...\n");
 
