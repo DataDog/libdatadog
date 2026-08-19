@@ -693,4 +693,31 @@ mod tests {
                 },
             );
     }
+
+    /// Basic bolero test on a single field: any random string round-trips through
+    /// `span.name` unchanged.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn fuzz_span_name_roundtrip() {
+        check!().with_type::<String>().cloned().for_each(|name| {
+            let span = V1SpanBytes {
+                name: bs(&name),
+                ..Default::default()
+            };
+            let payload = TracerPayloadBytes {
+                chunks: vec![TraceChunkBytes {
+                    trace_id: [0xab; 16],
+                    spans: vec![span],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+
+            let encoded = to_vec_from_v1(&payload);
+            let (decoded, _) =
+                from_bytes(Bytes::from(encoded)).expect("decoder should accept its own output");
+
+            assert_eq!(decoded.chunks[0].spans[0].name.as_str(), name);
+        });
+    }
 }
