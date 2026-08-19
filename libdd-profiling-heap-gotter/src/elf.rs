@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use libdd_gotter::lookup_symbol;
 use libdd_gotter::{
-    elf64_r_sym, elf64_r_type, is_got_pointer_reloc, iterate_libraries, DynamicInfo, PageProtGuard,
+    elf64_r_sym, elf64_r_type, is_got_pointer_reloc, is_vdso_or_dynamic_linker, iterate_libraries,
+    DynamicInfo, PageProtGuard,
 };
 
 /// Per-library bookkeeping for the GOT re-scan. We never un-patch (see
@@ -152,7 +153,7 @@ impl SymbolOverrides {
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
         let self_ptr = self as *mut Self as usize;
         let guard_ptr = &mut guard as *mut PageProtGuard as usize;
-        iterate_libraries(move |info, _is_exe| unsafe {
+        iterate_libraries(move |info, is_exe| unsafe {
             let this = &mut *(self_ptr as *mut Self);
             let g = &mut *(guard_ptr as *mut PageProtGuard);
             let lib_name = if info.dlpi_name.is_null() {
@@ -162,7 +163,7 @@ impl SymbolOverrides {
                     .to_string_lossy()
                     .into_owned()
             };
-            if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+            if is_vdso_or_dynamic_linker(&lib_name, is_exe) {
                 return false;
             }
             if let Some(dyn_info) = DynamicInfo::from_phdr(info) {

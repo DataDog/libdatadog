@@ -192,6 +192,36 @@ impl<'a> DynamicInfo<'a> {
             jmprels_size = 0;
         }
 
+        // Validate every raw pointer read from PT_DYNAMIC actually falls within one of this
+        // object's own PT_LOAD segments before trusting it for dereferencing.
+        // This is a sanity check to avoid crashing due to odd/corrupted dynamic entries.
+        let in_bounds =
+            |addr: *const c_void| -> bool { containing_load_segment_end(addr as usize).is_some() };
+        if strtab.is_null() || !in_bounds(strtab as *const c_void) {
+            strtab = core::ptr::null();
+        }
+        if symtab.is_null() || !in_bounds(symtab as *const c_void) {
+            symtab = core::ptr::null();
+        }
+        if rels.is_null() || !in_bounds(rels as *const c_void) {
+            rels = core::ptr::null();
+            rels_size = 0;
+        }
+        if relas.is_null() || !in_bounds(relas as *const c_void) {
+            relas = core::ptr::null();
+            relas_size = 0;
+        }
+        if jmprels.is_null() || !in_bounds(jmprels as *const c_void) {
+            jmprels = core::ptr::null();
+            jmprels_size = 0;
+        }
+        if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void) {
+            gnu_hash = core::ptr::null();
+        }
+        if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void) {
+            sysv_hash = core::ptr::null();
+        }
+
         // Need at minimum strtab + symtab to resolve relocation symbol names.
         if strtab.is_null() || symtab.is_null() {
             return None;
@@ -614,6 +644,22 @@ unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
     find_containing_load_segment(phdrs, base, addr).is_some()
 }
 
+/// Whether a `dl_iterate_phdr` entry is a pseudo-object that has no
+/// backing file and isn't relocated by ld.so the way a normal shared
+/// library is, so it shouldn't be handed to [`DynamicInfo::from_phdr`] or
+/// patched: the vdso (kernel-mapped directly at process creation) or
+/// glibc's separate dynamic-linker object.
+///
+/// The vdso's name varies by libc: glibc reports it as
+/// `"linux-vdso.so.1"`, but musl can report an empty name, indistinguishable
+/// from `dlpi_name` simply being absent. Checking also for `is_exe` here,
+/// as the main executable can also have an empty `dlpi_name`.
+pub fn is_vdso_or_dynamic_linker(lib_name: &str, is_exe: bool) -> bool {
+    (lib_name.is_empty() && !is_exe)
+        || lib_name.contains("linux-vdso")
+        || lib_name.contains("/ld-linux")
+}
+
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
 /// stop iteration.
@@ -861,13 +907,13 @@ fn lookup_symbol_impl(
     // mapped library. from_phdr's safety precondition (mapped for 'a)
     // is satisfied because the callback runs synchronously under the
     // loader lock.
-    iterate_libraries(|info, _is_exe| unsafe {
+    iterate_libraries(|info, is_exe| unsafe {
         let lib_name = if info.dlpi_name.is_null() {
             ""
         } else {
             CStr::from_ptr(info.dlpi_name).to_str().unwrap_or("")
         };
-        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+        if is_vdso_or_dynamic_linker(lib_name, is_exe) {
             return false;
         }
         // Skip the library containing skip_addr (the hook function).
@@ -1012,7 +1058,7 @@ unsafe fn hook_symbol_impl(
     let patched_ptr = &mut entries_patched as *mut usize;
     let failed_ptr = &mut entries_failed as *mut usize;
 
-    iterate_libraries(|info, _is_exe| {
+    iterate_libraries(|info, is_exe| {
         let lib_name = if info.dlpi_name.is_null() {
             ""
         } else {
@@ -1022,7 +1068,7 @@ unsafe fn hook_symbol_impl(
                 .to_str()
                 .unwrap_or("")
         };
-        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+        if is_vdso_or_dynamic_linker(lib_name, is_exe) {
             return false;
         }
 
@@ -1430,7 +1476,7 @@ mod tests {
         let mut total_libs = 0usize;
         let mut libs_excluding_self = 0usize;
 
-        iterate_libraries(|info, _| {
+        iterate_libraries(|info, is_exe| {
             let lib_name = if info.dlpi_name.is_null() {
                 ""
             } else {
@@ -1438,7 +1484,7 @@ mod tests {
                     .to_str()
                     .unwrap_or("")
             };
-            if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+            if is_vdso_or_dynamic_linker(lib_name, is_exe) {
                 return false;
             }
             if unsafe { DynamicInfo::from_phdr(info) }.is_none() {
