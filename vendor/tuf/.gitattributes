@@ -1,0 +1,7 @@
+# Prevent Git from converting line endings in test fixture files.
+# The ECDSA canonical-JSON fixture embeds PEM newlines that are part of
+# the signed content; CRLF conversion on Windows would corrupt the bytes
+# and cause signature-verification test failures.
+tests/ecdsa/* binary
+tests/ed25519/* binary
+tests/rsa/* binary

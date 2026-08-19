@@ -3,6 +3,7 @@ name: 'Weekly verify trace-protobuf'
 on:
   schedule:
     - cron: '0 2 * * 1'
+  workflow_dispatch:
 
 env:
   DATADOG_AGENT_TAG: "main"
