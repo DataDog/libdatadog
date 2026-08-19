@@ -1,13 +1,13 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod span_pool;
 pub mod trace_utils;
 pub mod trace_utils_v1;
 pub mod v04;
 pub mod v05;
 pub mod v1;
 pub mod vec_map;
-pub mod span_pool;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;

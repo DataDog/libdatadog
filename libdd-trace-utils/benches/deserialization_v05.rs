@@ -150,7 +150,7 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
         .into_iter()
         .map(|trace| {
             trace
-                .into_iter()
+                .iter()
                 .map(|span| from_v04_span(span, &mut dict))
                 .collect::<anyhow::Result<Vec<_>>>()
         })
