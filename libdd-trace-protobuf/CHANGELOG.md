@@ -2,6 +2,14 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.1..libdd-trace-protobuf-v5.0.0) - 2026-08-19
+
+### Changed
+
+- Sync span.proto with datadog-agent ([#2356](https://github.com/datadog/libdatadog/issues/2356)) - ([899d0fb](https://github.com/datadog/libdatadog/commit/899d0fbad1e961bf23486282437b56e0c0199a98))
+
+
+
 ## [4.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.0..libdd-trace-protobuf-v4.0.1) - 2026-08-07
 
 ### Added
