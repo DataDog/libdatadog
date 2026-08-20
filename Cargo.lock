@@ -3691,9 +3691,6 @@ name = "libdd-wasm-tests"
 version = "0.0.1"
 dependencies = [
  "http 1.1.0",
- "libdd-capabilities",
- "libdd-common",
- "libdd-trace-utils",
  "wasm-bindgen-test",
  "zrip",
 ]

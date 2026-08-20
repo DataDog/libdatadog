@@ -56,18 +56,12 @@ pub fn add_headers(headers: &mut http::HeaderMap, strategy: CompressionStrategy)
     }
 }
 
-#[cfg(all(test, feature = "compression"))]
+#[cfg(all(test, feature = "compression", not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
     fn decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
         zstd::decode_all(data)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
-        zrip::decompress(data).map_err(std::io::Error::other)
     }
 
     #[test]

@@ -3,86 +3,29 @@
 
 #![cfg(target_arch = "wasm32")]
 
-// The full profiling crate has unrelated native-only dependencies. The codec
-// module is standalone, so compile its production source directly here.
+// These modules are standalone, while their parent crates have unrelated
+// native-only dependencies. Compile the production source directly here.
+#[allow(dead_code)]
+#[path = "../../../libdd-trace-utils/src/send_with_retry/compression.rs"]
+mod trace_compression;
+
 #[allow(dead_code)]
 #[path = "../../../libdd-profiling/src/profiles/compressor.rs"]
 mod profiling_compressor;
 
-use libdd_capabilities::{
-    Bytes, HttpClientCapability, HttpError, Request, Response, SleepCapability,
-};
-use libdd_common::Endpoint;
-use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
-};
-use std::{
-    cell::RefCell,
-    future::{self, Future},
-    io::{Read, Write},
-    rc::Rc,
-    time::Duration,
-};
-
-#[derive(Clone, Debug, Default)]
-struct TestCapabilities {
-    request: Rc<RefCell<Option<Request<Bytes>>>>,
-}
-
-impl HttpClientCapability for TestCapabilities {
-    fn new_client() -> Self {
-        Self::default()
-    }
-
-    fn new_without_connection_pooling() -> Self {
-        Self::default()
-    }
-
-    fn request(
-        &self,
-        request: Request<Bytes>,
-    ) -> impl Future<Output = Result<Response<Bytes>, HttpError>> {
-        self.request.replace(Some(request));
-        future::ready(Ok(Response::new(Bytes::new())))
-    }
-}
-
-impl SleepCapability for TestCapabilities {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn sleep(&self, _duration: Duration) -> impl Future<Output = ()> {
-        future::pending()
-    }
-}
+use std::io::{Read, Write};
 
 #[wasm_bindgen_test::wasm_bindgen_test]
-async fn compression_uses_zrip() {
+fn trace_compression_uses_zrip() {
+    use trace_compression::{add_headers, compress, CompressionStrategy};
+
     let payload = b"hello zstd".repeat(100);
-    let capabilities = TestCapabilities::default();
-    let endpoint = Endpoint {
-        url: "http://localhost/v0.4/traces".parse().unwrap(),
-        ..Endpoint::default()
-    };
-    let retry = RetryStrategy::new(0, 0, RetryBackoffType::Constant, None);
+    let (compressed, strategy) = compress(payload.clone(), CompressionStrategy::Zstd { level: 1 });
+    assert_eq!(zrip::decompress(&compressed).unwrap(), payload);
 
-    let (_, attempts) = send_with_retry(
-        &capabilities,
-        &endpoint,
-        payload.clone(),
-        &http::HeaderMap::new(),
-        &retry,
-        CompressionStrategy::Zstd { level: 1 },
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(attempts, 1);
-    let request = capabilities.request.borrow_mut().take().unwrap();
-    assert_eq!(request.headers()["content-encoding"], "zstd");
-    assert_ne!(request.body().as_ref(), payload);
-    assert_eq!(zrip::decompress(request.body()).unwrap(), payload);
+    let mut headers = http::HeaderMap::new();
+    add_headers(&mut headers, strategy);
+    assert_eq!(headers["content-encoding"], "zstd");
 }
 
 #[wasm_bindgen_test::wasm_bindgen_test]
