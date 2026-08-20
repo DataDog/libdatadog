@@ -223,6 +223,7 @@ kv-log-macro,https://github.com/yoshuawuyts/kv-log-macro,MIT OR Apache-2.0,Yoshu
 lazy_static,https://github.com/rust-lang-nursery/lazy-static.rs,MIT OR Apache-2.0,Marvin Löbel <loebel.marvin@gmail.com>
 libc,https://github.com/rust-lang/libc,MIT OR Apache-2.0,The libc Authors
 libdd-libunwind-sys,https://github.com/DataDog/libdatadog/tree/main/libdd-libunwind-sys,Apache-2.0,The libdd-libunwind-sys Authors
+libdd-tuf,https://github.com/theupdateframework/rust-tuf,MIT OR Apache-2.0,"heartsucker <heartsucker@autistici.org>, Erick Tryzelaar <etryzelaar@google.com>"
 libloading,https://github.com/nagisa/rust_libloading,ISC,Simonas Kazlauskas <libloading@kazlauskas.me>
 libredox,https://gitlab.redox-os.org/redox-os/libredox,MIT,4lDO2 <4lDO2@protonmail.com>
 libz-rs-sys,https://github.com/trifectatechfoundation/zlib-rs,Zlib,The libz-rs-sys Authors
@@ -466,7 +467,6 @@ tracing-log,https://github.com/tokio-rs/tracing,MIT,Tokio Contributors <team@tok
 tracing-serde,https://github.com/tokio-rs/tracing,MIT,Tokio Contributors <team@tokio.rs>
 tracing-subscriber,https://github.com/tokio-rs/tracing,MIT,"Eliza Weisman <eliza@buoyant.io>, David Barsky <me@davidbarsky.com>, Tokio Contributors <team@tokio.rs>"
 try-lock,https://github.com/seanmonstar/try-lock,MIT,Sean McArthur <sean@seanmonstar.com>
-tuf,https://github.com/theupdateframework/rust-tuf,MIT OR Apache-2.0,"heartsucker <heartsucker@autistici.org>, Erick Tryzelaar <etryzelaar@google.com>"
 twox-hash,https://github.com/shepmaster/twox-hash,MIT,Jake Goulding <jake.goulding@gmail.com>
 typeid,https://github.com/dtolnay/typeid,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 typenum,https://github.com/paholg/typenum,MIT OR Apache-2.0,"Paho Lurie-Gregg <paho@paholg.com>, Andre Bogus <bogusandre@gmail.com>"
