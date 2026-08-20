@@ -10,6 +10,7 @@ use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    SendWithRetryResult,
 };
 use std::time::Duration;
 
@@ -35,6 +36,35 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     content_type: http::HeaderValue,
     body: Vec<u8>,
     max_retries: u32,
+) -> Result<(), TraceExporterError> {
+    send_otlp_http_with_observer(
+        capabilities,
+        endpoint_url,
+        config_headers,
+        timeout,
+        test_token,
+        content_type,
+        body,
+        max_retries,
+        |_| {},
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send_otlp_http_with_observer<
+    C: HttpClientCapability + SleepCapability,
+    F: FnOnce(&SendWithRetryResult),
+>(
+    capabilities: &C,
+    endpoint_url: &str,
+    config_headers: &HeaderMap,
+    timeout: Duration,
+    test_token: Option<&str>,
+    content_type: http::HeaderValue,
+    body: Vec<u8>,
+    max_retries: u32,
+    observer: F,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
@@ -67,7 +97,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         None,
     );
 
-    match send_with_retry(
+    let result = send_with_retry(
         capabilities,
         &target,
         body,
@@ -75,8 +105,9 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         &retry_strategy,
         CompressionStrategy::None,
     )
-    .await
-    {
+    .await;
+    observer(&result);
+    match result {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e).await),
     }
@@ -87,6 +118,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
 ///
 /// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
 /// against the Datadog test agent's OTLP endpoint.
+#[allow(dead_code)] // Retains the existing contract while telemetry uses the observer variant.
 pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,

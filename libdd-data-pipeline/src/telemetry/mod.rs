@@ -198,6 +198,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             worker: handle,
         }
     }
+
+    pub(crate) fn send_count_metric(
+        &self,
+        metric: metrics::MetricKind,
+        count: usize,
+    ) -> Result<(), TelemetryError> {
+        if count > 0 {
+            self.worker
+                .add_point(count as f64, self.metrics.get(metric), vec![])?;
+        }
+        Ok(())
+    }
 }
 
 /// Telemetry describing the sending of a trace payload

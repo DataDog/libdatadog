@@ -9,7 +9,8 @@ use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
+    SendWithRetryError, SendWithRetryResult,
 };
 use tracing::error;
 
@@ -21,11 +22,26 @@ const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
 /// `headers` should already contain all required headers (api key, content-type, meta-*,
 /// entity, trace-count, etc.). `test_token` is forwarded as `X-Datadog-Test-Session-Token`
 /// when set, enabling snapshot tests against a local mock.
+#[allow(dead_code)] // Retains the existing contract while telemetry uses the observer variant.
 pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &AgentlessTraceConfig,
     headers: HeaderMap,
     json_body: Vec<u8>,
+) -> Result<(), TraceExporterError> {
+    send_agentless_traces_http_with_observer(capabilities, config, headers, json_body, |_, _| {})
+        .await
+}
+
+pub(crate) async fn send_agentless_traces_http_with_observer<
+    C: HttpClientCapability + SleepCapability,
+    F: FnOnce(&SendWithRetryResult, usize),
+>(
+    capabilities: &C,
+    config: &AgentlessTraceConfig,
+    headers: HeaderMap,
+    json_body: Vec<u8>,
+    observer: F,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
@@ -51,7 +67,7 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
     #[cfg(not(feature = "compression"))]
     let compression_strategy = CompressionStrategy::None;
 
-    match send_with_retry(
+    let (result, payload_size) = send_with_retry_and_size(
         capabilities,
         &target,
         json_body,
@@ -59,11 +75,9 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
         &retry_strategy,
         compression_strategy,
     )
-    .await
-    {
-        Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e)),
-    }
+    .await;
+    observer(&result, payload_size);
+    result.map(|_| ()).map_err(map_send_error)
 }
 
 fn map_send_error(err: SendWithRetryError) -> TraceExporterError {

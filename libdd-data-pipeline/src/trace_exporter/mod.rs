@@ -18,8 +18,12 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::agentless::exporter::send_agentless_traces_http_with_observer;
+use crate::agentless::AgentlessTraceConfig;
+use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
+use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(feature = "telemetry")]
+use crate::telemetry::metrics::MetricKind;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -306,6 +310,50 @@ impl<
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
         self.telemetry
             .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_trace_counts(&self, counts: &[(MetricKind, usize)]) {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            for &(metric, count) in counts {
+                if let Err(e) = telemetry.send_count_metric(metric, count) {
+                    error!(?e, "Error sending telemetry");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_serialization_drop(&self, chunks: usize, spans: usize) {
+        self.emit_trace_counts(&[
+            (MetricKind::ChunksDroppedSerializationError, chunks),
+            (MetricKind::SpansDroppedSerializationError, spans),
+        ]);
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_send_telemetry(
+        &self,
+        result: &SendWithRetryResult,
+        bytes: usize,
+        chunks: usize,
+        spans: usize,
+    ) {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            let payload =
+                SendPayloadTelemetry::from_retry_result(result, bytes as u64, chunks as u64);
+            if let Err(e) = telemetry.send(&payload) {
+                error!(?e, "Error sending telemetry");
+            }
+            let metric = match result {
+                Err(SendWithRetryError::Build(_)) => MetricKind::SpansDroppedSerializationError,
+                Err(_) => MetricKind::SpansDroppedApiError,
+                Ok(_) => return,
+            };
+            if let Err(e) = telemetry.send_count_metric(metric, spans) {
+                error!(?e, "Error sending telemetry");
+            }
+        }
     }
 
     /// Stop the background workers owned by this exporter.
@@ -659,18 +707,31 @@ impl<
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
         let trace_count = traces.len();
+        #[cfg(feature = "telemetry")]
+        let span_count = traces.iter().map(Vec::len).sum::<usize>();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
             &traces,
             &self.metadata,
         )
         .map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
+            #[cfg(feature = "telemetry")]
+            self.emit_serialization_drop(trace_count, span_count);
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
 
         let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
-
-        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        send_agentless_traces_http_with_observer(
+            &self.capabilities,
+            config,
+            headers,
+            json_body,
+            |_result, _payload_len| {
+                #[cfg(feature = "telemetry")]
+                self.emit_send_telemetry(_result, _payload_len, trace_count, span_count);
+            },
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -680,6 +741,10 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(feature = "telemetry")]
+        let trace_count = traces.len();
+        #[cfg(feature = "telemetry")]
+        let span_count = traces.iter().map(Vec::len).sum::<usize>();
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
             r.service = self.metadata.service.clone();
@@ -701,6 +766,8 @@ impl<
             map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
         let body = config.protocol.encode(&request).map_err(|e| {
             error!("OTLP serialization error: {e}");
+            #[cfg(feature = "telemetry")]
+            self.emit_serialization_drop(trace_count, span_count);
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
                 "failed to encode OTLP request: {e}"
             )))
@@ -720,11 +787,21 @@ impl<
         } else {
             config
         };
-        send_otlp_traces_http(
+        #[cfg(feature = "telemetry")]
+        let payload_len = body.len();
+        send_otlp_http_with_observer(
             &self.capabilities,
-            config_to_use,
+            &config_to_use.endpoint_url,
+            &config_to_use.headers,
+            config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
+            config_to_use.protocol.content_type(),
             body,
+            OTLP_MAX_RETRIES,
+            |_result| {
+                #[cfg(feature = "telemetry")]
+                self.emit_send_telemetry(_result, payload_len, trace_count, span_count);
+            },
         )
         .await?;
         Ok(AgentResponse::Unchanged)
@@ -737,7 +814,10 @@ impl<
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
+        spans: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(not(feature = "telemetry"))]
+        let _ = spans;
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
 
@@ -753,15 +833,7 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
-                &result,
-                payload_len as u64,
-                chunks as u64,
-            )) {
-                error!(?e, "Error sending telemetry");
-            }
-        }
+        self.emit_send_telemetry(&result, payload_len, chunks, spans);
 
         self.handle_send_result(result, chunks, payload_len).await
     }
@@ -800,6 +872,12 @@ impl<
         if let Some(max_line_size) = self.log_output {
             return self.send_trace_chunks_to_log(&traces, max_line_size);
         }
+
+        #[cfg(feature = "telemetry")]
+        self.emit_trace_counts(&[(
+            MetricKind::SpansEnqueuedForSerialization,
+            traces.iter().map(Vec::len).sum(),
+        )]);
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
@@ -847,6 +925,9 @@ impl<
         // Snapshot the effective format once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let effective_format = self.effective_output_format();
+        #[cfg(feature = "telemetry")]
+        let trace_count = traces.len();
+        let span_count = traces.iter().map(Vec::len).sum::<usize>();
 
         let prepared = match self.serializer.prepare_traces_payload(
             traces,
@@ -862,6 +943,8 @@ impl<
                     HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
                     None,
                 );
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(trace_count, span_count);
                 return Err(e);
             }
         };
@@ -877,6 +960,7 @@ impl<
                 prepared.data,
                 prepared.headers,
                 prepared.chunk_count,
+                span_count,
             )
             .await;
 
@@ -2362,7 +2446,8 @@ mod telemetry_metrics_tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v05;
+    use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::{v04::SpanBytes, v05};
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -2387,6 +2472,7 @@ mod telemetry_metrics_tests {
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
                 .body_includes("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -2408,7 +2494,7 @@ mod telemetry_metrics_tests {
             });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let traces = vec![0x90];
+        let traces = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
