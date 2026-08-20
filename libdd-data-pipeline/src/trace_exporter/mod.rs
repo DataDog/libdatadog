@@ -652,8 +652,6 @@ impl<
         if self.log_output.is_none() {
             self.check_agent_info().await;
         }
-        // These spans are owned by the caller (not drawn from our pool), so do not recycle
-        // them here: they are wrapped unpooled.
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
