@@ -533,7 +533,6 @@ fn collect_and_add_thread_contexts(
         crashing_tid,
         config.max_threads(),
         budget,
-        config.resolve_frames(),
         |tid, captured_context| {
             let (name, state) = read_thread_stat(parent_pid, tid);
             let name = name.unwrap_or_else(|| tid.to_string());

@@ -4,9 +4,9 @@
 
 use tokio::runtime;
 
-use datadog_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
+use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::SeqpacketConn;
 
 /// Verifies that a `ShmHandle` (Windows named file mapping) can be transferred across an IPC
 /// connection via `DuplicateHandle`-based in-band handle passing, and that the receiving side
