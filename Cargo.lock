@@ -3550,7 +3550,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "4.0.1"
+version = "5.0.0"
 dependencies = [
  "bolero",
  "prost",
