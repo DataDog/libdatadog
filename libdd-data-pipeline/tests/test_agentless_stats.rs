@@ -285,10 +285,9 @@ async fn test_agentless_stats_payload_structure() {
         "tracer_version must be set on the client payload in agentless mode"
     );
 
-    assert!(
-        payload.agent_version.contains("-libdatadog"),
-        "agent_version ({}) must contain the '-libdatadog' suffix",
-        payload.agent_version
+    assert_eq!(
+        payload.agent_version, "1.2.3-python",
+        "agent_version must be '{{tracer_version}}-{{language}}'"
     );
 }
 
