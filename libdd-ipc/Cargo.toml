@@ -27,7 +27,7 @@ libdd-common = { version = "5.2.0", path = "../libdd-common" }
 libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
 libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "7.0.0", path = "../libdd-trace-stats" }
-libdd-ipc-macros = { version = "0.1.0", path = "../libdd-ipc-macros" }
+libdd-ipc-macros = { version = "1.0.0", path = "../libdd-ipc-macros" }
 tracing.workspace = true
 
 [dev-dependencies]
