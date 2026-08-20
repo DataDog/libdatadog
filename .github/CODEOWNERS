@@ -93,6 +93,7 @@ spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog
 symbolizer-ffi                       @DataDog/libdatadog-profiling
 tests/run-package-tests.ps1          @DataDog/apm-common-components-core
 tests/spawn_from_lib/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
+tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/libdatadog-apm
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
