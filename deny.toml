@@ -5,7 +5,7 @@ unmaintained = "workspace"
 multiple-versions = "warn"
 
 deny = [
-    { name = "arrayref", version = "=0.3.9" }, # TEMP APMSP-3945: validate ban gate fails on our current arrayref; REVERT before merge
+    { name = "arrayref", version = "=0.3.10" },
     { name = "append-only-vec", version = "=0.1.9" },
     { name = "internment", version = "=0.8.7" },
     { name = "proc-macro1" },
