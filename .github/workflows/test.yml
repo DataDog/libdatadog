@@ -412,7 +412,7 @@ jobs:
           cargo test -p libdd-profiling --test exporter_e2e
 
   wasm:
-    name: "cargo check --target wasm32-unknown-unknown"
+    name: "WASM checks and tests"
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-wasm
@@ -429,7 +429,13 @@ jobs:
         with:
           cache-targets: true
           cache-bin: true
+      - name: Install wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+      - name: Test WASM compression
+        run: cargo test -p libdd-wasm-tests --target wasm32-unknown-unknown
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner

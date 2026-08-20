@@ -122,6 +122,7 @@ impl ProfileCodec for NoopProfileCodec {
 #[allow(unused)]
 pub struct ZstdProfileCodec;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ProfileCodec for ZstdProfileCodec {
     type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
 
@@ -143,6 +144,28 @@ impl ProfileCodec for ZstdProfileCodec {
 
     fn recommended_input_buf_size() -> usize {
         zstd::Encoder::<SizeRestrictedBuffer>::recommended_input_size()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ProfileCodec for ZstdProfileCodec {
+    type Encoder = zrip::FrameEncoder<SizeRestrictedBuffer>;
+
+    fn new_encoder(
+        size_hint: usize,
+        max_capacity: usize,
+        compression_level: i32,
+    ) -> io::Result<Self::Encoder> {
+        let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
+        zrip::FrameEncoder::new(buffer, compression_level).map_err(io::Error::other)
+    }
+
+    fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
+        encoder.finish().map(Vec::from)
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        zrip::frame::MAX_BLOCK_SIZE
     }
 }
 
@@ -186,6 +209,7 @@ impl ObservationCodec for NoopObservationCodec {
 #[allow(unused)]
 pub struct ZstdObservationCodec;
 
+#[cfg(not(target_arch = "wasm32"))]
 impl ObservationCodec for ZstdObservationCodec {
     type Encoder = zstd::Encoder<'static, SizeRestrictedBuffer>;
     type Decoder = zstd::Decoder<'static, io::Cursor<SizeRestrictedBuffer>>;
@@ -207,6 +231,26 @@ impl ObservationCodec for ZstdObservationCodec {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+impl ObservationCodec for ZstdObservationCodec {
+    type Encoder = zrip::FrameEncoder<SizeRestrictedBuffer>;
+    type Decoder = zrip::FrameDecoder<io::Cursor<SizeRestrictedBuffer>>;
+
+    fn new_encoder(size_hint: usize, max_capacity: usize) -> io::Result<Self::Encoder> {
+        let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
+        zrip::FrameEncoder::new(buffer, 1).map_err(io::Error::other)
+    }
+
+    fn encoder_into_decoder(encoder: Self::Encoder) -> io::Result<Self::Decoder> {
+        let buffer = encoder.finish()?;
+        Ok(zrip::FrameDecoder::new(io::Cursor::new(buffer)))
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        zrip::frame::MAX_BLOCK_SIZE
+    }
+}
+
 #[cfg(not(miri))]
 pub type DefaultObservationCodec = ZstdObservationCodec;
 #[cfg(miri)]
@@ -223,7 +267,7 @@ impl<C: ProfileCodec> Compressor<C> {
     /// - `size_hint`: beginning capacity for the output buffer. This is a hint for the starting
     ///   size, and the implementation may use something different.
     /// - `max_capacity`: the maximum size for the output buffer (hard limit).
-    /// - `compression_level`: see [`zstd::Encoder::new`] for the valid range.
+    /// - `compression_level`: must be supported by the target's zstd encoder.
     pub fn try_new(
         size_hint: usize,
         max_capacity: usize,
