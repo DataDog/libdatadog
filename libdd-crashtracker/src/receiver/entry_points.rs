@@ -105,14 +105,21 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 /// description.
 pub(crate) async fn receiver_entry_point(
     timeout: Duration,
-    stream: impl AsyncBufReadExt + std::marker::Unpin,
+    mut stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
-    if let Some((config, mut crash_info)) = receive_report_from_stream(timeout, stream).await? {
+    if let Some((config, mut crash_info)) = receive_report_from_stream(timeout, &mut stream).await?
+    {
+        // Symbolization reads /proc/<pid>/maps, and the crashing process is
+        // waiting on POLLHUP from this connection to terminate. Hold it open
+        // until the report is symbolized, then release the process before the
+        // upload so a slow endpoint does not extend the crash pause.
         if let Err(e) = resolve_frames(&config, &mut crash_info) {
             crash_info
                 .log_messages
                 .push(format!("Error resolving frames: {e}"));
         }
+        drop(stream);
+
         if config.demangle_names() {
             if let Err(e) = crash_info.demangle_names() {
                 crash_info
