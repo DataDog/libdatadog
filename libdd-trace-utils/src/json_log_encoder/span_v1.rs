@@ -252,7 +252,9 @@ fn split_trace_id(trace_id: &[u8; 16]) -> (u64, u64) {
     )
 }
 
-/// Serializes a v1 [`SpanLink`] in the v0.4 JSON log shape.
+/// Serializes a v1 [`SpanLink`] in the v0.4 JSON log shape without requiring `T: Serialize`
+/// (only `T::Text`, via the `SpanText` bound, is needed) — same rationale as
+/// [`super::span::LogSpanLink`].
 struct LogSpanLinkV1<'a, T: TraceData>(&'a SpanLink<T>);
 
 impl<T: TraceData> Serialize for LogSpanLinkV1<'_, T> {
@@ -392,7 +394,9 @@ impl<T: TraceData> Serialize for LogEventArrayValueSeq<'_, T> {
     }
 }
 
-/// Serializes a v1 [`SpanEvent`] in the v0.4 JSON log shape.
+/// Serializes a v1 [`SpanEvent`] in the v0.4 JSON log shape without requiring `T: Serialize`.
+/// The event's attribute values (`AttributeValue<T>`, via [`LogEventAttrValueV1`]) already
+/// serialize via a `T::Text`-bounded impl — same rationale as [`super::span::LogSpanEvent`].
 struct LogSpanEventV1<'a, T: TraceData>(&'a SpanEvent<T>);
 
 impl<T: TraceData> Serialize for LogSpanEventV1<'_, T> {
@@ -436,7 +440,9 @@ impl<T: TraceData> Serialize for LogEventAttrsV1<'_, T> {
     }
 }
 
-/// Serializes a slice of `Item` as a JSON array using the `Wrap` per-element wrapper.
+/// Serializes a slice of `Item` as a JSON array using the `Wrap` per-element wrapper,
+/// avoiding a `T: Serialize` bound on the element type — same rationale as
+/// [`super::span::LogSeq`].
 struct LogSeqV1<'a, I, W>(&'a [I], fn(&'a I) -> W);
 
 impl<I, W: Serialize> Serialize for LogSeqV1<'_, I, W> {
