@@ -73,12 +73,8 @@ pub(crate) mod prost_codec {
         }
     }
     impl<T: ProstMessage + Default> ProstDecoder<T> {
-        // See `ProstEncoder::encode_into`: generic over `Buf` so it is testable without tonic's
-        // private `DecodeBuf` constructor.
         fn decode_from(src: &mut impl bytes::Buf) -> Result<Option<T>, Status> {
-            // copy_to_bytes drains the whole buffer even if the backing store is non-contiguous.
-            let buf = src.copy_to_bytes(src.remaining());
-            T::decode(buf)
+            T::decode(src)
                 .map(Some)
                 .map_err(|e| Status::internal(format!("Failed to decode protobuf message: {e}")))
         }
@@ -173,28 +169,43 @@ impl GrpcService<TonicBody> for H2Service {
                 .adaptive_window(true)
                 .handshake::<_, TonicBody>(io)
                 .await?;
-            // The Connection (request dispatcher) must be driven or send_request deadlocks.
-            // Spawn it ephemerally; it ends when `sender` drops at the close of this future.
-            let driver = tokio::spawn(async move {
-                let _ = conn.await;
-            });
-            let resp = sender.send_request(req).await?;
-            let (parts, incoming) = resp.into_parts();
-            let collected = incoming.collect().await?;
-            driver.abort();
-            Ok(http::Response::from_parts(parts, collected))
+            let request = async move {
+                let resp = sender.send_request(req).await?;
+                let (parts, incoming) = resp.into_parts();
+                let collected = incoming.collect().await?;
+                Ok::<_, BoxError>(http::Response::from_parts(parts, collected))
+            };
+            tokio::pin!(conn);
+            tokio::pin!(request);
+
+            let response = tokio::select! {
+                biased;
+                response = &mut request => response?,
+                connection = &mut conn => {
+                    connection?;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "gRPC connection closed before the response completed",
+                    ).into());
+                }
+            };
+
+            // The completed request has dropped its sender. Polling the connection to completion
+            // lets hyper shut it down gracefully; the exporter's outer timeout bounds this wait.
+            conn.await?;
+            Ok(response)
         })
     }
 }
 
 /// A gRPC transport for OTLP trace export: per-request config, request origin, and the dial
-/// service. Holds no live connection (nothing to rebuild across fork).
+/// service. Holds no live connection and thus no background task (nothing to rebuild across fork).
 #[derive(Clone, Debug)]
 pub(crate) struct OtlpGrpcTransport {
     pub(crate) config: OtlpGrpcTraceConfig,
     origin: http::Uri,
     service: H2Service,
-    /// Custom headers parsed to gRPC metadata once at build time; invalid entries are dropped.
+    /// Custom headers parsed to gRPC metadata once at build time.
     metadata_headers: Vec<(AsciiMetadataKey, AsciiMetadataValue)>,
 }
 

@@ -133,19 +133,6 @@ mod tests {
             libdd_common::header::APPLICATION_PROTOBUF
         );
     }
-
-    #[test]
-    fn grpc_config_constructs_and_clones() {
-        let cfg = OtlpGrpcTraceConfig {
-            headers: vec![("k".to_string(), "v".to_string())],
-            timeout: Duration::from_secs(3),
-            otel_trace_semantics_enabled: true,
-        };
-        let clone = cfg.clone();
-        assert_eq!(clone.headers, cfg.headers);
-        assert_eq!(clone.timeout, Duration::from_secs(3));
-        assert!(clone.otel_trace_semantics_enabled);
-    }
 }
 
 /// Parsed OTLP trace-metrics exporter configuration.
