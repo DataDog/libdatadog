@@ -103,6 +103,9 @@ test-utils = [
 change-buffer = []
 # Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`).
 bench-internals = []
-compression = ["dep:zstd", "dep:zrip"]
+compression = ["zstd"]
+# Preserve the existing public feature while selecting the implementation by
+# target: zstd on native platforms and zrip on WASM.
+zstd = ["dep:zstd", "dep:zrip"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]
