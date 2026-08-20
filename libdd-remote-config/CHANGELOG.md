@@ -2,6 +2,20 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v3.0.0..libdd-remote-config-v4.0.0) - 2026-08-20
+
+### Added
+
+- Vendor rust-tuf crate in libdatadog for release ([#2365](https://github.com/datadog/libdatadog/issues/2365)) - ([9ea9268](https://github.com/datadog/libdatadog/commit/9ea926846c4795aa6730e8a1f06c205db7d295aa))
+- Agentless RC fetcher ([#2112](https://github.com/datadog/libdatadog/issues/2112)) - ([20a3f4d](https://github.com/datadog/libdatadog/commit/20a3f4d67bba02004554be4c4e32a27ebe574fa7))
+- Revert vendoring of tuf-rust ([#2365](https://github.com/datadog/libdatadog/issues/2365)), use new crates.io package ([#2374](https://github.com/datadog/libdatadog/issues/2374)) - ([b56b21c](https://github.com/datadog/libdatadog/commit/b56b21c490ef11bc733c6fe7dc3da838ef5b1d28))
+
+### Changed
+
+- Add DEBUG product ([#2306](https://github.com/datadog/libdatadog/issues/2306)) - ([7be7ac7](https://github.com/datadog/libdatadog/commit/7be7ac7f383deea0af32bce895cfa1b44e6c8b94))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v2.0.0..libdd-remote-config-v3.0.0) - 2026-08-07
 
 ### Added
