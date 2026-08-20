@@ -133,7 +133,7 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
 
 /// Wrap a prost attribute value as a `KeyValue`. `key_ref` is a profiling-signal field, set to
 /// its zero default explicitly (no `..Default::default()`).
-fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
+pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
     ProtoKeyValue {
         key,
         value: Some(ProtoAnyValue { value: Some(value) }),
@@ -339,7 +339,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
     }
 }
 
-fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
+pub(super) fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
     fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
         if !v.is_empty() {
             attrs.push(proto_kv(
