@@ -3641,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "1.0.1"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
