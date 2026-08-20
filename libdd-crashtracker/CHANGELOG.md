@@ -2,6 +2,14 @@
 
 
 
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-crashtracker-v2.0.0..libdd-crashtracker-v2.0.1) - 2026-08-20
+
+### Fixed
+
+- Stop resolving thread symbols with libunwind in the receiver ([#2361](https://github.com/datadog/libdatadog/issues/2361)) - ([24c833f](https://github.com/datadog/libdatadog/commit/24c833fe595ab162bbcf370d93dc19fb11ef46bc))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-crashtracker-v1.0.0..libdd-crashtracker-v2.0.0) - 2026-08-18
 
 ### Added
