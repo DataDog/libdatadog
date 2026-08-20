@@ -12,7 +12,7 @@ When a shared library calls an external function like `malloc`, it jumps through
 ### Single-symbol hook (crashtracker intercepting `__assert_fail`)
 
 ```rust
-use libdd_got_hook::hook_symbol;
+use libdd_gotter::hook_symbol;
 
 static ORIG_FN: AtomicUsize = AtomicUsize::new(0);
 

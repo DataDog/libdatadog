@@ -125,6 +125,9 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
+      - name: Configure git long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build"
         shell: bash
         run: |

@@ -167,8 +167,8 @@ pub(crate) enum ConditionCheck {
     },
     Regex {
         expected_match: bool,
-        // As regex is supplied by user, we allow regex parse failure to not fail parsing and
-        // evaluation. Invalid regexes are simply ignored.
+        // Compile user-supplied regexes during ingestion so a failure rejects only the containing
+        // flag before evaluation.
         regex: Regex,
     },
     Membership {
