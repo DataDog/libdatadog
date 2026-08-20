@@ -2,6 +2,12 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v8.0.0..libdd-data-pipeline-v9.0.0) - 2026-08-20
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v7.0.0..libdd-data-pipeline-v8.0.0) - 2026-08-17
 
 ### Added
