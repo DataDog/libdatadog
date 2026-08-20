@@ -370,6 +370,27 @@ jobs:
         echo "cargo-deny found ${{ steps.cargo-deny.outputs.total_errors }} error(s) and FAIL_IF_CARGO_DENY is enabled"
         exit 1
 
+  # Dedicated, always-on gate: banned/compromised crates must never enter the
+  # dependency graph. Unlike `dependency-check` (scoped to changed crates), this
+  # runs on every PR so a dependency-only change - e.g. a Cargo.lock bump pulling
+  # a compromised transitive crate - cannot bypass it. Blocks on cargo-deny's exit
+  # code. advisories/sources stay informational in `dependency-check`.
+  cargo-deny-bans:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      with:
+        cache-targets: true
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+      with:
+        tool: cargo-deny
+      env:
+        RUSTUP_TOOLCHAIN: stable
+    - name: Block PRs that introduce banned or compromised crates
+      run: cargo deny --log-level error check bans
+
   dependency-check-delete:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count == 0
