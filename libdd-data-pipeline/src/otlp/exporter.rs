@@ -37,7 +37,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     body: Vec<u8>,
     max_retries: u32,
 ) -> Result<(), TraceExporterError> {
-    match send_otlp_http_with_result(
+    send_otlp_http_with_observer(
         capabilities,
         endpoint_url,
         config_headers,
@@ -46,16 +46,16 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         content_type,
         body,
         max_retries,
+        |_| {},
     )
-    .await?
-    {
-        Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e).await),
-    }
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
+pub(crate) async fn send_otlp_http_with_observer<
+    C: HttpClientCapability + SleepCapability,
+    F: FnOnce(&SendWithRetryResult),
+>(
     capabilities: &C,
     endpoint_url: &str,
     config_headers: &HeaderMap,
@@ -64,7 +64,8 @@ async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
     content_type: http::HeaderValue,
     body: Vec<u8>,
     max_retries: u32,
-) -> Result<SendWithRetryResult, TraceExporterError> {
+    observer: F,
+) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
             "Invalid OTLP endpoint URL: {}",
@@ -96,7 +97,7 @@ async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
         None,
     );
 
-    Ok(send_with_retry(
+    let result = send_with_retry(
         capabilities,
         &target,
         body,
@@ -104,7 +105,12 @@ async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
         &retry_strategy,
         CompressionStrategy::None,
     )
-    .await)
+    .await;
+    observer(&result);
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => Err(map_send_error(e).await),
+    }
 }
 
 /// Send an OTLP trace payload to the configured endpoint with retries. The `Content-Type` is
@@ -112,13 +118,14 @@ async fn send_otlp_http_with_result<C: HttpClientCapability + SleepCapability>(
 ///
 /// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
 /// against the Datadog test agent's OTLP endpoint.
+#[allow(dead_code)] // Retains the existing contract while telemetry uses the observer variant.
 pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
     test_token: Option<&str>,
     body: Vec<u8>,
-) -> Result<SendWithRetryResult, TraceExporterError> {
-    send_otlp_http_with_result(
+) -> Result<(), TraceExporterError> {
+    send_otlp_http(
         capabilities,
         &config.endpoint_url,
         &config.headers,
@@ -131,7 +138,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     .await
 }
 
-pub(crate) async fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
+async fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
     match err {
         SendWithRetryError::Http(response, _) => {
             let status = response.status();

@@ -27,4 +27,5 @@ pub(crate) mod config;
 pub(crate) mod exporter;
 
 pub use config::AgentlessTraceConfig;
+#[allow(unused_imports)]
 pub use exporter::send_agentless_traces_http;

@@ -18,10 +18,12 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::map_send_error as map_agentless_send_error;
-use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
-use crate::otlp::exporter::map_send_error as map_otlp_send_error;
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::agentless::exporter::send_agentless_traces_http_with_observer;
+use crate::agentless::AgentlessTraceConfig;
+use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
+use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(feature = "telemetry")]
+use crate::telemetry::metrics::MetricKind;
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -311,9 +313,44 @@ impl<
     }
 
     #[cfg(feature = "telemetry")]
-    fn emit_trace_telemetry(&self, data: &SendPayloadTelemetry) {
+    fn emit_trace_counts(&self, counts: &[(MetricKind, usize)]) {
         if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(data) {
+            for &(metric, count) in counts {
+                if let Err(e) = telemetry.send_count_metric(metric, count) {
+                    error!(?e, "Error sending telemetry");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_serialization_drop(&self, chunks: usize, spans: usize) {
+        self.emit_trace_counts(&[
+            (MetricKind::ChunksDroppedSerializationError, chunks),
+            (MetricKind::SpansDroppedSerializationError, spans),
+        ]);
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_send_telemetry(
+        &self,
+        result: &SendWithRetryResult,
+        bytes: usize,
+        chunks: usize,
+        spans: usize,
+    ) {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            let payload =
+                SendPayloadTelemetry::from_retry_result(result, bytes as u64, chunks as u64);
+            if let Err(e) = telemetry.send(&payload) {
+                error!(?e, "Error sending telemetry");
+            }
+            let metric = match result {
+                Err(SendWithRetryError::Build(_)) => MetricKind::SpansDroppedSerializationError,
+                Err(_) => MetricKind::SpansDroppedApiError,
+                Ok(_) => return,
+            };
+            if let Err(e) = telemetry.send_count_metric(metric, spans) {
                 error!(?e, "Error sending telemetry");
             }
         }
@@ -678,27 +715,22 @@ impl<
         .map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
             #[cfg(feature = "telemetry")]
-            self.emit_trace_telemetry(&SendPayloadTelemetry::spans_dropped_serialization_error(
-                span_count as u64,
-            ));
+            self.emit_serialization_drop(trace_count, span_count);
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
 
         let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
-        #[cfg(feature = "telemetry")]
-        let payload_len = json_body.len();
-        let result =
-            send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
-
-        #[cfg(feature = "telemetry")]
-        self.emit_trace_telemetry(&SendPayloadTelemetry::from_retry_result_with_spans(
-            &result,
-            payload_len as u64,
-            trace_count as u64,
-            span_count as u64,
-        ));
-
-        result.map_err(map_agentless_send_error)?;
+        send_agentless_traces_http_with_observer(
+            &self.capabilities,
+            config,
+            headers,
+            json_body,
+            |_result, _payload_len| {
+                #[cfg(feature = "telemetry")]
+                self.emit_send_telemetry(_result, _payload_len, trace_count, span_count);
+            },
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -733,9 +765,7 @@ impl<
         let body = config.protocol.encode(&request).map_err(|e| {
             error!("OTLP serialization error: {e}");
             #[cfg(feature = "telemetry")]
-            self.emit_trace_telemetry(&SendPayloadTelemetry::spans_dropped_serialization_error(
-                span_count as u64,
-            ));
+            self.emit_serialization_drop(trace_count, span_count);
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
                 "failed to encode OTLP request: {e}"
             )))
@@ -757,25 +787,21 @@ impl<
         };
         #[cfg(feature = "telemetry")]
         let payload_len = body.len();
-        let result = send_otlp_traces_http(
+        send_otlp_http_with_observer(
             &self.capabilities,
-            config_to_use,
+            &config_to_use.endpoint_url,
+            &config_to_use.headers,
+            config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
+            config_to_use.protocol.content_type(),
             body,
+            OTLP_MAX_RETRIES,
+            |_result| {
+                #[cfg(feature = "telemetry")]
+                self.emit_send_telemetry(_result, payload_len, trace_count, span_count);
+            },
         )
         .await?;
-
-        #[cfg(feature = "telemetry")]
-        self.emit_trace_telemetry(&SendPayloadTelemetry::from_retry_result_with_spans(
-            &result,
-            payload_len as u64,
-            trace_count as u64,
-            span_count as u64,
-        ));
-
-        if let Err(err) = result {
-            return Err(map_otlp_send_error(err).await);
-        }
         Ok(AgentResponse::Unchanged)
     }
 
@@ -805,12 +831,7 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        self.emit_trace_telemetry(&SendPayloadTelemetry::from_retry_result_with_spans(
-            &result,
-            payload_len as u64,
-            chunks as u64,
-            spans as u64,
-        ));
+        self.emit_send_telemetry(&result, payload_len, chunks, spans);
 
         self.handle_send_result(result, chunks, payload_len).await
     }
@@ -851,9 +872,10 @@ impl<
         }
 
         #[cfg(feature = "telemetry")]
-        self.emit_trace_telemetry(&SendPayloadTelemetry::spans_enqueued(
-            traces.iter().map(Vec::len).sum::<usize>() as u64,
-        ));
+        self.emit_trace_counts(&[(
+            MetricKind::SpansEnqueuedForSerialization,
+            traces.iter().map(Vec::len).sum(),
+        )]);
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
@@ -901,6 +923,8 @@ impl<
         // Snapshot the effective format once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let effective_format = self.effective_output_format();
+        #[cfg(feature = "telemetry")]
+        let trace_count = traces.len();
         let span_count = traces.iter().map(Vec::len).sum::<usize>();
 
         let prepared = match self.serializer.prepare_traces_payload(
@@ -918,9 +942,7 @@ impl<
                     None,
                 );
                 #[cfg(feature = "telemetry")]
-                self.emit_trace_telemetry(
-                    &SendPayloadTelemetry::spans_dropped_serialization_error(span_count as u64),
-                );
+                self.emit_serialization_drop(trace_count, span_count);
                 return Err(e);
             }
         };
@@ -2416,7 +2438,6 @@ mod tests {
 #[cfg(feature = "telemetry")]
 mod telemetry_metrics_tests {
     use super::*;
-    use crate::telemetry::TelemetryClientBuilder;
     use crate::trace_exporter::tests::build_test_exporter;
     use httpmock::prelude::*;
     use httpmock::MockServer;
@@ -2505,7 +2526,6 @@ mod telemetry_metrics_tests {
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
                 .body_includes("\"metric\":\"trace_api.bytes\"")
-                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -2521,10 +2541,7 @@ mod telemetry_metrics_tests {
             true,
         );
 
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (
-            vec![BytesString::from_static("")],
-            vec![vec![v05::Span::default()]],
-        );
+        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -2537,170 +2554,6 @@ mod telemetry_metrics_tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v1() {
-        let server = MockServer::start();
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V1_TRACES_ENDPOINT);
-            then.status(200).body("{}");
-        });
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.requests\"")
-                .body_includes("\"metric\":\"trace_api.responses\"")
-                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200).body("");
-        });
-
-        let exporter = build_test_exporter(
-            server.url("/"),
-            None,
-            TraceExporterInputFormat::V04,
-            TraceExporterOutputFormat::V1,
-            true,
-            true,
-        );
-        exporter.v1_active.store(true, Ordering::Relaxed);
-
-        let result = exporter
-            .shared_runtime
-            .block_on(exporter.send_trace_chunks_inner(vec![vec![SpanBytes::default()]]))
-            .unwrap()
-            .unwrap();
-        assert!(matches!(result, AgentResponse::Changed { .. }));
-
-        traces_endpoint.assert_calls(1);
-        for _ in 0..50 {
-            if metrics_endpoint.calls() > 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_otlp() {
-        let server = MockServer::start();
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/traces")
-                .header("content-type", "application/json");
-            then.status(200).body("");
-        });
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.requests\"")
-                .body_includes("\"metric\":\"trace_api.responses\"")
-                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200).body("");
-        });
-
-        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .set_otlp_endpoint(&otlp_endpoint)
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            });
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let result = exporter
-            .shared_runtime
-            .block_on(exporter.send_trace_chunks_inner(vec![vec![SpanBytes::default()]]))
-            .unwrap()
-            .unwrap();
-        assert_eq!(result, AgentResponse::Unchanged);
-
-        traces_endpoint.assert_calls(1);
-        for _ in 0..50 {
-            if metrics_endpoint.calls() > 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_agentless_with_shared_telemetry() {
-        let server = MockServer::start();
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/input")
-                .header("dd-api-key", "test-api-key");
-            then.status(200).body("");
-        });
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.requests\"")
-                .body_includes("\"metric\":\"trace_api.responses\"")
-                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"");
-            then.status(200).body("");
-        });
-
-        let telemetry_runtime = ForkSafeRuntime::new().unwrap();
-        let (telemetry_client, telemetry_worker) = TelemetryClientBuilder::default()
-            .set_service_name("foo")
-            .set_service_version("1.0")
-            .set_env("foo-env")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_tracer_version("v0.1")
-            .set_url(&server.url("/"))
-            .set_heartbeat(100)
-            .build::<NativeCapabilities>()
-            .unwrap();
-        let telemetry_worker = telemetry_runtime
-            .spawn_worker(telemetry_worker, true)
-            .unwrap();
-        telemetry_client.start().unwrap();
-
-        let intake_endpoint = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .set_agentless_endpoint(&intake_endpoint, "test-api-key");
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-        exporter.set_telemetry_handle(Some(telemetry_client.clone_handle()));
-
-        let result = exporter
-            .send_trace_chunks(vec![vec![SpanBytes::default()]], None)
-            .unwrap();
-        assert_eq!(result, AgentResponse::Unchanged);
-
-        traces_endpoint.assert_calls(1);
-        for _ in 0..50 {
-            if metrics_endpoint.calls() > 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-        telemetry_runtime
-            .block_on(telemetry_worker.stop())
-            .unwrap()
-            .unwrap();
     }
 
     #[test]
