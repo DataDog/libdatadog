@@ -6,11 +6,12 @@ use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
-use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
-use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_live_debugger::LiveDebuggingData;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{tag::Tag, MutexExt};
+use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
+use libdd_ipc::rate_limiter::ShmLimiter;
 use libdd_remote_config::config::dynamic::{parse_json, Configs};
 use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
@@ -186,7 +187,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product == RemoteConfigProduct::LiveDebugger {
+            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
                 Some(SHM_LIMITER.lock_or_panic().alloc())
             } else {
                 None
@@ -245,10 +246,12 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
-impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStorage<N> {
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
+    for ConfigFileStorage<N>
+{
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, Self>>,
+        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeCapabilities>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -291,7 +294,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
             );
             serialized.push(b'\n');
 
-            if file.refcount.path.product == RemoteConfigProduct::ApmTracing {
+            if file.refcount.path.product() == RemoteConfigProduct::ApmTracing {
                 let mut handle = file.handle.lock_or_panic();
                 #[allow(clippy::unwrap_used)]
                 let shm = handle.take().unwrap();
@@ -317,9 +320,9 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
                 let now_enabled =
                     dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
                 if was_enabled && !now_enabled {
-                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
                 } else if !was_enabled && now_enabled {
-                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -408,7 +411,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
                         freshly_disabled = true;
                     }
                     if Some(false) != apm_config_dynamic_instrumentation && freshly_disabled {
-                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugger);
+                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugging);
                     }
                     remove
                 };
@@ -422,7 +425,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeCapabilities>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -448,7 +451,11 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
             _phantom: Default::default(),
         };
-        let fetcher = MultiTargetFetcher::new(storage, invariants);
+        let fetcher = MultiTargetFetcher::new(
+            storage,
+            invariants,
+            NativeCapabilities::new_without_connection_pooling(),
+        );
         fetcher
             .remote_config_interval
             .store(interval.as_nanos() as u64, Ordering::Relaxed);
@@ -521,7 +528,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
                 };
                 if freshly_enabled {
                     self.0
-                        .force_product(&target, RemoteConfigProduct::LiveDebugger);
+                        .force_product(&target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -704,12 +711,7 @@ impl RemoteConfigManager {
                 match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
-                        entry.insert(RemoteConfigPath {
-                            source: parsed.source,
-                            product: parsed.product,
-                            config_id: parsed.config_id.clone(),
-                            name: parsed.name.clone(),
-                        });
+                        entry.insert(parsed.path.clone());
                         return RemoteConfigUpdate::Add {
                             value: parsed,
                             limiter_index,
@@ -777,7 +779,7 @@ impl RemoteConfigManager {
     /// Can be used to fast-remove configs temporarily. Will be re-applied on next fetch_update().
     pub fn unload_configs(&mut self, configs: &[RemoteConfigProduct]) {
         self.active_configs.retain(|key, path| {
-            if configs.contains(&path.product) {
+            if configs.contains(&path.product()) {
                 // self.check_configs should generally be empty here, but be safe
                 if let Some(pos) = self.check_configs.iter().position(|x| x == key) {
                     self.check_configs.swap_remove(pos);
@@ -799,29 +801,19 @@ mod tests {
         tests::dummy_dynamic_config, Configs, DynamicConfigFile,
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
-    use libdd_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
     use std::sync::LazyLock;
 
-    static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "1234".to_string(),
-        name: "config".to_string(),
+    static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/1234/config").expect("valid path")
     });
 
-    static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "9876".to_string(),
-        name: "config".to_string(),
+    static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/9876/config").expect("valid path")
     });
 
-    static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::LiveDebugger,
-        config_id: "ld-1".to_string(),
-        name: "config".to_string(),
+    static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/LIVE_DEBUGGING/ld-1/config").expect("valid path")
     });
 
     static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -917,9 +909,9 @@ mod tests {
         receiver.recv().await;
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
-            assert_eq!(value.source, PATH_FIRST.source);
-            assert_eq!(value.name, PATH_FIRST.name);
+            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+            assert_eq!(value.path.source(), PATH_FIRST.source());
+            assert_eq!(value.path.name(), PATH_FIRST.name());
             let parsed = value.data.as_ref().expect("dynamic config must parse");
             if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
                 assert!(matches!(
@@ -936,10 +928,10 @@ mod tests {
         // just one update
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
 
-        manager.unload_configs(&[PATH_FIRST.product]);
+        manager.unload_configs(&[PATH_FIRST.product()]);
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
+            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
         } else {
             unreachable!();
         }
@@ -979,17 +971,17 @@ mod tests {
 
         // then the adds
         let was_second = if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            value.config_id == PATH_SECOND.config_id
+            value.path.config_id() == PATH_SECOND.config_id()
         } else {
             unreachable!();
         };
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(
-                &value.config_id,
+                value.path.config_id(),
                 if was_second {
-                    &PATH_FIRST.config_id
+                    PATH_FIRST.config_id()
                 } else {
-                    &PATH_SECOND.config_id
+                    PATH_SECOND.config_id()
                 }
             );
         } else {
@@ -1013,11 +1005,11 @@ mod tests {
         // If we re-track it's added again immediately
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(
-                &value.config_id,
+                value.path.config_id(),
                 if was_second {
-                    &PATH_SECOND.config_id
+                    PATH_SECOND.config_id()
                 } else {
-                    &PATH_FIRST.config_id
+                    PATH_FIRST.config_id()
                 }
             );
         } else {
@@ -1106,10 +1098,10 @@ mod tests {
         receiver.recv().await;
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
+            assert_eq!(value.path.config_id(), PATH_LIVE_DEBUGGER.config_id());
             assert_eq!(
-                value.product,
-                RemoteConfigProduct::LiveDebugger,
+                value.path.product(),
+                RemoteConfigProduct::LiveDebugging,
                 "must be parsed as LiveDebugger, not skipped"
             );
             let data = value.data.as_ref().expect("LiveDebugger must parse");

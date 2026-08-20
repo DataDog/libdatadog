@@ -7,8 +7,8 @@ use constcat::concat;
 use futures::future;
 use http::uri::PathAndQuery;
 use http::{Method, Uri};
-use http_body_util::BodyExt;
-use libdd_common::http_common;
+use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
@@ -19,6 +19,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -217,7 +218,19 @@ pub fn agent_info_supports_debugger_v2_endpoint(info: &AgentInfoStruct) -> bool 
         .unwrap_or(false)
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 #[repr(C)]
 pub enum DebuggerType {
     Diagnostics,
@@ -239,6 +252,32 @@ impl DebuggerType {
         }
     }
 }
+
+/// The agent or intake answered with a >= 400 status.
+///
+/// Carried inside the [`anyhow::Error`] returned by [`send`], [`send_symdb`] and
+/// [`PayloadSender::finish`], so callers can `downcast_ref` to recover the status
+/// code and tell an unsupported endpoint (e.g. 404 from an agent that does not
+/// proxy `/debugger/v2/input`) apart from a transport failure.
+#[derive(Debug)]
+pub struct PayloadRejected {
+    pub status: u16,
+    pub body: String,
+    /// The payload flavour, as it appears in the error message ("debugger" or "symdb").
+    pub kind: &'static str,
+}
+
+impl Display for PayloadRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Server did not accept {} payload ({}): {}",
+            self.kind, self.status, self.body
+        )
+    }
+}
+
+impl std::error::Error for PayloadRejected {}
 
 pub fn encode<S: Eq + Hash + Serialize>(data: Vec<DebuggerPayload>) -> Vec<u8> {
     #[allow(clippy::unwrap_used)]
@@ -266,29 +305,54 @@ pub fn generate_tags(
     percent_encode(tags.as_bytes(), CONTROLS).to_string()
 }
 
+/// Owns the spawned request task and aborts it when dropped.
+struct AbortOnDrop(JoinHandle<anyhow::Result<http::Response<Bytes>>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        // A no-op once the task has completed, so the success path is unaffected.
+        self.0.abort();
+    }
+}
+
 #[derive(Default)]
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(http_common::ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<http_common::HttpResponse>>),
+    Outstanding(ResponseFuture),
+    Submitted(AbortOnDrop),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: http_common::Sender,
+    sender: BodySender,
     needs_boundary: bool,
     payloads: u32,
+    timeout_ms: u64,
 }
 
 const BOUNDARY: &str = "------------------------44617461646f67";
-const BOUNDARY_LINE: &str = concat!("--", BOUNDARY, "\r\n");
+const BOUNDARY_LINE: &str = concat!("--", BOUNDARY);
 
 impl PayloadSender {
     pub fn new(
         config: &Config,
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
+    ) -> anyhow::Result<Self> {
+        Self::new_with_client(
+            config,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_with_client<C: HttpClientCapability + Send + 'static>(
+        config: &Config,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
@@ -297,7 +361,12 @@ impl PayloadSender {
         }
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("missing endpoint for {debugger_type:?}"))?;
-        Self::new_to_endpoint(endpoint, debugger_type, percent_encoded_tags)
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client,
+        )
     }
 
     /// Creates a sender targeting a specific endpoint. Used to fan a payload out
@@ -306,6 +375,20 @@ impl PayloadSender {
         endpoint: &Endpoint,
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
+    ) -> anyhow::Result<Self> {
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_to_endpoint_with_client<C: HttpClientCapability + Send + 'static>(
+        endpoint: &Endpoint,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         let mut url = endpoint.url.clone();
         let mut parts = url.into_parts();
@@ -328,8 +411,6 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = http_common::Body::channel();
-
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
             "Content-type",
@@ -340,12 +421,13 @@ impl PayloadSender {
             },
         );
 
-        let future = http_common::new_default_client().request(req.body(body)?);
+        let (sender, future) = http_client.request_streamed(req.body(())?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
             needs_boundary,
             payloads: 0,
+            timeout_ms: endpoint.timeout_ms,
         })
     }
 
@@ -354,18 +436,19 @@ impl PayloadSender {
             SenderFuture::Outstanding(future) => {
                 if self.needs_boundary {
                     let header = concat!(
-                        BOUNDARY_LINE,
-                        "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
-                        "Content-Type: application/json\r\n",
-                        "\r\n",
+                    BOUNDARY_LINE,
+                    "\r\n",
+                    "Content-Disposition: form-data; name=\"event\"; filename=\"event.json\"\r\n",
+                    "Content-Type: application/json\r\n",
+                    "\r\n",
                     );
-                    self.sender.send_data(header.into()).await?;
+                    self.sender.send_chunk(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(async {
-                    let resp = http_common::into_response(future.await?);
+                self.future = SenderFuture::Submitted(AbortOnDrop(tokio::spawn(async move {
+                    let resp = future.await?;
                     Ok(resp)
-                }));
+                })));
                 true
             }
             future => {
@@ -380,39 +463,47 @@ impl PayloadSender {
         if !first {
             data[0] = b',';
         }
-        self.sender.send_data(Bytes::from(data)).await?;
+        self.sender.send_chunk(Bytes::from(data)).await?;
 
         self.payloads += 1;
         Ok(())
     }
 
-    pub async fn finish(self) -> anyhow::Result<u32> {
-        if let SenderFuture::Submitted(future) = self.future {
+    pub async fn finish(mut self) -> anyhow::Result<u32> {
+        if let SenderFuture::Submitted(mut future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
-                    .send_data(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE, "--\r\n").into())
                     .await?;
             } else {
-                self.sender.send_data(Bytes::from_static(b"]")).await?;
+                self.sender.send_chunk(Bytes::from_static(b"]")).await?;
             }
 
             drop(self.sender);
-            match future.await? {
-                Ok(response) => {
-                    let status = response.status().as_u16();
-                    if status >= 400 {
-                        let body_bytes = response.into_body().collect().await?.to_bytes();
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!(
-                            "Server did not accept debugger payload ({status}): {response_body}"
-                        );
-                    }
-                    Ok(self.payloads)
-                }
-                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
+            // Once the body is fully sent, bound the wait for the response headers and (if
+            // needed) the response body under a single timeout - a slow/stalled server must
+            // not be able to hang this indefinitely. Returning here drops `future`, whose
+            // `AbortOnDrop` cancels the underlying request rather than detaching it.
+            let response =
+                match tokio::time::timeout(Duration::from_millis(self.timeout_ms), &mut future.0)
+                    .await
+                {
+                    Ok(joined) => joined??,
+                    Err(_) => return Err(anyhow::anyhow!("debugger payload request timed out")),
+                };
+
+            let status = response.status().as_u16();
+            if status >= 400 {
+                let response_body =
+                    String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+                anyhow::bail!(PayloadRejected {
+                    status,
+                    body: response_body,
+                    kind: "debugger",
+                });
             }
+            Ok(self.payloads)
         } else {
             Ok(0)
         }
@@ -425,6 +516,25 @@ pub async fn send(
     debugger_type: DebuggerType,
     percent_encoded_tags: &str,
 ) -> anyhow::Result<()> {
+    send_with_client(
+        payload,
+        config,
+        debugger_type,
+        percent_encoded_tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send()`, but allows plugging in a non-default `HttpClientCapability`
+/// implementation (e.g. for testing/mocking).
+pub async fn send_with_client<C: HttpClientCapability + Send + 'static>(
+    payload: &[u8],
+    config: &Config,
+    debugger_type: DebuggerType,
+    percent_encoded_tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
     let endpoints = config.debugger_endpoints_for(debugger_type);
     let (primary, additional) = endpoints
         .split_first()
@@ -435,22 +545,39 @@ pub async fn send(
     // responses are best-effort and discarded; only the primary endpoint's
     // result is returned to the caller. Running concurrently keeps a slow or
     // stalled additional endpoint from delaying the primary.
-    let primary_send = send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags);
-    let additional_sends =
-        future::join_all(additional.iter().map(|&endpoint| {
-            send_to_endpoint(payload, endpoint, debugger_type, percent_encoded_tags)
-        }));
+    let primary_send = send_to_endpoint(
+        payload,
+        primary,
+        debugger_type,
+        percent_encoded_tags,
+        http_client.clone(),
+    );
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_to_endpoint(
+            payload,
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client.clone(),
+        )
+    }));
     let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
-async fn send_to_endpoint(
+async fn send_to_endpoint<C: HttpClientCapability + Send + 'static>(
     payload: &[u8],
     endpoint: &Endpoint,
     debugger_type: DebuggerType,
     percent_encoded_tags: &str,
+    http_client: C,
 ) -> anyhow::Result<()> {
-    let mut batch = PayloadSender::new_to_endpoint(endpoint, debugger_type, percent_encoded_tags)?;
+    let mut batch = PayloadSender::new_to_endpoint_with_client(
+        endpoint,
+        debugger_type,
+        percent_encoded_tags,
+        http_client,
+    )?;
     batch.append(payload).await?;
     batch.finish().await?;
     Ok(())
@@ -466,6 +593,25 @@ pub async fn send_symdb(
     config: &Config,
     tags: &str,
 ) -> anyhow::Result<()> {
+    send_symdb_with_client(
+        payload,
+        content_type,
+        config,
+        tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send_symdb()`, but allows plugging in a non-default
+/// `HttpClientCapability` implementation (e.g. for testing/mocking).
+pub async fn send_symdb_with_client<C: HttpClientCapability>(
+    payload: &[u8],
+    content_type: &str,
+    config: &Config,
+    tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
     let endpoints = config.symdb_endpoints();
     let (primary, additional) = endpoints
         .split_first()
@@ -473,21 +619,21 @@ pub async fn send_symdb(
 
     // Send the primary and any additional dual-ship endpoints concurrently;
     // additional responses are best-effort and discarded.
-    let primary_send = send_symdb_to_endpoint(payload, content_type, primary, tags);
-    let additional_sends = future::join_all(
-        additional
-            .iter()
-            .map(|&endpoint| send_symdb_to_endpoint(payload, content_type, endpoint, tags)),
-    );
+    let primary_send =
+        send_symdb_to_endpoint(payload, content_type, primary, tags, http_client.clone());
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_symdb_to_endpoint(payload, content_type, endpoint, tags, http_client.clone())
+    }));
     let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
-async fn send_symdb_to_endpoint(
+async fn send_symdb_to_endpoint<C: HttpClientCapability>(
     payload: &[u8],
     content_type: &str,
     endpoint: &Endpoint,
     tags: &str,
+    http_client: C,
 ) -> anyhow::Result<()> {
     let mut req = endpoint
         .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
@@ -502,18 +648,28 @@ async fn send_symdb_to_endpoint(
         req = req.header("DD-EVP-ORIGIN", "agent-symdb");
     }
 
-    let body = http_common::Body::from(payload.to_vec());
-    let response = http_common::into_response(
-        http_common::new_default_client()
-            .request(req.body(body)?)
-            .await?,
-    );
+    let body = Bytes::from(payload.to_vec());
+    let (status, body_bytes) =
+        tokio::time::timeout(Duration::from_millis(endpoint.timeout_ms), async {
+            let response = http_client
+                .request(req.body(body)?)
+                .await
+                .map_err(anyhow::Error::new)?;
 
-    let status = response.status().as_u16();
+            let status = response.status().as_u16();
+            let body_bytes = response.into_body();
+            Ok::<_, anyhow::Error>((status, body_bytes))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("symdb payload request to {} timed out", endpoint.url))??;
+
     if status >= 400 {
-        let body_bytes = response.into_body().collect().await?.to_bytes();
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-        anyhow::bail!("Server did not accept symdb payload ({status}): {response_body}");
+        anyhow::bail!(PayloadRejected {
+            status,
+            body: response_body,
+            kind: "symdb",
+        });
     }
     Ok(())
 }
@@ -525,7 +681,10 @@ pub fn generate_new_id() -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_capabilities::{ChunkFuture, HttpError, MaybeSend, StreamingBodySender};
     use std::borrow::Cow;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn agent_endpoint() -> Endpoint {
         Endpoint::from_slice("http://localhost:8126")
@@ -636,6 +795,122 @@ mod tests {
         for endpoint in diagnostics {
             assert_eq!(endpoint.url.path(), "/api/v2/debugger");
         }
+    }
+
+    struct SetOnDrop(Arc<AtomicBool>);
+
+    impl Drop for SetOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// A response that never arrives, holding `guard` for as long as it lives.
+    ///
+    /// The guard is captured by move rather than constructed in the body, because an
+    /// async block does not run its body until first polled: a task aborted before
+    /// its first poll would otherwise never arm the observer.
+    async fn stalled_response(guard: SetOnDrop) -> Result<http::Response<Bytes>, HttpError> {
+        let _guard = guard;
+        future::pending::<()>().await;
+        unreachable!()
+    }
+
+    /// Accepts and discards body chunks, so the test's stalled response future is the
+    /// only thing the spawned task ever waits on.
+    struct DiscardingBodySender;
+
+    impl StreamingBodySender for DiscardingBodySender {
+        fn send_chunk(&mut self, _data: Bytes) -> ChunkFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// A client whose requests never complete, so a test can observe what happens to
+    /// the in-flight task once the sender goes away. The flag is set when the
+    /// response future is dropped, which happens only if the spawned task was
+    /// aborted rather than detached.
+    ///
+    /// `request_streamed` is overridden rather than relying on the default
+    /// implementation: that one parks on the body channel until the `BodySender` is
+    /// dropped, so a task abandoned before `finish()` would be cancelled before it
+    /// ever reached `request()` and the flag would never be armed.
+    #[derive(Clone, Debug)]
+    struct StalledClient(Arc<AtomicBool>);
+
+    impl HttpClientCapability for StalledClient {
+        fn new_client() -> Self {
+            Self(Arc::new(AtomicBool::new(false)))
+        }
+
+        fn new_without_connection_pooling() -> Self {
+            Self::new_client()
+        }
+
+        fn request(
+            &self,
+            _req: http::Request<Bytes>,
+        ) -> impl std::future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
+        {
+            stalled_response(SetOnDrop(self.0.clone()))
+        }
+
+        fn request_streamed(&self, _req: http::Request<()>) -> (BodySender, ResponseFuture) {
+            (
+                Box::new(DiscardingBodySender),
+                Box::pin(stalled_response(SetOnDrop(self.0.clone()))),
+            )
+        }
+    }
+
+    #[cfg_attr(miri, ignore)] // stalled async request cancellation is prohibitively slow under Miri
+    #[tokio::test]
+    async fn test_dropping_payload_sender_aborts_in_flight_request() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+
+        let mut config = Config::default();
+        config.set_endpoint(agent_endpoint()).unwrap();
+
+        let mut sender = PayloadSender::new_to_endpoint_with_client(
+            config.snapshots_endpoint.as_ref().unwrap(),
+            DebuggerType::Snapshots,
+            "",
+            StalledClient(cancelled.clone()),
+        )
+        .unwrap();
+
+        // Spawns the request task, which then never completes.
+        sender.append(b"[{}]").await.unwrap();
+
+        // Abandoning the sender (an enclosing timeout, a `select!`, a cancelled task)
+        // must cancel that request instead of leaving it running with its connection.
+        drop(sender);
+
+        for _ in 0..100 {
+            if cancelled.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        assert!(
+            cancelled.load(Ordering::SeqCst),
+            "in-flight request was detached instead of aborted"
+        );
+    }
+
+    #[test]
+    fn test_payload_rejected_display_is_downcastable() {
+        let err: anyhow::Error = anyhow::Error::from(PayloadRejected {
+            status: 404,
+            body: "Not Found".to_string(),
+            kind: "debugger",
+        });
+        assert_eq!(
+            err.to_string(),
+            "Server did not accept debugger payload (404): Not Found"
+        );
+        assert_eq!(err.downcast_ref::<PayloadRejected>().unwrap().status, 404);
     }
 
     #[test]

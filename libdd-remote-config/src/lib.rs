@@ -79,6 +79,7 @@ impl Target {
     strum_macros::IntoStaticStr,
     strum_macros::Display,
 )]
+#[non_exhaustive]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
@@ -129,4 +130,5 @@ pub enum RemoteConfigCapabilities {
     FfeFlagConfigurationRules = 46,
     DdDataStreamsTransactionExtractors = 47,
     LlmObsActivation = 48,
+    AsmRawResponseBody = 49,
 }

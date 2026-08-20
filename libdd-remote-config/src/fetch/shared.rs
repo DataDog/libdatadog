@@ -6,6 +6,7 @@ use crate::fetch::{
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -126,12 +127,12 @@ impl RunnersGeneration {
     }
 }
 
-pub struct RefcountingStorage<S: FileStorage + Clone>
+pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>
 where
     S::StoredFile: RefcountedFile,
 {
     pub storage: S,
-    state: Arc<ConfigFetcherState<S::StoredFile>>,
+    state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     /// Stores recently expired files. When a file refcount drops to zero, they're no longer sent
     /// via the remote config client. However, there may still be in-flight requests, with telling
     /// the remote config server that we know about these files. Thus, as long as these requests
@@ -160,7 +161,8 @@ impl Add for RefcountingStorageStats {
     }
 }
 
-impl<S: FileStorage + Clone> Clone for RefcountingStorage<S>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> Clone
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -174,11 +176,11 @@ where
     }
 }
 
-impl<S: FileStorage + Clone> RefcountingStorage<S>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
-    pub fn new(storage: S, mut state: ConfigFetcherState<S::StoredFile>) -> Self {
+    pub fn new(storage: S, mut state: ConfigFetcherState<S::StoredFile, C>) -> Self {
         state.expire_unused_files = false;
         RefcountingStorage {
             storage,
@@ -222,7 +224,8 @@ where
     }
 }
 
-impl<S: FileStorage + Clone> FileStorage for RefcountingStorage<S>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> FileStorage
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -267,15 +270,21 @@ impl SharedFetcher {
     /// On successful fetches on_fetch() is called with the new configuration.
     /// Should not be called more than once.
     #[allow(clippy::type_complexity)]
-    pub async fn run<S: FileStorage + Clone>(
+    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>(
         &self,
-        storage: RefcountingStorage<S>,
+        storage: RefcountingStorage<S, C>,
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
     ) where
         S::StoredFile: RefcountedFile,
     {
         let state = storage.state.clone();
-        let mut fetcher = ConfigFetcher::new(storage, state);
+        let mut fetcher = match ConfigFetcher::new(storage, state).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("failed to create the fetcher: {:?}", e);
+                return;
+            }
+        };
 
         let mut opaque_state = ConfigClientState::default();
 
@@ -314,7 +323,9 @@ impl SharedFetcher {
             };
 
             match fetched {
-                Ok(None) => clean_inactive(), // nothing changed
+                Ok(None) => {
+                    clean_inactive();
+                }
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
@@ -349,6 +360,17 @@ impl SharedFetcher {
                 }
             }
 
+            if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
+                // Keep the run-loop interval in sync with the server-provided value.
+                // If the interval in nanoseconds is greater than u64::MAX, pick the max
+                // representable value. This is tolerable as u64::MAX nanoseconds
+                // still represents 35584 years.
+                self.interval.store(
+                    interval.as_nanos().min(u64::MAX as u128) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+
             select! {
                 _ = self.cancellation.cancelled() => { break; }
                 _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
@@ -377,6 +399,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::Target;
     use futures::future::join_all;
+    use libdd_capabilities_impl::NativeCapabilities;
     use std::sync::{Arc, LazyLock};
 
     pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -435,7 +458,10 @@ pub mod tests {
         let storage = RcFileStorage::default();
         let rc_storage = RefcountingStorage::new(
             storage.clone(),
-            ConfigFetcherState::new(server.dummy_options().invariants),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_without_connection_pooling(),
+            ),
         );
 
         server.files.lock().unwrap().insert(
@@ -497,7 +523,10 @@ pub mod tests {
         let storage = RcFileStorage::default();
         let rc_storage = RefcountingStorage::new(
             storage.clone(),
-            ConfigFetcherState::new(server.dummy_options().invariants),
+            ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeCapabilities::new_without_connection_pooling(),
+            ),
         );
 
         server.files.lock().unwrap().insert(

@@ -190,7 +190,7 @@ int main(int argc, char* argv[]) {
         config_path = argv[1];
     } else {
         // Default to the canonical FFE test data file
-        config_path = "./datadog-ffe-test-suite/ffe-system-test-data/ufc-config.json";
+        config_path = "./libdd-ffe-test-suite/ffe-system-test-data/ufc-config.json";
     }
 
     printf("Step 1: Loading configuration from file...\n");
@@ -222,6 +222,9 @@ int main(int argc, char* argv[]) {
 
     ddog_ffe_Handle_Configuration config = config_result.ok;
     printf("  Configuration loaded successfully\n");
+
+    bool observe_full_evaluation_data = ddog_ffe_configuration_get_observe_full_evaluation_data(config);
+    printf("  observeFullEvaluationData: %s\n", observe_full_evaluation_data ? "true" : "false");
 
     // Step 2: Create evaluation context with targeting key and attributes
     printf("\nStep 2: Creating evaluation context...\n");

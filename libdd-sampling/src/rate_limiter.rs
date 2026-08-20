@@ -4,13 +4,77 @@
 use libdd_common::MutexExt;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::time::Duration;
 use std::time::Instant;
+
+/// Monotonic clock used by [`RateLimiter`].
+///
+/// Production code uses [`Clock::system`] (real wall-clock). Tests inject
+/// [`Clock::mock`] so token replenishment and window rollover are
+/// deterministic and do not depend on wall-clock timing.
+#[derive(Clone)]
+pub(crate) enum Clock {
+    System,
+    #[cfg(test)]
+    Mock(Arc<MockClockInner>),
+}
+
+/// Shared state for the mock clock variant.
+#[cfg(test)]
+pub(crate) struct MockClockInner {
+    now: Mutex<Instant>,
+}
+
+impl Clock {
+    /// Real wall-clock source backed by [`std::time::Instant::now`].
+    pub(crate) fn system() -> Self {
+        Clock::System
+    }
+
+    /// Controllable clock for tests. Starts at an arbitrary `Instant` and only
+    /// advances when [`Clock::advance`] is called.
+    #[cfg(test)]
+    pub(crate) fn mock() -> Self {
+        Clock::Mock(Arc::new(MockClockInner {
+            now: Mutex::new(Instant::now()),
+        }))
+    }
+
+    /// Returns the current monotonic timestamp.
+    pub(crate) fn now(&self) -> Instant {
+        match self {
+            Clock::System => Instant::now(),
+            #[cfg(test)]
+            Clock::Mock(inner) => *inner.now.lock().unwrap(),
+        }
+    }
+
+    /// Advances the mock clock by `dur`. Panics if called on [`Clock::System`].
+    #[cfg(test)]
+    pub(crate) fn advance(&self, dur: Duration) {
+        match self {
+            Clock::System => panic!("cannot advance the system clock"),
+            Clock::Mock(inner) => {
+                let mut g = inner.now.lock().unwrap();
+                // `Instant + Duration` is infallible on Rust ≥ 1.75; use
+                // checked_add for defensiveness in case the test harness ever
+                // runs on an older toolchain.
+                *g = g.checked_add(dur).expect("clock overflow");
+            }
+        }
+    }
+}
 
 /// A token bucket rate limiter implementation
 #[derive(Clone)]
 pub struct RateLimiter {
     /// Rate limit value that doesn't need to be protected by mutex
     rate_limit: i32,
+
+    /// Clock used to read the current monotonic timestamp. Clones share the
+    /// same time source (important for tests using the mock variant).
+    clock: Clock,
 
     /// Inner state protected by a mutex for thread safety
     inner: Arc<Mutex<RateLimiterState>>,
@@ -73,13 +137,25 @@ impl RateLimiter {
     ///   With the default window `rate_limit` is equivalent to requests per second, but the actual
     ///   unit is always "requests per `time_window_ns`".
     pub fn new(rate_limit: i32, time_window_ns: Option<u64>) -> Self {
+        Self::new_with_clock(Clock::system(), rate_limit, time_window_ns)
+    }
+
+    /// Creates a new [`RateLimiter`] with an explicit [`Clock`] source.
+    ///
+    /// Used by tests to make token replenishment and window rollover
+    /// deterministic. Production callers should use [`RateLimiter::new`].
+    pub(crate) fn new_with_clock(
+        clock: Clock,
+        rate_limit: i32,
+        time_window_ns: Option<u64>,
+    ) -> Self {
         let window_ns = time_window_ns.unwrap_or(1_000_000_000); // Default to 1 second in ns
 
         let state = RateLimiterState {
             time_window_ns: window_ns,
             tokens: rate_limit as i64,
             max_tokens: rate_limit as i64,
-            last_update: Instant::now(),
+            last_update: clock.now(),
             current_window_start: None,
             tokens_allowed: 0,
             tokens_total: 0,
@@ -88,6 +164,7 @@ impl RateLimiter {
 
         RateLimiter {
             rate_limit,
+            clock,
             inner: Arc::new(Mutex::new(state)),
         }
     }
@@ -100,19 +177,19 @@ impl RateLimiter {
         // Fast paths that don't touch the lock at all.
         if self.rate_limit == 0 {
             // Still need to update window counts so effective_rate() reflects denials.
-            let now = Instant::now();
+            let now = self.clock.now();
             let mut state = self.inner.lock_or_panic();
             self.update_rate_counts_locked(&mut state, false, now);
             return false;
         }
         if self.rate_limit < 0 {
-            let now = Instant::now();
+            let now = self.clock.now();
             let mut state = self.inner.lock_or_panic();
             self.update_rate_counts_locked(&mut state, true, now);
             return true;
         }
 
-        let now = Instant::now();
+        let now = self.clock.now();
         let mut state = self.inner.lock_or_panic();
 
         // Try to consume a token; if not enough, replenish and try again.
@@ -223,6 +300,7 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
     use std::thread;
     use std::time::Duration;
 
@@ -328,38 +406,146 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_rate_limiter_thread_safety() {
-        let limiter = RateLimiter::new(100, None);
+    fn test_rate_limiter_thread_safety_no_panic() {
+        // Frozen clock: no replenishment, no window rollover. The only thing this
+        // test asserts is that a shared limiter does not panic under contention —
+        // `join().unwrap()` propagates any panic from the spawned thread. A
+        // barrier makes both threads reach the start gate before either begins
+        // issuing requests, maximizing the chance that `is_allowed` calls
+        // overlap rather than running sequentially.
+        let clock = Clock::mock();
+        let limiter = RateLimiter::new_with_clock(clock.clone(), 100, None);
         let limiter_clone = limiter.clone();
+        let barrier = Arc::new(Barrier::new(2));
+        let start = barrier.clone();
 
-        // Spawn a thread that uses the limiter
         let handle = thread::spawn(move || {
-            let mut allowed_count = 0;
+            start.wait();
             for _ in 0..100 {
-                if limiter_clone.is_allowed() {
-                    allowed_count += 1;
-                }
+                let _ = limiter_clone.is_allowed();
             }
-            allowed_count
         });
-
-        // Use the limiter in the main thread too
-        let mut main_allowed_count = 0;
+        barrier.wait();
         for _ in 0..100 {
+            let _ = limiter.is_allowed();
+        }
+        handle.join().expect("limiter panicked under contention");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_rate_limiter_budget_invariant_concurrent() {
+        // Frozen clock ⇒ `replenish` always computes 0 tokens and the window never
+        // resets. Four threads race on a shared limiter with a budget of 100; the
+        // total number of allowed requests must be exactly 100, and the next
+        // request must be denied. No timing slack: this is an exact invariant.
+        // A barrier gates all workers so they begin issuing requests
+        // simultaneously, maximizing `is_allowed` overlap; without it a
+        // scheduler could run each worker to completion before the next starts,
+        // reducing the test to sequential access.
+        let clock = Clock::mock();
+        let limiter = Arc::new(RateLimiter::new_with_clock(clock.clone(), 100, None));
+        let barrier = Arc::new(Barrier::new(4));
+
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let l = limiter.clone();
+            let start = barrier.clone();
+            handles.push(thread::spawn(move || {
+                start.wait();
+                let mut allowed = 0;
+                for _ in 0..50 {
+                    if l.is_allowed() {
+                        allowed += 1;
+                    }
+                }
+                allowed
+            }));
+        }
+        let total: u32 = handles.into_iter().map(|h| h.join().unwrap()).sum();
+        assert_eq!(
+            total, 100,
+            "token budget must be exactly exhausted with a frozen clock"
+        );
+        // Budget is gone; the next request must be denied.
+        assert!(!limiter.is_allowed());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_rate_limiter_window_reset_under_contention() {
+        // Deterministic window rollover: the first window is drained with an
+        // asymmetric allow/deny ratio so its rate is distinguishable from the
+        // second window. After advancing the mock clock past the window
+        // boundary, `update_rate_counts_locked` must roll over: it stores the
+        // first window's rate as `prev_window_rate` and resets the running
+        // counts. The second window then starts fresh. Asserting `effective_rate`
+        // after the reset proves the rollover happened — `replenish` alone
+        // (which just restores the token bucket) cannot produce this value.
+        let clock = Clock::mock();
+        let limiter = Arc::new(RateLimiter::new_with_clock(
+            clock.clone(),
+            10,
+            Some(1_000_000),
+        ));
+
+        // First window: 10 allowed, then 90 denied. rate = 10/100 = 0.1.
+        for _ in 0..10 {
+            assert!(limiter.is_allowed(), "initial budget must allow 10");
+        }
+        for _ in 0..90 {
+            assert!(!limiter.is_allowed(), "first window budget is exhausted");
+        }
+        assert!(
+            (0.099..=0.101).contains(&limiter.effective_rate()),
+            "first window rate must be 10/100 before rollover"
+        );
+
+        // Advance the clock past the 1ms window. Deterministic reset.
+        clock.advance(Duration::from_millis(2));
+
+        // Race on the fresh window with a barrier so both sides start together.
+        // 5 + 5 = 10 requests, budget is 10 again, so all are allowed and the
+        // second window rate is 1.0.
+        let barrier = Arc::new(Barrier::new(2));
+        let b = {
+            let l = limiter.clone();
+            let start = barrier.clone();
+            thread::spawn(move || {
+                start.wait();
+                let mut n = 0;
+                for _ in 0..5 {
+                    if l.is_allowed() {
+                        n += 1;
+                    }
+                }
+                n
+            })
+        };
+        barrier.wait();
+        let mut main_n = 0;
+        for _ in 0..5 {
             if limiter.is_allowed() {
-                main_allowed_count += 1;
+                main_n += 1;
             }
         }
-
-        // Get the result from the spawned thread
-        let thread_allowed_count = handle.join().unwrap();
-
-        // Combined, they should have allowed about 100 requests
-        let total_allowed = main_allowed_count + thread_allowed_count;
-        assert!(
-            (95..=105).contains(&total_allowed),
-            "Expected around 100 allowed requests, got {total_allowed}",
+        let b_allowed = b.join().unwrap();
+        assert_eq!(
+            b_allowed + main_n,
+            10,
+            "second window must have a full budget after deterministic reset"
         );
+
+        // Rollover assertion: `effective_rate` averages the current window rate
+        // (1.0) with the previous window rate (0.1) ⇒ 0.55. If the rollover
+        // logic were broken, `prev_window_rate` would stay `None` and the
+        // counts would accumulate across windows (20/110 ≈ 0.182), so this
+        // assertion would fail — proving the test now covers the rollover.
+        assert!(
+            (0.549..=0.551).contains(&limiter.effective_rate()),
+            "window rollover must set prev_window_rate and reset counts"
+        );
+        assert!(!limiter.is_allowed(), "second window must be exhausted");
     }
 
     #[test]

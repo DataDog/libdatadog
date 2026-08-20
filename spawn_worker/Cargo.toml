@@ -9,9 +9,9 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-io-lifetimes = { version = "1.0" }
+io-lifetimes = { workspace = true, features = ["close"] }
 fastrand = "2.0.1"
-libc = "0.2"
+libc.workspace = true
 
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
@@ -34,10 +34,10 @@ kernel32-sys = "0.2.2"
 [target.'cfg(not(windows))'.dependencies]
 memfd = { version = "0.6" }
 nix = { version = "0.29", features = ["dir", "process"] }
-tempfile = { version = "3.3" }
+tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
-tempfile = { version = "3.3" }
+tempfile.workspace = true
 
 [target.'cfg(not(windows))'.dev-dependencies]
 rlimit = {version = "0.9"}

@@ -134,7 +134,7 @@ impl JsonObfuscator {
 
 /// Updates `key` and `wiped` based on the current closure stack.
 /// `key` is true at top level or when inside an object (not an array).
-fn set_key(closures: &[ClosureKind], key: &mut bool, wiped: &mut bool) {
+const fn set_key(closures: &[ClosureKind], key: &mut bool, wiped: &mut bool) {
     let n = closures.len();
     *key = n == 0 || matches!(closures[n - 1], ClosureKind::Object);
     *wiped = false;

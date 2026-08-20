@@ -14,7 +14,7 @@
 //! boundaries, [`SeqpacketStreamReader`] concatenates the collector's datagrams back into a
 //! contiguous stream (a zero-length datagram is EOF).
 
-use datadog_ipc::AsyncConn;
+use libdd_ipc::AsyncConn;
 
 /// Returns the abstract socket name the Linux listener binds.
 #[cfg(target_os = "linux")]
@@ -37,7 +37,7 @@ pub fn crashtracker_receiver_request_bytes() -> &'static [u8] {
     use crate::service::sidecar_interface::SidecarInterfaceRequest;
     static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     BYTES.get_or_init(|| {
-        datadog_ipc::codec::encode(&SidecarInterfaceRequest::EnterCrashtrackerReceiver {})
+        libdd_ipc::codec::encode(&SidecarInterfaceRequest::EnterCrashtrackerReceiver {})
     })
 }
 
@@ -96,7 +96,7 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
 
 mod adapter {
     use super::*;
-    use datadog_ipc::platform::sockets::max_message_size;
+    use libdd_ipc::platform::sockets::max_message_size;
     use std::io;
     use std::os::fd::AsRawFd;
     use std::pin::Pin;
@@ -299,7 +299,12 @@ mod tests {
         let writer = tokio::task::spawn_blocking(move || {
             let refs: Vec<&[u8]> = chunks.iter().map(|c| c.as_slice()).collect();
             send_datagrams(&a, &refs);
-            // Drop `a` to signal EOF to the reader.
+            // Signal EOF with the protocol's zero-length datagram sentinel
+            // Relying on `drop(a)` alone hangs on
+            // macOS bc closing an AF_UNIX SOCK_DGRAM peer there does not deliver a
+            // readable EOF event, so the reader would never wake
+            let eof: &[u8] = &[];
+            send_datagrams(&a, &[eof]);
             drop(a);
         });
 
@@ -324,7 +329,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_run_crashtracker_receiver_unblocks_next_recv() {
-        use datadog_ipc::recv_raw_async;
+        use libdd_ipc::recv_raw_async;
 
         let (collector, receiver) = dgram_pair();
         // Mirror the collector: send the report and never send/close anything else.
@@ -353,7 +358,7 @@ mod tests {
     fn receiver_request_bytes_decode_to_variant() {
         use crate::service::sidecar_interface::SidecarInterfaceRequest;
         let bytes = crashtracker_receiver_request_bytes();
-        let decoded = datadog_ipc::codec::decode::<SidecarInterfaceRequest>(bytes)
+        let decoded = libdd_ipc::codec::decode::<SidecarInterfaceRequest>(bytes)
             .expect("request bytes must decode as a SidecarInterfaceRequest");
         assert!(matches!(
             decoded,

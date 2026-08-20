@@ -6,10 +6,10 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
 use libdd_telemetry::metrics::MetricContext;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -26,6 +26,7 @@ pub enum DynamicInstrumentationConfigState {
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct SidecarFlushOptions {
     pub traces_and_stats: bool,
+    pub flag_evaluations: bool,
     pub telemetry: bool,
 }
 
@@ -33,7 +34,7 @@ pub struct SidecarFlushOptions {
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
 /// session configurations, and sending traces.
-#[datadog_ipc_macros::service]
+#[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions to be performed.
     ///
@@ -220,7 +221,8 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
-    /// Flushes outstanding traces/stats and/or telemetry, as specified by options.
+    /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by
+    /// options.
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
 
@@ -242,7 +244,7 @@ pub trait SidecarInterface {
     async fn add_span_to_concentrator(
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
     /// Sends a ping to the service.

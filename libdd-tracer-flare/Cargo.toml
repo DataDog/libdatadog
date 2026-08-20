@@ -1,28 +1,30 @@
 [package]
 name = "libdd-tracer-flare"
-version = "0.1.0"
+version = "1.0.0"
 description = "Rust library for collecting and transmitting Datadog tracer diagnostic flares via remote configuration."
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
 autobenches = false
-publish = false
 authors.workspace = true
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 
 [dependencies]
 anyhow = "1.0"
-libdd-remote-config = { path = "../libdd-remote-config", default-features = false }
-libdd-common = { version = "5.1.0", path = "../libdd-common" }
-libdd-trace-utils = { version = "9.0.0", path = "../libdd-trace-utils" }
+libdd-remote-config = { version = "3.0.0", path = "../libdd-remote-config", default-features = false }
+libdd-common = { version = "5.2.0", path = "../libdd-common" }
+libdd-trace-utils = { version = "10.1.0", path = "../libdd-trace-utils" }
 http = "1"
 bytes = "1.11.1"
 tokio = { workspace = true, features = ["time"] }
-serde_json = "1.0"
+serde_json.workspace = true
 zip = { version = "4.0.0", default-features = false, features = ["deflate"] }
 walkdir = "2.4"
-tempfile = "3.8"
+tempfile.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false
@@ -35,4 +37,5 @@ tokio = { version = "1.36.0", features = ["time", "macros", "rt"] }
 
 [features]
 default = ["listener"]
+agentless = ["libdd-remote-config/agentless"]
 listener = ["libdd-remote-config/client"]

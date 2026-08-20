@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::constants::numeric::KNUTH_FACTOR;
 use crate::dd_constants::{
     RL_EFFECTIVE_RATE, SAMPLING_AGENT_RATE_TAG_KEY, SAMPLING_DECISION_MAKER_TAG_KEY,
     SAMPLING_KNUTH_RATE_TAG_KEY, SAMPLING_PRIORITY_TAG_KEY, SAMPLING_RULE_RATE_TAG_KEY,
@@ -12,7 +13,7 @@ use crate::sampling_rule_config::SamplingRuleConfig;
 /// Consolidated callback type used across crates for remote config sampling updates
 pub type SamplingRulesCallback = Box<dyn for<'a> Fn(&'a [SamplingRuleConfig]) + Send + Sync>;
 
-use crate::types::{SamplingData, SpanProperties};
+use crate::types::{SamplingData, SpanProperties, TraceIdLike};
 
 use super::agent_service_sampler::{AgentRates, ServicesSampler};
 use super::rate_limiter::RateLimiter;
@@ -155,10 +156,13 @@ impl DatadogSampler {
 
             if !rule.sample(trace_id) {
                 is_keep = false;
-            } else if !self.rate_limiter.is_allowed() {
-                // Rule kept the span, but the rate limiter dropped it.
-                is_keep = false;
+            } else {
+                // Record the limiter's effective rate whether it allows or drops the trace.
+                let allowed = self.rate_limiter.is_allowed();
                 rl_effective_rate = Some(self.rate_limiter.effective_rate());
+                if !allowed {
+                    is_keep = false;
+                }
             }
         } else {
             let service_key = self.service_key(span);
@@ -182,6 +186,7 @@ impl DatadogSampler {
                 mechanism,
                 rate: sample_rate,
                 rl_effective_rate,
+                is_keep,
             }),
         }
     }
@@ -210,13 +215,63 @@ fn format_sampling_rate(rate: f64) -> Option<String> {
     Some(s.trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
+/// OTel consistent-probability tracestate values (`ot.rv`, `ot.th`), 56 bits each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OtelConsistentSampling {
+    /// 56-bit random value derived from the trace id.
+    pub rv: u64,
+    /// 56-bit rejection threshold derived from the sample rate.
+    pub th: u64,
+}
+
 pub struct TraceRootSamplingInfo {
     mechanism: SamplingMechanism,
     rate: f64,
     rl_effective_rate: Option<f64>,
+    is_keep: bool,
+}
+
+/// Derives the 56-bit OTel `rv` from the low 64 bits of a trace id.
+fn derive_rv<T: TraceIdLike>(trace_id: &T) -> u64 {
+    let low64 = trace_id.to_u128() as u64;
+    (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8
+}
+
+/// Derives the 56-bit OTel `th` (rejection threshold) from a DD sample rate.
+fn derive_th(rate: f64) -> u64 {
+    const U56_MOD: u64 = 1u64 << 56;
+    const U56_MAX: u64 = U56_MOD - 1;
+    (((1.0 - rate) * U56_MOD as f64).round() as u64).clamp(0, U56_MAX)
+}
+
+/// Nudges `rv` across `th` when compressing to 56 bits flipped the `rv >= th`
+/// comparison relative to `kept`.
+fn reconcile_rv(rv: u64, th: u64, kept: bool) -> u64 {
+    if kept && rv < th {
+        th
+    } else if !kept && rv >= th {
+        th.saturating_sub(1)
+    } else {
+        rv
+    }
 }
 
 impl TraceRootSamplingInfo {
+    /// Derives the reconciled OTel `rv`/`th` pair, or `None` for a
+    /// non-probability mechanism or a rate-limiter-overturned keep.
+    pub fn otel_consistent_sampling<T: TraceIdLike>(
+        &self,
+        trace_id: &T,
+    ) -> Option<OtelConsistentSampling> {
+        if !self.mechanism.is_probability() || (self.rl_effective_rate.is_some() && !self.is_keep) {
+            return None;
+        }
+        let rv = derive_rv(trace_id);
+        let th = derive_th(self.rate);
+        let rv = reconcile_rv(rv, th, self.is_keep);
+        Some(OtelConsistentSampling { rv, th })
+    }
+
     /// Returns the sampling mechanism used for this trace root
     pub fn mechanism(&self) -> SamplingMechanism {
         self.mechanism
@@ -318,6 +373,130 @@ mod tests {
     use crate::types::{AttributeLike, TraceIdLike, ValueLike};
     use std::borrow::Cow;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_otel_consistent_sampling() {
+        use crate::dd_sampling::mechanism;
+        // rv depends only on trace id
+        let cases = [
+            (1u128, 0xf0948a54d43b8eu64),
+            (10, 0x65cd67504a538e),
+            (100, 0xfa060922e7438e),
+            (1000, 0xc43c5b5d08a38e),
+            (18446744073709551615, 0x0f6b75ab2bc471),
+            (83, 0x0028d980cf4f1c),
+            (18444899399302180863, 0xef284ace7a91e1),
+        ];
+        for (tid, want_rv) in cases {
+            // Raw derivation only, independent of the keep/drop reconciliation
+            // step exercised separately below.
+            assert_eq!(derive_rv(&tid), want_rv, "rv for {tid}");
+        }
+        // th depends only on rate. See system-tests #7372.
+        let th_cases = [
+            (0.01f64, 0xfd70a3d70a3d70u64),
+            (0.1, 0xe6666666666668),
+            (0.2, 0xccccccccccccd0),
+            (0.5, 0x80000000000000),
+            (0.99, 0x28f5c28f5c290),
+            (1.0, 0x0),
+        ];
+        for (rate, want_th) in th_cases {
+            assert_eq!(derive_th(rate), want_th, "th for rate {rate}");
+        }
+
+        // non-probability mechanism -> None
+        let manual = TraceRootSamplingInfo {
+            mechanism: mechanism::MANUAL,
+            rate: 1.0,
+            rl_effective_rate: None,
+            is_keep: true,
+        };
+        assert!(manual.otel_consistent_sampling(&1u128).is_none());
+
+        // probability mechanism, but the rate limiter overturned the keep ->
+        // None (th erased; caller still forwards an inherited rv).
+        let rate_limited = TraceRootSamplingInfo {
+            mechanism: mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
+            rate: 0.5,
+            rl_effective_rate: Some(0.25),
+            is_keep: false,
+        };
+        assert!(rate_limited.otel_consistent_sampling(&1u128).is_none());
+
+        let rate_limiter_allowed = TraceRootSamplingInfo {
+            mechanism: mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
+            rate: 0.1,
+            rl_effective_rate: Some(1.0),
+            is_keep: true,
+        };
+        assert_eq!(
+            rate_limiter_allowed.otel_consistent_sampling(&1u128),
+            Some(OtelConsistentSampling {
+                rv: 0xf0948a54d43b8e,
+                th: 0xe6666666666668,
+            })
+        );
+    }
+
+    #[test]
+    fn test_reconcile_rv_nudges_only_on_disagreement() {
+        // Worked example (rate 0.1): DD keeps, but rv < th, so a downstream
+        // re-derivation of `rv >= th` would disagree (drop).
+        assert_eq!(
+            reconcile_rv(0xe6666666666666, 0xe6666666666668, true),
+            0xe6666666666668
+        );
+        // Symmetric case: DD drops, but rv >= th, so a re-derivation would
+        // disagree (keep).
+        assert_eq!(
+            reconcile_rv(0xe6666666666668, 0xe6666666666668, false),
+            0xe6666666666667
+        );
+        // Already agrees (kept, rv >= th) -> untouched.
+        assert_eq!(
+            reconcile_rv(0xef284ace7a91e1, 0xe6666666666666, true),
+            0xef284ace7a91e1
+        );
+        // Already agrees (dropped, rv < th) -> untouched.
+        assert_eq!(
+            reconcile_rv(0x1000000000000, 0xe6666666666666, false),
+            0x1000000000000
+        );
+        // th == 0 (rate 1.0, keep-all): a drop decision here is inconsistent
+        // with th, but the saturating subtraction must not underflow.
+        assert_eq!(reconcile_rv(0, 0, false), 0);
+    }
+
+    #[test]
+    fn test_otel_consistent_sampling_reconciles_disagreement() {
+        // rate 0.1 -> th = 0xe6666666666668. Pick a trace id whose raw rv
+        // lands just under th, then check that a DD keep nudges rv up to
+        // agree, while a DD drop leaves it alone (already agrees).
+        let trace_id = 18446744073709551615u128; // rv = 0x0f6b75ab2bc471 (see golden cases)
+        let raw_rv = derive_rv(&trace_id);
+        let th = derive_th(0.1);
+        assert!(raw_rv < th, "test assumes a naturally-disagreeing pair");
+
+        let kept = TraceRootSamplingInfo {
+            mechanism: mechanism::DEFAULT,
+            rate: 0.1,
+            rl_effective_rate: None,
+            is_keep: true,
+        };
+        let got = kept.otel_consistent_sampling(&trace_id).unwrap();
+        assert_eq!(got.th, th);
+        assert_eq!(got.rv, th, "kept but rv < th must be nudged up to th");
+
+        let dropped = TraceRootSamplingInfo {
+            mechanism: mechanism::DEFAULT,
+            rate: 0.1,
+            rl_effective_rate: None,
+            is_keep: false,
+        };
+        let got = dropped.otel_consistent_sampling(&trace_id).unwrap();
+        assert_eq!(got.rv, raw_rv, "dropped and rv < th already agree");
+    }
 
     // Test-only semantic convention constants
     const HTTP_REQUEST_METHOD: &str = "http.request.method";
@@ -988,6 +1167,7 @@ mod tests {
                 mechanism,
                 rate: 0.5,
                 rl_effective_rate: None,
+                is_keep: is_sampled,
             }),
         };
 
@@ -1060,6 +1240,7 @@ mod tests {
                 mechanism,
                 rate: 0.5,
                 rl_effective_rate: Some(rate_limit),
+                is_keep: is_sampled,
             }),
         };
         let attrs_with_limit = sampling_result
@@ -1096,6 +1277,7 @@ mod tests {
                 mechanism,
                 rate: agent_rate,
                 rl_effective_rate: None,
+                is_keep: is_sampled,
             }),
         };
 

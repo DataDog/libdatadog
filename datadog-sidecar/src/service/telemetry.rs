@@ -11,8 +11,8 @@ use tracing::{debug, info, warn};
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::one_way_shared_memory::OneWayShmWriter;
-use datadog_ipc::platform::NamedShmHandle;
+use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
+use libdd_ipc::platform::NamedShmHandle;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
@@ -460,6 +460,7 @@ impl TelemetryCachedClient {
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
                 SidecarAction::FfeExposureBatch(_) => {}         // handled in sidecar_server
+                SidecarAction::FfeFlagEvaluationBatch(_) => {}   // handled in sidecar_server
                 SidecarAction::FfeEvaluationMetrics { .. } => {} // handled in sidecar_server
             }
         }

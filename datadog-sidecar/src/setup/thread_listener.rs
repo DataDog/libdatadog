@@ -17,7 +17,7 @@ use crate::setup::Liaison;
 #[cfg(not(target_os = "linux"))]
 use crate::setup::SharedDirLiaison;
 use crate::tracer::SHM_LIMITER;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 
@@ -148,7 +148,7 @@ async fn accept_socket_loop_thread(
                                 // the master runs as root and workers run as a different user.
                                 FIRST_CONNECTION_INIT.get_or_init(|| {
                                     if let Ok(cred) = conn.peer_credentials() {
-                                        datadog_ipc::platform::set_shm_owner_uid(cred.uid);
+                                        libdd_ipc::platform::set_shm_owner_uid(cred.uid);
                                     }
                                     drop(SHM_LIMITER.lock());
                                 });
