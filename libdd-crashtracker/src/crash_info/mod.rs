@@ -34,6 +34,7 @@ pub use spans::*;
 pub use stacktrace::*;
 pub use telemetry::*;
 pub use ucontext::*;
+pub use unknown_value::*;
 
 use anyhow::Context;
 use schemars::JsonSchema;

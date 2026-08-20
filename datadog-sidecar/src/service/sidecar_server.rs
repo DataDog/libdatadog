@@ -10,9 +10,9 @@ use crate::service::{
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
     SidecarInterface,
 };
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
 use libdd_common::{Endpoint, MutexExt};
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
@@ -35,6 +35,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_exposures_flusher;
+use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
@@ -43,11 +44,11 @@ use crate::service::stats_flusher::{
 };
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
-use datadog_ipc::ipc_server::OwnedServerConn;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
+use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
@@ -117,6 +118,8 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// Sidecar-owned EVP flagevaluation coalescer, shared across PHP request lifetimes.
+    pub(crate) ffe_flagevaluation_coalescer: ffe_flagevaluation_flusher::FlagEvaluationCoalescer,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -464,6 +467,27 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     }
                     false
                 }
+                SidecarAction::FfeFlagEvaluationBatch(batch) => {
+                    if let Some(base) = trace_config.endpoint.as_ref() {
+                        if let Some(ep) = ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
+                        {
+                            self.server.ffe_flagevaluation_coalescer.enqueue(
+                                ffe_http_client.clone(),
+                                ep,
+                                batch.clone(),
+                            );
+                        } else {
+                            debug!(
+                                "ffe_flagevaluation_flusher: could not derive endpoint, dropping batch"
+                            );
+                        }
+                    } else {
+                        debug!(
+                            "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
+                        );
+                    }
+                    false
+                }
                 SidecarAction::FfeEvaluationMetrics { context, metrics } => {
                     if let Some(ep) = session.get_otlp_metrics_endpoint().clone() {
                         let client = ffe_http_client.clone();
@@ -801,6 +825,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 language: config.language,
                 tracer_version: config.tracer_version,
                 endpoint: config.endpoint,
+                agentless: None,
             },
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
@@ -1073,7 +1098,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         &self,
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     ) {
         let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or("");
         let session = self.server.get_session(session_id);
@@ -1093,14 +1118,30 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn flush(&self, options: SidecarFlushOptions) {
-        if options.traces_and_stats {
-            let flusher = self.server.trace_flusher.clone();
-            if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
-                error!("Failed flushing traces: {e:?}");
+        let flag_evaluations = options.flag_evaluations;
+        let ffe_coalescer = self.server.ffe_flagevaluation_coalescer.clone();
+        let ffe_http_client = self.server.ffe_http_client.clone();
+        let flush_flag_evaluations = async move {
+            if flag_evaluations {
+                ffe_coalescer.flush_now(ffe_http_client).await;
             }
-            flush_all_stats_now(&self.server.span_concentrators).await;
-            debug!("Finished executing flush() for traces and stats")
-        }
+        };
+
+        let traces_and_stats = options.traces_and_stats;
+        let flusher = self.server.trace_flusher.clone();
+        let span_concentrators = self.server.span_concentrators.clone();
+        let flush_traces_and_stats = async move {
+            if traces_and_stats {
+                if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
+                    error!("Failed flushing traces: {e:?}");
+                }
+                flush_all_stats_now(&span_concentrators).await;
+                debug!("Finished executing flush() for traces and stats")
+            }
+        };
+
+        tokio::join!(flush_flag_evaluations, flush_traces_and_stats);
+
         if options.telemetry {
             let workers: Vec<_> = {
                 let clients = self.server.telemetry_clients.inner.lock_or_panic();
@@ -1183,8 +1224,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+    use crate::service::{
+        FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
+        FfeFlagEvaluationEvent, FfeTelemetryContext, FlagKey,
+    };
     use httpmock::{Method::POST, MockServer};
+    use libdd_ffe::telemetry::flagevaluation::EVP_FLAGEVALUATION_PATH;
     use tokio::time::{sleep, Duration as TokioDuration};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
@@ -1223,6 +1268,28 @@ mod tests {
             reason: "TARGETING_MATCH".to_owned(),
             error_type: None,
             allocation_key: Some("alloc".to_owned()),
+        }
+    }
+
+    fn ffe_flag_evaluation_batch() -> FfeFlagEvaluationBatch {
+        FfeFlagEvaluationBatch {
+            context: ffe_context(),
+            flag_evaluations: vec![FfeFlagEvaluationEvent {
+                timestamp: 123,
+                flag: FlagKey {
+                    key: "flag".to_owned(),
+                },
+                first_evaluation: 100,
+                last_evaluation: 123,
+                evaluation_count: 1,
+                variant: None,
+                allocation: None,
+                targeting_rule: None,
+                targeting_key: None,
+                context: None,
+                error: None,
+                runtime_default_used: false,
+            }],
         }
     }
 
@@ -1344,6 +1411,56 @@ mod tests {
             .get_runtime(&instance_id)
             .lock_applications()
             .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flush_options_control_ffe_flag_evaluations() {
+        let http_server = MockServer::start_async().await;
+        let flag_evaluations_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path(EVP_FLAGEVALUATION_PATH);
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::FfeFlagEvaluationBatch(
+                    ffe_flag_evaluation_batch(),
+                )],
+            )
+            .await;
+
+        handler.flush(SidecarFlushOptions::default()).await;
+        sleep(TokioDuration::from_millis(50)).await;
+        assert_eq!(flag_evaluations_mock.calls_async().await, 0);
+
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..SidecarFlushOptions::default()
+            })
+            .await;
+
+        flag_evaluations_mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]

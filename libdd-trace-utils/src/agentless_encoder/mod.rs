@@ -27,7 +27,7 @@
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-use crate::span::TraceData;
+use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
     ser::{SerializeMap, SerializeSeq},
@@ -341,9 +341,14 @@ fn encode_span_link<T: TraceData, S: Serializer>(
             }),
         )?;
     }
-    // `flags == 0` means no sampling decision is available; omit the field.
+    // When `flags` is 0, no sampling decision exists, so omit the field. Before emission,
+    // mask off the internal "explicitly set" sentinel (bit 31), because this JSON field uses
+    // the same `_dd.span_links` key that the v0.5 encoder produces and must match its output.
     if link.flags != 0 {
-        map.serialize_entry("flags", &(link.flags as u64))?;
+        map.serialize_entry(
+            "flags",
+            &((link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL) as u64),
+        )?;
     }
     let tracestate: &str = link.tracestate.borrow();
     if !tracestate.is_empty() {

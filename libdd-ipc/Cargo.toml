@@ -1,8 +1,12 @@
 [package]
-edition = "2021"
-name = "datadog-ipc"
+name = "libdd-ipc"
 version = "0.1.0"
-publish = false
+description = "IPC implementation for libdatadog"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,14 +20,14 @@ page_size = "0.6.0"
 memfd = { version = "0.6" }
 serde = { workspace = true, features = ["derive"] }
 libc.workspace = true
-libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
+libdd-tinybytes = { path = "../libdd-tinybytes", version = "1.1.2", optional = true }
 
 
-libdd-common = { path = "../libdd-common" }
-libdd-ddsketch = { path = "../libdd-ddsketch" }
-libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { path = "../libdd-trace-stats" }
-datadog-ipc-macros = { path = "../datadog-ipc-macros" }
+libdd-common = { version = "5.2.0", path = "../libdd-common" }
+libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
+libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-stats = { version = "7.0.0", path = "../libdd-trace-stats" }
+libdd-ipc-macros = { version = "0.1.0", path = "../libdd-ipc-macros" }
 tracing.workspace = true
 
 [dev-dependencies]

@@ -47,6 +47,8 @@ use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "telemetry")]
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -260,7 +262,7 @@ pub struct TraceExporter<
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     #[cfg(feature = "telemetry")]
-    telemetry: Option<TelemetryClient<C>>,
+    telemetry: ArcSwapOption<TelemetryClient<C>>,
     health_metrics_enabled: bool,
     capabilities: C,
     workers: TraceExporterWorkers,
@@ -292,6 +294,18 @@ impl<
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
         TraceExporterBuilder::new()
+    }
+
+    /// Re-point health-metric reporting at a different telemetry worker, or at none.
+    ///
+    /// Libraries might need to update the used telemetry worker at runtime. This allows doing so
+    /// without rebuilding the whole trace exporter.
+    ///
+    /// Pass `None` on telemetry shut down, so reporting stops rather than targeting a dead worker.
+    #[cfg(feature = "telemetry")]
+    pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
+        self.telemetry
+            .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
     }
 
     /// Stop the background workers owned by this exporter.
@@ -467,6 +481,7 @@ impl<
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
                     stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
+                    additional_metric_tag_keys: &self.client_side_stats.additional_metric_tag_keys,
                     restart_after_fork: self.restart_after_fork,
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
@@ -474,7 +489,11 @@ impl<
                         None
                     },
                     #[cfg(feature = "telemetry")]
-                    telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
+                    telemetry: self
+                        .telemetry
+                        .load_full()
+                        .as_ref()
+                        .map(|t| t.clone_handle()),
                     #[cfg(not(feature = "telemetry"))]
                     _phantom: std::marker::PhantomData,
                 };
@@ -669,7 +688,8 @@ impl<
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats = self.otlp_stats_enabled;
+            r.client_computed_stats =
+                self.metadata.client_computed_stats || self.otlp_stats_enabled;
             r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
             r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
@@ -687,7 +707,7 @@ impl<
         })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
-        let config_to_use = if self.otlp_stats_enabled {
+        let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
             effective_config = {
                 let mut c = config.clone();
                 c.headers.insert(
@@ -733,7 +753,7 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = &self.telemetry {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
                 payload_len as u64,
@@ -804,7 +824,7 @@ impl<
             self.client_computed_top_level,
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
-            self.telemetry.as_ref(),
+            self.telemetry.load_full().as_deref(),
         );
 
         for chunk in &mut traces {

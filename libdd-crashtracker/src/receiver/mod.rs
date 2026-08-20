@@ -3,6 +3,7 @@
 #![cfg(unix)]
 #![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
+mod debug_logger;
 mod entry_points;
 pub use entry_points::{
     async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,

@@ -4,7 +4,7 @@
 #[cfg(unix)]
 use criterion::{criterion_group, criterion_main, Criterion};
 #[cfg(unix)]
-use datadog_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
+use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 
 #[cfg(unix)]
 use std::thread;
@@ -13,7 +13,7 @@ use tokio::runtime;
 
 #[cfg(unix)]
 fn criterion_benchmark(c: &mut Criterion) {
-    let (conn_server, conn_client) = datadog_ipc::SeqpacketConn::socketpair().unwrap();
+    let (conn_server, conn_client) = libdd_ipc::SeqpacketConn::socketpair().unwrap();
 
     let _worker = thread::spawn(move || {
         let rt = runtime::Builder::new_current_thread()
