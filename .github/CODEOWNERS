@@ -87,6 +87,7 @@ scripts/exclude-from-green-ci.sh     @DataDog/libdatadog-core
 scripts/major-bumps-level.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
+scripts/release-excluded-crates-hints.sh  @DataDog/libdatadog-core
 scripts/release-generate-changelogs.sh  @DataDog/libdatadog-core
 scripts/release-version-bumps.sh     @DataDog/libdatadog-core
 scripts/release-version-major-bumps.sh  @DataDog/libdatadog-core
