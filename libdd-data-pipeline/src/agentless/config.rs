@@ -5,10 +5,11 @@
 
 use std::{fmt::Debug, time::Duration};
 
+use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
+
 pub const DEFAULT_AGENTLESS_TIMEOUT: Duration = Duration::from_secs(15);
 
-///Agentless trace exporter configuration.
-#[derive(Clone)]
+/// Agentless trace exporter configuration.
 pub struct AgentlessTraceConfig {
     /// Full URL to POST traces to (e.g.
     /// `https://public-trace-http-intake.logs.datadoghq.com/v1/input`).
@@ -17,6 +18,8 @@ pub struct AgentlessTraceConfig {
     pub api_key: String,
     /// Request timeout.
     pub timeout: Duration,
+    /// Span normalization and obfuscation settings.
+    pub obfuscation: ObfuscationConfig,
 }
 
 impl Debug for AgentlessTraceConfig {

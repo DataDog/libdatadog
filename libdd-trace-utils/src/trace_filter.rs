@@ -162,6 +162,15 @@ impl<'a, T: TraceData> Span<'a> for ChunkSpanView<'a, T> {
 }
 
 impl TraceFilterer {
+    /// Returns whether this filter has no active trace rules.
+    pub fn is_empty(&self) -> bool {
+        self.reject.is_empty()
+            && self.reject_regex.is_empty()
+            && self.require.is_empty()
+            && self.require_regex.is_empty()
+            && self.ignore_resources.is_empty()
+    }
+
     fn compile_literal_filters(filters: &[String]) -> Vec<TagLiteralFilter> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
@@ -491,6 +500,16 @@ mod tests {
 
     fn ignore_resources(patterns: &[&str]) -> TraceFilterer {
         TraceFilterer::new(&[], &[], &[], &[], &map_to_owned(patterns))
+    }
+
+    #[test]
+    fn is_empty_tracks_all_filter_types() {
+        assert!(TraceFilterer::default().is_empty());
+        assert!(!require_str(&["env:prod"]).is_empty());
+        assert!(!reject_str(&["env:prod"]).is_empty());
+        assert!(!require_regex(&["env:^prod$"]).is_empty());
+        assert!(!reject_regex(&["env:^prod$"]).is_empty());
+        assert!(!ignore_resources(&["health"]).is_empty());
     }
 
     // ---- reject (TagStringFilter) ----

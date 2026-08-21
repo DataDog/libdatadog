@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::SystemTime;
+use web_time::SystemTime;
 
 // MAX_TYPE_LEN the maximum size for a span type
 pub(crate) const MAX_TYPE_LEN: usize = 100;

@@ -18,6 +18,9 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+#[cfg(feature = "agentless")]
+use crate::agentless::obfuscation::normalize_and_obfuscate;
+#[cfg(feature = "agentless")]
 use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
@@ -49,11 +52,16 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
+#[cfg(feature = "agentless")]
+use libdd_trace_utils::agentless_encoder::encode_protobuf_payload;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_utils::span::{
+    v04::{Span, SpanSlice},
+    TraceData,
+};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,6 +80,7 @@ const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
 ///
 /// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
 /// and entity headers (container-id / entity-id / external-env) when available.
+#[cfg(feature = "agentless")]
 fn build_agentless_headers(
     metadata: &TracerMetadata,
     api_key: &str,
@@ -185,6 +194,8 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
+#[cfg(feature = "agentless")]
+pub use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 /// Handles for the background workers owned by a [`TraceExporter`].
@@ -271,6 +282,7 @@ pub struct TraceExporter<
     otlp_config: Option<OtlpTraceConfig>,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
+    #[cfg(feature = "agentless")]
     agentless_config: Option<AgentlessTraceConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
@@ -397,24 +409,37 @@ impl<
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        if self.should_check_agent_info() {
             self.check_agent_info().await;
         }
 
-        let format: DeserInputFormat = self.input_format.into();
+        let traces = self.deserialize_traces(data, self.input_format.into())?;
 
+        let res = self.send_trace_chunks_inner(traces).await?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+        Ok(res)
+    }
+
+    fn deserialize_traces<'a>(
+        &self,
+        data: &'a [u8],
+        format: DeserInputFormat,
+    ) -> Result<Vec<Vec<SpanSlice<'a>>>, TraceExporterError> {
         let (traces, _) = match format {
             DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
             DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
         }
-        .map_err(|e| {
-            error!("Error deserializing trace from request body: {e}");
+        .map_err(|error| {
+            error!("Error deserializing trace from request body: {error}");
             self.emit_metric(
                 HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
                 None,
             );
-            TraceExporterError::Deserialization(e)
+            TraceExporterError::Deserialization(error)
         })?;
         debug!(
             trace_count = traces.len(),
@@ -424,14 +449,71 @@ impl<
             HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
         );
+        Ok(traces)
+    }
 
-        let res = self.send_trace_chunks_inner(traces).await?;
-        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
-            return Err(TraceExporterError::Agent(
-                error::AgentErrorKind::EmptyResponse,
-            ));
+    /// Send an already encoded v0.4 trace payload.
+    ///
+    /// The payload is forwarded without decoding when the exporter can preserve it exactly.
+    /// Configurations that consume or transform spans use the regular decoded path instead.
+    /// `chunk_count` must match the number of trace chunks in `data`.
+    pub async fn send_v04_payload_async(
+        &self,
+        data: Vec<u8>,
+        chunk_count: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if self.should_check_agent_info() {
+            self.check_agent_info().await;
         }
-        Ok(res)
+
+        if !self.can_forward_v04_payload() {
+            let traces = self.deserialize_traces(&data, DeserInputFormat::V04)?;
+            return self.send_trace_chunks_inner(traces).await;
+        }
+
+        let header_tags: TracerHeaderTags = self.metadata.borrow().into();
+        let headers = self.serializer.build_traces_headers(
+            header_tags,
+            chunk_count,
+            self.agent_payload_response_version.as_ref(),
+        );
+        let endpoint = Endpoint {
+            url: TraceExporterOutputFormat::V04.add_path(&self.endpoint.url),
+            ..self.endpoint.clone()
+        };
+
+        self.send_traces_with_telemetry(&endpoint, data, headers, chunk_count)
+            .await
+    }
+
+    fn can_forward_v04_payload(&self) -> bool {
+        #[cfg(feature = "agentless")]
+        let agentless_disabled = self.agentless_config.is_none();
+        #[cfg(not(feature = "agentless"))]
+        let agentless_disabled = true;
+
+        self.output_format == TraceExporterOutputFormat::V04
+            && self.log_output.is_none()
+            && agentless_disabled
+            && self.otlp_config.is_none()
+            && matches!(
+                &**self.client_side_stats.status.load(),
+                StatsComputationStatus::Disabled
+            )
+            && self.trace_filterer.load().is_empty()
+    }
+
+    fn should_check_agent_info(&self) -> bool {
+        if self.log_output.is_some() {
+            return false;
+        }
+
+        #[cfg(feature = "agentless")]
+        if self.agentless_config.is_some() {
+            return false;
+        }
+
+        true
     }
 
     /// Check if agent info state has changed
@@ -645,25 +727,29 @@ impl<
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        if self.should_check_agent_info() {
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
+    #[cfg(feature = "agentless")]
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        let traces =
+            normalize_and_obfuscate(traces, &config.obfuscation, self.client_computed_top_level)
+                .map_err(|error| {
+                    error!("Agentless trace normalization or obfuscation error: {error}");
+                    TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                        error.to_string(),
+                    ))
+                })?;
         let trace_count = traces.len();
-        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-            &traces,
-            &self.metadata,
-        )
-        .map_err(|e| {
+        let json_body = encode_protobuf_payload(&traces, &self.metadata).map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
@@ -801,19 +887,12 @@ impl<
             return self.send_trace_chunks_to_log(&traces, max_line_size);
         }
 
-        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
-
+        #[cfg(feature = "agentless")]
         if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-
             return self.send_agentless_traces_inner(traces, config).await;
         }
+
+        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
@@ -1131,10 +1210,22 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
+    #[cfg(feature = "agentless")]
+    use libdd_tinybytes::Bytes;
     use libdd_tinybytes::BytesString;
+    #[cfg(feature = "agentless")]
+    use libdd_trace_obfuscation::obfuscation_config::{CreditCardConfig, HttpConfig, RedisConfig};
+    #[cfg(feature = "agentless")]
+    use libdd_trace_obfuscation::replacer::parse_rules_from_string;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
+    #[cfg(feature = "agentless")]
+    use libdd_trace_utils::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, VecMap};
+    #[cfg(feature = "agentless")]
+    use std::collections::HashMap;
     use std::net;
+    #[cfg(feature = "agentless")]
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1371,6 +1462,75 @@ mod tests {
         }
 
         builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_v04_payload_forwards_bytes_without_reserializing() {
+        let fake_agent = MockServer::start();
+        let traces = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"raw-payload").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let expected = data.clone();
+        let mock_traces = fake_agent.mock(move |when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "1")
+                .is_true(move |request| request.body_ref() == expected.as_slice());
+            then.status(200).body("{}");
+        });
+        let exporter = build_test_exporter(
+            fake_agent.url("/"),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+            false,
+        );
+
+        exporter
+            .shared_runtime
+            .block_on(exporter.send_v04_payload_async(data, 1))
+            .unwrap()
+            .unwrap();
+
+        mock_traces.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_v04_payload_decodes_when_output_requires_transformation() {
+        let fake_agent = MockServer::start();
+        let traces = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"transformed-payload").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let original = data.clone();
+        let mock_traces = fake_agent.mock(move |when, then| {
+            when.method(POST)
+                .path(V05_TRACES_ENDPOINT)
+                .is_true(move |request| request.body_ref() != original.as_slice());
+            then.status(200).body("{}");
+        });
+        let exporter = build_test_exporter(
+            fake_agent.url("/"),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V05,
+            false,
+            false,
+        );
+
+        exporter
+            .shared_runtime
+            .block_on(exporter.send_v04_payload_async(data, 1))
+            .unwrap()
+            .unwrap();
+
+        mock_traces.assert_calls(1);
     }
 
     // Capturing capabilities: delegate HTTP/sleep to the native impls, but capture
@@ -2234,6 +2394,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "agentless")]
     #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder() {
         let server = MockServer::start();
@@ -2257,7 +2418,7 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("v20.11.0")
             .set_language_interpreter("v8")
-            .set_agentless_endpoint(&intake_url, "test-api-key")
+            .set_agentless_endpoint(&intake_url, "test-api-key", ObfuscationConfig::default())
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -2275,7 +2436,10 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
-        let result = exporter.send(data.as_ref());
+        let result = exporter
+            .shared_runtime
+            .block_on(exporter.send_v04_payload_async(data, 1))
+            .unwrap();
 
         assert!(
             result.is_ok(),
@@ -2288,6 +2452,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "agentless")]
     #[cfg_attr(miri, ignore)]
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
@@ -2330,11 +2495,14 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("v20.11.0")
             .set_language_interpreter("v8")
-            .set_agentless_endpoint(&intake_url, "k")
+            .set_client_computed_top_level()
+            .set_agentless_endpoint(&intake_url, "k", ObfuscationConfig::default())
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
+        let mut metrics = VecMap::new();
+        metrics.insert("_dd.top_level".into(), 1.0);
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"op").unwrap(),
             service: BytesString::from_static("svc"),
@@ -2344,11 +2512,294 @@ mod tests {
             parent_id: 0,
             start: 0,
             duration: 1,
+            metrics,
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
+    }
+
+    #[test]
+    #[cfg(feature = "agentless")]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_normalizes_and_obfuscates_before_sending() {
+        let server = MockServer::start();
+        let received_body = Arc::new(Mutex::new(None));
+        let body_capture = received_body.clone();
+        let mock_intake = server.mock(move |when, then| {
+            when.method(POST).path("/v1/input").is_true(move |request| {
+                #[cfg(feature = "compression")]
+                let body = zstd::decode_all(request.body_ref()).unwrap();
+                #[cfg(not(feature = "compression"))]
+                let body = request.body_vec();
+                *body_capture.lock().unwrap() = Some(body);
+                true
+            });
+            then.status(200).body("");
+        });
+
+        let obfuscation = ObfuscationConfig {
+            tag_replace_rules: Some(
+                parse_rules_from_string(
+                    r#"[{"name":"custom.tag","pattern":"(/foo/bar/).*","repl":"${1}extra"}]"#,
+                )
+                .unwrap(),
+            ),
+            http: HttpConfig {
+                remove_query_string: true,
+                remove_paths_with_digits: true,
+            },
+            redis: RedisConfig {
+                enabled: true,
+                remove_all_args: false,
+            },
+            credit_cards: CreditCardConfig {
+                enabled: true,
+                luhn: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_hostname("host")
+            .set_language("nodejs")
+            .set_agentless_endpoint(&intake_url, "api-key", obfuscation)
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let trace_id = 0x1234;
+        let mut web_meta = VecMap::new();
+        web_meta.insert(
+            "http.url".into(),
+            "http://example.com/users/123?token=secret".into(),
+        );
+        web_meta.insert("card.number".into(), "4111111111111111".into());
+        web_meta.insert("custom.tag".into(), "/foo/bar/private".into());
+        web_meta.insert("_dd.p.tid".into(), "abcdef0123456789".into());
+        let mut meta_struct = VecMap::new();
+        meta_struct.insert(
+            "_dd.appsec.json".into(),
+            Bytes::from(
+                rmp_serde::to_vec_named(&serde_json::json!({
+                    "rule_id": "crs-913-110",
+                    "category": "sqli"
+                }))
+                .unwrap(),
+            ),
+        );
+        let web = SpanBytes {
+            service: "".into(),
+            name: "".into(),
+            resource: "".into(),
+            r#type: "web".into(),
+            trace_id,
+            span_id: 1,
+            start: 1_700_000_000_000_000_000,
+            duration: 1_000_000,
+            meta: web_meta,
+            meta_struct,
+            span_events: vec![SpanEvent {
+                time_unix_nano: 1_700_000_000_000_000_000,
+                name: "payment".into(),
+                attributes: HashMap::from([(
+                    "payment.card".into(),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                        "4111111111111111".into(),
+                    )),
+                )]),
+            }],
+            ..Default::default()
+        };
+        let sql = SpanBytes {
+            service: "database".into(),
+            name: "sql.query".into(),
+            resource: "SELECT * FROM users WHERE id = 42".into(),
+            r#type: "sql".into(),
+            trace_id,
+            span_id: 2,
+            parent_id: 1,
+            start: 1_700_000_000_001_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        };
+        let mut redis_meta = VecMap::new();
+        redis_meta.insert(
+            "redis.raw_command".into(),
+            "GEOADD key longitude latitude member".into(),
+        );
+        let redis = SpanBytes {
+            service: "redis".into(),
+            name: "redis.command".into(),
+            resource: "GEOADD key longitude latitude member".into(),
+            r#type: "redis".into(),
+            trace_id,
+            span_id: 3,
+            parent_id: 1,
+            start: 1_700_000_000_002_000_000,
+            duration: 1_000_000,
+            meta: redis_meta,
+            ..Default::default()
+        };
+        let normalized_parent = SpanBytes {
+            service: "bad&service".into(),
+            name: "normalized.parent".into(),
+            resource: "parent".into(),
+            r#type: "normalized-parent".into(),
+            trace_id,
+            span_id: 4,
+            parent_id: 1,
+            start: 1_700_000_000_003_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        };
+        let normalized_child = SpanBytes {
+            service: "bad$service".into(),
+            name: "normalized.child".into(),
+            resource: "child".into(),
+            r#type: "normalized-child".into(),
+            trace_id,
+            span_id: 5,
+            parent_id: 4,
+            start: 1_700_000_000_004_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        };
+
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![
+            web,
+            sql,
+            redis,
+            normalized_parent,
+            normalized_child,
+        ]]);
+        exporter.send(data.as_ref()).unwrap();
+        mock_intake.assert_calls(1);
+
+        let body = received_body.lock().unwrap().take().unwrap();
+        let body_text = std::str::from_utf8(&body).unwrap();
+        assert!(!body_text.contains("token=secret"));
+        assert!(!body_text.contains("4111111111111111"));
+        assert!(!body_text.contains("id = 42"));
+        assert!(!body_text.contains("longitude latitude member"));
+        assert!(!body_text.contains("/foo/bar/private"));
+
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let spans = payload["traces"][0]["spans"].as_array().unwrap();
+        let web = spans.iter().find(|span| span["type"] == "web").unwrap();
+        assert_eq!(web["service"], "unnamed-service");
+        assert_eq!(web["name"], "unnamed_operation");
+        assert_eq!(web["resource"], "unnamed_operation");
+        assert_eq!(web["meta"]["http.url"], "http://example.com/users/??");
+        assert_eq!(web["meta"]["card.number"], "?");
+        assert_eq!(web["meta"]["custom.tag"], "/foo/bar/extra");
+        assert_eq!(web["meta"]["_dd.p.tid"], "abcdef0123456789");
+        assert_eq!(
+            web["meta_struct"]["_dd.appsec.json"],
+            serde_json::json!({
+                "rule_id": "crs-913-110",
+                "category": "sqli"
+            })
+        );
+        let events: serde_json::Value =
+            serde_json::from_str(web["meta"]["events"].as_str().unwrap()).unwrap();
+        assert_eq!(events[0]["attributes"]["payment.card"], "?");
+
+        let sql = spans.iter().find(|span| span["type"] == "sql").unwrap();
+        assert_eq!(sql["resource"], "SELECT * FROM users WHERE id = ?");
+        assert_eq!(sql["meta"]["sql.query"], sql["resource"]);
+
+        let redis = spans.iter().find(|span| span["type"] == "redis").unwrap();
+        assert_eq!(redis["resource"], "GEOADD");
+        assert_eq!(
+            redis["meta"]["redis.raw_command"],
+            "GEOADD key longitude latitude ?"
+        );
+
+        let normalized_parent = spans
+            .iter()
+            .find(|span| span["type"] == "normalized-parent")
+            .unwrap();
+        assert_eq!(normalized_parent["service"], "bad_service");
+        assert_eq!(normalized_parent["metrics"]["_top_level"], 1.0);
+
+        let normalized_child = spans
+            .iter()
+            .find(|span| span["type"] == "normalized-child")
+            .unwrap();
+        assert_eq!(normalized_child["service"], "bad_service");
+        assert!(normalized_child["metrics"]["_top_level"].is_null());
+
+        let trace_id = (u128::from(0x123456789abcdef0_u64) << 64) | 0x5678;
+        let traces = vec![vec![SpanBytes {
+            service: "service".into(),
+            name: "operation".into(),
+            resource: "resource".into(),
+            trace_id,
+            span_id: 6,
+            start: 1_700_000_000_005_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        }]];
+        exporter
+            .shared_runtime
+            .block_on(exporter.send_trace_chunks_async(traces))
+            .unwrap()
+            .unwrap();
+        mock_intake.assert_calls(2);
+
+        let body = received_body.lock().unwrap().take().unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let span = &payload["traces"][0]["spans"][0];
+        assert_eq!(span["trace_id"], "0000000000005678");
+        assert_eq!(span["meta"]["_dd.p.tid"], "123456789abcdef0");
+    }
+
+    #[test]
+    #[cfg(feature = "agentless")]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_rejects_invalid_traces_before_sending() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            when.method(POST).path("/v1/input");
+            then.status(200).body("");
+        });
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_agentless_endpoint(&intake_url, "api-key", ObfuscationConfig::default())
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let valid_span = |trace_id, span_id| SpanBytes {
+            service: "service".into(),
+            name: "operation".into(),
+            resource: "resource".into(),
+            trace_id,
+            span_id,
+            start: 1_700_000_000_000_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        };
+        let cases = [
+            ("empty trace", vec![vec![]]),
+            (
+                "different trace IDs",
+                vec![vec![valid_span(1, 1), valid_span(2, 2)]],
+            ),
+            ("zero trace ID", vec![vec![valid_span(0, 1)]]),
+            ("zero span ID", vec![vec![valid_span(1, 0)]]),
+        ];
+
+        for (name, traces) in cases {
+            let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+            assert!(exporter.send(data.as_ref()).is_err(), "{name} was accepted");
+        }
+        mock_intake.assert_calls(0);
     }
 }
 

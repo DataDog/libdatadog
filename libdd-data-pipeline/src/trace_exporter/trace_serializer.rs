@@ -96,7 +96,7 @@ impl TraceSerializer {
     }
 
     /// Build HTTP headers for traces request
-    fn build_traces_headers(
+    pub(super) fn build_traces_headers(
         &self,
         header_tags: TracerHeaderTags,
         chunk_count: usize,

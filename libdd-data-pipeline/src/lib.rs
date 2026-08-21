@@ -12,6 +12,7 @@
 //! in different languages.
 
 pub mod agent_info;
+#[cfg(feature = "agentless")]
 pub(crate) mod agentless;
 mod health_metrics;
 pub(crate) mod otlp;

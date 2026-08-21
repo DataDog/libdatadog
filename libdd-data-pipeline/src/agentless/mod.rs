@@ -12,8 +12,9 @@
 //!
 //! - **Transport**: `POST` to the public HTTP trace intake (default `https://public-trace-http-intake.logs.{DD_SITE}/v1/input`,
 //!   or a custom URL) using `dd-api-key` auth, instead of msgpack to the local agent's
-//!   `/v0.4/traces`. The host language resolves the URL from `DD_SITE` and supplies the API key;
-//!   the exporter reads no environment variables.
+//!   `/v0.4/traces`. The host language resolves the URL from `DD_SITE` and supplies the API key.
+//! - **Processing**: spans are normalized and obfuscated with the configuration supplied by the
+//!   host before they leave the process.
 //! - **Encoding**: JSON (see [`libdd_trace_utils::agentless_encoder`]) instead of msgpack v04. See
 //!   that module for the payload-shape differences.
 //! - **Retries**: up to 2 retries with exponential backoff starting at 1 s and no cap (the agent
@@ -25,6 +26,7 @@
 
 pub(crate) mod config;
 pub(crate) mod exporter;
+pub(crate) mod obfuscation;
 
 pub use config::AgentlessTraceConfig;
 pub use exporter::send_agentless_traces_http;
