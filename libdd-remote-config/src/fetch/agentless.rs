@@ -14,7 +14,7 @@ use http::{
     uri::{Authority, PathAndQuery},
     Method, Request, Uri,
 };
-use libdd_capabilities::{Bytes, HttpClientCapability};
+use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
@@ -190,9 +190,10 @@ impl AgentlessConfig {
     }
 }
 
-pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeCapabilities>;
 
-pub struct AgentlessFetcher<C: HttpClientCapability> {
+pub struct AgentlessFetcher<C: HttpClientCapability + SleepCapability> {
     http: C,
     opaque_backend_state: Vec<u8>,
     director_client: TUFClient,
@@ -304,7 +305,7 @@ impl<'a> TrustedTarget<'a> {
     }
 }
 
-impl<C: HttpClientCapability> AgentlessFetcher<C> {
+impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// Create a new `AgentlessFetcher` client.
     ///
     /// # Errors
@@ -644,14 +645,17 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .method(method)
             .body(body)?;
         let timeout = Duration::from_millis(self.endpoint.timeout_ms);
-        let response = tokio::time::timeout(timeout, self.http.request(req))
-            .await
-            .map_err(|_| {
-                format_err!(
+        let sleeper = <C as SleepCapability>::new();
+        let response = tokio::select! {
+            biased;
+            result = self.http.request(req) => result?,
+            _ = sleeper.sleep(timeout) => {
+                bail!(
                     "Remote config request timed out after {}ms",
                     self.endpoint.timeout_ms,
                 )
-            })??;
+            }
+        };
         Ok(response)
     }
 
@@ -1474,7 +1478,7 @@ mod tests {
             NativeAgentlessFetcher::new(
                 cfg,
                 endpoint,
-                libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
+                <libdd_capabilities_impl::NativeCapabilities as libdd_capabilities::HttpClientCapability>::new_without_connection_pooling(),
             )
             .await
             .unwrap_or_else(|e| panic!("failed to instantiate fetcher for site {site}: {e}"));
