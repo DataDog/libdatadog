@@ -55,15 +55,15 @@ hyper-rustls = { version = "0.27.7", default-features = false, features = [
 rustls-webpki = { version = ">=0.103.13", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-hyper = { workspace = true, features = ["http1", "client"] }
-hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"] }
-http-body = "1.0"
-http-body-util = "0.1"
-tower-service = "0.3"
+hyper = { workspace = true, features = ["http1", "client"], optional = true }
+hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"], optional = true }
+http-body = { version = "1.0", optional = true }
+http-body-util = { version = "0.1", optional = true }
+tower-service = { version = "0.3", optional = true }
 cc = "1.1.31"
 pin-project = "1"
 libc.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"], optional = true }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.52"
@@ -92,8 +92,16 @@ tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 
 [features]
 default = ["https"]
+http-client = [
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body",
+    "dep:http-body-util",
+    "dep:tower-service",
+    "dep:tokio",
+]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
-tls-core = ["tokio-rustls", "rustls", "hyper-rustls","rustls-native-certs", "rustls-platform-verifier"]
+tls-core = ["http-client", "tokio-rustls", "rustls", "hyper-rustls","rustls-native-certs", "rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
@@ -108,7 +116,7 @@ require-regex-full = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
-reqwest = ["dep:reqwest", "test-utils"]
+reqwest = ["http-client", "dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
 test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
 # Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)

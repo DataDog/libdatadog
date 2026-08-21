@@ -12,7 +12,7 @@
 //! in different languages.
 
 pub mod agent_info;
-pub(crate) mod agentless;
+pub mod agentless;
 mod health_metrics;
 pub(crate) mod otlp;
 // `OtlpProtocol` (documented on the enum itself) is the only public symbol from the otherwise

@@ -21,8 +21,10 @@ pub mod azure_app_services;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "http-client")]
 pub mod connector;
 #[cfg(feature = "reqwest")]
+#[cfg(feature = "http-client")]
 pub mod dump_server;
 pub mod entity_id;
 pub mod machine_id;
@@ -33,6 +35,7 @@ pub mod cstr;
 pub mod bench_utils;
 pub mod config;
 pub mod error;
+#[cfg(feature = "http-client")]
 pub mod http_common;
 pub mod multipart;
 #[cfg(not(target_arch = "wasm32"))]
@@ -199,17 +202,17 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpResponse = http_common::HttpResponse;
 pub type HttpRequestBuilder = http::request::Builder;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {

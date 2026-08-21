@@ -53,6 +53,7 @@ members = [
   "libdd-shared-runtime",
   "libdd-shared-runtime-ffi",
   "libdd-data-pipeline",
+  "libdd-data-pipeline-core",
   "libdd-data-pipeline-ffi",
   "libdd-ddsketch",
   "libdd-ddsketch-ffi",

@@ -23,8 +23,10 @@
 //!   any of them together causes `build`/`build_async` to return
 //!   `BuilderErrorKind::InvalidConfiguration`.
 
-pub(crate) mod config;
 pub(crate) mod exporter;
 
-pub use config::AgentlessTraceConfig;
 pub use exporter::send_agentless_traces_http;
+pub use libdd_data_pipeline_core::{
+    prepare_agentless_v04_request, AgentlessTraceConfig, PrepareAgentlessError,
+    PreparedAgentlessRequest, TracerMetadata, DEFAULT_AGENTLESS_TIMEOUT,
+};

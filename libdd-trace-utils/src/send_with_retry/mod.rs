@@ -11,6 +11,7 @@ pub(crate) mod compression;
 pub use compression::CompressionStrategy;
 
 use bytes::Bytes;
+use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
@@ -20,6 +21,65 @@ use tracing::{debug, error};
 pub type Attempts = u32;
 
 pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWithRetryError>;
+
+/// An HTTP request prepared for repeated transport attempts.
+///
+/// Payload compression and invariant header construction happen once. Each
+/// call to [`Self::request`] creates a fresh request with a cheaply cloned
+/// [`Bytes`] body, allowing a host runtime to implement retries without using
+/// libdatadog's HTTP client or async executor.
+#[derive(Clone, Debug)]
+pub struct PreparedRequest {
+    target: Endpoint,
+    payload: Bytes,
+    headers: HeaderMap,
+    compression_strategy: CompressionStrategy,
+}
+
+impl PreparedRequest {
+    /// Prepares a payload and its invariant request metadata.
+    pub fn new(
+        target: Endpoint,
+        payload: Vec<u8>,
+        headers: HeaderMap,
+        compression_strategy: CompressionStrategy,
+    ) -> Self {
+        let (payload, compression_strategy) = compression::compress(payload, compression_strategy);
+        Self {
+            target,
+            payload: Bytes::from(payload),
+            headers,
+            compression_strategy,
+        }
+    }
+
+    /// Builds one transport attempt.
+    pub fn request(&self) -> Result<http::Request<Bytes>, http::Error> {
+        let mut builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(self.target.url.clone());
+        builder = self
+            .target
+            .set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        for (key, value) in &self.headers {
+            builder = builder.header(key, value);
+        }
+        if let Some(headers) = builder.headers_mut() {
+            compression::add_headers(headers, self.compression_strategy);
+        }
+        builder.body(self.payload.clone())
+    }
+
+    /// Returns the timeout for one transport attempt.
+    pub fn timeout(&self) -> Duration {
+        Duration::from_millis(self.target.timeout_ms)
+    }
+
+    /// Returns the prepared payload after any configured compression.
+    pub fn payload(&self) -> &Bytes {
+        &self.payload
+    }
+}
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
@@ -106,65 +166,71 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
     retry_strategy: &RetryStrategy,
     compression_strategy: CompressionStrategy,
 ) -> SendWithRetryResult {
+    let prepared = PreparedRequest::new(
+        target.clone(),
+        payload,
+        headers.clone(),
+        compression_strategy,
+    );
+    send_prepared_with_retry(capabilities, &prepared, retry_strategy).await
+}
+
+/// Sends a pre-built request plan with retries.
+///
+/// This is the executor-driven counterpart to the host-driven API exposed by
+/// [`PreparedRequest`] and [`RetryStrategy`].
+#[allow(clippy::result_large_err)]
+pub async fn send_prepared_with_retry<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    prepared: &PreparedRequest,
+    retry_strategy: &RetryStrategy,
+) -> SendWithRetryResult {
     let mut request_attempt = 0;
-    let timeout = Duration::from_millis(target.timeout_ms);
+    let timeout = prepared.timeout();
 
     debug!(
-        url = %target.url,
-        payload_size = payload.len(),
+        url = %prepared.target.url,
+        payload_size = prepared.payload.len(),
         max_retries = retry_strategy.max_retries(),
         "Sending with retry"
     );
-
-    let (compressed, compression_strategy) = compression::compress(payload, compression_strategy);
-    let payload = Bytes::from(compressed);
 
     loop {
         request_attempt += 1;
 
         debug!(
-            url = %target.url,
+            url = %prepared.target.url,
             attempt = request_attempt,
             max_retries = retry_strategy.max_retries(),
             "Attempting request"
         );
 
-        let mut builder = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(target.url.clone());
-        builder =
-            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
-        for (key, value) in headers {
-            builder = builder.header(key, value);
-        }
-        // headers_mut is only None if the builder is in an error state
-        if let Some(h) = builder.headers_mut() {
-            compression::add_headers(h, compression_strategy);
-        }
-        let req = match builder.body(payload.clone()) {
+        let req = match prepared.request() {
             Ok(r) => r,
             Err(_) => {
                 return Err(SendWithRetryError::Build(request_attempt));
             }
         };
 
-        let result = tokio::select! {
-            biased;
-            r = capabilities.request(req) => Ok(r),
-            _ = capabilities.sleep(timeout) => Err(()),
+        let request = capabilities.request(req);
+        let timeout = capabilities.sleep(timeout);
+        futures::pin_mut!(request, timeout);
+        let result = match select(request, timeout).await {
+            Either::Left((response, _)) => Ok(response),
+            Either::Right(((), _)) => Err(()),
         };
 
         match result {
             Ok(Ok(response)) => {
                 let status = response.status();
                 debug!(
-                    url = %target.url,
+                    url = %prepared.target.url,
                     status = status.as_u16(),
                     attempt = request_attempt,
                     "Received response"
                 );
 
-                if status.is_client_error() || status.is_server_error() {
+                if RetryStrategy::is_retryable_status(status) {
                     debug!(
                         status = status.as_u16(),
                         attempt = request_attempt,
@@ -199,7 +265,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             }
             Ok(Err(e)) => {
                 debug!(
-                    url = %target.url,
+                    url = %prepared.target.url,
                     error = ?e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
@@ -233,7 +299,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             }
             Err(_) => {
                 debug!(
-                    url = %target.url,
+                    url = %prepared.target.url,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request timed out"
@@ -263,9 +329,42 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
 mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
+    use http::{HeaderName, HeaderValue, Method};
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
+
+    #[test]
+    fn prepared_request_builds_repeatable_attempts() {
+        let target = Endpoint {
+            url: "https://example.test/v1/input".parse().unwrap(),
+            timeout_ms: 1_234,
+            test_token: Some("test-token".into()),
+            ..Default::default()
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-datadog-trace-count"),
+            HeaderValue::from_static("2"),
+        );
+        let prepared =
+            PreparedRequest::new(target, vec![1, 2, 3], headers, CompressionStrategy::None);
+
+        let first = prepared.request().unwrap();
+        let second = prepared.request().unwrap();
+
+        assert_eq!(first.method(), Method::POST);
+        assert_eq!(first.uri(), "https://example.test/v1/input");
+        assert_eq!(first.headers()["x-datadog-trace-count"], "2");
+        assert_eq!(
+            first.headers()["x-datadog-test-session-token"],
+            "test-token"
+        );
+        assert_eq!(first.body().as_ref(), &[1, 2, 3]);
+        assert_eq!(first.body(), second.body());
+        assert_eq!(prepared.payload().as_ref(), &[1, 2, 3]);
+        assert_eq!(prepared.timeout(), Duration::from_millis(1_234));
+    }
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
