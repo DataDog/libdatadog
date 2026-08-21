@@ -33,6 +33,7 @@ tokio = { workspace = true, features = [
 uuid = { workspace = true, features = ["v4", "std"] }
 tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
+libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "1.0.0" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "3.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "7.0.0", path = "../libdd-telemetry", default-features = false, optional = true}
@@ -120,4 +121,4 @@ fips = [
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
 # Enable zstd compression for the agentless trace intake sender.
-compression = ["libdd-trace-utils/compression"]
+compression = ["libdd-trace-utils/compression", "libdd-data-pipeline-core/compression"]

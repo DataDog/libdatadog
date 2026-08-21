@@ -18,7 +18,10 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
+use crate::agentless::exporter::{
+    prepare_agentless_traces_request, send_prepared_agentless_request,
+};
+use crate::agentless::AgentlessTraceConfig;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -67,49 +70,6 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
-
-/// Build the HTTP headers required by the agentless intake.
-///
-/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
-/// and entity headers (container-id / entity-id / external-env) when available.
-fn build_agentless_headers(
-    metadata: &TracerMetadata,
-    api_key: &str,
-    trace_count: usize,
-) -> Result<HeaderMap, TraceExporterError> {
-    let mut headers: HeaderMap = {
-        let tags: TracerHeaderTags = metadata.into();
-        tags.into()
-    };
-
-    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
-        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
-            "Invalid Datadog API key value for dd-api-key header".to_string(),
-        ))
-    })?;
-    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
-
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
-    );
-
-    headers.insert(
-        http::HeaderName::from_static("x-datadog-trace-count"),
-        http::HeaderValue::from(trace_count),
-    );
-
-    for (name, value) in libdd_common::entity_id::get_entity_headers() {
-        if let (Ok(name), Ok(value)) = (
-            http::HeaderName::from_bytes(name.as_bytes()),
-            http::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, value);
-        }
-    }
-
-    Ok(headers)
-}
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -658,19 +618,8 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let trace_count = traces.len();
-        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-            &traces,
-            &self.metadata,
-        )
-        .map_err(|e| {
-            error!("Agentless JSON serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })?;
-
-        let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
-
-        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        let prepared = prepare_agentless_traces_request(traces, &self.metadata, config)?;
+        send_prepared_agentless_request(&self.capabilities, &prepared).await?;
         Ok(AgentResponse::Unchanged)
     }
 
