@@ -173,6 +173,8 @@ jobs:
       - name: "(Windows) Run FFI examples"
         shell: bash
         if: matrix.platform == 'windows-latest'
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
           cargo ffi-test
       - name: "Test building CXX bindings - Crashinfo (Unix)"
