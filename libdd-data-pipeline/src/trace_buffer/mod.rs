@@ -15,6 +15,10 @@ use std::{
 
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::{SharedRuntime, Worker};
+use libdd_trace_utils::span::{
+    span_pool::{PooledChunks, SpanPool},
+    BytesData,
+};
 
 use crate::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
@@ -807,6 +811,7 @@ where
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     trace_exporter: TraceExporter<C, R>,
+    span_pool: Option<SpanPool<BytesData>>,
 }
 
 impl<C, R> DefaultExport<C, R>
@@ -814,8 +819,14 @@ where
     C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
-    pub fn new(trace_exporter: TraceExporter<C, R>) -> Self {
-        Self { trace_exporter }
+    pub fn new(
+        trace_exporter: TraceExporter<C, R>,
+        span_pool: Option<SpanPool<BytesData>>,
+    ) -> Self {
+        Self {
+            trace_exporter,
+            span_pool,
+        }
     }
 }
 
@@ -834,7 +845,10 @@ where
     > {
         Box::pin(async {
             self.trace_exporter
-                .send_trace_chunks_async(trace_chunks)
+                .send_trace_chunks_async(match &self.span_pool {
+                    Some(p) => p.wrap_chunks(trace_chunks),
+                    None => PooledChunks::unpooled(trace_chunks),
+                })
                 .await
         })
     }
