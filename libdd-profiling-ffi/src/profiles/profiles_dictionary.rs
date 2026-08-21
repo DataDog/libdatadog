@@ -4,8 +4,11 @@
 use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
 use crate::profiles::utf8::{self, Utf8Option};
-use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
+use crate::profiles::{
+    ensure_non_null_insert, ensure_non_null_out_parameter, wrap_with_profile_status,
+};
 use crate::ProfileError;
+use function_name::named;
 use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_common_ffi::MutSlice;
 use libdd_profiling::profiles::collections::StringRef;
@@ -113,6 +116,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_try_clone(
 /// - `dict` must refer to a live dictionary.
 /// - `function` must be non-null and point to a valid `Function` for the duration of the call.
 #[no_mangle]
+#[named]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
     function_id: *mut FunctionId2,
     dict: Option<&ProfilesDictionary>,
@@ -120,13 +124,13 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
 ) -> ProfileStatus {
     ensure_non_null_out_parameter!(function_id);
     ensure_non_null_insert!(function);
-    ProfileStatus::from(|| -> Result<(), ProfileError> {
+    wrap_with_profile_status!({
         let dict = dict.ok_or(NULL_PROFILES_DICTIONARY)?;
         let f2: Function2 = unsafe { *function };
         let id = dict.try_insert_function2(f2)?;
         unsafe { function_id.write(id) };
-        Ok(())
-    }())
+        Ok::<(), ProfileError>(())
+    })
 }
 
 /// Inserts a `Mapping` into the dictionary and returns its id.
