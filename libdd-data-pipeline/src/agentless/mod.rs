@@ -10,11 +10,10 @@
 //!
 //! ## Differences from the regular agent export
 //!
-//! - **Transport**: `POST` to the public HTTP trace intake (default
-//!   `https://public-trace-http-intake.logs.{DD_SITE}/v1/input`, or a custom URL) using
-//!   `dd-api-key` auth, instead of msgpack to the local agent's `/v0.4/traces`. The host language
-//!   resolves the URL from `DD_SITE` and supplies the API key; the exporter reads no environment
-//!   variables.
+//! - **Transport**: `POST` to the public HTTP trace intake (default `https://public-trace-http-intake.logs.{DD_SITE}/v1/input`,
+//!   or a custom URL) using `dd-api-key` auth, instead of msgpack to the local agent's
+//!   `/v0.4/traces`. The host language resolves the URL from `DD_SITE` and supplies the API key;
+//!   the exporter reads no environment variables.
 //! - **Encoding**: JSON (see [`libdd_trace_utils::agentless_encoder`]) instead of msgpack v04. See
 //!   that module for the payload-shape differences.
 //! - **Retries**: up to 2 retries with exponential backoff starting at 1 s and no cap (the agent
