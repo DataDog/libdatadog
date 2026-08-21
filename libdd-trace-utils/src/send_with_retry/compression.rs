@@ -27,12 +27,19 @@ pub fn compress(data: Vec<u8>, strategy: CompressionStrategy) -> (Vec<u8>, Compr
             // Allocate 1/10th of the original buffer, so we shouldn't add too
             // much memory usage, and no less than 256 bytes
             let writer = Vec::with_capacity((data.len() / 10).max(256));
-            zstd::Encoder::new(writer, level)
+            #[cfg(not(target_arch = "wasm32"))]
+            let result = zstd::Encoder::new(writer, level).and_then(|mut e| {
+                e.write_all(&data)?;
+                Ok((e.finish()?, strategy))
+            });
+            #[cfg(target_arch = "wasm32")]
+            let result = zrip::FrameEncoder::new(writer, level)
+                .map_err(std::io::Error::other)
                 .and_then(|mut e| {
                     e.write_all(&data)?;
                     Ok((e.finish()?, strategy))
-                })
-                .unwrap_or((data, CompressionStrategy::None))
+                });
+            result.unwrap_or((data, CompressionStrategy::None))
         }
     }
 }
@@ -46,5 +53,23 @@ pub fn add_headers(headers: &mut http::HeaderMap, strategy: CompressionStrategy)
         CompressionStrategy::Zstd { .. } => {
             headers.insert(http::header::CONTENT_ENCODING, CONTENT_ENCODING_ZSTD);
         }
+    }
+}
+
+#[cfg(all(test, feature = "compression", not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    fn decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
+        zstd::decode_all(data)
+    }
+
+    #[test]
+    fn zstd_compression_roundtrips() {
+        let data = b"hello zstd".repeat(100);
+        let (compressed, strategy) = compress(data.clone(), CompressionStrategy::Zstd { level: 1 });
+
+        assert!(matches!(strategy, CompressionStrategy::Zstd { level: 1 }));
+        assert_eq!(decompress(&compressed).unwrap(), data);
     }
 }

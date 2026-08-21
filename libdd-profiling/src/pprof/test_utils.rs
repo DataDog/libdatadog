@@ -6,16 +6,24 @@ use libdd_profiling_protobuf::prost_impls::{Profile, Sample};
 fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
 
-    // The zstd bindings use FFI so they don't work under miri. This means the
-    // buffer isn't compressed, so simply convert to a vec.
+    // Native zstd uses FFI and is unavailable under Miri, where the default
+    // profile codec remains uncompressed.
     #[cfg(miri)]
     let buf = encoded.to_vec();
-    #[cfg(not(miri))]
+    #[cfg(all(not(miri), not(target_arch = "wasm32")))]
     let buf = {
         use anyhow::Context;
         use std::io::{Cursor, Read};
         let mut decoder =
             zstd::Decoder::new(Cursor::new(encoded)).context("failed to create zstd decoder")?;
+        let mut out = Vec::new();
+        decoder.read_to_end(&mut out)?;
+        out
+    };
+    #[cfg(all(not(miri), target_arch = "wasm32"))]
+    let buf = {
+        use std::io::{Cursor, Read};
+        let mut decoder = zrip::FrameDecoder::new(Cursor::new(encoded));
         let mut out = Vec::new();
         decoder.read_to_end(&mut out)?;
         out
