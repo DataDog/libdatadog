@@ -17,11 +17,7 @@ stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline
 [dependencies]
 anyhow = { version = "1.0" }
 arc-swap = { workspace = true, optional = true }
-# Pinned to a known-good exact version: crates.io account "droundy" was
-# compromised on 2026-08-20 and used to publish a malicious arrayref 0.3.10
-# cargo-deny currently only warns in CI (FAIL_IF_CARGO_DENY=false), so pin here
-# too until it blocks.
-arrayref = "=0.3.9"
+arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
