@@ -433,3 +433,9 @@ jobs:
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+      - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
+        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+          # ring compiles C for wasm32, which the runner's default `cc` (gcc) cannot target.
+          CC_wasm32_unknown_unknown: clang
