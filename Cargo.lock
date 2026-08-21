@@ -2971,6 +2971,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-data-pipeline-core",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
@@ -2996,6 +2997,20 @@ dependencies = [
  "uuid",
  "web-time",
  "zrip",
+ "zstd",
+]
+
+[[package]]
+name = "libdd-data-pipeline-core"
+version = "1.0.0"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
+ "libdd-common",
+ "libdd-tinybytes",
+ "libdd-trace-utils",
+ "serde_json",
+ "thiserror 1.0.68",
  "zstd",
 ]
 
