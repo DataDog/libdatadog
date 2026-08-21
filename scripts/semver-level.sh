@@ -68,13 +68,65 @@ max_level() {
 # Normalize a cargo-public-api signature line so that only semver-significant
 # differences remain. Reads lines on stdin and writes normalized lines out.
 # It drops the leading +/- diff marker, removes attribute tokens (`#[...]`) and
-# the `const`/`async`/`unsafe` qualifiers, and collapses whitespace. Those
+# the `const`/`unsafe` qualifiers, and collapses whitespace. Those
 # qualifier/attribute deltas are either non-breaking (adding `#[repr(C)]`,
-# making a fn `const`) or already covered by cargo-semver-checks' own lints, so
+# making a fn `const`) or already covered by cargo-semver-checks' own lints
+# (`repr_c_added`, `function_const_removed`, `function_unsafe_added`), so
 # stripping them lets us tell a real signature change (e.g. a parameter or
 # return type change) from cosmetic churn under "Changed items".
+#
+# `async` is deliberately NOT stripped. cargo-semver-checks has no async lint at all, so
+# unlike const/unsafe there is no second opinion to fall back on
 normalize_api_line() {
-    sed -E 's/^[+-]//; s/#\[[^]]*\]//g; s/\b(const|async|unsafe)\b//g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+    sed -E 's/^[+-]//; s/#\[[^]]*\]//g; s/\b(const|unsafe)\b//g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+# Cap a block of detail lines at <max>, marking the cut so an elided failure list is not
+# mistaken for a complete one. Reads on stdin, writes on stdout.
+truncate_details() {
+    local max=$1
+    local content total
+    content=$(cat)
+
+    if [[ -z "$content" ]]; then
+        return
+    fi
+
+    total=$(wc -l <<< "$content")
+    if (( total > max )); then
+        head -n "$max" <<< "$content"
+        printf '... (%d more lines truncated)\n' "$(( total - max ))"
+    else
+        printf '%s\n' "$content"
+    fi
+}
+
+# Pull the failure blocks out of a cargo-semver-checks run, falling back to the tail of
+# the output when the run reported a level without emitting any `--- failure` block.
+#
+# The fallback used to read `grep -A 1000 ... | head -100 || tail -50`, which could never
+# fire: a pipeline's exit status is the last command's, and `head` succeeds even when
+# `grep` matched nothing, so such a run produced empty details rather than the intended
+# tail.
+extract_semver_details() {
+    local output=$1
+    local details
+    details=$(grep -A 1000 "^--- failure" <<< "$output")
+    if [[ -z "$details" ]]; then
+        details=$(tail -50 <<< "$output")
+    fi
+    truncate_details 100 <<< "$details"
+}
+
+# Extract one titled section of a `cargo public-api diff` report, bounded by the next
+# section header so the details cannot bleed into unrelated sections.
+public_api_section() {
+    local output=$1 start=$2 end=$3
+    if [[ -n "$end" ]]; then
+        sed -n "/^${start}$/,/^${end}$/p" <<< "$output"
+    else
+        sed -n "/^${start}$/,\$p" <<< "$output"
+    fi
 }
 
 compute_semver_results() {
@@ -89,6 +141,11 @@ compute_semver_results() {
 
     # Fetch base commit
     git fetch origin "$baseline" --quiet
+    local fetch_exit_code=$?
+    if [[ $fetch_exit_code -ne 0 ]]; then
+        echo "Failed to fetch baseline ref: $baseline" >&2
+        return "$fetch_exit_code"
+    fi
 
     # Ensure baseline has origin/ prefix if it doesn't already (skip for tags: refs/tags/...)
     if [[ ! "$baseline" =~ ^origin/ ]] && [[ "$baseline" != *"refs/tags"* ]]; then
@@ -118,7 +175,7 @@ compute_semver_results() {
         if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
             semver_level="major"
             semver_reason="cargo-semver-checks detected breaking changes"
-            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
+            semver_details=$(extract_semver_details "$SEMVER_OUTPUT")
             log_verbose "cargo-semver-checks: major"
         elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
             # The crate doesn't exist in the baseline — it's a new crate being added
@@ -129,7 +186,7 @@ compute_semver_results() {
         elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
             semver_level="minor"
             semver_reason="cargo-semver-checks detected minor breaking changes"
-            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
+            semver_details=$(extract_semver_details "$SEMVER_OUTPUT")
             log_verbose "cargo-semver-checks: minor"
         else
             echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
@@ -221,17 +278,20 @@ compute_semver_results() {
         if $removed_breaking; then
             public_api_level="major"
             public_api_reason="cargo-public-api detected removed public API items"
-            public_api_details=$(grep -A 50 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
+            public_api_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
+                "Removed items from the public API" "Changed items in the public API" \
+                | truncate_details 50)
             log_verbose "cargo-public-api: major (removed items)"
         elif $changed_breaking; then
             public_api_level="major"
             public_api_reason="cargo-public-api detected breaking signature changes"
-            public_api_details=$(head -50 <<< "$changed_section")
+            public_api_details=$(truncate_details 50 <<< "$changed_section")
             log_verbose "cargo-public-api: major (changed signatures)"
         elif $added; then
             public_api_level="minor"
             public_api_reason="cargo-public-api detected new public API items"
-            public_api_details=$(grep -A 50 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
+            public_api_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
+                "Added items to the public API" "" | truncate_details 50)
             log_verbose "cargo-public-api: minor (added items)"
         fi
     fi
@@ -253,16 +313,25 @@ compute_semver_results() {
         REASON="No public API changes detected"
     fi
 
-    echo "$(jq -n \
+    jq -n \
         --arg name "$crate" \
         --arg level "$LEVEL" \
         --arg reason "$REASON" \
         --arg details "$DETAILS" \
-        '{"name": $name, "level": $level, "reason": $reason, "details": $details}')"
+        '{"name": $name, "level": $level, "reason": $reason, "details": $details}'
 }
 
-# Run the computation and capture JSON output
+# Run the computation and capture JSON output.
+# compute_semver_results runs in a command substitution, so the `exit` calls in its
+# error paths only terminate that subshell. Propagate the status explicitly, otherwise
+# a tool failure leaves RESULT_JSON empty and the script still exits 0 — the caller
+# then reads an empty semver level and bumps the crate with whatever cargo-release
+# makes of it.
 RESULT_JSON=$(compute_semver_results "$CRATE" "$BASE_REF" "$CURRENT_REF")
+COMPUTE_EXIT_CODE=$?
+if [[ $COMPUTE_EXIT_CODE -ne 0 ]]; then
+    exit $COMPUTE_EXIT_CODE
+fi
 
 # Output JSON to stdout (captured by workflow)
 echo "$RESULT_JSON"
