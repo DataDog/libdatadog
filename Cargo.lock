@@ -1462,7 +1462,7 @@ dependencies = [
  "nix 0.29.0",
  "prctl",
  "priority-queue",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rmp-serde",
  "sendfd",
  "serde",
@@ -2858,7 +2858,7 @@ dependencies = [
  "nix 0.29.0",
  "pin-project",
  "proptest",
- "rand 0.8.5",
+ "rand 0.8.7",
  "regex",
  "regex-lite",
  "reqwest",
@@ -2919,7 +2919,7 @@ dependencies = [
  "os_info",
  "page_size",
  "portable-atomic",
- "rand 0.8.5",
+ "rand 0.8.7",
  "schemars",
  "serde",
  "serde_json",
@@ -2983,7 +2983,7 @@ dependencies = [
  "libdd-trace-stats",
  "libdd-trace-utils",
  "prost",
- "rand 0.8.5",
+ "rand 0.8.7",
  "regex",
  "rmp-serde",
  "serde",
@@ -3024,7 +3024,7 @@ dependencies = [
  "prost",
  "prost-build",
  "protoc-bin-vendored",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
 ]
 
@@ -3183,7 +3183,7 @@ dependencies = [
  "libdd-trace-protobuf",
  "memfd",
  "prost",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rmp",
  "rmp-serde",
  "serde",
@@ -3285,7 +3285,7 @@ dependencies = [
  "parking_lot",
  "proptest",
  "prost",
- "rand 0.8.5",
+ "rand 0.8.7",
  "reqwest",
  "rustc-hash",
  "rustls",
@@ -3404,7 +3404,7 @@ dependencies = [
  "libdd-tuf",
  "manual_future",
  "prost",
- "rand 0.8.5",
+ "rand 0.8.7",
  "serde",
  "serde_json",
  "serde_with",
@@ -3528,7 +3528,7 @@ dependencies = [
  "criterion",
  "duplicate 0.4.1",
  "libdd-trace-protobuf",
- "rand 0.8.5",
+ "rand 0.8.7",
 ]
 
 [[package]]
@@ -3584,7 +3584,7 @@ dependencies = [
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rmp-serde",
  "serde",
  "tokio",
@@ -3623,7 +3623,7 @@ dependencies = [
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "prost",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rmp",
  "rmp-serde",
  "rmpv",
@@ -4567,7 +4567,7 @@ dependencies = [
  "bitflags",
  "lazy_static",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_xorshift",
  "regex-syntax",
@@ -4774,9 +4774,9 @@ checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",

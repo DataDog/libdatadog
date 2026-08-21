@@ -27,7 +27,7 @@ mime = { version = "0.3.16", optional = true }
 multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
-rand = { version = "0.8", optional = true }
+rand = { version = ">=0.8.6, <0.9", optional = true }
 regex = "1.5"
 regex-lite = { version = "0.1", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
@@ -86,7 +86,7 @@ maplit = "1.0"
 mime = "0.3.16"
 multer = "3.1"
 proptest = "1"
-rand = "0.8"
+rand = ">=0.8.6, <0.9"
 tempfile.workspace = true
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 

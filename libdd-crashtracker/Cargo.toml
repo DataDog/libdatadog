@@ -62,7 +62,7 @@ num-traits = "0.2.19"
 os_info = "3.14.0"
 page_size = "0.6.0"
 portable-atomic = { version = "1.6.0", features = ["serde"] }
-rand = "0.8.5"
+rand = ">=0.8.6, <0.9"
 schemars = "0.8.21"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["std"] }
