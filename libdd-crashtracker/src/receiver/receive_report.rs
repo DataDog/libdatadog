@@ -324,9 +324,14 @@ fn process_line(
 ///    Some(CrashInfo)
 /// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally). In this case
 ///    we return "None".
+///
+/// Borrows `stream` rather than consuming it. The crashing process blocks on
+/// POLLHUP from this connection, so closing it here would release that process
+/// before the caller has symbolized the report, and symbolization reads
+/// `/proc/<pid>/maps`. The caller decides when to close.
 pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
-    stream: impl AsyncBufReadExt + std::marker::Unpin,
+    stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
@@ -671,10 +676,10 @@ mod tests {
         // Close without sending anything, as a parent that exited normally does.
         drop(sender);
 
-        let report =
-            receive_report_from_stream(Duration::from_secs(1), tokio::io::BufReader::new(receiver))
-                .await
-                .unwrap();
+        let mut stream = tokio::io::BufReader::new(receiver);
+        let report = receive_report_from_stream(Duration::from_secs(1), &mut stream)
+            .await
+            .unwrap();
         assert!(report.is_none());
 
         let request = server.await.unwrap();
