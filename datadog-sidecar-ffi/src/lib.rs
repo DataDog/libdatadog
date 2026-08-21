@@ -49,6 +49,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1152,6 +1153,72 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
         instance_id,
         data.as_bytes().to_vec(),
         tracer_header_tags,
+    ));
+
+    MaybeError::None
+}
+
+/// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
+/// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+/// `/v1.0/traces` endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    shm_handle: Box<ShmHandle>,
+    len: usize,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_shm(
+        transport,
+        instance_id,
+        *shm_handle,
+        len,
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
+/// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
+/// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+/// endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    data: ffi::CharSlice,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_bytes(
+        transport,
+        instance_id,
+        data.as_bytes().to_vec(),
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
     ));
 
     MaybeError::None
