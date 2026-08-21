@@ -116,7 +116,7 @@ require-regex-full = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
-reqwest = ["dep:reqwest", "test-utils"]
+reqwest = ["http-client", "dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
 test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
 # Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
