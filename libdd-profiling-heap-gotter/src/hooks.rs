@@ -154,8 +154,9 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
     // single (1, req.size) allocation when sampling kicks in, so the
     // underlying allocator zeroes everything we hand back. Unsampled
     // path keeps the user's (nmemb, size) verbatim.
-    // `req.weight == 0` is `!dd_alloc_req_is_sampled(req)`, inlined here to avoid a cross-FFI call.
-    let raw = if req.weight == 0 {
+    // `req.weighted_bytes == 0` is `!dd_alloc_req_is_sampled(req)`, inlined here to avoid a
+    // cross-FFI call.
+    let raw = if req.weighted_bytes == 0 {
         real(nmemb, size)
     } else {
         real(1, req.size)
@@ -277,6 +278,6 @@ fn _types_anchor() -> dd_alloc_req_t {
         size: 0,
         user_size: 0,
         alignment: 0,
-        weight: 0,
+        weighted_bytes: 0,
     }
 }
