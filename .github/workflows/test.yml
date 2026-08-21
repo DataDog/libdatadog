@@ -439,3 +439,9 @@ jobs:
         run: cargo test -p libdd-wasm-tests --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
+        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+          # ring compiles C for wasm32, which the runner's default `cc` (gcc) cannot target.
+          CC_wasm32_unknown_unknown: clang
