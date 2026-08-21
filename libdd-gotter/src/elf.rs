@@ -1185,6 +1185,138 @@ unsafe fn patch_got_entries(
     }
 }
 
+/// Restore GOT entries in one library for the target symbol, undoing a
+/// previous [`patch_got_entries`] call.
+///
+/// Only restores entries whose current value matches `hook_fn`, so this
+/// is safe to call even if some entries were never patched or were
+/// independently overwritten.
+///
+/// # Safety
+/// Same as [`patch_got_entries`].
+unsafe fn restore_got_entries(
+    dyn_info: &DynamicInfo,
+    symbol_name: &[u8],
+    hook_fn: usize,
+    orig_addr: usize,
+    guard: &mut PageProtGuard,
+    restored: &mut usize,
+    failed: &mut usize,
+) {
+    let mut try_restore = |r_info: u64, r_offset: u64| {
+        if !is_got_pointer_reloc(elf64_r_type(r_info)) {
+            return;
+        }
+        let sym_idx = elf64_r_sym(r_info);
+        if let Some(cstr) = dyn_info.sym_name(sym_idx) {
+            if cstr.to_bytes() == symbol_name {
+                let addr = u64_to_usize(r_offset) + dyn_info.base_address();
+                // Only restore entries that currently point at our hook.
+                // SAFETY: `addr` is a GOT slot address from a valid
+                // relocation entry in a currently-loaded library.
+                let current = unsafe { core::ptr::read_unaligned(addr as *const usize) };
+                if current == hook_fn {
+                    if guard.override_entry(addr, orig_addr) {
+                        *restored += 1;
+                    } else {
+                        *failed += 1;
+                    }
+                }
+            }
+        }
+    };
+
+    for reloc in dyn_info.rels() {
+        try_restore(reloc.r_info, reloc.r_offset);
+    }
+    for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
+        for reloc in relocs {
+            try_restore(reloc.r_info, reloc.r_offset);
+        }
+    }
+}
+
+/// Reverse a previous [`hook_symbol`] call by restoring all GOT entries
+/// for `symbol_name` that currently point at `hook_fn` back to
+/// `orig_addr`.
+///
+/// Only entries whose current value equals `hook_fn` are touched, so
+/// this is safe even if some libraries were loaded after the original
+/// hook (their entries were never patched and won't be modified).
+///
+/// Returns the number of entries restored and failed.
+///
+/// # Safety
+///
+/// * `orig_addr` must be the original function address returned by the corresponding `hook_symbol`
+///   call (`HookResult::orig_addr`).
+/// * The caller must ensure no other thread is concurrently calling through a GOT entry being
+///   restored. In practice this means the hooked symbol must not be called concurrently with
+///   unhooking.
+pub unsafe fn unhook_symbol(
+    symbol_name: &CStr,
+    hook_fn: usize,
+    orig_addr: usize,
+) -> Result<HookResult, HookError> {
+    let symbol_name_bytes = symbol_name.to_bytes();
+    // Validate the symbol name but we don't need to resolve it. The
+    // caller provides orig_addr directly.
+    let _ = symbol_name
+        .to_str()
+        .map_err(|_| HookError::InvalidSymbolName)?;
+
+    let mut entries_restored: usize = 0;
+    let mut entries_failed: usize = 0;
+    let mut guard = PageProtGuard::new();
+
+    let guard_ptr = &mut guard as *mut PageProtGuard;
+    let restored_ptr = &mut entries_restored as *mut usize;
+    let failed_ptr = &mut entries_failed as *mut usize;
+
+    iterate_libraries(|info, _is_exe| {
+        let lib_name = if info.dlpi_name.is_null() {
+            ""
+        } else {
+            // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
+            // NUL-terminated C string for the callback's duration.
+            unsafe { CStr::from_ptr(info.dlpi_name) }
+                .to_str()
+                .unwrap_or("")
+        };
+        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+            return false;
+        }
+        // SAFETY: `info` points to a valid `dl_phdr_info` provided by
+        // `dl_iterate_phdr`; the library is mapped for the callback's
+        // duration.
+        let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
+            return false;
+        };
+        // SAFETY: dyn_info was just produced from a currently-loaded
+        // library. guard_ptr/restored_ptr/failed_ptr are valid for the
+        // duration of iterate_libraries (they point to locals in the
+        // enclosing fn).
+        unsafe {
+            restore_got_entries(
+                &dyn_info,
+                symbol_name_bytes,
+                hook_fn,
+                orig_addr,
+                &mut *guard_ptr,
+                &mut *restored_ptr,
+                &mut *failed_ptr,
+            );
+        }
+        false
+    });
+
+    Ok(HookResult {
+        orig_addr,
+        entries_patched: entries_restored,
+        entries_failed,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1522,6 +1654,78 @@ mod tests {
             "excluding self should skip at least one library \
              (total={total_libs}, excluding_self={libs_excluding_self})"
         );
+    }
+
+    /// Hook `getpid` and then unhook it, verifying that:
+    /// 1. hook_symbol patches at least one GOT entry
+    /// 2. unhook_symbol restores the same number of entries
+    /// 3. a second unhook_symbol is a no-op (entries already restored)
+    ///
+    /// We use `getpid` because it is a known symbol that we are okay with patching for the
+    /// duration of the test.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_unhook_symbol_restores_got_entries() {
+        unsafe extern "C" fn dummy_getpid() -> libc::pid_t {
+            -1
+        }
+
+        let hook_fn = dummy_getpid as *const () as usize;
+
+        // SAFETY: dummy_getpid matches getpid's signature.
+        let hook_result = unsafe { hook_symbol(c"getpid", hook_fn) };
+
+        let Ok(hook_result) = hook_result else {
+            eprintln!("note: getpid not found, skipping unhook test");
+            return;
+        };
+
+        assert!(
+            hook_result.entries_patched > 0,
+            "getpid should have at least one GOT entry"
+        );
+
+        let orig_addr = hook_result.orig_addr;
+        let patched_count = hook_result.entries_patched;
+
+        // Verify the hook took effect.
+        assert_eq!(
+            unsafe { libc::getpid() },
+            -1,
+            "hooked getpid should return -1"
+        );
+
+        // SAFETY: orig_addr is the real getpid address returned by
+        // hook_symbol, and hook_fn is the dummy we installed.
+        let unhook_result = unsafe { unhook_symbol(c"getpid", hook_fn, orig_addr) }.unwrap();
+
+        assert_eq!(
+            unhook_result.entries_patched, patched_count,
+            "unhook should restore exactly the entries that were patched"
+        );
+
+        // Verify the original behavior is restored.
+        let real_pid = unsafe { libc::getpid() };
+        assert_ne!(real_pid, -1, "unhooked getpid should return the real PID");
+        assert!(real_pid > 0, "real PID should be positive");
+
+        // A second unhook should be a no-op. Entries already point at
+        // orig_addr, not hook_fn.
+        let second = unsafe { unhook_symbol(c"getpid", hook_fn, orig_addr) }.unwrap();
+        assert_eq!(
+            second.entries_patched, 0,
+            "second unhook should find nothing to restore"
+        );
+    }
+
+    /// Verify that unhook_symbol returns InvalidSymbolName for invalid
+    /// UTF-8 symbol names.
+    #[test]
+    #[allow(clippy::manual_c_str_literals)] // intentionally invalid UTF-8
+    fn test_unhook_symbol_invalid_name() {
+        let invalid = CStr::from_bytes_with_nul(b"\xff\0").unwrap();
+        let result = unsafe { unhook_symbol(invalid, 0, 0) };
+        assert_eq!(result.unwrap_err(), HookError::InvalidSymbolName);
     }
 
     /// Sanity check against real loaded libraries: the filter should
