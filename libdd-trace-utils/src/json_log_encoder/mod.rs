@@ -20,10 +20,13 @@
 //! Forwarder's `is_trace` detection requirements.
 
 mod span;
+mod span_v1;
 
 use crate::span::v04::Span;
+use crate::span::v1::TraceChunk;
 use crate::span::TraceData;
 use span::LogSpan;
+use span_v1::{ChunkContextV1, LogSpanV1};
 use std::io::Write;
 
 /// Opening bytes of every emitted line: `{"traces":[[`.
@@ -100,6 +103,80 @@ pub fn encode_traces<T: TraceData>(
         for span in trace {
             span_buf.clear();
             serde_json::to_writer(&mut span_buf, &LogSpan(span)).map_err(std::io::Error::other)?;
+            let span_len = span_buf.len();
+
+            // A span that cannot fit on a line by itself is dropped rather than
+            // emitted as a truncated, unparseable line.
+            if span_len + TRACE_FORMAT_OVERHEAD > max_line_size {
+                stats.spans_dropped += 1;
+                tracing::debug!(
+                    span_len,
+                    max_line_size,
+                    "Span too large to send to logs, dropping"
+                );
+                continue;
+            }
+
+            // Flush the current line if appending this span would overflow.
+            // `line` already contains `TRACE_PREFIX`; the emitted line will also
+            // gain `TRACE_SUFFIX`, so account for both here.
+            let comma = usize::from(line_span_count > 0);
+            if line_span_count > 0
+                && line.len() + comma + span_len + TRACE_SUFFIX.len() > max_line_size
+            {
+                flush_line(out, &mut line)?;
+                line_span_count = 0;
+            }
+
+            if line_span_count > 0 {
+                line.push(b',');
+            }
+            line.extend_from_slice(&span_buf);
+            line_span_count += 1;
+            stats.spans_written += 1;
+        }
+    }
+
+    if line_span_count > 0 {
+        flush_line(out, &mut line)?;
+    }
+
+    Ok(stats)
+}
+
+/// Encodes v1 `traces` (grouped as [`TraceChunk`]s) into newline-delimited JSON "log
+/// exporter" lines, writing them to `out`. Same framing, packing, and oversized-span
+/// dropping behavior as [`encode_traces`] — see its docs — but takes v1
+/// [`TraceChunk`]/[`crate::span::v1::Span`] input and downgrades each span's unified
+/// attribute model back to the `meta`/`metrics`-shaped wire span via
+/// [`span_v1::LogSpanV1`], since the JSON log wire contract (consumed by the Datadog
+/// Forwarder Lambda) is unchanged by the v1 migration.
+///
+/// # Errors
+///
+/// Returns any [`std::io::Error`] produced while writing to `out`.
+pub fn encode_traces_v1<T: TraceData>(
+    chunks: &[TraceChunk<T>],
+    out: &mut impl Write,
+    max_line_size: usize,
+) -> std::io::Result<EncodeStats> {
+    let mut stats = EncodeStats::default();
+
+    // Reusable buffers: `span_buf` holds the JSON for the span currently being
+    // considered; `line` accumulates the complete current line. It is primed
+    // with `TRACE_PREFIX` so that a single `write_all` per line can emit
+    // prefix + spans + suffix in one syscall (see `flush_line`).
+    let mut span_buf: Vec<u8> = Vec::with_capacity(512);
+    let mut line: Vec<u8> = Vec::with_capacity(max_line_size.min(64 * 1024));
+    line.extend_from_slice(TRACE_PREFIX);
+    let mut line_span_count: usize = 0;
+
+    for chunk in chunks {
+        let ctx = ChunkContextV1::new(chunk);
+        for span in &chunk.spans {
+            span_buf.clear();
+            serde_json::to_writer(&mut span_buf, &LogSpanV1(span, &ctx))
+                .map_err(std::io::Error::other)?;
             let span_len = span_buf.len();
 
             // A span that cannot fit on a line by itself is dropped rather than

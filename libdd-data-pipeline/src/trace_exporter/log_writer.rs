@@ -11,8 +11,8 @@
 //! and submits the traces to the trace intake.
 
 use libdd_capabilities::LogWriterCapability;
-use libdd_trace_utils::json_log_encoder::{encode_traces, EncodeStats};
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_utils::json_log_encoder::{encode_traces, encode_traces_v1, EncodeStats};
+use libdd_trace_utils::span::{v04::Span, v1::TraceChunk, TraceData};
 
 /// Default maximum size of a single emitted log line, in bytes.
 ///
@@ -34,6 +34,27 @@ pub(crate) fn write_log_traces<C: LogWriterCapability + ?Sized, T: TraceData>(
 ) -> std::io::Result<EncodeStats> {
     let mut buf: Vec<u8> = Vec::new();
     let stats = encode_traces(traces, &mut buf, max_line_size)?;
+    if !buf.is_empty() {
+        capabilities.write_log_output(&buf)?;
+    }
+    Ok(stats)
+}
+
+/// v1-native analog of [`write_log_traces`]. Encodes v1 [`TraceChunk`]s to the same
+/// newline-delimited Forwarder JSON wire format and writes them through the log-output
+/// capability. Returns counts of spans written/dropped.
+///
+/// Writes are synchronous: on native targets this blocks on a stdout write, so
+/// log-export mode is intended for single-threaded / current-thread serverless
+/// runtimes (e.g. AWS Lambda) where there is no shared async reactor to stall.
+#[allow(dead_code)] // Not yet wired into a live send path; see APMSP-2812.
+pub(crate) fn write_log_traces_v1<C: LogWriterCapability + ?Sized, T: TraceData>(
+    capabilities: &C,
+    chunks: &[TraceChunk<T>],
+    max_line_size: usize,
+) -> std::io::Result<EncodeStats> {
+    let mut buf: Vec<u8> = Vec::new();
+    let stats = encode_traces_v1(chunks, &mut buf, max_line_size)?;
     if !buf.is_empty() {
         capabilities.write_log_output(&buf)?;
     }
@@ -88,6 +109,41 @@ mod tests {
         let cap = CapturingLog::default();
         let traces: Vec<Vec<Span<SliceData<'static>>>> = vec![];
         let stats = write_log_traces(&cap, &traces, DEFAULT_LOG_MAX_LINE_SIZE).expect("ok");
+        assert_eq!(stats.spans_written, 0);
+        assert!(cap.0.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn encodes_and_writes_through_capability_v1() {
+        let cap = CapturingLog::default();
+        let chunks = vec![TraceChunk::<SliceData<'static>> {
+            trace_id: [0u8; 16],
+            spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
+                span_id: 2,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+
+        let stats =
+            write_log_traces_v1(&cap, &chunks, DEFAULT_LOG_MAX_LINE_SIZE).expect("write ok");
+        assert_eq!(stats.spans_written, 1);
+        assert_eq!(stats.spans_dropped, 0);
+
+        let out = cap.0.lock().expect("lock");
+        let text = std::str::from_utf8(&out).expect("utf8");
+        assert!(text.ends_with('\n'), "line must be newline-terminated");
+        let v: serde_json::Value = serde_json::from_str(text.trim_end()).expect("valid json");
+        // Forwarder is_trace contract.
+        assert!(v["traces"][0][0]["trace_id"].is_string());
+        assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
+    }
+
+    #[test]
+    fn empty_chunks_do_not_call_capability_v1() {
+        let cap = CapturingLog::default();
+        let chunks: Vec<TraceChunk<SliceData<'static>>> = vec![];
+        let stats = write_log_traces_v1(&cap, &chunks, DEFAULT_LOG_MAX_LINE_SIZE).expect("ok");
         assert_eq!(stats.spans_written, 0);
         assert!(cap.0.lock().expect("lock").is_empty());
     }
