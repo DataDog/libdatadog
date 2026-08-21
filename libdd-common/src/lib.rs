@@ -218,7 +218,7 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 // Used by tag! macro
 pub use const_format;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: http::Uri,
@@ -230,6 +230,18 @@ pub struct Endpoint {
     /// in-process resolver is used.
     #[serde(default)]
     pub use_system_resolver: bool,
+}
+
+impl core::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("url", &self.url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("timeout_ms", &self.timeout_ms)
+            .field("test_token", &self.test_token)
+            .field("use_system_resolver", &self.use_system_resolver)
+            .finish()
+    }
 }
 
 impl Default for Endpoint {

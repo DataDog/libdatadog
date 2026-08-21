@@ -20,12 +20,54 @@ use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
 };
+use libdd_trace_utils::stats_payload_encoder::{
+    build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
+    MAX_GROUPED_STATS_PER_PAYLOAD,
+};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
 use tracing::error;
 
 pub const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
+
+/// A fully-built HTTP request ready to be sent by the [`StatsExporter`].
+///
+/// The exporter is agnostic to how the body was produced: the agent and
+/// agentless destinations each build their own [`StatsRequest`] with the
+/// appropriate encoding, headers, compression, and retry strategy.
+pub struct StatsRequest {
+    pub body: Vec<u8>,
+    pub headers: http::HeaderMap,
+    pub compression: CompressionStrategy,
+    pub endpoint: Endpoint,
+    pub retry: RetryStrategy,
+}
+
+#[derive(Debug)]
+pub enum StatsDestination {
+    /// Send `ClientStatsPayload` as msgpack to the Agent's `/v0.6/stats`.
+    Agent { endpoint: Endpoint },
+    /// Send the top-level `StatsPayload` as zstd-compressed msgpack directly to
+    /// the intake (`/api/v0.2/stats`), authenticated.
+    Agentless(AgentlessStatsTarget),
+}
+
+/// Parameters needed to send stats directly to the Datadog intake.
+///
+/// This type is intentionally free of any Agent-specific concepts. `hostname`
+/// and `env` for the `StatsPayload` are taken from the exporter's
+/// [`StatsMetadata`]; only intake-specific values live here.
+#[derive(Debug)]
+pub struct AgentlessStatsTarget {
+    /// Full intake endpoint (e.g. `https://trace.agent.<site>/api/v0.2/stats`),
+    /// carrying the Datadog API key. `send_with_retry` derives the `dd-api-key`
+    /// header from [`Endpoint::api_key`].
+    pub endpoint: Endpoint,
+    /// `agent_version` field of the `StatsPayload`: the library version suffixed
+    /// with the language, so the backend can tell libdatadog tracers from the Agent.
+    pub version: String,
+}
 
 /// Health metric name for the number of spans collapsed.
 pub const COLLAPSED_SPANS_HEALTH_METRIC: &str = "datadog.tracer.stats.collapsed_spans";
@@ -93,7 +135,7 @@ pub struct StatsExporter<
 > {
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
-    endpoint: Endpoint,
+    destination: StatsDestination,
     meta: StatsMetadata,
     sequence_id: AtomicU64,
     capabilities: Cap,
@@ -115,7 +157,7 @@ impl<
         Con: FlushableConcentrator,
     > StatsExporter<Cap, Con>
 {
-    /// Return a new StatsExporter
+    /// Return a new StatsExporter targeting the Datadog Agent's `/v0.6/stats`.
     ///
     /// - `flush_interval` the interval on which the concentrator is flushed
     /// - `concentrator` an impl of `FlushableConcentrator` storing the stats to be sent to the
@@ -128,6 +170,68 @@ impl<
         concentrator: Arc<Mutex<Con>>,
         meta: StatsMetadata,
         endpoint: Endpoint,
+        capabilities: Cap,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+        #[cfg(feature = "telemetry")] telemetry: Option<
+            libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
+        >,
+        #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
+    ) -> Self {
+        Self::from_parts(
+            flush_interval,
+            concentrator,
+            meta,
+            StatsDestination::Agent { endpoint },
+            capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
+            #[cfg(feature = "telemetry")]
+            telemetry,
+            #[cfg(feature = "dogstatsd")]
+            dogstatsd,
+        )
+    }
+
+    /// Return a new StatsExporter that sends the top-level `StatsPayload`
+    /// directly to the Datadog intake (agentless).
+    ///
+    /// This path is fully decoupled from the Agent transport: it wraps the
+    /// flushed buckets in a `StatsPayload`, msgpack-encodes it, and posts it to
+    /// `target.endpoint` with `dd-api-key` auth and zstd compression.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_agentless(
+        flush_interval: time::Duration,
+        concentrator: Arc<Mutex<Con>>,
+        meta: StatsMetadata,
+        target: AgentlessStatsTarget,
+        capabilities: Cap,
+        #[cfg(feature = "telemetry")] telemetry: Option<
+            libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
+        >,
+        #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
+    ) -> Self {
+        Self::from_parts(
+            flush_interval,
+            concentrator,
+            meta,
+            StatsDestination::Agentless(target),
+            capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            telemetry,
+            #[cfg(feature = "dogstatsd")]
+            dogstatsd,
+        )
+    }
+
+    /// Shared constructor for both the Agent and agentless destinations.
+    #[allow(clippy::too_many_arguments)]
+    fn from_parts(
+        flush_interval: time::Duration,
+        concentrator: Arc<Mutex<Con>>,
+        meta: StatsMetadata,
+        destination: StatsDestination,
         capabilities: Cap,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
         #[cfg(feature = "telemetry")] telemetry: Option<
@@ -149,7 +253,7 @@ impl<
         Self {
             flush_interval,
             concentrator,
-            endpoint,
+            destination,
             meta,
             sequence_id: AtomicU64::new(0),
             capabilities,
@@ -229,16 +333,74 @@ impl<
         Ok(sent_stats)
     }
 
-    /// Encode the given buckets into a stats payload and send it to the agent.
+    /// Encode the buckets into stats payloads and send them.
     ///
-    /// `obfuscated` indicates whether the buckets were obfuscated client-side, in which case the
-    /// `datadog-obfuscation-version` header is added.
+    /// Buckets over [`MAX_GROUPED_STATS_PER_PAYLOAD`] are split into several payloads. Like the
+    /// Agent, all fragments of one flush share a sequence id, are flagged `split_payload`, and are
+    /// sent in separate requests.
+    ///
+    /// `obfuscated` adds the `datadog-obfuscation-version` header.
     async fn send_payload(
         &self,
         buckets: Vec<pb::ClientStatsBucket>,
-        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))] obfuscated: bool,
+        obfuscated: bool,
     ) -> anyhow::Result<()> {
+        let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+        let split = groups.len() > 1;
+        // All fragments of one flush share a single sequence id, as the Agent does.
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+        for group in groups {
+            self.send_single_payload(group, obfuscated, split, sequence)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Encode a single (already split) group of buckets into a stats payload and send it.
+    async fn send_single_payload(
+        &self,
+        buckets: Vec<pb::ClientStatsBucket>,
+        obfuscated: bool,
+        split: bool,
+        sequence: u64,
+    ) -> anyhow::Result<()> {
+        let request = match &self.destination {
+            StatsDestination::Agent { endpoint } => {
+                self.build_agent_request(endpoint.clone(), sequence, buckets, obfuscated)?
+            }
+            StatsDestination::Agentless(target) => {
+                build_agentless_request(&self.meta, sequence, buckets, target, split)?
+            }
+        };
+
+        let result = send_with_retry(
+            &self.capabilities,
+            &request.endpoint,
+            request.body,
+            &request.headers,
+            &request.retry,
+            request.compression,
+        )
+        .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!(?err, "Error with the StatsExporter when sending stats");
+                anyhow::bail!("Failed to send stats: {err}");
+            }
+        }
+    }
+
+    /// Build the request for the Agent `/v0.6/stats` destination: a
+    /// `ClientStatsPayload` serialized as msgpack, uncompressed.
+    fn build_agent_request(
+        &self,
+        endpoint: Endpoint,
+        sequence: u64,
+        buckets: Vec<pb::ClientStatsBucket>,
+        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))] obfuscated: bool,
+    ) -> anyhow::Result<StatsRequest> {
         let payload = encode_stats_payload(&self.meta, sequence, buckets);
         let body = rmp_serde::encode::to_vec_named(&payload)?;
 
@@ -255,24 +417,75 @@ impl<
             );
         }
 
-        let result = send_with_retry(
-            &self.capabilities,
-            &self.endpoint,
+        Ok(StatsRequest {
             body,
-            &headers,
-            &RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
-            CompressionStrategy::None,
-        )
-        .await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                error!(?err, "Error with the StatsExporter when sending stats");
-                anyhow::bail!("Failed to send stats: {err}");
-            }
-        }
+            headers,
+            compression: CompressionStrategy::None,
+            endpoint,
+            retry: RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
+        })
     }
+}
+
+/// Number of retries used by the agentless intake stats sender.
+const AGENTLESS_STATS_MAX_RETRIES: u32 = 2;
+/// Initial retry delay (ms) used by the agentless intake stats sender.
+const AGENTLESS_STATS_RETRY_DELAY_MS: u64 = 1000;
+
+/// Build the request for the agentless intake `/api/v0.2/stats` destination.
+///
+/// The buckets are wrapped in a `ClientStatsPayload`, then a `StatsPayload`,
+/// serialized as msgpack and compressed with zstd (`Content-Encoding: zstd` set
+/// by `send_with_retry`). Auth uses the `dd-api-key` header. Shares no logic
+/// with the Agent transport.
+///
+/// `split` marks this payload as one fragment of a split flush (see `send_payload`).
+fn build_agentless_request(
+    meta: &StatsMetadata,
+    sequence: u64,
+    buckets: Vec<pb::ClientStatsBucket>,
+    target: &AgentlessStatsTarget,
+    split: bool,
+) -> anyhow::Result<StatsRequest> {
+    let mut client_payload = encode_stats_payload(meta, sequence, buckets);
+    // Unlike the Agent path, no Agent enriches the payload downstream, so populate the
+    // informative `lang`/`tracer_version` fields ourselves.
+    client_payload.lang = meta.language.clone();
+    client_payload.tracer_version = meta.tracer_version.clone();
+    let payload = build_stats_payload(
+        client_payload,
+        meta.hostname.clone(),
+        meta.env.clone(),
+        target.version.clone(),
+        split,
+    );
+    let body = encode_stats_payload_msgpack(&payload)?;
+
+    // `dd-api-key` and entity headers are set automatically by `send_with_retry` from the
+    // endpoint (`Endpoint::api_key`), so only the payload-specific headers are added here.
+    let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        libdd_common::header::APPLICATION_MSGPACK,
+    );
+
+    #[cfg(feature = "compression")]
+    let compression = CompressionStrategy::Zstd { level: 1 };
+    #[cfg(not(feature = "compression"))]
+    let compression = CompressionStrategy::None;
+
+    Ok(StatsRequest {
+        body,
+        headers,
+        compression,
+        endpoint: target.endpoint.clone(),
+        retry: RetryStrategy::new(
+            AGENTLESS_STATS_MAX_RETRIES,
+            AGENTLESS_STATS_RETRY_DELAY_MS,
+            RetryBackoffType::Exponential,
+            None,
+        ),
+    })
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -440,6 +653,59 @@ mod tests {
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap();
+
+        mock.assert_async().await;
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_agentless_stats() {
+        use super::AgentlessStatsTarget;
+
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                let w = when
+                    .method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .header("dd-api-key", "test-api-key")
+                    .path("/api/v0.2/stats");
+                // The agentless intake compresses with zstd when the feature is enabled;
+                // otherwise the raw msgpack body is sent and contains the service name.
+                #[cfg(feature = "compression")]
+                let w = w.header("Content-Encoding", "zstd");
+                #[cfg(not(feature = "compression"))]
+                // `libdatadog-test` is the service; `rust` is the lang field that must now be
+                // populated by us (the Agent no longer sets it in agentless mode).
+                let w = w.body_includes("libdatadog-test").body_includes("rust");
+                let _ = w;
+                then.status(202).body("");
+            })
+            .await;
+
+        let target = AgentlessStatsTarget {
+            endpoint: Endpoint {
+                api_key: Some("test-api-key".into()),
+                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+            },
+            version: "1.2.3-libdatadog".to_string(),
+        };
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new_agentless(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            target,
+            NativeCapabilities::new_client(),
             #[cfg(feature = "telemetry")]
             None,
             #[cfg(feature = "dogstatsd")]

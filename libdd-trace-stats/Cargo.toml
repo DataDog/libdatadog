@@ -54,6 +54,8 @@ tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util"
 [features]
 default = ["https"]
 stats-obfuscation = []
+# Enable zstd compression for the agentless intake stats sender.
+compression = ["libdd-trace-utils/compression"]
 telemetry = ["libdd-telemetry"]
 dogstatsd = ["libdd-dogstatsd-client"]
 https = ["libdd-common/https", "libdd-capabilities-impl/https", "libdd-shared-runtime/https","libdd-telemetry?/https","libdd-dogstatsd-client?/https" ]

@@ -397,8 +397,8 @@ impl<
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
 
@@ -645,8 +645,8 @@ impl<
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
@@ -657,11 +657,17 @@ impl<
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
+        stats_computed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // When local stats computation is active (agentless stats path), the
+        // intake must not also compute stats for these traces.  Suppressing
+        // `_dd.compute_stats=1` prevents double-counting.
+        let suppress_compute_stats = stats_computed;
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
             &traces,
             &self.metadata,
+            suppress_compute_stats,
         )
         .map_err(|e| {
             error!("Agentless JSON serialization error: {e}");
@@ -803,25 +809,14 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-
-            return self.send_agentless_traces_inner(traces, config).await;
-        }
-
-        // Process stats computation and drop non-sampled (p0) chunks.
-        // This must run before the OTLP path so that unsampled spans are not exported.
-        stats::process_traces_for_stats(
+        let stats_computed = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
+            // if agentless is enabled, we want to compute top-level
+            // regardless of wether stats is enabled or not``
+            self.agentless_config.is_some(),
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
             self.telemetry.load_full().as_deref(),
@@ -831,6 +826,15 @@ impl<
             for span in chunk.iter_mut() {
                 span.dedup();
             }
+        }
+
+        if let Some(ref config) = self.agentless_config {
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+            return self
+                .send_agentless_traces_inner(traces, config, stats_computed)
+                .await;
         }
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
