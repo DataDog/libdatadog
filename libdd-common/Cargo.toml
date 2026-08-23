@@ -34,7 +34,7 @@ regex-lite = { version = "0.1", optional = true }
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
 # Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
-# backend. We install the ring provider explicitly in connector/mod.rs instead.
+# backend. We install the ring provider explicitly in connector/http_client.rs instead.
 reqwest = { version = "0.13.2", features = ["rustls-no-provider", "hickory-dns"], default-features = false, optional = true }
 criterion = { workspace = true, optional = true }
 rustls-native-certs = { version = ">=0.8.1, <0.8.3", optional = true }
@@ -130,8 +130,8 @@ bench-utils = ["dep:criterion"]
 # provider default needs to be set by the caller in fips mode. For now, we want
 # to make sure that the coverage tests use the non-fips version of the crypto
 # provider initialization logic, so we added a coverage cfg check on the
-# function in src/connector/mod.rs. The coverage config is actually not used in
-# normal environments, so we need to let the rust linter know that it is in
+# function in src/connector/http_client.rs. The coverage config is actually not
+# used in normal environments, so we need to let the rust linter know that it is in
 # fact a real thing, though one that shows up only in some situations.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 

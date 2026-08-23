@@ -753,14 +753,6 @@ impl<
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-
             return self.send_agentless_traces_inner(traces, config).await;
         }
 

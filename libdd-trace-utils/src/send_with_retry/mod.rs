@@ -15,7 +15,7 @@ use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
-use std::time::Duration;
+use std::{fmt, time::Duration};
 use tracing::{debug, error};
 
 pub type Attempts = u32;
@@ -28,12 +28,24 @@ pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWit
 /// call to [`Self::request`] creates a fresh request with a cheaply cloned
 /// [`Bytes`] body, allowing a host runtime to implement retries without using
 /// libdatadog's HTTP client or async executor.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PreparedRequest {
     target: Endpoint,
     payload: Bytes,
     headers: HeaderMap,
     compression_strategy: CompressionStrategy,
+}
+
+impl fmt::Debug for PreparedRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedRequest")
+            .field("url", &self.target.url)
+            .field("timeout", &self.timeout())
+            .field("payload_len", &self.payload.len())
+            .field("compression_strategy", &self.compression_strategy)
+            .finish()
+    }
 }
 
 impl PreparedRequest {
@@ -364,6 +376,32 @@ mod tests {
         assert_eq!(first.body(), second.body());
         assert_eq!(prepared.payload().as_ref(), &[1, 2, 3]);
         assert_eq!(prepared.timeout(), Duration::from_millis(1_234));
+    }
+
+    #[test]
+    fn prepared_request_debug_redacts_sensitive_data() {
+        let target = Endpoint {
+            url: "https://example.test/v1/input".parse().unwrap(),
+            api_key: Some("endpoint-secret".into()),
+            ..Default::default()
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("dd-api-key"),
+            HeaderValue::from_static("header-secret"),
+        );
+        let prepared = PreparedRequest::new(
+            target,
+            b"payload-secret".to_vec(),
+            headers,
+            CompressionStrategy::None,
+        );
+
+        let debug = format!("{prepared:?}");
+        assert!(!debug.contains("endpoint-secret"));
+        assert!(!debug.contains("header-secret"));
+        assert!(!debug.contains("payload-secret"));
+        assert!(debug.contains("payload_len: 14"));
     }
 
     #[cfg_attr(miri, ignore)]

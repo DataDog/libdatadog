@@ -21,7 +21,6 @@ pub mod azure_app_services;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(feature = "http-client")]
 pub mod connector;
 #[cfg(feature = "reqwest")]
 #[cfg(feature = "http-client")]
