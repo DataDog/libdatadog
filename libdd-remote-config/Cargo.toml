@@ -28,6 +28,7 @@ client = [
     "base64",
     "sha2",
     "uuid",
+    "getrandom",
     "dep:futures",
     "futures-util",
     "tokio",
@@ -58,7 +59,8 @@ http-body-util = { version = "0.1", optional = true }
 http = { version = "1.1", optional = true }
 base64 = { version = "0.22.1", optional = true }
 sha2 = { version = "0.10", optional = true }
-uuid = { workspace = true, features = ["v4", "std"], optional = true }
+getrandom = { version = "0.2", optional = true }
+uuid = { workspace = true, features = ["std"], optional = true }
 futures-util = { version = "0.3", optional = true }
 tokio = { workspace = true, optional = true, features = ["macros"] }
 tokio-util = { version = "0.7.10", optional = true }
@@ -95,7 +97,6 @@ hyper-util = { workspace = true, features = [
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-uuid = { workspace = true, features = ["js", "std"] }
 # For `tuf` ring needs this feature for `SystemRandom` on wasm.
 ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"], optional = true }
 
