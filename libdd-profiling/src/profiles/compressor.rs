@@ -4,13 +4,22 @@
 use std::io::{self, BufWriter, Read, Write};
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
+#[cfg(target_arch = "wasm32")]
+const MIN_ZRIP_COMPRESSION_LEVEL: i32 = -7;
+#[cfg(target_arch = "wasm32")]
+const MAX_ZRIP_COMPRESSION_LEVEL: i32 = 4;
 
 fn zstd_compression_level(level: i32) -> i32 {
-    if level == 0 {
+    let level = if level == 0 {
         DEFAULT_COMPRESSION_LEVEL
     } else {
         level
-    }
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let level = level.clamp(MIN_ZRIP_COMPRESSION_LEVEL, MAX_ZRIP_COMPRESSION_LEVEL);
+
+    level
 }
 
 /// This type wraps a [`Vec`] to provide a [`Write`] interface that has a max
@@ -131,9 +140,9 @@ impl ProfileCodec for NoopProfileCodec {
 
 /// A zstd-compatible profile codec.
 ///
-/// WASM accepts levels `-7..=4`. Native targets accept the range reported by
-/// `zstd::compression_level_range()`, making `-7..=4` the portable range. Level
-/// `0` selects level `3` on every target.
+/// Native targets accept the range reported by `zstd::compression_level_range()`.
+/// WASM clamps levels to zrip's supported range of `-7..=4`. Level `0` selects
+/// level `3` on every target.
 #[allow(unused)]
 pub struct ZstdProfileCodec;
 
@@ -333,5 +342,11 @@ mod tests {
     #[test]
     fn zero_uses_default_compression_level() {
         assert_eq!(compress(0), compress(DEFAULT_COMPRESSION_LEVEL));
+    }
+
+    #[test]
+    fn native_compression_level_is_not_clamped() {
+        assert_eq!(zstd_compression_level(22), 22);
+        assert!(!compress(22).is_empty());
     }
 }

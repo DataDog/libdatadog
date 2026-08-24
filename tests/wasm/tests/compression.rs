@@ -37,7 +37,7 @@ fn trace_compression_uses_zrip() {
 }
 
 #[wasm_bindgen_test::wasm_bindgen_test]
-fn trace_compression_levels_are_portable() {
+fn trace_compression_levels_are_clamped() {
     use trace_compression::{compress, CompressionStrategy};
 
     let payload = b"hello zstd".repeat(100);
@@ -46,11 +46,12 @@ fn trace_compression_levels_are_portable() {
         assert!(matches!(strategy, CompressionStrategy::Zstd { level: actual } if actual == level));
         assert_eq!(zrip::decompress(&compressed).unwrap(), payload);
     }
-    for level in [-8, 5] {
-        let (uncompressed, strategy) =
-            compress(payload.clone(), CompressionStrategy::Zstd { level });
-        assert!(matches!(strategy, CompressionStrategy::None));
-        assert_eq!(uncompressed, payload);
+    for (level, expected) in [(-8, -7), (5, 4), (22, 4)] {
+        let (compressed, strategy) = compress(payload.clone(), CompressionStrategy::Zstd { level });
+        assert!(
+            matches!(strategy, CompressionStrategy::Zstd { level: actual } if actual == expected)
+        );
+        assert_eq!(zrip::decompress(&compressed).unwrap(), payload);
     }
 }
 
@@ -59,10 +60,12 @@ fn trace_compression_zero_uses_level_three() {
     use trace_compression::{compress, CompressionStrategy};
 
     let payload = b"hello zstd".repeat(100);
-    let (default_compressed, _) = compress(payload.clone(), CompressionStrategy::Zstd { level: 0 });
+    let (default_compressed, strategy) =
+        compress(payload.clone(), CompressionStrategy::Zstd { level: 0 });
     let (level_three_compressed, _) = compress(payload, CompressionStrategy::Zstd { level: 3 });
 
     assert_eq!(default_compressed, level_three_compressed);
+    assert!(matches!(strategy, CompressionStrategy::Zstd { level: 3 }));
 }
 
 #[wasm_bindgen_test::wasm_bindgen_test]
@@ -82,14 +85,17 @@ fn profiling_codecs_use_zrip() {
 }
 
 #[wasm_bindgen_test::wasm_bindgen_test]
-fn profiling_compression_levels_are_portable() {
+fn profiling_compression_levels_are_clamped() {
     let payload = b"hello profile".repeat(100);
     for level in [-7, 4] {
         let compressed = compress_profile(&payload, level).unwrap();
         assert_eq!(zrip::decompress(&compressed).unwrap(), payload);
     }
-    for level in [-8, 5] {
-        assert!(compress_profile(&payload, level).is_err());
+    for (level, expected) in [(-8, -7), (5, 4), (22, 4)] {
+        assert_eq!(
+            compress_profile(&payload, level).unwrap(),
+            compress_profile(&payload, expected).unwrap()
+        );
     }
 }
 
