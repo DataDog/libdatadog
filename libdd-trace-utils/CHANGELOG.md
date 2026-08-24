@@ -2,6 +2,18 @@
 
 
 
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.1.0..libdd-trace-utils-v11.0.0) - 2026-08-24
+
+### Added
+
+- Use zrip for wasm targets ([#2386](https://github.com/datadog/libdatadog/issues/2386)) - ([9d6b2ff](https://github.com/datadog/libdatadog/commit/9d6b2ffb3d86bb052a822a5e9a9bcfeb62514983))
+
+### Fixed
+
+- Fix forward compatibility for string streaming ([#2295](https://github.com/datadog/libdatadog/issues/2295)) - ([24022a9](https://github.com/datadog/libdatadog/commit/24022a96fb4410d7931bf4fc50b848f7c5e3024e))
+
+
+
 ## [10.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.0.0..libdd-trace-utils-v10.1.0) - 2026-08-17
 
 ### Added
