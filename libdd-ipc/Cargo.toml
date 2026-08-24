@@ -1,6 +1,6 @@
 [package]
 name = "libdd-ipc"
-version = "0.1.0"
+version = "1.0.0"
 description = "IPC implementation for libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
