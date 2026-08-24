@@ -73,9 +73,9 @@ pub fn set_handler_path(atom: &AtomicPtr<CString>, path: &Path) -> Result<()> {
 /// Writes `contents` to the path published by [`set_handler_path`], using only async-signal-safe
 /// calls and leaving `errno` as it was found.
 ///
-/// A handler must not allocate. `fork()` holds libmalloc's lock across its atfork hooks, and these
-/// tests fork to generate the very signal being handled, so an allocating handler can interrupt
-/// the lock holder and re-enter that lock. macOS kills the process for it.
+/// A handler must not allocate. `fork()` can hold the alloctor's lock across its atfork hooks, and
+/// these tests fork to generate the very signal being handled, so an allocating handler can
+/// interrupt the lock holder and re-enter that lock
 pub fn handler_write_msg(atom: &AtomicPtr<CString>, contents: &[u8]) {
     let path = atom.load(Ordering::SeqCst);
     if path.is_null() {
