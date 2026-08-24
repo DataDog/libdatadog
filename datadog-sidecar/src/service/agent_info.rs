@@ -129,7 +129,11 @@ impl AgentInfoFetcher {
                                 };
                             }
                             if let Some(ref writer) = writer {
-                                writer.write(&serde_json::to_vec(&status.info).unwrap())
+                                if let Err(e) =
+                                    writer.write(&serde_json::to_vec(&status.info).unwrap())
+                                {
+                                    error!("Failed to write agent info shm segment: {e}");
+                                }
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));

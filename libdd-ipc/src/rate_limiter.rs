@@ -72,7 +72,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         }
     }
 
-    fn next_free(&mut self) -> u32 {
+    fn next_free(&mut self) -> io::Result<u32> {
         let mut first_free = self.first_free_ref().load(Ordering::Relaxed);
         loop {
             let mut target_next_free = ShmLimiter {
@@ -90,7 +90,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
                 #[allow(clippy::unwrap_used)]
                 self.mem.write().unwrap().ensure_space(
                     target_next_free as usize + std::mem::size_of::<ShmLimiterData<Inner>>(),
-                );
+                )?;
             }
             match self.first_free_ref().compare_exchange(
                 first_free,
@@ -98,19 +98,19 @@ impl<Inner> ShmLimiterMemory<Inner> {
                 Ordering::Release,
                 Ordering::Relaxed,
             ) {
-                Ok(_) => return first_free,
+                Ok(_) => return Ok(first_free),
                 Err(found) => first_free = found,
             }
         }
     }
 
-    pub fn alloc(&mut self) -> ShmLimiter<Inner> {
+    pub fn alloc(&mut self) -> io::Result<ShmLimiter<Inner>> {
         self.alloc_with_granularity(1)
     }
 
-    pub fn alloc_with_granularity(&mut self, seconds: u32) -> ShmLimiter<Inner> {
+    pub fn alloc_with_granularity(&mut self, seconds: u32) -> io::Result<ShmLimiter<Inner>> {
         let reference = ShmLimiter {
-            idx: self.next_free(),
+            idx: self.next_free()?,
             memory: self.clone(),
         };
         let limiter = reference.limiter();
@@ -121,7 +121,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
                 .limiter
                 .reset(seconds)
         };
-        reference
+        Ok(reference)
     }
 
     fn ensure_index(&self, idx: u32) -> Option<()> {
@@ -131,7 +131,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
             let mut mem = self.mem.write().unwrap();
             let mut cur_size = mem.mem.get_size() as u32;
             if cur_size < end {
-                mem.ensure_space(end as usize);
+                mem.ensure_space(end as usize).ok()?;
                 cur_size = mem.mem.get_size() as u32;
                 if cur_size < end {
                     return None;
@@ -337,7 +337,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_limiters() {
         let mut limiters = ShmLimiterMemory::<()>::create(path()).unwrap();
-        let limiter = limiters.alloc();
+        let limiter = limiters.alloc().unwrap();
         let limiter_idx = limiter.idx;
         // Two are allowed, then one more because a small amount of time passed since the first one
         assert!(limiter.inc(2));
@@ -352,17 +352,17 @@ mod tests {
         assert!(!limiter.inc(2));
 
         // Now test the free list
-        let limiter2 = limiters.alloc();
+        let limiter2 = limiters.alloc().unwrap();
         assert_eq!(
             limiter2.idx,
             limiter_idx + std::mem::size_of::<ShmLimiterData<()>>() as u32
         );
         drop(limiter);
 
-        let limiter = limiters.alloc();
+        let limiter = limiters.alloc().unwrap();
         assert_eq!(limiter.idx, limiter_idx);
 
-        let limiter3 = limiters.alloc();
+        let limiter3 = limiters.alloc().unwrap();
         assert_eq!(
             limiter3.idx,
             limiter2.idx + std::mem::size_of::<ShmLimiterData<()>>() as u32

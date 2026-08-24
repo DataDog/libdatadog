@@ -3,7 +3,6 @@
 
 use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
-use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
@@ -138,7 +137,7 @@ impl RemoteConfigWriter {
         })
     }
 
-    pub fn write(&self, contents: &[u8]) {
+    pub fn write(&self, contents: &[u8]) -> io::Result<()> {
         self.writer.write(contents)
     }
 
@@ -188,7 +187,17 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                Some(SHM_LIMITER.lock_or_panic().alloc())
+                crate::tracer::with_shm_limiter(|mem| mem.alloc()).and_then(|result| {
+                    result
+                        .inspect_err(|e| {
+                            warn!(
+                                "Failed to allocate a shared-memory rate limiter slot for \
+                                     live debugging config (will retry on the next remote config \
+                                     fetch): {e}"
+                            );
+                        })
+                        .ok()
+                })
             } else {
                 None
             },
@@ -328,7 +337,12 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
         }
 
         if writer.writer.as_slice() != serialized {
-            writer.write(&serialized);
+            if let Err(e) = writer.write(&serialized) {
+                warn!(
+                    "Failed to write remote config shm segment (will retry on the next fetch): {e}"
+                );
+                return false;
+            }
 
             debug!(
                 "Active configuration files are: {}",
@@ -351,7 +365,10 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     fn expired(&self, target: &Arc<Target>) {
         if let Some(writer) = self.writers.lock_or_panic().remove(target) {
             // clear to signal it's no longer being fetched
-            writer.write(&[]);
+            if let Err(e) = writer.write(&[]) {
+                // shouldn't happen as it never should increase shm size
+                warn!("Failed to clear remote config shm segment on expiry: {e}");
+            }
         }
     }
 

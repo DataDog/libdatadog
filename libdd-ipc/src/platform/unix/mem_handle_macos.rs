@@ -158,17 +158,16 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
+    pub fn ensure_space(&mut self, expected_size: usize) -> io::Result<()> {
         if expected_size <= self.mem.get_shm().size {
-            return;
+            return Ok(());
         }
-        #[allow(clippy::panic)]
         if expected_size > MAPPING_MAX_SIZE - page_size::get() {
-            panic!(
+            return Err(io::Error::other(format!(
                 "Tried to allocate {} bytes for shared mapping (limit: {} bytes)",
                 expected_size,
                 MAPPING_MAX_SIZE - page_size::get()
-            );
+            )));
         }
 
         // SAFETY: we'll overwrite the original memory later
@@ -176,28 +175,32 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
 
         #[allow(clippy::unwrap_used)]
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
-        unsafe {
-            _ = handle.set_mapping_size(expected_size);
+        let mapped = (|| -> io::Result<()> {
+            unsafe {
+                handle
+                    .set_mapping_size(expected_size)
+                    .map_err(io::Error::other)?;
 
-            #[allow(clippy::unwrap_used)]
-            let ptr = mmap(
-                None,
-                page_size,
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                handle.get_shm().handle.as_owned_fd().unwrap(),
-                (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
-            )
-            .unwrap();
-            let size = AtomicUsize::from_ptr(ptr.cast::<usize>().as_ptr());
-            size.fetch_max(handle.get_size(), Ordering::SeqCst);
-            _ = munmap(ptr, usize::from(page_size));
-        }
+                let ptr = mmap(
+                    None,
+                    page_size,
+                    ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                    MapFlags::MAP_SHARED,
+                    handle.get_shm().handle.as_owned_fd()?,
+                    (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
+                )?;
+                let size = AtomicUsize::from_ptr(ptr.cast::<usize>().as_ptr());
+                size.fetch_max(handle.get_size(), Ordering::SeqCst);
+                _ = munmap(ptr, usize::from(page_size));
+            }
+            Ok(())
+        })();
 
         #[allow(clippy::unwrap_used)]
         unsafe {
             std::ptr::write(self, handle.map().unwrap())
         };
+        mapped
     }
 }
 
