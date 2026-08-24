@@ -1,19 +1,19 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Reproducer for the async-signal-unsafe SIGCHLD handler used by the `sigchld` bin tests.
+//! Shows why the `sigchld` bin tests must keep their SIGCHLD handler async-signal-safe.
 //!
-//! `test_002_sigchld`, `test_003_sigchld_with_exec` and `test_006_sigchld_sigstack` install a
-//! SIGCHLD handler that allocates: `atom_to_clone` clones a `PathBuf`, and `file_write_msg` opens
-//! and writes through Rust's `File`. Both reach malloc.
+//! `test_002_sigchld`, `test_003_sigchld_with_exec` and `test_006_sigchld_sigstack` used to install
+//! a handler that allocated: `atom_to_clone` clones a `PathBuf`, and `file_write_msg` opens and
+//! writes through Rust's `File`. Both reach malloc.
 //!
-//! A child can exit before its parent has finished returning from `fork()`, so SIGCHLD is
-//! routinely delivered while libmalloc holds the lock its atfork hooks take. A handler that
-//! allocates there re-enters that lock: macOS kills the process outright ("BUG IN CLIENT OF
-//! LIBPLATFORM: Trying to recursively lock an os_unfair_lock"), and elsewhere it can deadlock.
+//! A child can exit before its parent has finished returning from `fork()`, so SIGCHLD is routinely
+//! delivered while libmalloc holds the lock its atfork hooks take. A handler that allocates there
+//! re-enters that lock: macOS kills the process outright ("BUG IN CLIENT OF LIBPLATFORM: Trying to
+//! recursively lock an os_unfair_lock"), and elsewhere it can deadlock.
 //!
-//! This runs the tests' handler and an async-signal-safe equivalent, each in its own child process,
-//! and reports how each fares:
+//! This runs that old handler against the `handler_write_msg` the tests now use, each in its own
+//! child process, and reports how each fares:
 //!
 //! ```not_rust
 //! cargo run -p bin_tests --example sigchld_async_signal_safety [iterations]
@@ -35,7 +35,9 @@ fn main() -> anyhow::Result<()> {
 #[cfg(unix)]
 mod unix {
     use anyhow::{Context, Result};
-    use bin_tests::modes::behavior::{atom_to_clone, file_write_msg, set_atomic};
+    use bin_tests::modes::behavior::{
+        atom_to_clone, file_write_msg, handler_write_msg, set_atomic, set_handler_path,
+    };
     use std::ffi::CString;
     use std::os::unix::process::ExitStatusExt;
     use std::path::{Path, PathBuf};
@@ -50,7 +52,7 @@ mod unix {
     const PROGRESS_FILE: &str = "progress";
     const CHECK_FILE: &str = "check";
 
-    /// The handler the sigchld bin tests install, reproduced verbatim from their own helpers.
+    /// The handler the sigchld bin tests used to install, built from the same helpers it used.
     static ALLOCATING_OUTPUT: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
 
     extern "C" fn allocating_handler(_: libc::c_int) {
@@ -61,27 +63,11 @@ mod unix {
         file_write_msg(&ofile, "O").ok();
     }
 
-    /// The same handler written to be async-signal-safe: a preformatted path, raw syscalls, no
-    /// allocation. This is the idiom `test_016_errno_preservation` already uses.
+    /// The handler those tests install today.
     static SAFE_OUTPUT: AtomicPtr<CString> = AtomicPtr::new(std::ptr::null_mut());
 
     extern "C" fn safe_handler(_: libc::c_int) {
-        let path = SAFE_OUTPUT.load(Ordering::SeqCst);
-        if path.is_null() {
-            return;
-        }
-        // SAFETY: `SAFE_OUTPUT` holds null or a leaked, still-live `CString`.
-        unsafe {
-            let fd = libc::open(
-                (*path).as_ptr(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
-                0o644,
-            );
-            if fd >= 0 {
-                libc::write(fd, b"O".as_ptr().cast(), 1);
-                libc::close(fd);
-            }
-        }
+        handler_write_msg(&SAFE_OUTPUT, b"O");
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -232,8 +218,7 @@ mod unix {
                 install_handler(allocating_handler)?;
             }
             Variant::Safe => {
-                let cpath = CString::new(check_path.as_os_str().as_encoded_bytes())?;
-                SAFE_OUTPUT.store(Box::into_raw(Box::new(cpath)), Ordering::SeqCst);
+                set_handler_path(&SAFE_OUTPUT, &check_path)?;
                 install_handler(safe_handler)?;
             }
         }
