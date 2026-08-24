@@ -3,7 +3,9 @@
 
 #![cfg(unix)]
 use anyhow::{Context, Result};
+use errno::{errno, set_errno};
 use libdd_crashtracker::CrashtrackerConfiguration;
+use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -57,6 +59,43 @@ pub fn wait_for_file_content(filepath: &Path, contents: &str, timeout: Duration)
 
         std::thread::sleep(SIGNAL_HANDLER_POLL_INTERVAL);
     }
+}
+
+/// Publishes `path` for a signal handler to write to later, in a form that needs no allocation at
+/// delivery time. The previous value is leaked, since a late signal may still be reading it.
+pub fn set_handler_path(atom: &AtomicPtr<CString>, path: &Path) -> Result<()> {
+    let cpath = CString::new(path.as_os_str().as_encoded_bytes())
+        .with_context(|| format!("Path is not a valid C string: {}", path.display()))?;
+    atom.store(Box::into_raw(Box::new(cpath)), Ordering::SeqCst);
+    Ok(())
+}
+
+/// Writes `contents` to the path published by [`set_handler_path`], using only async-signal-safe
+/// calls and leaving `errno` as it was found.
+///
+/// A handler must not allocate. `fork()` can hold the alloctor's lock across its atfork hooks, and
+/// these tests fork to generate the very signal being handled, so an allocating handler can
+/// interrupt the lock holder and re-enter that lock
+pub fn handler_write_msg(atom: &AtomicPtr<CString>, contents: &[u8]) {
+    let path = atom.load(Ordering::SeqCst);
+    if path.is_null() {
+        return;
+    }
+
+    let saved_errno = errno();
+    // SAFETY: `atom` only ever holds null or a leaked, still-live `CString`.
+    unsafe {
+        let fd = libc::open(
+            (*path).as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+            0o644,
+        );
+        if fd >= 0 {
+            libc::write(fd, contents.as_ptr().cast(), contents.len());
+            libc::close(fd);
+        }
+    }
+    set_errno(saved_errno);
 }
 
 pub fn file_append_msg(filepath: &Path, contents: &str) -> Result<()> {

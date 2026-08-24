@@ -5,13 +5,14 @@
 // crashtracker when the altstack is used.
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
-    atom_to_clone, file_write_msg, fileat_content_equals, remove_permissive, removeat_permissive,
-    set_atomic, wait_for_file_content, SIGNAL_HANDLER_TIMEOUT,
+    fileat_content_equals, handler_write_msg, remove_permissive, removeat_permissive,
+    set_handler_path, wait_for_file_content, SIGNAL_HANDLER_TIMEOUT,
 };
 
 use libc;
 use libdd_crashtracker::CrashtrackerConfiguration;
-use std::path::{Path, PathBuf};
+use std::ffi::CString;
+use std::path::Path;
 use std::sync::atomic::AtomicPtr;
 
 pub struct Test;
@@ -48,23 +49,17 @@ impl Behavior for Test {
 
 extern "C" fn sigchld_handler(_: libc::c_int) {
     // Open and write 'O' to the output file
-    let ofile = match atom_to_clone(&OUTPUT_FILE) {
-        Ok(ofile) => ofile,
-        _ => {
-            return;
-        }
-    };
-    file_write_msg(&ofile, "O").ok();
+    handler_write_msg(&OUTPUT_FILE, b"O");
 }
 
-static OUTPUT_FILE: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
+static OUTPUT_FILE: AtomicPtr<CString> = AtomicPtr::new(std::ptr::null_mut());
 
 fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     // We're going to cause a SIGCHLD and check
 
     // Set the output file so the handler can pick up on it
-    set_atomic(&OUTPUT_FILE, output_dir.join(filename));
-    let ofile = atom_to_clone(&OUTPUT_FILE)?;
+    let ofile = output_dir.join(filename);
+    set_handler_path(&OUTPUT_FILE, &ofile)?;
 
     match unsafe { libc::fork() } {
         -1 => {
@@ -100,8 +95,7 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     removeat_permissive(output_dir, "INVALID");
 
     // OK, we're done.  Return the output file name
-    set_atomic(&OUTPUT_FILE, output_dir.join("INVALID"));
-    Ok(())
+    set_handler_path(&OUTPUT_FILE, &output_dir.join("INVALID"))
 }
 
 pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
@@ -128,7 +122,5 @@ pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
     }
 
     // Additional setup logic for the output file
-    set_atomic(&OUTPUT_FILE, output_dir.join("INVALID"));
-
-    Ok(())
+    set_handler_path(&OUTPUT_FILE, &output_dir.join("INVALID"))
 }
