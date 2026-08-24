@@ -122,6 +122,8 @@ jobs:
         shell: bash
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
+          CARGO_PROFILE_RELEASE_LTO: "thin"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
               git config --global core.longpaths true
