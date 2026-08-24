@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
@@ -201,7 +201,7 @@ pub(crate) enum ConditionCheck {
     },
     SemverComparison {
         operator: SemverComparisonOperator,
-        comparand: semver::Version,
+        comparand: ExtendedVersion,
     },
 }
 
@@ -295,7 +295,7 @@ impl From<Condition> for ConditionWire {
             } => (
                 operator.into(),
                 ConditionValue::Single(SingleConditionValue::String(Str::from(
-                    comparand.to_string().as_str(),
+                    comparand.original.as_ref(),
                 ))),
             ),
         };
@@ -425,9 +425,9 @@ impl TryFrom<ConditionWire> for Condition {
                         return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
-                let comparand = semver::Version::parse(&semver_string).map_err(|err| {
+                let comparand = ExtendedVersion::parse(&semver_string).ok_or_else(|| {
                     log::warn!(
-                        "failed to parse condition: invalid semver {:?}: {err:?}",
+                        "failed to parse condition: invalid semver {:?}",
                         semver_string
                     );
                     EvaluationError::ConfigurationParseError
@@ -439,6 +439,82 @@ impl TryFrom<ConditionWire> for Condition {
             }
         };
         Ok(Condition { attribute, check })
+    }
+}
+
+/// A semantic version with between one and five numeric core components.
+///
+/// The UFC format permits abbreviated and extended core versions. Missing components compare as
+/// zero; build metadata does not affect precedence, matching SemVer's comparison rules.
+#[derive(Debug, Clone)]
+pub(crate) struct ExtendedVersion {
+    original: Box<str>,
+    core: Box<[u64]>,
+    normalized: semver::Version,
+}
+
+impl ExtendedVersion {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        let (without_build, build) = match value.split_once('+') {
+            Some((version, build)) if !build.is_empty() && !build.contains('+') => {
+                (version, Some(build))
+            }
+            Some(_) => return None,
+            None => (value, None),
+        };
+        let (core, prerelease) = match without_build.split_once('-') {
+            Some((core, prerelease)) if !prerelease.is_empty() => (core, Some(prerelease)),
+            Some(_) => return None,
+            None => (without_build, None),
+        };
+
+        let core: Box<[u64]> = core
+            .split('.')
+            .map(|component| {
+                (!component.is_empty()
+                    && component.bytes().all(|byte| byte.is_ascii_digit())
+                    && (component == "0" || !component.starts_with('0')))
+                .then(|| component.parse().ok())?
+            })
+            .collect::<Option<Vec<_>>>()?
+            .into();
+        if !(1..=5).contains(&core.len()) {
+            return None;
+        }
+
+        let mut normalized = format!(
+            "{}.{}.{}",
+            core[0],
+            *core.get(1).unwrap_or(&0),
+            *core.get(2).unwrap_or(&0)
+        );
+        if let Some(prerelease) = prerelease {
+            normalized.push('-');
+            normalized.push_str(prerelease);
+        }
+        if let Some(build) = build {
+            normalized.push('+');
+            normalized.push_str(build);
+        }
+
+        Some(Self {
+            original: value.into(),
+            core,
+            normalized: semver::Version::parse(&normalized).ok()?,
+        })
+    }
+
+    pub(crate) fn cmp_precedence(&self, other: &Self) -> Ordering {
+        let component_ordering = self
+            .core
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(0))
+            .zip(other.core.iter().copied().chain(std::iter::repeat(0)))
+            .take(self.core.len().max(other.core.len()))
+            .find_map(|(left, right)| (left != right).then(|| left.cmp(&right)));
+
+        component_ordering.unwrap_or_else(|| self.normalized.cmp_precedence(&other.normalized))
     }
 }
 
