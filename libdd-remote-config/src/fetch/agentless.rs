@@ -139,6 +139,12 @@ pub struct AgentlessConfig {
     agentless_endpoint: Endpoint,
     /// Override the `agent_uuid` field sent to the RC backend.
     agent_uuid: Option<String>,
+    /// Override the embedded TUF config trust root, mirroring the Datadog Agent's
+    /// `DD_REMOTE_CONFIGURATION_CONFIG_ROOT` setting.
+    config_root_override: Option<Vec<u8>>,
+    /// Override the embedded TUF director trust root, mirroring the Datadog Agent's
+    /// `DD_REMOTE_CONFIGURATION_DIRECTOR_ROOT` setting.
+    director_root_override: Option<Vec<u8>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +172,8 @@ impl AgentlessConfig {
             hostname,
             agentless_endpoint,
             agent_uuid: None,
+            config_root_override: None,
+            director_root_override: None,
         })
     }
 
@@ -173,6 +181,22 @@ impl AgentlessConfig {
     #[must_use]
     pub fn with_agent_uuid(mut self, agent_uuid: String) -> Self {
         self.agent_uuid = Some(agent_uuid);
+        self
+    }
+
+    /// Override the embedded TUF config trust root with `root` (raw signed root
+    /// metadata JSON), instead of picking one of the embedded roots based on site.
+    #[must_use]
+    pub fn with_config_root(mut self, root: Vec<u8>) -> Self {
+        self.config_root_override = Some(root);
+        self
+    }
+
+    /// Override the embedded TUF director trust root with `root` (raw signed root
+    /// metadata JSON), instead of picking one of the embedded roots based on site.
+    #[must_use]
+    pub fn with_director_root(mut self, root: Vec<u8>) -> Self {
+        self.director_root_override = Some(root);
         self
     }
 
@@ -187,6 +211,14 @@ impl AgentlessConfig {
 
     pub fn agent_uuid(&self) -> Option<&str> {
         self.agent_uuid.as_deref()
+    }
+
+    pub fn config_root_override(&self) -> Option<&[u8]> {
+        self.config_root_override.as_deref()
+    }
+
+    pub fn director_root_override(&self) -> Option<&[u8]> {
+        self.director_root_override.as_deref()
     }
 }
 
@@ -315,26 +347,33 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
         endpoint: Endpoint,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        // Pick the embedded trust roots based on the endpoint's host.
+        // Pick the embedded trust roots based on the endpoint's host, unless overridden.
         let site = endpoint
             .url
             .host()
             .map(Site::from_host)
             .unwrap_or(Site::Prod);
 
+        let director_root = cfg
+            .director_root_override
+            .unwrap_or_else(|| site.embedded_director_root().to_vec());
+        let config_root = cfg
+            .config_root_override
+            .unwrap_or_else(|| site.embedded_config_root().to_vec());
+
         Ok(Self {
             endpoint,
             http: http_client,
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(site.embedded_director_root().to_vec()),
+                &RawSignedMetadata::new(director_root),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
             config_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(site.embedded_config_root().to_vec()),
+                &RawSignedMetadata::new(config_root),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
