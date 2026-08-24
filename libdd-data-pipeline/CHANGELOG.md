@@ -2,6 +2,14 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v8.0.0..libdd-data-pipeline-v9.0.0) - 2026-08-24
+
+### Added
+
+- Use zrip for wasm targets ([#2386](https://github.com/datadog/libdatadog/issues/2386)) - ([9d6b2ff](https://github.com/datadog/libdatadog/commit/9d6b2ffb3d86bb052a822a5e9a9bcfeb62514983))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v7.0.0..libdd-data-pipeline-v8.0.0) - 2026-08-17
 
 ### Added
