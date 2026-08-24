@@ -320,7 +320,7 @@ impl<C: ProfileCodec> Write for Compressor<C> {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(miri), not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 
