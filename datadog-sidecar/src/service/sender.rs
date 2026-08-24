@@ -18,10 +18,10 @@ use crate::service::{
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
 use libdd_telemetry::metrics::MetricContext;
 use std::collections::HashMap;
 use std::{io, time::Duration};
@@ -468,7 +468,7 @@ impl SidecarSender {
         &mut self,
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     ) {
         if !self.try_drain_outbox() {
             return;
@@ -495,12 +495,12 @@ impl SidecarSender {
         self.channel.call_ping()
     }
 
-    pub fn dump(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_dump()
     }
 
-    pub fn stats(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
     }

@@ -12,12 +12,13 @@ description = "Datadog Remote Configuration client and config parsers"
 [features]
 default = ["client", "https"]
 agentless = [
+    "dep:ring",
     "dep:tuf",
     "dep:chrono",
     "dep:prost",
     "dep:rand",
     "client",
-    "https",
+    "libdd-capabilities-impl/https",
 ]
 client = [
     "libdd-trace-protobuf",
@@ -46,9 +47,8 @@ test = ["hyper/server", "hyper-util"]
 [dependencies]
 anyhow.workspace = true
 bytes = { version = "1", optional = true }
-libdd-common = { path = "../libdd-common", version = "5.1.1", default-features = false }
+libdd-common = { path = "../libdd-common", version = "5.2.0", default-features = false }
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
-libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "4.0.1", optional = true }
 hyper = { workspace = true, optional = true, default-features = false, features = [
     "http1",
@@ -75,8 +75,7 @@ serde_with = "3"
 rand = { version = "0.8.5", optional = true }
 thiserror = "2"
 hashbrown = "0.15"
-# branch = "opw-develop"
-tuf = { git = "https://github.com/DataDog/rust-tuf/", rev = "eb129ccad320b11e8bf99d2f0ff2c415a0795ccb", default-features = false, optional = true }
+tuf = { package = "libdd-tuf", version = "0.3.1", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
 ], optional = true }
@@ -93,6 +92,12 @@ hyper-util = { workspace = true, features = [
     "client-legacy",
     "service",
 ], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { workspace = true, features = ["js", "std"] }
+# For `tuf` ring needs this feature for `SystemRandom` on wasm.
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "4.0.0", default-features = false }

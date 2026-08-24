@@ -26,8 +26,8 @@ crashtracker = []
 profiling = []
 telemetry = []
 data-pipeline = []
-# Enable zstd compression for the agentless trace intake sender (opt-in: links a C
-# library and increases artifact size).
+# Enable zstd compression for the agentless trace intake sender. Native builds
+# link the C implementation; WASM builds use pure-Rust zrip.
 data-pipeline-compression = ["data-pipeline"]
 symbolizer = []
 library-config = []

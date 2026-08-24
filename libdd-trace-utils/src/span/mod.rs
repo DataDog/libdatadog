@@ -68,7 +68,7 @@ impl SpanText for BytesString {
     }
 }
 
-pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default {
+pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default + Clone {
     fn from_static_bytes(value: &'static [u8]) -> Self;
 }
 
@@ -99,6 +99,13 @@ pub trait DeserializableTraceData: TraceData {
     fn try_slice_and_advance(buf: &mut Self::Bytes, bytes: usize) -> Option<Self::Bytes>;
 
     fn read_string(buf: &mut Self::Bytes) -> Result<Self::Text, DecodeError>;
+
+    /// Interns a string found while walking a value through `get_mut_slice`'s lied `'static`
+    /// view (e.g. skipping an unrecognized V1 field for forward compatibility). `s` really
+    /// borrows from `owner`'s memory, not `'static`: implementations must derive `Self::Text`
+    /// from `owner` itself rather than trusting that lifetime, so a refcounted backing
+    /// allocation isn't freed out from under the interned string.
+    fn intern_skipped_str(owner: &Self::Bytes, s: &'static str) -> Self::Text;
 }
 
 /// TraceData implementation using `Bytes` and `BytesString`.
@@ -150,6 +157,11 @@ impl DeserializableTraceData for BytesData {
         }
         Ok(string)
     }
+
+    #[inline]
+    fn intern_skipped_str(owner: &Bytes, s: &'static str) -> BytesString {
+        BytesString::from_bytes_slice(owner, s)
+    }
 }
 
 /// TraceData implementation using `&str` and `&[u8]`.
@@ -179,6 +191,13 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
             *buf = newbuf;
             str
         })
+    }
+
+    #[inline]
+    fn intern_skipped_str(_owner: &&'a [u8], s: &'static str) -> &'a str {
+        // No refcounted allocation to preserve here: `s` borrows from a plain slice the
+        // caller owns for `'a`, and a `'static` reference is always a valid `'a` reference.
+        s
     }
 }
 

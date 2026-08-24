@@ -1370,49 +1370,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
-name = "datadog-ipc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "criterion",
- "datadog-ipc-macros",
- "futures",
- "glibc_version",
- "io-lifetimes",
- "libc",
- "libdd-common",
- "libdd-ddsketch",
- "libdd-tinybytes",
- "libdd-trace-protobuf",
- "libdd-trace-stats",
- "memfd",
- "nix 0.29.0",
- "page_size",
- "pretty_assertions",
- "sendfd",
- "serde",
- "spawn_worker",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "winapi 0.3.9",
- "windows-sys 0.48.0",
- "zwohash",
-]
-
-[[package]]
-name = "datadog-ipc-macros"
-version = "0.0.1"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.87",
-]
-
-[[package]]
 name = "datadog-live-debugger"
 version = "0.0.1"
 dependencies = [
@@ -1476,8 +1433,6 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
- "datadog-ipc",
- "datadog-ipc-macros",
  "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",
@@ -1494,6 +1449,8 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
  "libdd-ffe",
+ "libdd-ipc",
+ "libdd-ipc-macros",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
@@ -1531,7 +1488,6 @@ dependencies = [
 name = "datadog-sidecar-ffi"
 version = "0.0.1"
 dependencies = [
- "datadog-ipc",
  "datadog-live-debugger",
  "datadog-sidecar",
  "http 1.1.0",
@@ -1541,6 +1497,7 @@ dependencies = [
  "libdd-crashtracker",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
+ "libdd-ipc",
  "libdd-remote-config",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
@@ -2875,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.1.1"
+version = "5.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2937,7 +2894,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "blazesym",
@@ -2996,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3038,6 +2995,7 @@ dependencies = [
  "tracing",
  "uuid",
  "web-time",
+ "zrip",
  "zstd",
 ]
 
@@ -3061,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "criterion",
  "prost",
@@ -3082,7 +3040,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3150,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-gotter"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -3172,6 +3130,49 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "libdd-ipc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "criterion",
+ "futures",
+ "glibc_version",
+ "io-lifetimes",
+ "libc",
+ "libdd-common",
+ "libdd-ddsketch",
+ "libdd-ipc-macros",
+ "libdd-tinybytes",
+ "libdd-trace-protobuf",
+ "libdd-trace-stats",
+ "memfd",
+ "nix 0.29.0",
+ "page_size",
+ "pretty_assertions",
+ "sendfd",
+ "serde",
+ "spawn_worker",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "winapi 0.3.9",
+ "windows-sys 0.48.0",
+ "zwohash",
+]
+
+[[package]]
+name = "libdd-ipc-macros"
+version = "0.1.0"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -3298,6 +3299,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "zrip",
  "zstd",
 ]
 
@@ -3391,6 +3393,7 @@ dependencies = [
  "chrono",
  "futures",
  "futures-util",
+ "getrandom 0.2.15",
  "hashbrown 0.15.1",
  "http 1.1.0",
  "http-body-util",
@@ -3401,9 +3404,11 @@ dependencies = [
  "libdd-common",
  "libdd-remote-config",
  "libdd-trace-protobuf",
+ "libdd-tuf",
  "manual_future",
  "prost",
  "rand 0.8.5",
+ "ring",
  "serde",
  "serde_json",
  "serde_with",
@@ -3415,13 +3420,12 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tuf",
  "uuid",
 ]
 
 [[package]]
 name = "libdd-sampling"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3433,7 +3437,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3458,7 +3462,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3533,7 +3537,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3564,7 +3568,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3595,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "10.0.0"
+version = "10.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3637,6 +3641,7 @@ dependencies = [
  "tokio",
  "tracing",
  "urlencoding",
+ "zrip",
  "zstd",
 ]
 
@@ -3657,6 +3662,40 @@ dependencies = [
  "tokio",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "libdd-tuf"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f7e7c44ae16b25063087e576b0ec25b46ef3a84c8a2239ea85ef7685fd46fb6"
+dependencies = [
+ "chrono",
+ "data-encoding",
+ "derp",
+ "futures-io",
+ "futures-util",
+ "http 0.2.12",
+ "itoa 0.4.8",
+ "log",
+ "percent-encoding",
+ "ring",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.68",
+ "untrusted 0.7.1",
+ "url",
+]
+
+[[package]]
+name = "libdd-wasm-tests"
+version = "0.0.1"
+dependencies = [
+ "http 1.1.0",
+ "wasm-bindgen-test",
+ "zrip",
 ]
 
 [[package]]
@@ -3849,6 +3888,16 @@ checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
 dependencies = [
  "mime",
  "unicase",
+]
+
+[[package]]
+name = "minicov"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3aa3aa12b448ac225b3102217d1ac5cc717908f02722926524b0599c933c7a0"
+dependencies = [
+ "cc",
+ "walkdir",
 ]
 
 [[package]]
@@ -6376,30 +6425,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
-name = "tuf"
-version = "0.3.0-beta10"
-source = "git+https://github.com/DataDog/rust-tuf/?rev=eb129ccad320b11e8bf99d2f0ff2c415a0795ccb#eb129ccad320b11e8bf99d2f0ff2c415a0795ccb"
-dependencies = [
- "chrono",
- "data-encoding",
- "derp",
- "futures-io",
- "futures-util",
- "http 0.2.12",
- "itoa 0.4.8",
- "log",
- "percent-encoding",
- "ring",
- "serde",
- "serde_derive",
- "serde_json",
- "tempfile",
- "thiserror 1.0.68",
- "untrusted 0.7.1",
- "url",
-]
-
-[[package]]
 name = "twox-hash"
 version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6646,12 +6671,13 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.45"
+version = "0.4.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7ec4f8827a71586374db3e87abdb5a2bb3a15afed140221307c3ec06b1f63b"
+checksum = "555d470ec0bc3bb57890405e5d4322cc9ea83cebb085523ced7be4144dac1e61"
 dependencies = [
  "cfg-if",
  "js-sys",
+ "once_cell",
  "wasm-bindgen",
  "web-sys",
 ]
@@ -6689,10 +6715,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "web-sys"
-version = "0.3.72"
+name = "wasm-bindgen-test"
+version = "0.3.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6488b90108c040df0fe62fa815cbdee25124641df01814dd7282749234c6112"
+checksum = "66c8d5e33ca3b6d9fa3b4676d774c5778031d27a578c2b007f905acf816152c3"
+dependencies = [
+ "js-sys",
+ "minicov",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test-macro",
+]
+
+[[package]]
+name = "wasm-bindgen-test-macro"
+version = "0.3.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17d5042cc5fa009658f9a7333ef24291b1291a25b6382dd68862a7f3b969f69b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "web-sys"
+version = "0.3.77"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b6dd2ef9186f1f2072e409e99cd22a975331a6b3591b12c764e0e55c60d5d2"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -7412,6 +7462,41 @@ dependencies = [
  "crc32fast",
  "log",
  "simd-adler32",
+]
+
+[[package]]
+name = "zrip"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "964fe9f1ea10a0d183fc143a7525266cbe16978883dbe304725da34b314c04cf"
+dependencies = [
+ "zrip-core",
+ "zrip-decode",
+ "zrip-encode",
+]
+
+[[package]]
+name = "zrip-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cbc201ba56175f86e67cc88bdaf1a7af9c061815c7dde719c7a6a1ed5aaa186b"
+
+[[package]]
+name = "zrip-decode"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "038f795e49887bdeaab197fff84c8165644484a98dc3f2354e5df3d2e5f4f978"
+dependencies = [
+ "zrip-core",
+]
+
+[[package]]
+name = "zrip-encode"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3dfdcbb503db2045716492d5ab31cd82f2852d0d93d8edf6a9235653d9da685"
+dependencies = [
+ "zrip-core",
 ]
 
 [[package]]
