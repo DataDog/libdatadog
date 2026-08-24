@@ -8,6 +8,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicPtr, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::modes::unix::*;
 use nix::sys::socket;
@@ -29,6 +30,33 @@ pub fn file_content_equals(filepath: &Path, contents: &str) -> anyhow::Result<bo
     let file_contents = std::fs::read_to_string(filepath)
         .with_context(|| format!("Failed to read file: {}", filepath.display()))?;
     Ok(file_contents.trim() == contents)
+}
+
+/// How long to wait for an asynchronously delivered signal's handler to publish its result.
+pub const SIGNAL_HANDLER_TIMEOUT: Duration = Duration::from_secs(5);
+
+const SIGNAL_HANDLER_POLL_INTERVAL: Duration = Duration::from_millis(1);
+
+/// Waits for `filepath` to contain `contents`, polling until `timeout` elapses.
+pub fn wait_for_file_content(filepath: &Path, contents: &str, timeout: Duration) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // Reading directly (rather than through `file_content_equals`) keeps whatever the last
+        // observation was around for the error message.
+        let observed = std::fs::read_to_string(filepath);
+        if matches!(&observed, Ok(found) if found.trim() == contents) {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "File {} did not contain {contents:?} within {timeout:?}, last read: {observed:?}",
+                filepath.display()
+            );
+        }
+
+        std::thread::sleep(SIGNAL_HANDLER_POLL_INTERVAL);
+    }
 }
 
 pub fn file_append_msg(filepath: &Path, contents: &str) -> Result<()> {

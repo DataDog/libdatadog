@@ -15,7 +15,7 @@
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
     atom_to_clone, file_write_msg, fileat_content_equals, remove_permissive, removeat_permissive,
-    set_atomic,
+    set_atomic, wait_for_file_content, SIGNAL_HANDLER_TIMEOUT,
 };
 
 use libc;
@@ -98,13 +98,9 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     }
 
     // Now check the output file.  Strongly assumes that nothing happened to change the value of
-    // OUTPUT_FILE within the handler.
-    match fileat_content_equals(output_dir, filename, "O") {
-        Ok(true) => (), // Expected, do nothing
-        _ => {
-            anyhow::bail!("Output file {:?}/{} was not 'O'", output_dir, filename);
-        }
-    }
+    // OUTPUT_FILE within the handler.  The handler runs asynchronously, so the file is waited on
+    // rather than checked once.
+    wait_for_file_content(&ofile, "O", SIGNAL_HANDLER_TIMEOUT)?;
 
     // Delete the file and the INVALID file to remove any previous state
     remove_permissive(&ofile);
