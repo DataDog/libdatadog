@@ -663,9 +663,7 @@ impl<
         mut traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // Obfuscate every span we are about to send to the intake. Agentless mode never drops
-        // unsampled chunks (no stats aggregation / `drop_chunks`), so every span in `traces`
-        // is exported and therefore gets obfuscated. Dropped spans never reach this path.
+        // Obfuscate every span we are about to send to the intake
         #[cfg(feature = "stats-obfuscation")]
         for chunk in traces.iter_mut() {
             for span in chunk.iter_mut() {
@@ -675,6 +673,8 @@ impl<
                 );
             }
         }
+        #[cfg(not(feature = "stats-obfuscation"))]
+        let _ = &mut span; // silence the mutable warning
 
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
