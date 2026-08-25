@@ -119,8 +119,13 @@ fn collect_span_attributes_v1<T: TraceData>(
     resource_service: &str,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
+    // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
+    // attrs plus every merged chunk+span attribute, clamped to the per-span cap.
     let capacity = (4 + merged.len()).min(MAX_ATTRIBUTES_PER_SPAN);
     let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(capacity);
+    // With OTel-semantics enabled the DD-specific attributes are omitted: the four promoted tags
+    // below, and the `error.msg`/`error.message` compat tags (that information lives in the OTLP
+    // Status field instead).
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
     if has_per_span_service && !otel_trace_semantics_enabled {
@@ -164,6 +169,9 @@ fn collect_span_attributes_v1<T: TraceData>(
         }
         attrs.push(proto_kv(key.to_string(), attr_value_to_proto(value)));
     }
+    // Dropped-count accounting must mirror what was actually emitted: with OTel-semantics on, the
+    // promoted tags aren't added and the excluded `error.msg`/`error.message` tags drop out of
+    // the merged total.
     let promoted = if otel_trace_semantics_enabled {
         0
     } else {
@@ -296,9 +304,12 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
     let resource = build_resource(resource_info);
+    // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.spans.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
     for chunk in trace_chunks {
+        // Resolve the chunk-level sampling priority once per chunk and apply it to every span's
+        // flags (see the module/function doc for why this differs from v0.4's per-span metric).
         let flags = chunk.priority.map(|p| (p >= 1) as u32).unwrap_or(0);
         for span in &chunk.spans {
             all_spans.push(map_span_v1(
