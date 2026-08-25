@@ -39,6 +39,9 @@ env:
 jobs:
   validate-inputs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       crates: ${{ steps.normalize.outputs.crates }}
       crates_display: ${{ steps.normalize.outputs.crates_display }}
@@ -47,10 +50,18 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
+
       - name: Exclude from Green CI
+        continue-on-error: true
         env:
           DATADOG_SITE: datadoghq.com
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
         run: ./scripts/exclude-from-green-ci.sh
 
       - name: Normalize and validate crate list

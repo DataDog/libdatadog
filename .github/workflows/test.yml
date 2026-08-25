@@ -77,6 +77,7 @@ jobs:
     permissions:
       checks: write
       contents: read
+      id-token: write
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -220,8 +221,18 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ steps.rust-version.outputs.version }}] test report"
           include_passed: true
+      # Forked PRs get no id-token permission, so on failure the upload below
+      # runs with an empty key and is itself continue-on-error.
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        if: success() || failure()
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
       - name: Upload test results to Datadog
         if: success() || failure()
+        continue-on-error: true
         shell: bash
         run: |
           # Download datadog-ci binary
@@ -265,13 +276,17 @@ jobs:
             --tags rustc:${{ steps.rust-version.outputs.version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }} \
             target/nextest/ci/junit.xml
         env:
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
 
   cross-centos7:
     name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      id-token: write
     env:
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
@@ -334,8 +349,18 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[centos7] test report"
           include_passed: true
+      # Forked PRs get no id-token permission, so on failure the upload below
+      # runs with an empty key and is itself continue-on-error.
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        if: success() || failure()
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
       - name: Upload test results to Datadog
         if: success() || failure()
+        continue-on-error: true
         run: |
           URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
           OUTPUT="datadog-ci"
@@ -362,7 +387,7 @@ jobs:
             --tags arch:${{ runner.arch }},os:Linux,platform:centos7 \
             target/nextest/ci/junit.xml
         env:
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
 
   no-certs-exporter:
     name: "exporter_e2e tests (no CA certificates)"
