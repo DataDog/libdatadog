@@ -48,6 +48,7 @@ members = [
   "tools/sidecar_mockgen",
   "spawn_worker",
   "tests/spawn_from_lib",
+  "tests/wasm",
   "bin_tests",
   "libdd-shared-runtime",
   "libdd-shared-runtime-ffi",

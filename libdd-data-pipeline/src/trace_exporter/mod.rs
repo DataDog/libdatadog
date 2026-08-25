@@ -2309,7 +2309,11 @@ mod tests {
             let when = when.method(POST).path("/v1/input");
             #[cfg(feature = "compression")]
             let when = when.header("content-encoding", "zstd").is_true(|req| {
-                let Ok(body) = zstd::decode_all(req.body_ref()) else {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                let Ok(body) = body else {
                     return false;
                 };
                 let body = String::from_utf8(body).unwrap();

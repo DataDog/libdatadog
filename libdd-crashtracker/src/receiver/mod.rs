@@ -25,7 +25,7 @@ mod tests {
     use crate::shared::constants::*;
     use crate::{CrashtrackerConfiguration, ErrorKind};
     use std::time::Duration;
-    use tokio::io::{AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
     use tokio::net::UnixStream;
 
     async fn to_socket(
@@ -40,6 +40,19 @@ mod tests {
 
     async fn send_report(delay: Duration, mut stream: UnixStream) -> anyhow::Result<()> {
         let sender = &mut stream;
+        send_report_prelude(sender).await?;
+        tokio::time::sleep(delay).await;
+        to_socket(sender, DD_CRASHTRACK_DONE).await?;
+        Ok(())
+    }
+
+    async fn send_report_lines(sender: &mut UnixStream) -> anyhow::Result<()> {
+        send_report_prelude(sender).await?;
+        to_socket(sender, DD_CRASHTRACK_DONE).await?;
+        Ok(())
+    }
+
+    async fn send_report_prelude(sender: &mut UnixStream) -> anyhow::Result<()> {
         to_socket(sender, DD_CRASHTRACK_BEGIN_SIGINFO).await?;
         to_socket(
             sender,
@@ -67,8 +80,6 @@ mod tests {
             .build()?;
         to_socket(sender, serde_json::to_string(&config)?).await?;
         to_socket(sender, DD_CRASHTRACK_END_CONFIG).await?;
-        tokio::time::sleep(delay).await;
-        to_socket(sender, DD_CRASHTRACK_DONE).await?;
         Ok(())
     }
 
@@ -77,10 +88,10 @@ mod tests {
     async fn test_receive_report_short_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
-        let join_handle1 = tokio::spawn(receive_report_from_stream(
-            Duration::from_secs(1),
-            BufReader::new(receiver),
-        ));
+        let join_handle1 = tokio::spawn(async move {
+            let mut stream = BufReader::new(receiver);
+            receive_report_from_stream(Duration::from_secs(1), &mut stream).await
+        });
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(2), sender));
 
         let crash_report = join_handle1.await??;
@@ -96,16 +107,47 @@ mod tests {
     async fn test_receive_report_long_timeout() -> anyhow::Result<()> {
         let (sender, receiver) = tokio::net::UnixStream::pair()?;
 
-        let join_handle1 = tokio::spawn(receive_report_from_stream(
-            Duration::from_secs(2),
-            BufReader::new(receiver),
-        ));
+        let join_handle1 = tokio::spawn(async move {
+            let mut stream = BufReader::new(receiver);
+            receive_report_from_stream(Duration::from_secs(2), &mut stream).await
+        });
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(1), sender));
 
         let crash_report = join_handle1.await??;
         let (_config, crashinfo) = crash_report.expect("Expect a report");
         assert!(crashinfo.incomplete);
         join_handle2.await??;
+        Ok(())
+    }
+
+    /// The collector blocks on this connection until it sees a hangup, and the crashing
+    /// process is torn down as soon as it unblocks. Normalization and symbolization read
+    /// `/proc/<pid>/maps` and the process' mapped files, so returning the report must not
+    /// close the connection: the caller has to keep it open until symbolization is done.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_receive_report_keeps_collector_connection_open() -> anyhow::Result<()> {
+        let (mut sender, receiver) = tokio::net::UnixStream::pair()?;
+
+        // The whole report fits in the socket buffer, so it can be written up front and
+        // the receiver can be driven from this task while the sender end stays owned here.
+        send_report_lines(&mut sender).await?;
+
+        let mut stream = BufReader::new(receiver);
+        let crash_report = receive_report_from_stream(Duration::from_secs(5), &mut stream).await?;
+        assert!(crash_report.is_some(), "Expect a report");
+
+        let mut buf = [0u8; 1];
+        let hangup = tokio::time::timeout(Duration::from_millis(200), sender.read(&mut buf)).await;
+        assert!(
+            hangup.is_err(),
+            "receive_report_from_stream released the crashing process before symbolization"
+        );
+
+        // Dropping the receiving end is what releases the collector.
+        drop(stream);
+        let n = tokio::time::timeout(Duration::from_secs(5), sender.read(&mut buf)).await??;
+        assert_eq!(n, 0, "Expected a hangup once the receiver drops the stream");
         Ok(())
     }
 }

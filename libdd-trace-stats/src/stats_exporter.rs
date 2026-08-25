@@ -560,6 +560,7 @@ mod tests {
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
+    use std::borrow::Cow;
     use time::Duration;
     use time::SystemTime;
 
@@ -615,7 +616,7 @@ mod tests {
 
         for i in 1..100 {
             trace.push(SpanSlice {
-                service: "libdatadog-test",
+                service: Cow::Borrowed("libdatadog-test"),
                 duration: i,
                 ..Default::default()
             })
@@ -951,32 +952,35 @@ mod tests {
 
         let mut trace = vec![
             SpanSlice {
-                service: "svc-a",
-                resource: "resource-a",
+                service: Cow::Borrowed("svc-a"),
+                resource: Cow::Borrowed("resource-a"),
                 duration: 10,
-                meta: VecMap::from_iter([("http.endpoint", "/")]),
+                meta: VecMap::from_iter([(Cow::Borrowed("http.endpoint"), Cow::Borrowed("/"))]),
                 ..Default::default()
             },
             // only resource get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc-a",
-                resource: "resource-b",
+                service: Cow::Borrowed("svc-a"),
+                resource: Cow::Borrowed("resource-b"),
                 duration: 20,
-                meta: VecMap::from_iter([("http.endpoint", "/")]),
+                meta: VecMap::from_iter([(Cow::Borrowed("http.endpoint"), Cow::Borrowed("/"))]),
                 ..Default::default()
             },
             // both resource and http_endpoint get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc-b",
-                resource: "resource-c",
+                service: Cow::Borrowed("svc-b"),
+                resource: Cow::Borrowed("resource-c"),
                 duration: 20,
-                meta: VecMap::from_iter([("http.endpoint", "/hello.txt")]),
+                meta: VecMap::from_iter([(
+                    Cow::Borrowed("http.endpoint"),
+                    Cow::Borrowed("/hello.txt"),
+                )]),
                 ..Default::default()
             },
             // both resource and http_endpoint get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc-b",
-                resource: "resource-b",
+                service: Cow::Borrowed("svc-b"),
+                resource: Cow::Borrowed("resource-b"),
                 duration: 20,
                 ..Default::default()
             },
