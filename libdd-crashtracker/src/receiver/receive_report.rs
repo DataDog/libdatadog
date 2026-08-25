@@ -532,12 +532,15 @@ fn collect_and_add_thread_contexts(
     let parent_pid = parent_pid as i32;
 
     let mut collected_threads = Vec::new();
+    let crashing_context = builder.ucontext.clone();
+    let mut crashing_stack = None;
 
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         budget,
+        crashing_context.as_ref(),
         |tid, captured_context| {
             let (name, state) = read_thread_stat(parent_pid, tid);
             let name = name.unwrap_or_else(|| tid.to_string());
@@ -546,6 +549,10 @@ fn collect_and_add_thread_contexts(
                 Some(ctx) => ctx.stack_trace.clone(),
                 None => StackTrace::new_incomplete(),
             };
+
+            if tid == crashing_tid && !stack.frames.is_empty() {
+                crashing_stack = Some(stack.clone());
+            }
 
             collected_threads.push(ThreadData {
                 crashed: tid == crashing_tid,
@@ -558,6 +565,13 @@ fn collect_and_add_thread_contexts(
 
     if incomplete {
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
+    }
+
+    // The frame stream sent by the signal-safe collector is deliberately only
+    // a fallback. Replace it with the CFI unwind rooted at the saved kernel
+    // context so Error Tracking groups and displays the causal crash stack.
+    if let Some(stack) = crashing_stack {
+        builder.with_stack(stack)?;
     }
 
     let _ = builder.with_threads(collected_threads);

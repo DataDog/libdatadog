@@ -159,9 +159,128 @@ fn resolve_frames(
             .as_ref()
             .context("Unable to resolve frames: No PID specified")?
             .pid;
-        crash_info.enrich_callstacks(pid)?;
+        let enrichment = crash_info.enrich_callstacks(pid);
+        finish_native_stacks(crash_info);
+        enrichment?;
     }
     #[cfg(not(target_os = "linux"))]
     let _ = (config, crash_info);
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn finish_native_stacks(crash_info: &mut CrashInfo) {
+    // A software-generated fatal signal is captured while raise/pthread_kill is
+    // still on the stack. Those libc delivery frames describe how the signal
+    // arrived, not what application operation requested it. Remove only the
+    // contiguous leading libc segment and leave the first application frame as
+    // the grouping frame.
+    if crash_info
+        .sig_info
+        .as_ref()
+        .is_some_and(|sig_info| sig_info.si_code <= 0)
+    {
+        trim_signal_delivery_frames(&mut crash_info.error.stack);
+    }
+
+    synthesize_module_offsets(&mut crash_info.error.stack);
+    if let Some(threads) = crash_info.error.threads.as_mut() {
+        for thread in threads {
+            synthesize_module_offsets(&mut thread.stack);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace) {
+    let delivery_frames = stack
+        .frames
+        .iter()
+        .take_while(|frame| {
+            frame.path.as_deref().is_some_and(|path| {
+                let basename = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(path);
+                basename == "libc.so.6"
+                    || basename.starts_with("libc-")
+                    || basename.starts_with("ld-musl-")
+            })
+        })
+        .count();
+    stack.frames.drain(..delivery_frames);
+}
+
+#[cfg(target_os = "linux")]
+fn synthesize_module_offsets(stack: &mut crate::crash_info::StackTrace) {
+    for frame in &mut stack.frames {
+        if frame.function.is_some() {
+            continue;
+        }
+        let (Some(path), Some(relative_address)) =
+            (frame.path.as_deref(), frame.relative_address.as_deref())
+        else {
+            continue;
+        };
+        let module = std::path::Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path);
+        frame.function = Some(format!("{module}+{relative_address}"));
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::crash_info::{StackFrame, StackTrace};
+
+    fn frame(path: &str, relative_address: &str, function: Option<&str>) -> StackFrame {
+        StackFrame {
+            path: Some(path.to_string()),
+            relative_address: Some(relative_address.to_string()),
+            function: function.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn trims_only_leading_signal_delivery_frames() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("/lib/ld-musl-x86_64.so.1", "0x1", Some("raise")),
+                frame("/opt/app", "0x2", Some("main")),
+                frame("/lib/libc.so.6", "0x3", Some("__libc_start_main")),
+            ],
+            false,
+        );
+
+        trim_signal_delivery_frames(&mut stack);
+
+        assert_eq!(stack.frames.len(), 2);
+        assert_eq!(stack.frames[0].function.as_deref(), Some("main"));
+        assert_eq!(
+            stack.frames[1].function.as_deref(),
+            Some("__libc_start_main")
+        );
+    }
+
+    #[test]
+    fn adds_module_offset_only_when_symbolization_has_no_name() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("/usr/lib/libcupti.so.12", "0x0000000000001234", None),
+                frame("/opt/app", "0x2", Some("main")),
+            ],
+            false,
+        );
+
+        synthesize_module_offsets(&mut stack);
+
+        assert_eq!(
+            stack.frames[0].function.as_deref(),
+            Some("libcupti.so.12+0x0000000000001234")
+        );
+        assert_eq!(stack.frames[1].function.as_deref(), Some("main"));
+    }
 }
