@@ -1419,6 +1419,7 @@ mod tests {
             subject_attributes_json: "{}".to_owned(),
             allocation_key: "alloc".to_owned(),
             variant: "variant".to_owned(),
+            serial_id: None,
         }
     }
 
