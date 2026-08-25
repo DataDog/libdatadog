@@ -15,10 +15,11 @@
 //! use libdd_sampling::v04_span::{V04AttributeFactory, V04SamplingData, V04SamplingTag};
 //! use libdd_sampling::DatadogSampler;
 //! use libdd_trace_utils::span::{v04::Span, SliceData};
+//! use std::borrow::Cow::*;
 //!
 //! let mut span = Span::<SliceData<'_>>::default();
-//! span.name = "my-operation";
-//! span.service = "my-service";
+//! span.name = Borrowed("my-operation");
+//! span.service = Borrowed("my-service");
 //! span.trace_id = 1234567890u128;
 //!
 //! let sampler = DatadogSampler::new(vec![], 100);
