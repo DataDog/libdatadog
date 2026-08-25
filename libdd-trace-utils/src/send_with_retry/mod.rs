@@ -491,4 +491,36 @@ mod tests {
             "Expected only one request attempt"
         );
     }
+
+    #[cfg(feature = "compression")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_reports_compressed_payload_size() {
+        let server = MockServer::start();
+        let mock_202 = server
+            .mock_async(|_when, then| {
+                then.status(202);
+            })
+            .await;
+        let endpoint = Endpoint {
+            url: server.url("").parse().unwrap(),
+            ..Default::default()
+        };
+        let payload = vec![0; 1024];
+        let expected_size = zstd::encode_all(payload.as_slice(), 1).unwrap().len();
+
+        let (result, payload_size) = send_with_retry_and_size(
+            &NativeCapabilities::new_client(),
+            &endpoint,
+            payload,
+            &HeaderMap::new(),
+            &RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
+            CompressionStrategy::Zstd { level: 1 },
+        )
+        .await;
+
+        assert!(result.is_ok());
+        assert_eq!(payload_size, expected_size);
+        mock_202.assert_calls_async(1).await;
+    }
 }

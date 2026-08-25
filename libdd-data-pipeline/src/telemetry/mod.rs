@@ -198,18 +198,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             worker: handle,
         }
     }
-
-    pub(crate) fn send_count_metric(
-        &self,
-        metric: metrics::MetricKind,
-        count: usize,
-    ) -> Result<(), TelemetryError> {
-        if count > 0 {
-            self.worker
-                .add_point(count as f64, self.metrics.get(metric), vec![])?;
-        }
-        Ok(())
-    }
 }
 
 /// Telemetry describing the sending of a trace payload
@@ -224,6 +212,9 @@ pub struct SendPayloadTelemetry {
     chunks_sent: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
+    spans_enqueued_for_serialization: u64,
+    spans_dropped_serialization_error: u64,
+    spans_dropped_api_error: u64,
     responses_count_per_code: HashMap<u16, u64>,
 }
 
@@ -293,6 +284,42 @@ impl SendPayloadTelemetry {
         };
         telemetry
     }
+
+    pub(crate) fn from_retry_result_with_spans(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        spans: u64,
+    ) -> Self {
+        let mut telemetry = Self::from_retry_result(value, bytes_sent, chunks);
+        telemetry.spans_enqueued_for_serialization = spans;
+        match value {
+            Err(SendWithRetryError::Build(_)) => {
+                telemetry.spans_dropped_serialization_error = spans;
+            }
+            Err(_) => telemetry.spans_dropped_api_error = spans,
+            Ok(_) => {}
+        }
+        telemetry
+    }
+
+    pub(crate) fn from_serialization_error(chunks: u64, spans: u64) -> Self {
+        Self {
+            chunks_dropped_serialization_error: chunks,
+            spans_enqueued_for_serialization: spans,
+            spans_dropped_serialization_error: spans,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn from_canceled_send(chunks: u64, spans: u64) -> Self {
+        Self {
+            chunks_dropped_send_failure: chunks,
+            spans_enqueued_for_serialization: spans,
+            spans_dropped_api_error: spans,
+            ..Default::default()
+        }
+    }
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
@@ -344,6 +371,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 .get(metrics::MetricKind::ChunksDroppedSendFailure);
             self.worker
                 .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
+        }
+        if data.spans_enqueued_for_serialization > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansEnqueuedForSerialization);
+            self.worker
+                .add_point(data.spans_enqueued_for_serialization as f64, key, vec![])?;
+        }
+        if data.spans_dropped_serialization_error > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansDroppedSerializationError);
+            self.worker
+                .add_point(data.spans_dropped_serialization_error as f64, key, vec![])?;
+        }
+        if data.spans_dropped_api_error > 0 {
+            let key = self.metrics.get(metrics::MetricKind::SpansDroppedApiError);
+            self.worker
+                .add_point(data.spans_dropped_api_error as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
@@ -772,6 +818,43 @@ mod tests {
             .expect("Failed to get runtime");
     }
 
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn span_counts_test() {
+        let enqueued = Regex::new(r#""metric":"spans_enqueued_for_serialization","points":\[\[\d+,7\.0\]\],"tags":\[\],"common":true,"type":"count""#).unwrap();
+        let serialization = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,3\.0\]\],"tags":\["reason:serialization_error"\],"common":true,"type":"count""#).unwrap();
+        let api = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,4\.0\]\],"tags":\["reason:api_error"\],"common":true,"type":"count""#).unwrap();
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
+        let server = MockServer::start();
+        let mut telemetry_srv = server.mock(|when, then| {
+            when.method(POST)
+                .body_matches(enqueued)
+                .body_matches(serialization)
+                .body_matches(api);
+            then.status(200).body("");
+        });
+        let data = SendPayloadTelemetry {
+            spans_enqueued_for_serialization: 7,
+            spans_dropped_serialization_error: 3,
+            spans_dropped_api_error: 4,
+            ..Default::default()
+        };
+        let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
+        shared_runtime
+            .block_on(async {
+                let _ = client.start();
+                let _ = client.send(&data);
+                sleep(Duration::from_millis(100)).await;
+
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
+    }
+
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((
@@ -857,6 +940,49 @@ mod tests {
             SendPayloadTelemetry {
                 chunks_dropped_serialization_error: 2,
                 requests_count: 5,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_retry_result_with_spans_test() {
+        let result = Err(SendWithRetryError::Timeout(5));
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 7);
+        assert_eq!(
+            telemetry,
+            SendPayloadTelemetry {
+                chunks_dropped_send_failure: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_api_error: 7,
+                requests_count: 5,
+                errors_timeout: 1,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_serialization_error_test() {
+        assert_eq!(
+            SendPayloadTelemetry::from_serialization_error(2, 7),
+            SendPayloadTelemetry {
+                chunks_dropped_serialization_error: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_serialization_error: 7,
+                ..Default::default()
+            }
+        )
+    }
+
+    #[test]
+    fn telemetry_from_canceled_send_test() {
+        assert_eq!(
+            SendPayloadTelemetry::from_canceled_send(2, 7),
+            SendPayloadTelemetry {
+                chunks_dropped_send_failure: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_api_error: 7,
                 ..Default::default()
             }
         )
