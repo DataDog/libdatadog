@@ -14,7 +14,7 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
 use serde::Serialize;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -50,11 +50,17 @@ pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
     fn to_bytes_string(&self) -> BytesString {
         BytesString::from(<Self as Borrow<str>>::borrow(self).to_string())
     }
+
+    fn from_owned(value: String) -> Self;
 }
 
-impl SpanText for &str {
+impl SpanText for Cow<'_, str> {
     fn from_static_str(value: &'static str) -> Self {
-        value
+        Cow::Borrowed(value)
+    }
+
+    fn from_owned(value: String) -> Self {
+        Cow::Owned(value)
     }
 }
 
@@ -65,6 +71,10 @@ impl SpanText for BytesString {
 
     fn to_bytes_string(&self) -> BytesString {
         self.clone()
+    }
+
+    fn from_owned(value: String) -> Self {
+        BytesString::from_string(value)
     }
 }
 
@@ -168,7 +178,7 @@ impl DeserializableTraceData for BytesData {
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
 impl<'a> TraceData for SliceData<'a> {
-    type Text = &'a str;
+    type Text = Cow<'a, str>;
     type Bytes = &'a [u8];
 }
 
@@ -186,18 +196,18 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
     }
 
     #[inline]
-    fn read_string(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+    fn read_string(buf: &mut &'a [u8]) -> Result<Cow<'a, str>, DecodeError> {
         read_string_ref_nomut(buf).map(|(str, newbuf)| {
             *buf = newbuf;
-            str
+            Cow::Borrowed(str)
         })
     }
 
     #[inline]
-    fn intern_skipped_str(_owner: &&'a [u8], s: &'static str) -> &'a str {
+    fn intern_skipped_str(_owner: &&'a [u8], s: &'static str) -> Cow<'a, str> {
         // No refcounted allocation to preserve here: `s` borrows from a plain slice the
         // caller owns for `'a`, and a `'static` reference is always a valid `'a` reference.
-        s
+        Cow::Borrowed(s)
     }
 }
 
