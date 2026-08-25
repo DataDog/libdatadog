@@ -3544,6 +3544,7 @@ dependencies = [
  "duplicate 0.4.1",
  "fluent-uri",
  "libdd-common",
+ "libdd-tinybytes",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "log",

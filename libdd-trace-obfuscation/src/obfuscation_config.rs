@@ -8,6 +8,7 @@ use std::{collections::HashSet, env};
 use libdd_common::config::parse_env;
 
 use crate::{
+    json::JsonObfuscator,
     replacer::{self, ReplaceRule},
     sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
@@ -89,9 +90,9 @@ pub struct ObfuscationConfig {
     pub valkey: RedisConfig,
     pub credit_cards: CreditCardConfig,
     pub sql: SqlObfuscateConfig,
-    pub elasticsearch: JsonObfuscatorConfig,
-    pub opensearch: JsonObfuscatorConfig,
-    pub mongodb: JsonObfuscatorConfig,
+    pub elasticsearch: JsonObfuscator,
+    pub opensearch: JsonObfuscator,
+    pub mongodb: JsonObfuscator,
 }
 
 // Small subset of `ObfuscationConfig` for stats obfuscation only

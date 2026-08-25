@@ -15,7 +15,9 @@ use alloc::{collections::BTreeSet, fmt};
 use core::fmt::Display;
 use std::collections::HashSet;
 
-use libdd_trace_obfuscation::{obfuscate::obfuscate_span, obfuscation_config::ObfuscationConfig};
+use libdd_trace_obfuscation::{
+    obfuscate::obfuscate_pb_span, obfuscation_config::ObfuscationConfig,
+};
 use libdd_trace_protobuf::pb::{
     attribute_any_value::AttributeAnyValueType, attribute_array_value::AttributeArrayValueType,
     AttributeAnyValue, AttributeArray, AttributeArrayValue, Span, SpanEvent,
@@ -52,7 +54,7 @@ fn test_obfuscate_span() {
         expected,
     } in testcases
     {
-        obfuscate_span(&mut span, &config);
+        obfuscate_pb_span(&mut span, &config);
         if !span_equal(&span, &expected) {
             failures.push(format!(
                 "[{name}]: \n{}",
