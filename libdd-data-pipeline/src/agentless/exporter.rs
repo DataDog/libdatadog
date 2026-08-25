@@ -22,7 +22,7 @@ const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
 /// `headers` should already contain all required headers (api key, content-type, meta-*,
 /// entity, trace-count, etc.). `test_token` is forwarded as `X-Datadog-Test-Session-Token`
 /// when set, enabling snapshot tests against a local mock.
-#[allow(dead_code)] // Retains the existing contract while telemetry uses the observer variant.
+#[allow(dead_code)]
 pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &AgentlessTraceConfig,

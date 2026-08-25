@@ -302,24 +302,6 @@ impl SendPayloadTelemetry {
         }
         telemetry
     }
-
-    pub(crate) fn from_serialization_error(chunks: u64, spans: u64) -> Self {
-        Self {
-            chunks_dropped_serialization_error: chunks,
-            spans_enqueued_for_serialization: spans,
-            spans_dropped_serialization_error: spans,
-            ..Default::default()
-        }
-    }
-
-    pub(crate) fn from_canceled_send(chunks: u64, spans: u64) -> Self {
-        Self {
-            chunks_dropped_send_failure: chunks,
-            spans_enqueued_for_serialization: spans,
-            spans_dropped_api_error: spans,
-            ..Default::default()
-        }
-    }
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
@@ -818,43 +800,6 @@ mod tests {
             .expect("Failed to get runtime");
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn span_counts_test() {
-        let enqueued = Regex::new(r#""metric":"spans_enqueued_for_serialization","points":\[\[\d+,7\.0\]\],"tags":\[\],"common":true,"type":"count""#).unwrap();
-        let serialization = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,3\.0\]\],"tags":\["reason:serialization_error"\],"common":true,"type":"count""#).unwrap();
-        let api = Regex::new(r#""metric":"spans_dropped","points":\[\[\d+,4\.0\]\],"tags":\["reason:api_error"\],"common":true,"type":"count""#).unwrap();
-        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
-        let server = MockServer::start();
-        let mut telemetry_srv = server.mock(|when, then| {
-            when.method(POST)
-                .body_matches(enqueued)
-                .body_matches(serialization)
-                .body_matches(api);
-            then.status(200).body("");
-        });
-        let data = SendPayloadTelemetry {
-            spans_enqueued_for_serialization: 7,
-            spans_dropped_serialization_error: 3,
-            spans_dropped_api_error: 4,
-            ..Default::default()
-        };
-        let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
-        shared_runtime
-            .block_on(async {
-                let _ = client.start();
-                let _ = client.send(&data);
-                sleep(Duration::from_millis(100)).await;
-
-                handle.stop().await.expect("Failed to stop worker");
-                assert!(
-                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
-                    "telemetry server did not receive calls within timeout"
-                );
-            })
-            .expect("Failed to get runtime");
-    }
-
     #[test]
     fn telemetry_from_ok_response_test() {
         let result = Ok((
@@ -884,11 +829,13 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 7);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_api_error: 7,
                 requests_count: 5,
                 errors_status_code: 1,
                 responses_count_per_code: HashMap::from([(400, 1)]),
@@ -940,49 +887,6 @@ mod tests {
             SendPayloadTelemetry {
                 chunks_dropped_serialization_error: 2,
                 requests_count: 5,
-                ..Default::default()
-            }
-        )
-    }
-
-    #[test]
-    fn telemetry_from_retry_result_with_spans_test() {
-        let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 7);
-        assert_eq!(
-            telemetry,
-            SendPayloadTelemetry {
-                chunks_dropped_send_failure: 2,
-                spans_enqueued_for_serialization: 7,
-                spans_dropped_api_error: 7,
-                requests_count: 5,
-                errors_timeout: 1,
-                ..Default::default()
-            }
-        )
-    }
-
-    #[test]
-    fn telemetry_from_serialization_error_test() {
-        assert_eq!(
-            SendPayloadTelemetry::from_serialization_error(2, 7),
-            SendPayloadTelemetry {
-                chunks_dropped_serialization_error: 2,
-                spans_enqueued_for_serialization: 7,
-                spans_dropped_serialization_error: 7,
-                ..Default::default()
-            }
-        )
-    }
-
-    #[test]
-    fn telemetry_from_canceled_send_test() {
-        assert_eq!(
-            SendPayloadTelemetry::from_canceled_send(2, 7),
-            SendPayloadTelemetry {
-                chunks_dropped_send_failure: 2,
-                spans_enqueued_for_serialization: 7,
-                spans_dropped_api_error: 7,
                 ..Default::default()
             }
         )

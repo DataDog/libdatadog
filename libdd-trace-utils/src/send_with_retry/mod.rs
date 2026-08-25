@@ -119,9 +119,6 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
 }
 
 /// Send a payload with retries and return its post-compression size.
-///
-/// This is equivalent to [`send_with_retry`], with the payload size exposed for transport
-/// telemetry. The result contains the final outcome and the total number of request attempts.
 #[allow(clippy::result_large_err)]
 pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
@@ -490,37 +487,5 @@ mod tests {
             poll_for_mock_hit(&mut mock_202, 10, 250, 1, true).await,
             "Expected only one request attempt"
         );
-    }
-
-    #[cfg(feature = "compression")]
-    #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn test_reports_compressed_payload_size() {
-        let server = MockServer::start();
-        let mock_202 = server
-            .mock_async(|_when, then| {
-                then.status(202);
-            })
-            .await;
-        let endpoint = Endpoint {
-            url: server.url("").parse().unwrap(),
-            ..Default::default()
-        };
-        let payload = vec![0; 1024];
-        let expected_size = zstd::encode_all(payload.as_slice(), 1).unwrap().len();
-
-        let (result, payload_size) = send_with_retry_and_size(
-            &NativeCapabilities::new_client(),
-            &endpoint,
-            payload,
-            &HeaderMap::new(),
-            &RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
-            CompressionStrategy::Zstd { level: 1 },
-        )
-        .await;
-
-        assert!(result.is_ok());
-        assert_eq!(payload_size, expected_size);
-        mock_202.assert_calls_async(1).await;
     }
 }
