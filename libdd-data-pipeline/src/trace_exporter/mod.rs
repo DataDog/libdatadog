@@ -674,7 +674,7 @@ impl<
             }
         }
         #[cfg(not(feature = "stats-obfuscation"))]
-        let _ = &mut span; // silence the mutable warning
+        let _ = &mut traces; // silence the mutable warning
 
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
