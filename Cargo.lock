@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-gotter"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
  "tempfile",
