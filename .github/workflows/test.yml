@@ -149,10 +149,14 @@ jobs:
         shell: bash
         run: |
           if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | \
-            grep -Eq "libdd-(common|dogstatsd-client|http-client)"; then
+            grep -Eq "libdd-(common|dogstatsd-client|http-client|trace-utils)"; then
             cargo check -p libdd-dogstatsd-client --no-default-features
             cargo check -p libdd-http-client --no-default-features \
               --features hyper-backend
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features mini_agent
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features test-utils
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash

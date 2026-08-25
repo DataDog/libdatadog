@@ -91,9 +91,15 @@ tempfile.workspace = true
 [features]
 default = ["https"]
 https = ["libdd-common/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
-mini_agent = ["compression", "libdd-common/use_webpki_roots", "dep:flate2"]
+mini_agent = [
+    "compression",
+    "libdd-common/http-client",
+    "libdd-common/use_webpki_roots",
+    "dep:flate2",
+]
 test-utils = [
     "dep:tokio",
+    "libdd-common/http-client",
     "hyper/server",
     "httpmock",
     "cargo_metadata",
