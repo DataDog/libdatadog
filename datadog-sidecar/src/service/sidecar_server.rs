@@ -16,10 +16,13 @@ use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
+use libdd_trace_utils::tracer_payload::TraceChunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
 use manual_future::ManualFutureCompleter;
+use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -277,10 +280,15 @@ impl SidecarServer {
     /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
     /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
     ///
-    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so unlike
-    /// `send_trace_v04`, only the generic bool/int flags plus `lang_interpreter`/`lang_vendor`
-    /// (which have no equivalent in the V1 payload model) cross the IPC boundary — no full
-    /// `TracerHeaderTags`/`SerializedTracerHeaderTags` envelope.
+    /// Unlike `send_trace_v04`, only the generic bool/int flags plus `lang_interpreter`/
+    /// `lang_vendor` (which have no equivalent in the V1 payload model) cross the IPC boundary —
+    /// no full `TracerHeaderTags`/`SerializedTracerHeaderTags` envelope. The remaining fields
+    /// (`lang`, `lang_version`, `tracer_version`, `container_id`) are read back out of the
+    /// decoded V1 payload once it's available below and still forwarded to the agent as
+    /// `Datadog-Meta-*`/`Datadog-Container-Id` headers: the agent relies on those headers, not
+    /// just the payload body, to identify the source of malformed payloads or misbehaving
+    /// tracers when it can't decode the body, and populating them only on the agent side would
+    /// leave a gap whenever a tracer is upgraded ahead of its agent.
     ///
     /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
     /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
@@ -294,13 +302,43 @@ impl SidecarServer {
         target: &Endpoint,
         retry_interval: u64,
     ) {
-        let headers = TracerHeaderTags {
-            lang_interpreter,
-            lang_vendor,
-            generic,
-            ..Default::default()
-        };
-        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
+        match decode_to_trace_chunks(data, TraceEncoding::V1) {
+            Ok((payload, size)) => {
+                let TraceChunks::V1(tracer_payload) = &payload else {
+                    unreachable!(
+                        "decode_to_trace_chunks(_, TraceEncoding::V1) always returns TraceChunks::V1"
+                    );
+                };
+                // Cheap refcounted clones: decouples the header strings from `payload`'s
+                // borrow so `payload` can still be moved into `enqueue_trace` below.
+                let lang = tracer_payload.language_name.clone();
+                let lang_version = tracer_payload.language_version.clone();
+                let tracer_version = tracer_payload.tracer_version.clone();
+                let container_id = tracer_payload.container_id.clone();
+
+                let headers = TracerHeaderTags {
+                    lang: lang.borrow(),
+                    lang_version: lang_version.borrow(),
+                    lang_interpreter,
+                    lang_vendor,
+                    tracer_version: tracer_version.borrow(),
+                    container_id: container_id.borrow(),
+                    generic,
+                };
+                debug!(
+                    "Received {} bytes of data for {:?} with headers {:?}",
+                    size, target, headers
+                );
+                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
+                self.enqueue_trace(payload, size, headers, target, retry_interval);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to collect trace chunks from msgpack with error {:?}",
+                    e
+                )
+            }
+        }
     }
 
     fn send_trace(
@@ -321,16 +359,7 @@ impl SidecarServer {
         match decode_to_trace_chunks(data, encoding) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let mut data = SendData::new(
-                    size,
-                    payload.into_tracer_payload_collection(),
-                    headers,
-                    target,
-                );
-                let strategy =
-                    RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
-                data.set_retry_strategy(strategy);
-                self.trace_flusher.enqueue(data);
+                self.enqueue_trace(payload, size, headers, target, retry_interval);
             }
             Err(e) => {
                 error!(
@@ -339,6 +368,25 @@ impl SidecarServer {
                 )
             }
         }
+    }
+
+    fn enqueue_trace(
+        &self,
+        payload: TraceChunks<BytesData>,
+        size: usize,
+        headers: TracerHeaderTags,
+        target: &Endpoint,
+        retry_interval: u64,
+    ) {
+        let mut data = SendData::new(
+            size,
+            payload.into_tracer_payload_collection(),
+            headers,
+            target,
+        );
+        let strategy = RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
+        data.set_retry_strategy(strategy);
+        self.trace_flusher.enqueue(data);
     }
 
     #[cfg(windows)]
@@ -1671,7 +1719,9 @@ mod tests {
     /// `tracer::Config::set_endpoint` since it doesn't know ahead of time which encoding will be
     /// used. This exercises the full `send_trace_v1_bytes` chain to ensure V1 payloads are
     /// redirected to the agent's `/v1.0/traces` route instead, and that `lang_interpreter`/
-    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers.
+    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers, alongside
+    /// `lang`/`lang_version`/`tracer_version` (which are read back out of the decoded V1 payload
+    /// — see `send_trace_v1`).
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn send_trace_v1_bytes_routes_to_v1_endpoint() {
@@ -1681,7 +1731,10 @@ mod tests {
                 when.method(POST)
                     .path("/v1.0/traces")
                     .header("datadog-meta-lang-interpreter", "cpython")
-                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor");
+                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor")
+                    .header("datadog-meta-lang", "rust")
+                    .header("datadog-meta-lang-version", "1.87")
+                    .header("datadog-meta-tracer-version", "9.9.9");
                 then.status(200);
             })
             .await;
