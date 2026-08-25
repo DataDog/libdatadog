@@ -130,14 +130,38 @@ compute_semver_results() {
     log_verbose "Target kinds for $crate: $target_kinds"
 
     # ----------------------------------------------------------------
+    # 0b) Is the crate absent from the baseline, i.e. added by this PR?
+    #
+    # Decide this independently of the tool selection above. Inferring it from
+    # cargo-semver-checks' "package not found" output only works for crates that
+    # reach cargo-semver-checks at all: a crate without a library target skips it,
+    # so a newly added proc-macro crate would fall through to cargo-public-api,
+    # which would then try to build a baseline package that does not exist and
+    # fail — instead of reporting the intended `minor`.
+    #
+    # Match the package name declared in any manifest at the baseline rev rather
+    # than a fixed path, so relocating a crate's directory is not mistaken for
+    # adding a new one.
+    # ----------------------------------------------------------------
+    local crate_is_new=false
+    if ! git grep -q -E "^name = \"${crate}\"\$" "$baseline" -- '*Cargo.toml' 2>/dev/null; then
+        crate_is_new=true
+        log_verbose "$crate is absent from $baseline: new crate"
+    fi
+
+    # ----------------------------------------------------------------
     # 1) cargo-semver-checks (type-signature lints) — library targets only.
     # ----------------------------------------------------------------
     local semver_level="none"
     local semver_reason=""
     local semver_details=""
-    local crate_is_new=false
 
-    if ! $has_lib; then
+    if $crate_is_new; then
+        # Nothing to compare against; adding a crate is a minor change.
+        semver_level="minor"
+        semver_reason="New crate (not present in baseline)"
+        log_verbose "Skipping cargo-semver-checks: new crate, treat as minor"
+    elif ! $has_lib; then
         log_verbose "Skipping cargo-semver-checks: $crate has no library target"
     else
         SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
