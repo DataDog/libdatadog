@@ -12,9 +12,9 @@ use std::{
 use super::platform::{FileBackedHandle, PlatformHandle, ShmHandle};
 use crate::ipc_server::OwnedServerConn;
 
-extern crate self as datadog_ipc;
+extern crate self as libdd_ipc;
 
-#[datadog_ipc_macros::service]
+#[libdd_ipc_macros::service]
 pub trait ExampleInterface {
     async fn notify();
     #[blocking]

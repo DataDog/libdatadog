@@ -125,6 +125,9 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
+      - name: Configure git long paths (Windows)
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
       - name: "[${{ steps.rust-version.outputs.version}}] cargo build"
         shell: bash
         run: |
@@ -409,7 +412,7 @@ jobs:
           cargo test -p libdd-profiling --test exporter_e2e
 
   wasm:
-    name: "cargo check --target wasm32-unknown-unknown"
+    name: "WASM checks and tests"
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-wasm
@@ -426,7 +429,19 @@ jobs:
         with:
           cache-targets: true
           cache-bin: true
+      - name: Install wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+      - name: Run WASM tests
+        run: cargo test -p libdd-wasm-tests --target wasm32-unknown-unknown
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
+        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+          # ring compiles C for wasm32, which the runner's default `cc` (gcc) cannot target.
+          CC_wasm32_unknown_unknown: clang

@@ -6,10 +6,10 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ pub struct SidecarFlushOptions {
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
 /// session configurations, and sending traces.
-#[datadog_ipc_macros::service]
+#[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions to be performed.
     ///
@@ -295,7 +295,7 @@ pub trait SidecarInterface {
     async fn add_span_to_concentrator(
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
     /// Sends a ping to the service.

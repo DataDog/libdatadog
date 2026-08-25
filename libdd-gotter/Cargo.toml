@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-gotter"
-version = "0.1.0"
+version = "1.0.0"
 description = "ELF GOT-patching primitives for runtime function interposition on 64-bit Linux."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-gotter"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-gotter"
@@ -16,3 +16,6 @@ bench = false
 
 [dependencies]
 libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

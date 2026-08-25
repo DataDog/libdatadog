@@ -370,7 +370,6 @@ impl From<&ResolutionDetails> for Reason {
             Ok(assignment) => assignment.reason.into(),
             Err(EvaluationError::FlagDisabled) => Reason::Disabled,
             Err(EvaluationError::DefaultAllocationNull) => Reason::Default,
-            Err(EvaluationError::FlagConfigurationInvalid) => Reason::Default,
             Err(_) => Reason::Error,
         }
     }
@@ -409,7 +408,7 @@ impl From<&EvaluationError> for ErrorCode {
             EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
             EvaluationError::TargetingKeyMissing => ErrorCode::TargetingKeyMissing,
             EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
-            EvaluationError::FlagConfigurationInvalid => ErrorCode::Ok,
+            EvaluationError::FlagConfigurationInvalid => ErrorCode::ParseError,
             EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
             EvaluationError::FlagUnrecognizedOrDisabled => ErrorCode::FlagNotFound,
             EvaluationError::FlagDisabled => ErrorCode::Ok,
@@ -485,4 +484,17 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
 pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<ResolutionDetails>) {
     // SAFETY: the caller must ensure that assignment is valid
     unsafe { Handle::free(assignment) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_flag_is_exposed_as_parse_error() {
+        let details = ResolutionDetails::from(EvaluationError::FlagConfigurationInvalid);
+
+        assert!(matches!(Reason::from(&details), Reason::Error));
+        assert_eq!(ErrorCode::from(&details), ErrorCode::ParseError);
+    }
 }

@@ -92,7 +92,7 @@ where
                 })?;
                 span.span_kind = SpanKind::from(kind);
             }
-            _unknown => skip_unknown_value(buf)?,
+            _unknown => skip_unknown_value(buf, table)?,
         }
     }
 
@@ -276,7 +276,7 @@ where
                     DecodeError::InvalidFormat(format!("V1 span_link flags {v} exceeds u32::MAX"))
                 })?;
             }
-            _unknown => skip_unknown_value(buf)?,
+            _unknown => skip_unknown_value(buf, table)?,
         }
     }
     Ok(link)
@@ -325,7 +325,7 @@ where
             span_event_key::ATTRIBUTES => {
                 event.attributes = read_attributes_map(buf, table)?;
             }
-            _unknown => skip_unknown_value(buf)?,
+            _unknown => skip_unknown_value(buf, table)?,
         }
     }
     Ok(event)
