@@ -80,6 +80,9 @@ criterion.workspace = true
 goblin = "0.9.3"
 tempfile.workspace = true
 
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.59.0", features = ["Win32_System_LibraryLoader"] }
+
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
 cc = "1.1.31"

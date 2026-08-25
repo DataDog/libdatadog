@@ -298,6 +298,21 @@ pub trait SidecarInterface {
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
+    /// Starts the AppSec backend if it has not already been initialized.
+    ///
+    /// Returns only after initialization finishes, so subsequent AppSec messages
+    /// cannot overtake initialization.
+    async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
+
+    /// Forwards an AppSec message from the PHP extension to the registered helper.
+    ///
+    /// Returns the response bytes from the helper and a flag indicating whether
+    /// the extension session should be disconnected.
+    async fn send_appsec_message(
+        client_id: u64,
+        #[ClientType(&'request [u8])] data: Vec<u8>,
+    ) -> (Vec<u8>, bool);
+
     /// Sends a ping to the service.
     #[blocking]
     async fn ping();
@@ -320,4 +335,29 @@ pub trait SidecarInterface {
     ///
     /// The connection must right after that start emitting crashtracker messages.
     async fn enter_crashtracker_receiver();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+
+    #[test]
+    fn appsec_client_request_decodes_as_server_request() {
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
+            client_id: 42,
+            data: b"payload",
+        };
+
+        let encoded = libdd_ipc::codec::encode(&request);
+        let decoded: SidecarInterfaceRequest =
+            libdd_ipc::codec::decode(&encoded).expect("client request should decode");
+
+        match decoded {
+            SidecarInterfaceRequest::SendAppsecMessage { client_id, data } => {
+                assert_eq!(client_id, 42);
+                assert_eq!(data, b"payload");
+            }
+            _ => panic!("decoded the wrong request variant"),
+        }
+    }
 }

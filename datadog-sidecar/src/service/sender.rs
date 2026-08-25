@@ -14,7 +14,7 @@
 use crate::service::{
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
-        SidecarInterfaceRequest,
+        SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -526,6 +526,23 @@ impl SidecarSender {
 
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_write_timeout(d)
+    }
+
+    pub fn ensure_appsec_started(
+        &mut self,
+        log_file_path: Vec<u8>,
+        log_level: String,
+    ) -> Result<bool, libdd_ipc::codec::DecodeError> {
+        self.channel
+            .call_ensure_appsec_started(log_file_path, log_level)
+    }
+
+    pub fn send_appsec_message(
+        &mut self,
+        request: &SidecarInterfaceClientRequest<'_>,
+    ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {

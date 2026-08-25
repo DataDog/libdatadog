@@ -1433,6 +1433,7 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
+ "crossbeam-utils",
  "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",

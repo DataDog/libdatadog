@@ -6,7 +6,7 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::SidecarInterfaceChannel;
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
@@ -513,6 +513,20 @@ pub fn add_span_to_concentrator(
     Ok(())
 }
 
+/// Starts the AppSec backend in the sidecar and waits for initialization to
+/// complete before returning.
+pub fn ensure_appsec_started(
+    transport: &mut SidecarTransport,
+    log_file_path: Vec<u8>,
+    log_level: String,
+) -> io::Result<bool> {
+    transport.with_retry(|sender| {
+        sender
+            .ensure_appsec_started(log_file_path.clone(), log_level.clone())
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
+}
+
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))
@@ -521,6 +535,21 @@ pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
 /// Retrieves the current statistics of the service.
 pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
+}
+
+/// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message(
+    transport: &mut SidecarTransport,
+    client_id: u64,
+    data: &[u8],
+) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    transport.with_retry(|s| {
+        s.send_appsec_message(&request)
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
 }
 
 /// Flushes traces/stats and/or telemetry, as specified by options.
