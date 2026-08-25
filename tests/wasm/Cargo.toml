@@ -1,0 +1,20 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-wasm-tests"
+version = "0.0.1"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autolib = false
+
+[features]
+default = ["compression"]
+compression = []
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+http = "1"
+wasm-bindgen-test = "=0.3.50"
+zrip = { version = "=0.6.0", default-features = false, features = ["frame"] }

@@ -139,6 +139,7 @@ mod tests {
 
     /// APMSP-3830 was the feature being present for some builds and absent for others, so
     /// cover every combination a project can ask for, not just the one we release.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn catch_panic_survives_every_module_combination() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -152,6 +153,7 @@ mod tests {
     }
 
     /// The converse: not asking for it never sneaks it in, whatever else is selected.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn catch_panic_is_never_implied_by_another_feature() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -208,6 +210,7 @@ mod tests {
 
     /// Nothing is inherited under `--no-default-features`, so still-needed defaults must be
     /// listed explicitly.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn always_lists_features_that_no_longer_come_from_defaults() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -244,6 +247,7 @@ mod tests {
         assert_eq!(features, vec!["cbindgen", "ddcommon-ffi"]);
     }
 
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn emitted_list_has_no_duplicates() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -302,6 +306,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn every_containment_capable_sub_crate_is_fanned_out() {
         let root = workspace_root();

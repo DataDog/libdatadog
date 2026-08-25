@@ -6,11 +6,12 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -34,7 +35,7 @@ pub struct SidecarFlushOptions {
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
 /// session configurations, and sending traces.
-#[datadog_ipc_macros::service]
+#[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions to be performed.
     ///
@@ -137,6 +138,56 @@ pub trait SidecarInterface {
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
+    );
+
+    /// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 `TracerPayload`,
+    /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+    /// `/v1.0/traces` endpoint. Use this when the SDK speaks V1 natively.
+    ///
+    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so only
+    /// the generic bool/int flags need to cross the IPC boundary, unlike `send_trace_v04_shm`
+    /// which still needs the full `SerializedTracerHeaderTags`. `lang_interpreter`/`lang_vendor`
+    /// have no equivalent in the V1 payload model though, so those two still cross separately.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `handle` - The handle to the shared memory.
+    /// * `len` - The size of the shared memory data.
+    /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
+    /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
+    /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
+    async fn send_trace_v1_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+        len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    );
+
+    /// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 `TracerPayload`, can
+    /// inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+    /// endpoint. Use this when the SDK speaks V1 natively.
+    ///
+    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so only
+    /// the generic bool/int flags need to cross the IPC boundary, unlike `send_trace_v04_bytes`
+    /// which still needs the full `SerializedTracerHeaderTags`. `lang_interpreter`/`lang_vendor`
+    /// have no equivalent in the V1 payload model though, so those two still cross separately.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `data` - The V1 trace data serialized as bytes.
+    /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
+    /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
+    /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
+    async fn send_trace_v1_bytes(
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
     );
 
     /// Transfers raw data to a live-debugger endpoint.
@@ -244,7 +295,7 @@ pub trait SidecarInterface {
     async fn add_span_to_concentrator(
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
     );
 
     /// Starts the AppSec backend if it has not already been initialized.
@@ -297,9 +348,9 @@ mod tests {
             data: b"payload",
         };
 
-        let encoded = datadog_ipc::codec::encode(&request);
+        let encoded = libdd_ipc::codec::encode(&request);
         let decoded: SidecarInterfaceRequest =
-            datadog_ipc::codec::decode(&encoded).expect("client request should decode");
+            libdd_ipc::codec::decode(&encoded).expect("client request should decode");
 
         match decoded {
             SidecarInterfaceRequest::SendAppsecMessage { client_id, data } => {

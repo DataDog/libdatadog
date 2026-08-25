@@ -3,16 +3,18 @@
 
 //! GOT-table interposition for heap profiling.
 //!
-//! Uses the shared ELF primitives from `libdd-got-hook` for parsing and
+//! Uses the shared ELF primitives from `libdd-gotter` for parsing and
 //! patching, and adds the multi-symbol `SymbolOverrides` registry with
 //! per-library dedup and dlopen rescan support on top.
 
 use std::collections::HashMap;
-use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use libdd_gotter::lookup_symbol;
-use libdd_gotter::{elf64_r_sym, iterate_libraries, DynamicInfo, PageProtGuard};
+use libdd_gotter::{
+    dlpi_name, elf64_r_sym, elf64_r_type, is_got_pointer_reloc, is_vdso_or_dynamic_linker,
+    iterate_libraries, DynamicInfo, PageProtGuard,
+};
 
 /// Per-library bookkeeping for the GOT re-scan. We never un-patch (see
 /// the crate docs on why un-installing can't be done safely), so this
@@ -144,26 +146,22 @@ impl SymbolOverrides {
         // /proc/self/maps via PageProtGuard even if only one new object needs
         // patching. Track already-processed libraries and lazily create the
         // page-protection guard to avoid repeated heavy work.
+
         let mut guard = PageProtGuard::new();
 
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
         let self_ptr = self as *mut Self as usize;
         let guard_ptr = &mut guard as *mut PageProtGuard as usize;
-        iterate_libraries(move |info, _is_exe| unsafe {
+        iterate_libraries(move |info, is_exe| unsafe {
             let this = &mut *(self_ptr as *mut Self);
             let g = &mut *(guard_ptr as *mut PageProtGuard);
-            let lib_name = if info.dlpi_name.is_null() {
-                String::new()
-            } else {
-                CStr::from_ptr(info.dlpi_name)
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+            let lib_name = dlpi_name(info.dlpi_name);
+            if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
                 return false;
             }
             if let Some(dyn_info) = DynamicInfo::from_phdr(info) {
-                this.apply_to_library(&dyn_info, lib_name, g);
+                let owned_name = lib_name.map(|c| c.into_owned()).unwrap_or_default();
+                this.apply_to_library(&dyn_info, owned_name, g);
             }
             false
         });
@@ -222,21 +220,32 @@ impl SymbolOverrides {
             return;
         }
 
+        // NOTE: the SysV x86-64 ABI:
+        // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
+        // specifies that only RELA entries are used on AMD64 (spec page 64).
+        // ARM64 appears similar. REL processing is kept for defensive completeness
+        // but may be dead code on both architectures. We should revisit this.
         for reloc in dyn_info.rels() {
+            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                continue;
+            }
             Self::process_relocation(
                 &self.overrides,
                 dyn_info,
-                elf64_r_sym(reloc.r_info) as u32,
+                elf64_r_sym(reloc.r_info),
                 reloc.r_offset as usize,
                 guard,
             );
         }
         for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
             for reloc in relocs {
+                if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                    continue;
+                }
                 Self::process_relocation(
                     &self.overrides,
                     dyn_info,
-                    elf64_r_sym(reloc.r_info) as u32,
+                    elf64_r_sym(reloc.r_info),
                     reloc.r_offset as usize,
                     guard,
                 );

@@ -16,6 +16,13 @@ pub(crate) struct UniversalFlagConfigWire {
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
+    /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation
+    /// data may contain PII; defaults to `false` for privacy.
+    ///
+    /// Deserialized leniently: an absent, `null`, or non-boolean value falls back to `false`
+    /// instead of failing the parse of the whole configuration.
+    #[serde(default, deserialize_with = "deserialize_lenient_bool")]
+    pub observe_full_evaluation_data: bool,
     /// Flags configuration.
     ///
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
@@ -28,6 +35,20 @@ pub(crate) struct UniversalFlagConfigWire {
 pub struct Environment {
     /// Name of the environment.
     pub name: Str,
+}
+
+/// Deserializes a boolean, falling back to `false` for any value that is not a JSON boolean.
+///
+/// Server-controlled optional booleans must never fail the parse of the whole configuration. A
+/// `null` or mistyped value would otherwise discard every flag and force SDKs onto their defaults.
+fn deserialize_lenient_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Deserialize to a generic `Value` first so that any JSON shape is consumed without error,
+    // then keep only a real boolean. Anything else becomes `false`.
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_bool().unwrap_or(false))
 }
 
 /// `TryParse` allows the subfield to fail parsing without failing the parsing of the whole
@@ -167,8 +188,8 @@ pub(crate) enum ConditionCheck {
     },
     Regex {
         expected_match: bool,
-        // As regex is supplied by user, we allow regex parse failure to not fail parsing and
-        // evaluation. Invalid regexes are simply ignored.
+        // Compile user-supplied regexes during ingestion so a failure rejects only the containing
+        // flag before evaluation.
         regex: Regex,
     },
     Membership {
@@ -557,6 +578,71 @@ impl ShardRange {
 #[cfg(test)]
 mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
+
+    #[test]
+    fn observe_full_evaluation_data_defaults_to_false_when_absent() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(!ufc.observe_full_evaluation_data);
+    }
+
+    #[test]
+    fn observe_full_evaluation_data_parses_when_present() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "observeFullEvaluationData": true,
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(ufc.observe_full_evaluation_data);
+    }
+
+    /// A malformed value for this field must never discard the rest of the configuration. Each
+    /// case must parse, fall back to `false`, and keep the sibling flag usable.
+    #[test]
+    fn observe_full_evaluation_data_falls_back_to_false_when_malformed() {
+        for malformed in [r#"null"#, r#""true""#, r#"1"#, r#"{}"#, r#"[]"#] {
+            let json = format!(
+                r#"
+                  {{
+                    "createdAt": "2024-07-18T00:00:00Z",
+                    "environment": {{ "name": "test" }},
+                    "observeFullEvaluationData": {malformed},
+                    "flags": {{ "my_flag": {{
+                      "key": "my_flag",
+                      "enabled": true,
+                      "variationType": "BOOLEAN",
+                      "variations": {{}},
+                      "allocations": []
+                    }} }}
+                  }}
+                "#
+            );
+            let ufc: UniversalFlagConfigWire = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("value {malformed} must not fail the parse: {e}"));
+            assert!(
+                !ufc.observe_full_evaluation_data,
+                "value {malformed} must fall back to false"
+            );
+            assert!(
+                ufc.flags.contains_key("my_flag"),
+                "value {malformed} must not discard sibling flags"
+            );
+        }
+    }
 
     #[test]
     fn parse_partially_if_unexpected() {

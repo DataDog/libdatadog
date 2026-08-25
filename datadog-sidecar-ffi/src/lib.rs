@@ -10,9 +10,6 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_ipc::platform::{
-    FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
-};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
@@ -41,6 +38,7 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle};
 use libdd_remote_config::fetch::ConfigInvariants;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
@@ -51,6 +49,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -266,6 +265,7 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             language: language.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
+            agentless: None,
         },
         &Arc::new(Target::new(
             service_name.to_utf8_lossy().to_string(),
@@ -1158,6 +1158,72 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     MaybeError::None
 }
 
+/// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
+/// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+/// `/v1.0/traces` endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    shm_handle: Box<ShmHandle>,
+    len: usize,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_shm(
+        transport,
+        instance_id,
+        *shm_handle,
+        len,
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
+/// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
+/// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+/// endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    data: ffi::CharSlice,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_bytes(
+        transport,
+        instance_id,
+        data.as_bytes().to_vec(),
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
@@ -1210,6 +1276,8 @@ pub struct FfeExposure<'a> {
     pub subject_attributes_json: CharSlice<'a>,
     pub allocation_key: CharSlice<'a>,
     pub variant: CharSlice<'a>,
+    pub serial_id: i32,
+    pub has_serial_id: bool,
 }
 
 #[repr(C)]
@@ -1444,6 +1512,7 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         subject_attributes_json: char_slice_to_string(exposure.subject_attributes_json)?,
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
+        serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
     })
 }
 
@@ -2109,6 +2178,40 @@ mod tests {
         .expect("expected OTLP metrics endpoint");
 
         assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {
+        FfeExposure {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: CharSlice::from("flag-a"),
+            subject_id: CharSlice::from("user-1"),
+            subject_attributes_json: CharSlice::from("{}"),
+            allocation_key: CharSlice::from("alloc-a"),
+            variant: CharSlice::from("blue"),
+            serial_id,
+            has_serial_id,
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_present_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(4242));
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_zero_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(0, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(0));
+    }
+
+    #[test]
+    fn ffe_exposure_ignores_the_serial_id_value_when_absent() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, false)).unwrap();
+
+        assert_eq!(converted.serial_id, None);
     }
 
     #[test]

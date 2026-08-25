@@ -4,7 +4,7 @@ description = "Detects program crashes and reports them to datadog backend."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"
 edition.workspace = true
-version = "1.0.0"
+version = "2.0.0"
 rust-version.workspace = true
 license.workspace = true
 autobenches = false
@@ -42,17 +42,18 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libdd-libunwind-sys = { version = "1.0.2" }
+libdd-gotter = { version = "1.0.0", path = "../libdd-gotter" }
+libdd-libunwind-sys = { version = "1.0.3" }
 
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true, features = ["std", "clock", "serde"] }
 cxx = { version = "1.0", optional = true }
 errno = "0.3"
-libdd-capabilities = { version = "2.1.0", path = "../libdd-capabilities" }
-libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl" }
-libdd-common = { version = "5.1.0", path = "../libdd-common" }
-libdd-telemetry = { version = "6.0.0", path = "../libdd-telemetry" }
+libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
+libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl" }
+libdd-common = { version = "5.2.0", path = "../libdd-common" }
+libdd-telemetry = { version = "7.0.0", path = "../libdd-telemetry" }
 http = "1.1"
 libc.workspace = true
 nix = { version = "0.29", features = ["poll", "signal", "socket"] }
@@ -90,7 +91,7 @@ cxx-build = { workspace = true, optional = true }
 # in the build-script context. The build script only needs cc_utils, which has no TLS dependency.
 # Without this, aws-lc-sys gets compiled twice: once for the normal dep graph and once for the
 # build-script dep graph (Cargo resolver v2 keeps these contexts separate).
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

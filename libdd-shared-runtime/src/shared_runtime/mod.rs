@@ -75,6 +75,54 @@ pub trait SharedRuntime {
         Self: Sync;
 }
 
+/// Error returned by [`BlockingRuntime::block_on_with_timeout`].
+#[derive(Debug)]
+pub enum BlockOnTimeoutError {
+    /// The executor could not be accessed or constructed.
+    Io(io::Error),
+    /// The deadline elapsed before the future completed.
+    TimedOut(std::time::Duration),
+}
+
+impl fmt::Display for BlockOnTimeoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(err) => write!(f, "Executor error: {}", err),
+            Self::TimedOut(duration) => write!(f, "Timed out after {:?}", duration),
+        }
+    }
+}
+
+impl std::error::Error for BlockOnTimeoutError {}
+
+impl From<io::Error> for BlockOnTimeoutError {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+/// Returns true if `payload` is the panic that Tokio raises when it polls a timer on a
+/// runtime built without `enable_time`.
+///
+/// Tokio has no fallible constructor for this case. [`BlockingRuntime::block_on_with_timeout`]
+/// matches the panic message to convert the panic into a [`BlockOnTimeoutError`] instead of
+/// letting the panic abort the process.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_timers_disabled_panic(payload: &(dyn std::any::Any + Send)) -> bool {
+    // Tokio runs the timer driver as an internal task and re-raises that task's panic
+    // through `resume_unwind` on a boxed `JoinError` payload. The `JoinError` payload nests
+    // one `Box<dyn Any + Send>` inside the outer payload caught here, so this function
+    // unwraps the inner payload before matching on the message.
+    if let Some(inner) = payload.downcast_ref::<Box<dyn std::any::Any + Send>>() {
+        return is_timers_disabled_panic(inner.as_ref());
+    }
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    matches!(message, Some(message) if message.contains("timers are disabled"))
+}
+
 /// Extension of [`SharedRuntime`] for runtimes that can block the current thread on a future.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait BlockingRuntime: SharedRuntime {
@@ -82,6 +130,44 @@ pub trait BlockingRuntime: SharedRuntime {
     ///
     /// Returns an [`io::Error`] if the executor cannot be accessed or constructed.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error>;
+
+    /// Drives `f` to completion, blocking the current thread, but gives up once `timeout`
+    /// elapses.
+    ///
+    /// This method drives the deadline on the same executor as [`block_on`](Self::block_on).
+    ///
+    /// The bound is cooperative: the executor can only check the deadline when `f` yields.
+    /// A future that never yields, or that blocks the thread outside of `.await`, can run
+    /// past `timeout` before this method returns.
+    ///
+    /// This method requires a build with unwinding panics. A `panic = "abort"` build cannot
+    /// catch the panic that a timerless runtime raises (see below), and aborts the process
+    /// instead of returning [`BlockOnTimeoutError::Io`].
+    fn block_on_with_timeout<F: std::future::Future>(
+        &self,
+        f: F,
+        timeout: std::time::Duration,
+    ) -> Result<F::Output, BlockOnTimeoutError> {
+        // When the executor has no timer driver (e.g. a caller-supplied runtime built without
+        // `enable_time`), tokio::time::timeout panics instead of returning an error. The
+        // default block_on implementations are tokio-backed, so the panic reaches this
+        // catch_unwind. Catching the panic here converts it to an error, so a misconfigured
+        // executor cannot abort a process that calls block_on_with_timeout across the FFI
+        // boundary.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.block_on(async move { tokio::time::timeout(timeout, f).await })
+        }));
+        let outcome = match result {
+            Ok(outcome) => outcome,
+            Err(payload) if is_timers_disabled_panic(&payload) => {
+                return Err(BlockOnTimeoutError::Io(io::Error::other(
+                    "block_on_with_timeout requires a runtime with timers enabled",
+                )));
+            }
+            Err(payload) => std::panic::resume_unwind(payload),
+        };
+        outcome?.map_err(|_| BlockOnTimeoutError::TimedOut(timeout))
+    }
 }
 
 /// Handle to a worker registered on a [`SharedRuntime`].

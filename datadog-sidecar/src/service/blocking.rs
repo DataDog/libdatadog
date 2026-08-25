@@ -7,14 +7,15 @@ use super::{
 };
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -319,6 +320,48 @@ pub fn send_trace_v04_shm(
     Ok(())
 }
 
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(
+        instance_id.clone(),
+        data,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
+    Ok(())
+}
+
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(
+        instance_id.clone(),
+        handle,
+        len,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
+    Ok(())
+}
+
 /// Sends raw data from shared memory to the debugger endpoint.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
@@ -464,7 +507,7 @@ pub fn add_span_to_concentrator(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
-    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    span: libdd_ipc::shm_stats::OwnedShmSpanInput,
 ) -> io::Result<()> {
     lock_sender(transport)?.add_span_to_concentrator(env, version, span);
     Ok(())
@@ -525,7 +568,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use crate::service::blocking::SidecarTransport;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use tempfile::tempdir;
 

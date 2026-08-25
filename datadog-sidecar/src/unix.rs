@@ -5,7 +5,7 @@ use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
 use crate::config::Config;
 use crate::enter_listener_loop;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
@@ -53,7 +53,7 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
     let buf_size = Config::get().pipe_buffer_size;
     if buf_size > 0 {
-        datadog_ipc::platform::set_socket_buffer_size(buf_size);
+        libdd_ipc::platform::set_socket_buffer_size(buf_size);
     }
 
     let now = Instant::now();
