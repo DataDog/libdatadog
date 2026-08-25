@@ -3,6 +3,25 @@
 
 use std::io::{self, BufWriter, Read, Write};
 
+const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
+#[cfg(target_arch = "wasm32")]
+const MIN_ZRIP_COMPRESSION_LEVEL: i32 = -7;
+#[cfg(target_arch = "wasm32")]
+const MAX_ZRIP_COMPRESSION_LEVEL: i32 = 4;
+
+fn zstd_compression_level(level: i32) -> i32 {
+    let level = if level == 0 {
+        DEFAULT_COMPRESSION_LEVEL
+    } else {
+        level
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let level = level.clamp(MIN_ZRIP_COMPRESSION_LEVEL, MAX_ZRIP_COMPRESSION_LEVEL);
+
+    level
+}
+
 /// This type wraps a [`Vec`] to provide a [`Write`] interface that has a max
 /// capacity that won't be exceeded. Additionally, it gracefully handles
 /// out-of-memory conditions instead of panicking (unfortunately not compatible
@@ -119,6 +138,11 @@ impl ProfileCodec for NoopProfileCodec {
     }
 }
 
+/// A zstd-compatible profile codec.
+///
+/// Native targets accept the range reported by `zstd::compression_level_range()`.
+/// WASM clamps levels to zrip's supported range of `-7..=4`. Level `0` selects
+/// level `3` on every target.
 #[allow(unused)]
 pub struct ZstdProfileCodec;
 
@@ -132,7 +156,10 @@ impl ProfileCodec for ZstdProfileCodec {
         compression_level: i32,
     ) -> io::Result<Self::Encoder> {
         let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
-        zstd::Encoder::<'static, SizeRestrictedBuffer>::new(buffer, compression_level)
+        zstd::Encoder::<'static, SizeRestrictedBuffer>::new(
+            buffer,
+            zstd_compression_level(compression_level),
+        )
     }
 
     fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
@@ -157,7 +184,8 @@ impl ProfileCodec for ZstdProfileCodec {
         compression_level: i32,
     ) -> io::Result<Self::Encoder> {
         let buffer = SizeRestrictedBuffer::try_new(size_hint, max_capacity)?;
-        zrip::FrameEncoder::new(buffer, compression_level).map_err(io::Error::other)
+        zrip::FrameEncoder::new(buffer, zstd_compression_level(compression_level))
+            .map_err(io::Error::other)
     }
 
     fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
@@ -267,7 +295,8 @@ impl<C: ProfileCodec> Compressor<C> {
     /// - `size_hint`: beginning capacity for the output buffer. This is a hint for the starting
     ///   size, and the implementation may use something different.
     /// - `max_capacity`: the maximum size for the output buffer (hard limit).
-    /// - `compression_level`: must be supported by the target's zstd encoder.
+    /// - `compression_level`: passed to `C::new_encoder`. For the default [`ZstdProfileCodec`], see
+    ///   its target-specific level documentation.
     pub fn try_new(
         size_hint: usize,
         max_capacity: usize,
@@ -297,5 +326,27 @@ impl<C: ProfileCodec> Write for Compressor<C> {
     #[inline]
     fn flush(&mut self) -> io::Result<()> {
         self.encoder.flush()
+    }
+}
+
+#[cfg(all(test, not(miri), not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    fn compress(level: i32) -> Vec<u8> {
+        let mut compressor = Compressor::<ZstdProfileCodec>::try_new(256, 4096, level).unwrap();
+        compressor.write_all(b"hello profile").unwrap();
+        compressor.finish().unwrap()
+    }
+
+    #[test]
+    fn zero_uses_default_compression_level() {
+        assert_eq!(compress(0), compress(DEFAULT_COMPRESSION_LEVEL));
+    }
+
+    #[test]
+    fn native_compression_level_is_not_clamped() {
+        assert_eq!(zstd_compression_level(22), 22);
+        assert!(!compress(22).is_empty());
     }
 }
