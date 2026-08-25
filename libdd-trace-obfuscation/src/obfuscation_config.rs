@@ -1,11 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use log::{debug, error};
 use serde::Deserialize;
-use std::{collections::HashSet, env};
-
-use libdd_common::config::parse_env;
+use std::collections::HashSet;
 
 use crate::{
     json::JsonObfuscator,
@@ -13,14 +10,25 @@ use crate::{
     sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemcachedConfig {
     pub enabled: bool,
     pub keep_command: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// Mirrors the Datadog Agent defaults
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for MemcachedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_command: false,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CreditCardConfig {
     pub enabled: bool,
@@ -28,9 +36,21 @@ pub struct CreditCardConfig {
     pub keep_values: HashSet<String>,
 }
 
+/// Mirrors the Datadog Agent defaults
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for CreditCardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            luhn: false,
+            keep_values: HashSet::new(),
+        }
+    }
+}
+
 pub type JsonStringTransformer = fn(&str) -> String;
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
@@ -47,12 +67,23 @@ pub struct JsonObfuscatorConfig {
     pub transformer: Option<JsonStringTransformer>,
 }
 
+/// Mirrors the Datadog Agent defaults for the elasticsearch,
+/// opensearch and mongodb (`:374`) obfuscators, which are all enabled by default.
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for JsonObfuscatorConfig {
+    fn default() -> Self {
+        Self::enabled()
+    }
+}
+
 impl JsonObfuscatorConfig {
     #[must_use]
     pub fn disabled() -> Self {
         Self {
             enabled: false,
-            ..Default::default()
+            keep_keys: HashSet::new(),
+            transform_keys: HashSet::new(),
+            transformer: None,
         }
     }
 
@@ -60,16 +91,30 @@ impl JsonObfuscatorConfig {
     pub fn enabled() -> Self {
         Self {
             enabled: true,
-            ..Default::default()
+            keep_keys: HashSet::new(),
+            transform_keys: HashSet::new(),
+            transformer: None,
         }
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RedisConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
+}
+
+/// Mirrors the Datadog Agent defaults for both `redis` and `valkey`
+/// which share the same schema and defaults.
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            remove_all_args: false,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -107,7 +152,12 @@ impl ObfuscationConfig {
     /// # Errors
     ///
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
-    pub fn new() -> Result<Self, Box<dyn core::error::Error>> {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_from_env() -> Result<Self, Box<dyn core::error::Error>> {
+        use libdd_common::config::parse_env;
+        use log::{debug, error};
+        use std::env;
+
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
             Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
                 Ok(res) => {
