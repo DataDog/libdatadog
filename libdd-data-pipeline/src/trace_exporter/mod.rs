@@ -708,6 +708,8 @@ impl<
         let trace_count = traces.len();
         #[cfg(feature = "telemetry")]
         let span_count = traces.iter().map(Vec::len).sum::<usize>();
+        #[cfg(feature = "telemetry")]
+        self.emit_trace_counts(&[(MetricKind::SpansEnqueuedForSerialization, span_count)]);
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
             &traces,
             &self.metadata,
@@ -744,6 +746,8 @@ impl<
         let trace_count = traces.len();
         #[cfg(feature = "telemetry")]
         let span_count = traces.iter().map(Vec::len).sum::<usize>();
+        #[cfg(feature = "telemetry")]
+        self.emit_trace_counts(&[(MetricKind::SpansEnqueuedForSerialization, span_count)]);
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
             r.service = self.metadata.service.clone();
@@ -871,12 +875,6 @@ impl<
             return self.send_trace_chunks_to_log(&traces, max_line_size);
         }
 
-        #[cfg(feature = "telemetry")]
-        self.emit_trace_counts(&[(
-            MetricKind::SpansEnqueuedForSerialization,
-            traces.iter().map(Vec::len).sum(),
-        )]);
-
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         if let Some(ref config) = self.agentless_config {
@@ -926,6 +924,8 @@ impl<
         #[cfg(feature = "telemetry")]
         let trace_count = traces.len();
         let span_count = traces.iter().map(Vec::len).sum::<usize>();
+        #[cfg(feature = "telemetry")]
+        self.emit_trace_counts(&[(MetricKind::SpansEnqueuedForSerialization, span_count)]);
 
         let prepared = match self.serializer.prepare_traces_payload(
             traces,
@@ -2446,6 +2446,7 @@ mod telemetry_metrics_tests {
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::{v04::SpanBytes, v05};
+    use regex::Regex;
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -2499,6 +2500,70 @@ mod telemetry_metrics_tests {
         };
         assert_eq!(body, response_body);
 
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_enqueued_metric_excludes_dropped_p0_spans() {
+        let server = MockServer::start();
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/traces")
+                .header("Content-Type", "application/json");
+            then.status(200).body("");
+        });
+        let enqueued_metric = Regex::new(
+            r#""metric":"spans_enqueued_for_serialization","points":\[\[\d+,1\.0\]\],"tags":\[\],"common":true,"type":"count""#,
+        )
+        .unwrap();
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_matches(enqueued_metric)
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_otlp_endpoint(&otlp_endpoint)
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let kept_span = SpanBytes {
+            trace_id: 1,
+            span_id: 1,
+            ..Default::default()
+        };
+        let dropped_span = SpanBytes {
+            trace_id: 2,
+            span_id: 2,
+            metrics: vec![(BytesString::from_static("_sampling_priority_v1"), -1.0)].into(),
+            ..Default::default()
+        };
+        let traces = msgpack_encoder::v04::to_vec_from_v04(&[vec![kept_span], vec![dropped_span]]);
+
+        assert_eq!(
+            exporter.send(traces.as_ref()).unwrap(),
+            AgentResponse::Unchanged
+        );
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
             std::thread::sleep(Duration::from_millis(100));
