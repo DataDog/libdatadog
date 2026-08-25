@@ -43,7 +43,7 @@ blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libdd-gotter = { version = "1.0.0", path = "../libdd-gotter" }
-libdd-libunwind-sys = { version = "1.0.2" }
+libdd-libunwind-sys = { version = "1.0.3" }
 
 [dependencies]
 anyhow.workspace = true
@@ -79,6 +79,9 @@ windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "W
 criterion.workspace = true
 goblin = "0.9.3"
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "0.59.0", features = ["Win32_System_LibraryLoader"] }
 
 [build-dependencies]
 # If we use a newer version of cc, CI fails on alpine.
