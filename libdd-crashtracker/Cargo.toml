@@ -43,7 +43,7 @@ blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libdd-gotter = { version = "1.0.0", path = "../libdd-gotter" }
-libdd-libunwind-sys = { version = "1.0.2" }
+libdd-libunwind-sys = { version = "1.0.3" }
 
 [dependencies]
 anyhow.workspace = true
