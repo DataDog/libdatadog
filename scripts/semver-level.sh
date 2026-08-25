@@ -231,7 +231,12 @@ compute_semver_results() {
     elif ! $has_lib && ! $has_proc_macro; then
         log_verbose "Skipping cargo-public-api: $crate has no library or proc-macro target"
     else
-        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --color=never diff "$baseline..$current" 2>&1)
+        # --all-features matches the cargo-semver-checks invocation above, so both
+        # tools compare the same API surface. It is load-bearing for proc-macro
+        # crates: cargo-semver-checks is skipped for them, so this is the only
+        # comparison, and under the default feature set a removed or renamed
+        # feature-gated macro would be invisible and pass as a patch.
+        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --all-features --color=never diff "$baseline..$current" 2>&1)
         EXIT_CODE=$?
 
         if [[ $EXIT_CODE -ne 0 ]]; then
