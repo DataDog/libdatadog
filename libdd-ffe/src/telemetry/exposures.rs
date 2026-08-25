@@ -419,7 +419,7 @@ mod tests {
             exposure_with_serial_id("user", "alloc", "variant", 0),
         );
 
-        assert!(first.is_some());
+        assert_eq!(first.unwrap()["exposures"][0].get("serial_id"), None);
         assert_eq!(appeared.unwrap()["exposures"][0]["serial_id"], 0);
     }
 
@@ -435,8 +435,42 @@ mod tests {
             exposure_with_serial_id("user", "alloc", "variant", 1),
         );
 
-        assert!(first.is_some());
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
         assert_eq!(changed.unwrap()["exposures"][0]["serial_id"], 1);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_the_serial_id_disappears() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+        let disappeared = encode_one(&deduplicator, exposure("user", "alloc", "variant"));
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
+        assert_eq!(disappeared.unwrap()["exposures"][0].get("serial_id"), None);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_the_serial_id_returns_to_an_earlier_value() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 7),
+        );
+        let changed = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 9),
+        );
+        let returned = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 7),
+        );
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 7);
+        assert_eq!(changed.unwrap()["exposures"][0]["serial_id"], 9);
+        assert_eq!(returned.unwrap()["exposures"][0]["serial_id"], 7);
     }
 
     #[test]
@@ -451,8 +485,8 @@ mod tests {
             exposure_with_serial_id("user", "alloc", "variant", 0),
         );
 
-        assert!(first.is_some());
-        assert!(duplicate.is_none());
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
+        assert_eq!(duplicate, None);
     }
 
     #[test]
