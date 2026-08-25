@@ -1276,6 +1276,8 @@ pub struct FfeExposure<'a> {
     pub subject_attributes_json: CharSlice<'a>,
     pub allocation_key: CharSlice<'a>,
     pub variant: CharSlice<'a>,
+    pub serial_id: i32,
+    pub has_serial_id: bool,
 }
 
 #[repr(C)]
@@ -1510,6 +1512,7 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         subject_attributes_json: char_slice_to_string(exposure.subject_attributes_json)?,
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
+        serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
     })
 }
 
@@ -2115,6 +2118,40 @@ mod tests {
         .expect("expected OTLP metrics endpoint");
 
         assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {
+        FfeExposure {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: CharSlice::from("flag-a"),
+            subject_id: CharSlice::from("user-1"),
+            subject_attributes_json: CharSlice::from("{}"),
+            allocation_key: CharSlice::from("alloc-a"),
+            variant: CharSlice::from("blue"),
+            serial_id,
+            has_serial_id,
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_present_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(4242));
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_zero_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(0, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(0));
+    }
+
+    #[test]
+    fn ffe_exposure_ignores_the_serial_id_value_when_absent() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, false)).unwrap();
+
+        assert_eq!(converted.serial_id, None);
     }
 
     #[test]
