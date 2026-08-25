@@ -14,8 +14,37 @@ env:
   RUST_VERSION: 1.92.0
 
 jobs:
+  # Automation that opens a PR and labels it in two steps (`gh pr create
+  # --label` is not atomic) produces an `opened` event whose payload carries no
+  # labels, so a payload-based `if:` guard runs the check anyway. The later
+  # `labeled` runs skip correctly, but the failed check run from the `opened` run
+  # has a higher id and is the one all-checks keeps, so the PR stays red despite
+  # the label.
+  check-skip:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.labels.outputs.skip }}
+    steps:
+      - name: Check for skip-pr-title-semver-check label
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
+               --jq '.labels[].name' | grep -qx 'skip-pr-title-semver-check'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is set; skipping semver checks."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is not set; running semver checks."
+          fi
+
   detect-changes:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: check-skip
+    if: ${{ needs.check-skip.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       changed_crates: ${{ steps.detect.outputs.crates }}
@@ -78,8 +107,8 @@ jobs:
           fi
 
   semver-check:
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       result_json: ${{ steps.semver.outputs.result_json }}
@@ -167,8 +196,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   validate:
-    needs: [detect-changes, semver-check]
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes, semver-check]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title against semver changes

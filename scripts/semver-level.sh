@@ -101,44 +101,77 @@ compute_semver_results() {
     log_verbose "========================================"
 
     # ----------------------------------------------------------------
-    # 1) cargo-semver-checks (type-signature lints)
+    # 0) Select proper tool
+    #
+    # cargo-semver-checks only lints crates with a *library* target. A crate
+    # declaring `proc-macro = true` reports its target kind as `proc-macro`, not
+    # `lib`, so cargo-semver-checks selects nothing and exits 1 with "no crates
+    # with library targets selected". 
+    # cargo-public-api *does* support proc-macro crates — it reports the exported
+    # macros (e.g. `pub proc macro libdd_ipc_macros::#[service]`) — so a removed
+    # or renamed macro is still caught as a major change.
+    # ----------------------------------------------------------------
+    local target_kinds has_lib=false has_proc_macro=false
+    target_kinds=$(cargo metadata --format-version=1 --no-deps 2>/dev/null \
+        | jq -r --arg crate "$crate" \
+            '[.packages[] | select(.name == $crate) | .targets[].kind[]] | unique | join(" ")')
+
+    if [[ -z "$target_kinds" ]]; then
+        echo "Error: $crate has no targets in cargo metadata (unknown crate?)" >&2
+        exit 1
+    fi
+
+    if [[ " $target_kinds " == *" lib "* ]]; then
+        has_lib=true
+    fi
+    if [[ " $target_kinds " == *" proc-macro "* ]]; then
+        has_proc_macro=true
+    fi
+    log_verbose "Target kinds for $crate: $target_kinds"
+
+    # ----------------------------------------------------------------
+    # 1) cargo-semver-checks (type-signature lints) — library targets only.
     # ----------------------------------------------------------------
     local semver_level="none"
     local semver_reason=""
     local semver_details=""
     local crate_is_new=false
 
-    SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
-    SEMVER_EXIT_CODE=$?
+    if ! $has_lib; then
+        log_verbose "Skipping cargo-semver-checks: $crate has no library target"
+    else
+        SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
+        SEMVER_EXIT_CODE=$?
 
-    if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
-        log_verbose "cargo-semver-checks: no violations"
-        semver_level="none"
-    elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
-        if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
-            semver_level="major"
-            semver_reason="cargo-semver-checks detected breaking changes"
-            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
-            log_verbose "cargo-semver-checks: major"
-        elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
-            # The crate doesn't exist in the baseline — it's a new crate being added
-            semver_level="minor"
-            semver_reason="New crate (not present in baseline)"
-            crate_is_new=true
-            log_verbose "cargo-semver-checks: new crate, treat as minor"
-        elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
-            semver_level="minor"
-            semver_reason="cargo-semver-checks detected minor breaking changes"
-            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
-            log_verbose "cargo-semver-checks: minor"
+        if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
+            log_verbose "cargo-semver-checks: no violations"
+            semver_level="none"
+        elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
+            if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
+                semver_level="major"
+                semver_reason="cargo-semver-checks detected breaking changes"
+                semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
+                log_verbose "cargo-semver-checks: major"
+            elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
+                # The crate doesn't exist in the baseline — it's a new crate being added
+                semver_level="minor"
+                semver_reason="New crate (not present in baseline)"
+                crate_is_new=true
+                log_verbose "cargo-semver-checks: new crate, treat as minor"
+            elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
+                semver_level="minor"
+                semver_reason="cargo-semver-checks detected minor breaking changes"
+                semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
+                log_verbose "cargo-semver-checks: minor"
+            else
+                echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
+                exit $SEMVER_EXIT_CODE
+            fi
         else
-            echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
+            echo "Unexpected exit code from cargo-semver-checks: $SEMVER_EXIT_CODE" >&2
+            echo "$SEMVER_OUTPUT" >&2
             exit $SEMVER_EXIT_CODE
         fi
-    else
-        echo "Unexpected exit code from cargo-semver-checks: $SEMVER_EXIT_CODE" >&2
-        echo "$SEMVER_OUTPUT" >&2
-        exit $SEMVER_EXIT_CODE
     fi
 
     # ----------------------------------------------------------------
@@ -152,8 +185,9 @@ compute_semver_results() {
     # therefore run cargo-public-api unconditionally and, for changed items,
     # normalize and compare the old vs new signatures (see the Changed handling
     # below) before combining the result with semver-checks via max_level. Skip
-    # only when there is no baseline (new crate) or when semver-checks already
-    # flagged major (cannot go higher).
+    # only when there is no baseline (new crate), when semver-checks already
+    # flagged major (cannot go higher), or when the crate has neither a library
+    # nor a proc-macro target, leaving cargo-public-api nothing to document.
     #
     # Requires cargo-public-api >= 0.52.0: earlier versions include function
     # parameter names in signatures, so a non-breaking parameter *rename* also
@@ -170,6 +204,8 @@ compute_semver_results() {
         log_verbose "Skipping cargo-public-api: new crate (no baseline)"
     elif [[ "$semver_level" == "major" ]]; then
         log_verbose "Skipping cargo-public-api: cargo-semver-checks already at major"
+    elif ! $has_lib && ! $has_proc_macro; then
+        log_verbose "Skipping cargo-public-api: $crate has no library or proc-macro target"
     else
         PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --color=never diff "$baseline..$current" 2>&1)
         EXIT_CODE=$?
@@ -261,8 +297,19 @@ compute_semver_results() {
         '{"name": $name, "level": $level, "reason": $reason, "details": $details}')"
 }
 
-# Run the computation and capture JSON output
+# Run the computation and capture JSON output.
+#
+# compute_semver_results runs in a command substitution, so its `exit` calls only
+# terminate that subshell. Without propagating the status here the script would
+# return 0 with empty stdout, and the caller would report a confusing "unknown
+# level ()" instead of the underlying tool error.
 RESULT_JSON=$(compute_semver_results "$CRATE" "$BASE_REF" "$CURRENT_REF")
+RESULT_EXIT_CODE=$?
+
+if [[ $RESULT_EXIT_CODE -ne 0 ]] || [[ -z "$RESULT_JSON" ]]; then
+    echo "Error: failed to compute semver level for $CRATE (exit code: $RESULT_EXIT_CODE)" >&2
+    exit "$(( RESULT_EXIT_CODE == 0 ? 1 : RESULT_EXIT_CODE ))"
+fi
 
 # Output JSON to stdout (captured by workflow)
 echo "$RESULT_JSON"
