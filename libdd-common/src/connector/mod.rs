@@ -20,11 +20,18 @@ pub mod errors;
 mod conn_stream;
 use conn_stream::{ConnStream, ConnStreamError};
 
+#[cfg(feature = "hyper-proxy")]
+mod proxy;
+
 #[derive(Clone)]
+// `proxy::HttpsProxyConnector` is crate internal, and the field anyway not pub.
+#[allow(private_interfaces)]
 pub enum Connector {
     Http(connect::HttpConnector),
     #[cfg(feature = "tls-core")]
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
+    #[cfg(feature = "hyper-proxy")]
+    HttpsProxy(Box<proxy::HttpsProxyConnector>),
 }
 
 static DEFAULT_CONNECTOR: LazyLock<Connector> = LazyLock::new(Connector::new);
@@ -39,14 +46,22 @@ impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
+        #[cfg(feature = "hyper-proxy")]
+        {
+            Connector::HttpsProxy(Box::new(proxy::HttpsProxyConnector::new(
+                Self::new_no_proxy(),
+            )))
+        }
+        #[cfg(not(feature = "hyper-proxy"))]
+        {
+            Self::new_no_proxy()
+        }
+    }
+
+    pub(super) fn new_no_proxy() -> Self {
         #[cfg(feature = "tls-core")]
         {
-            #[cfg(feature = "use_webpki_roots")]
-            let https_connector_fn = https::build_https_connector_with_webpki_roots;
-            #[cfg(not(feature = "use_webpki_roots"))]
-            let https_connector_fn = https::build_https_connector;
-
-            match https_connector_fn() {
+            match https::build_https_connector() {
                 Ok(connector) => Connector::Https(connector),
                 Err(_) => Connector::Http(connect::HttpConnector::new()),
             }
@@ -77,6 +92,8 @@ impl Connector {
             Self::Https(c) => {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
+            #[cfg(feature = "hyper-proxy")]
+            Self::HttpsProxy(p) => p.build_conn_stream(uri, require_tls),
         }
     }
 }
@@ -107,38 +124,33 @@ mod https {
     fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]
-    pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
-        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    > {
+    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
 
-        let client_config = ClientConfig::builder()
+        Ok(ClientConfig::builder()
             .with_webpki_roots()
-            .with_no_client_auth();
-        Ok(hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(client_config)
-            .https_or_http()
-            .enable_http1()
-            .build())
+            .with_no_client_auth())
     }
 
     #[cfg(not(feature = "use_webpki_roots"))]
-    /// Returns a default connector that uses the system trust roots.
+    /// Builds the client TLS config using the system trust roots.
     /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
     /// `rustls_platform_verifier` doc for details.
-    pub(super) fn build_https_connector() -> anyhow::Result<
-        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    > {
+    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         use rustls_platform_verifier::BuilderVerifierExt;
 
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
 
-        let client_config = ClientConfig::builder()
+        Ok(ClientConfig::builder()
             .with_platform_verifier()?
-            .with_no_client_auth();
+            .with_no_client_auth())
+    }
 
+    pub(super) fn build_https_connector() -> anyhow::Result<
+        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+    > {
         Ok(hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(client_config)
+            .with_tls_config(build_tls_config()?)
             .https_or_http()
             .enable_http1()
             .build())
@@ -168,6 +180,8 @@ impl tower_service::Service<hyper::Uri> for Connector {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
             #[cfg(feature = "tls-core")]
             Connector::Https(c) => c.poll_ready(cx),
+            #[cfg(feature = "hyper-proxy")]
+            Connector::HttpsProxy(p) => p.poll_ready(cx),
         }
     }
 }
@@ -212,7 +226,7 @@ mod tests {
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
         env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
-        let connector = Connector::new();
+        let connector = Connector::new_no_proxy();
 
         assert!(matches!(connector, Connector::Http(_)));
 
@@ -231,7 +245,7 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let connector = Connector::new();
+        let connector = Connector::new_no_proxy();
         assert!(matches!(connector, Connector::Https(_)));
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);

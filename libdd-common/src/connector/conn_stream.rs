@@ -87,11 +87,16 @@ impl ConnStream {
     }
 
     #[cfg(feature = "tls-core")]
-    pub fn from_https_connector_with_uri(
-        c: &mut hyper_rustls::HttpsConnector<connect::HttpConnector>,
+    pub fn from_https_connector_with_uri<C>(
+        c: &mut hyper_rustls::HttpsConnector<C>,
         uri: hyper::Uri,
         require_tls: bool,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static
+    where
+        C: Service<hyper::Uri, Response = TokioIo<tokio::net::TcpStream>> + 'static,
+        C::Future: Send + 'static,
+        C::Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+    {
         #[allow(clippy::unwrap_used)]
         let stream_fut = c.call(uri.to_string().parse().unwrap());
         async move {
