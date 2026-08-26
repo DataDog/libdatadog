@@ -30,7 +30,7 @@ stats-obfuscation = ["libdd-data-pipeline/stats-obfuscation"]
 # endpoint / timeout setters, the span obfuscation config setter, and the
 # build-time wiring that forwards them to the trace exporter builder. Span
 # obfuscation has no separate feature; it is part of the agentless path.
-agentless = ["libdd-data-pipeline/agentless", "dep:serde_json"]
+agentless = ["libdd-data-pipeline/agentless", "dep:serde_json", "dep:libdd-trace-obfuscation"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
