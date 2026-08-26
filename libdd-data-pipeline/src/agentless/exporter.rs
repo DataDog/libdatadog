@@ -1,26 +1,32 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Executor-owned adapter for agentless trace export.
+//! Agentless trace export error adapter.
 
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_data_pipeline_core::{
-    prepare_agentless_json_request, prepare_agentless_traces_request as prepare_traces,
-    AgentlessTraceConfig, PrepareAgentlessError, PreparedAgentlessRequest,
+    send_agentless_json, send_agentless_traces as send_traces, AgentlessError, AgentlessTraceConfig,
 };
-use libdd_trace_utils::send_with_retry::{send_prepared_with_retry, SendWithRetryError};
+use libdd_trace_utils::send_with_retry::SendWithRetryError;
 use libdd_trace_utils::span::TraceData;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 
-pub(crate) fn prepare_agentless_traces_request<T: TraceData>(
+pub(crate) async fn send_agentless_traces<T, C>(
+    capabilities: &C,
     traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
-) -> Result<PreparedAgentlessRequest, TraceExporterError> {
-    prepare_traces(traces, metadata, config).map_err(map_prepare_error)
+) -> Result<(), TraceExporterError>
+where
+    T: TraceData,
+    C: HttpClientCapability + SleepCapability,
+{
+    send_traces(capabilities, traces, metadata, config)
+        .await
+        .map_err(map_agentless_error)
 }
 
 /// Sends an encoded agentless JSON request using executor-provided capabilities.
@@ -30,28 +36,14 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
     headers: HeaderMap,
     json_body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
-    let prepared =
-        prepare_agentless_json_request(config, headers, json_body).map_err(map_prepare_error)?;
-    send_prepared_agentless_request(capabilities, &prepared).await
+    send_agentless_json(capabilities, config, headers, json_body)
+        .await
+        .map_err(map_agentless_error)
 }
 
-pub(crate) async fn send_prepared_agentless_request<C: HttpClientCapability + SleepCapability>(
-    capabilities: &C,
-    prepared: &PreparedAgentlessRequest,
-) -> Result<(), TraceExporterError> {
-    send_prepared_with_retry(
-        capabilities,
-        prepared.request_plan(),
-        prepared.retry_strategy(),
-    )
-    .await
-    .map(|_| ())
-    .map_err(map_send_error)
-}
-
-fn map_prepare_error(error: PrepareAgentlessError) -> TraceExporterError {
+fn map_agentless_error(error: AgentlessError) -> TraceExporterError {
     match error {
-        PrepareAgentlessError::Deserialization(error) => TraceExporterError::Deserialization(error),
+        AgentlessError::Send(error) => map_send_error(*error),
         error => {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(error.to_string()))
         }

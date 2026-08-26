@@ -18,9 +18,7 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::{
-    prepare_agentless_traces_request, send_prepared_agentless_request,
-};
+use crate::agentless::exporter::send_agentless_traces;
 use crate::agentless::AgentlessTraceConfig;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
@@ -618,8 +616,7 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let prepared = prepare_agentless_traces_request(traces, &self.metadata, config)?;
-        send_prepared_agentless_request(&self.capabilities, &prepared).await?;
+        send_agentless_traces(&self.capabilities, traces, &self.metadata, config).await?;
         Ok(AgentResponse::Unchanged)
     }
 

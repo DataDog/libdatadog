@@ -80,7 +80,9 @@ impl RetryStrategy {
             max_retries,
             delay_ms: Duration::from_millis(delay_ms),
             backoff_type,
-            jitter: jitter.map(Duration::from_millis),
+            jitter: jitter
+                .filter(|jitter_ms| *jitter_ms != 0)
+                .map(Duration::from_millis),
         }
     }
     /// Delays the next request attempt based on the retry strategy.
@@ -110,33 +112,16 @@ impl RetryStrategy {
 
         if let Some(jitter) = self.jitter {
             let jitter_ms = u64::try_from(jitter.as_millis()).unwrap_or(u64::MAX);
-            if jitter_ms == 0 {
-                delay
-            } else {
-                let randomized_ms = rand::random::<u64>() % jitter_ms;
-                delay.saturating_add(Duration::from_millis(randomized_ms))
-            }
+            let randomized_ms = rand::random::<u64>() % jitter_ms;
+            delay.saturating_add(Duration::from_millis(randomized_ms))
         } else {
             delay
         }
     }
 
     /// Returns the maximum number of retries.
-    pub fn max_retries(&self) -> u32 {
+    pub(crate) fn max_retries(&self) -> u32 {
         self.max_retries
-    }
-
-    /// Returns whether an HTTP response should be retried.
-    pub fn is_retryable_status(status: http::StatusCode) -> bool {
-        status.is_client_error() || status.is_server_error()
-    }
-
-    /// Returns the delay before retrying after `attempt`.
-    ///
-    /// `attempt` is one-indexed. This returns `None` for attempt zero or when
-    /// the retry limit has been reached.
-    pub fn retry_delay(&self, attempt: u32) -> Option<Duration> {
-        (attempt != 0 && attempt <= self.max_retries).then(|| self.delay_for_attempt(attempt))
     }
 }
 
@@ -327,32 +312,31 @@ mod tests {
     }
 
     #[test]
-    fn test_retry_delays_for_host_runtime() {
+    fn test_retry_delays() {
         let retry_strategy = RetryStrategy::new(3, 100, RetryBackoffType::Exponential, None);
 
-        assert_eq!(retry_strategy.retry_delay(0), None);
         assert_eq!(
-            retry_strategy.retry_delay(1),
-            Some(Duration::from_millis(100))
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
         );
         assert_eq!(
-            retry_strategy.retry_delay(2),
-            Some(Duration::from_millis(200))
+            retry_strategy.delay_for_attempt(2),
+            Duration::from_millis(200)
         );
         assert_eq!(
-            retry_strategy.retry_delay(3),
-            Some(Duration::from_millis(400))
+            retry_strategy.delay_for_attempt(3),
+            Duration::from_millis(400)
         );
-        assert_eq!(retry_strategy.retry_delay(4), None);
     }
 
     #[test]
     fn test_zero_jitter_is_supported() {
         let retry_strategy = RetryStrategy::new(1, 100, RetryBackoffType::Constant, Some(0));
 
+        assert_eq!(retry_strategy.jitter, None);
         assert_eq!(
-            retry_strategy.retry_delay(1),
-            Some(Duration::from_millis(100))
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
         );
     }
 }

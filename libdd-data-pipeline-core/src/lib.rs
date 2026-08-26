@@ -5,13 +5,12 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 
-//! Runtime-independent preparation of APM data-pipeline requests.
+//! Runtime-independent APM data-pipeline operations.
 
 mod agentless;
 
 pub use agentless::{
-    prepare_agentless_json_request, prepare_agentless_traces_request,
-    prepare_agentless_v04_request, AgentlessTraceConfig, PrepareAgentlessError,
-    PreparedAgentlessRequest, DEFAULT_AGENTLESS_TIMEOUT,
+    send_agentless_json, send_agentless_traces, AgentlessError, AgentlessTraceConfig,
+    DEFAULT_AGENTLESS_TIMEOUT,
 };
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;

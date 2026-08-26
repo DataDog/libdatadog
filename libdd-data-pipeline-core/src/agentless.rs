@@ -3,10 +3,11 @@
 
 use std::{fmt, time::Duration};
 
-use http::{HeaderMap, StatusCode};
+use http::HeaderMap;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    CompressionStrategy, PreparedRequest, RetryBackoffType, RetryStrategy,
+    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -40,12 +41,9 @@ impl fmt::Debug for AgentlessTraceConfig {
     }
 }
 
-/// An error encountered while preparing an agentless request.
+/// An error encountered while sending agentless traces.
 #[derive(Debug, Error)]
-pub enum PrepareAgentlessError {
-    /// The v0.4 MessagePack input could not be decoded.
-    #[error("failed to decode v0.4 traces: {0}")]
-    Deserialization(libdd_trace_utils::msgpack_decoder::decode::error::DecodeError),
+pub enum AgentlessError {
     /// The decoded traces could not be serialized as agentless JSON.
     #[error("failed to encode agentless JSON: {0}")]
     Serialization(#[source] serde_json::Error),
@@ -55,69 +53,22 @@ pub enum PrepareAgentlessError {
     /// The API key cannot be represented as an HTTP header.
     #[error("invalid Datadog API key header value")]
     InvalidApiKey,
+    /// Sending failed after applying the retry strategy.
+    #[error("failed to send agentless traces: {0}")]
+    Send(#[source] Box<SendWithRetryError>),
 }
 
-/// A fully encoded agentless request for transport by the host runtime.
-#[derive(Clone, Debug)]
-pub struct PreparedAgentlessRequest {
-    request: PreparedRequest,
-    retry_strategy: RetryStrategy,
-}
-
-impl PreparedAgentlessRequest {
-    /// Returns the reusable request plan.
-    pub fn request_plan(&self) -> &PreparedRequest {
-        &self.request
-    }
-
-    /// Returns the retry strategy associated with the request.
-    pub fn retry_strategy(&self) -> &RetryStrategy {
-        &self.retry_strategy
-    }
-
-    /// Builds one HTTP request attempt.
-    pub fn request(&self) -> Result<http::Request<bytes::Bytes>, http::Error> {
-        self.request.request()
-    }
-
-    /// Returns the timeout for one HTTP request attempt.
-    pub fn timeout(&self) -> Duration {
-        self.request.timeout()
-    }
-
-    /// Returns the maximum number of retries after the initial attempt.
-    pub fn max_retries(&self) -> u32 {
-        self.retry_strategy.max_retries()
-    }
-
-    /// Returns whether an HTTP response is retryable.
-    pub fn is_retryable_status(status: StatusCode) -> bool {
-        RetryStrategy::is_retryable_status(status)
-    }
-
-    /// Returns the delay before retrying after the one-indexed `attempt`.
-    pub fn retry_delay(&self, attempt: u32) -> Option<Duration> {
-        self.retry_strategy.retry_delay(attempt)
-    }
-}
-
-/// Converts v0.4 MessagePack traces into a host-transported request.
-pub fn prepare_agentless_v04_request(
-    data: &[u8],
-    metadata: &TracerMetadata,
-    config: &AgentlessTraceConfig,
-) -> Result<PreparedAgentlessRequest, PrepareAgentlessError> {
-    let (traces, _) = libdd_trace_utils::msgpack_decoder::v04::from_slice(data)
-        .map_err(PrepareAgentlessError::Deserialization)?;
-    prepare_agentless_traces_request(traces, metadata, config)
-}
-
-/// Prepares already-decoded v0.4 traces for host transport.
-pub fn prepare_agentless_traces_request<T: TraceData>(
+/// Encodes and sends already-decoded v0.4 traces.
+pub async fn send_agentless_traces<C, T>(
+    capabilities: &C,
     mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
-) -> Result<PreparedAgentlessRequest, PrepareAgentlessError> {
+) -> Result<(), AgentlessError>
+where
+    C: HttpClientCapability + SleepCapability,
+    T: TraceData,
+{
     if !metadata.client_computed_top_level {
         for chunk in &mut traces {
             compute_top_level_span(chunk);
@@ -125,25 +76,29 @@ pub fn prepare_agentless_traces_request<T: TraceData>(
     }
     let trace_count = traces.len();
     let json_body = libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata)
-        .map_err(PrepareAgentlessError::Serialization)?;
+        .map_err(AgentlessError::Serialization)?;
     let headers = build_agentless_headers(metadata, trace_count);
-    prepare_agentless_json_request(config, headers, json_body)
+    send_agentless_json(capabilities, config, headers, json_body).await
 }
 
-/// Prepares an encoded agentless JSON request for host transport.
+/// Sends an encoded agentless JSON request.
 ///
 /// The configured API key replaces any `dd-api-key` value in `headers`.
-pub fn prepare_agentless_json_request(
+pub async fn send_agentless_json<C>(
+    capabilities: &C,
     config: &AgentlessTraceConfig,
     mut headers: HeaderMap,
     json_body: Vec<u8>,
-) -> Result<PreparedAgentlessRequest, PrepareAgentlessError> {
-    let api_key = http::HeaderValue::from_str(&config.api_key)
-        .map_err(|_| PrepareAgentlessError::InvalidApiKey)?;
+) -> Result<(), AgentlessError>
+where
+    C: HttpClientCapability + SleepCapability,
+{
+    let api_key =
+        http::HeaderValue::from_str(&config.api_key).map_err(|_| AgentlessError::InvalidApiKey)?;
     headers.insert(http::HeaderName::from_static("dd-api-key"), api_key);
 
     let url = libdd_common::parse_uri(&config.endpoint_url)
-        .map_err(|error| PrepareAgentlessError::InvalidEndpoint(error.to_string()))?;
+        .map_err(|error| AgentlessError::InvalidEndpoint(error.to_string()))?;
     let target = Endpoint {
         url,
         timeout_ms: u64::try_from(config.timeout.as_millis()).unwrap_or(u64::MAX),
@@ -161,10 +116,17 @@ pub fn prepare_agentless_json_request(
     #[cfg(not(feature = "compression"))]
     let compression_strategy = CompressionStrategy::None;
 
-    Ok(PreparedAgentlessRequest {
-        request: PreparedRequest::new(target, json_body, headers, compression_strategy),
-        retry_strategy,
-    })
+    send_with_retry(
+        capabilities,
+        &target,
+        json_body,
+        &headers,
+        &retry_strategy,
+        compression_strategy,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|error| AgentlessError::Send(Box::new(error)))
 }
 
 fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> HeaderMap {
@@ -191,9 +153,44 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, Default)]
+    struct TestCapabilities {
+        requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+    }
+
+    impl HttpClientCapability for TestCapabilities {
+        fn new_client() -> Self {
+            Self::default()
+        }
+
+        fn new_without_connection_pooling() -> Self {
+            Self::default()
+        }
+
+        async fn request(
+            &self,
+            request: http::Request<Bytes>,
+        ) -> Result<http::Response<Bytes>, libdd_capabilities::HttpError> {
+            self.requests.lock().unwrap().push(request);
+            Ok(http::Response::builder()
+                .status(http::StatusCode::ACCEPTED)
+                .body(Bytes::new())
+                .unwrap())
+        }
+    }
+
+    impl SleepCapability for TestCapabilities {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        async fn sleep(&self, _duration: Duration) {}
+    }
 
     fn metadata() -> TracerMetadata {
         TracerMetadata {
@@ -228,12 +225,7 @@ mod tests {
         }]]
     }
 
-    fn v04_payload() -> Vec<u8> {
-        msgpack_encoder::v04::to_vec_from_v04(&v04_traces())
-    }
-
-    fn request_body(prepared: &PreparedAgentlessRequest) -> Vec<u8> {
-        let request = prepared.request().unwrap();
+    fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {
         #[cfg(feature = "compression")]
         let body = zstd::decode_all(request.body().as_ref()).unwrap();
         #[cfg(not(feature = "compression"))]
@@ -242,71 +234,64 @@ mod tests {
     }
 
     #[test]
-    fn prepares_v04_request_without_runtime() {
-        let prepared =
-            prepare_agentless_v04_request(&v04_payload(), &metadata(), &config()).unwrap();
-        let request = prepared.request().unwrap();
+    fn sends_decoded_traces_with_top_level_tags() {
+        let capabilities = TestCapabilities::default();
+        let result = futures::executor::block_on(send_agentless_traces(
+            &capabilities,
+            v04_traces(),
+            &metadata(),
+            &config(),
+        ));
+        assert!(result.is_ok());
 
+        let requests = capabilities.requests.lock().unwrap();
+        let request = &requests[0];
         assert_eq!(request.uri(), "https://example.test/v1/input");
         assert_eq!(request.headers()["dd-api-key"], "test-api-key");
         assert_eq!(request.headers()["x-datadog-trace-count"], "1");
-        assert_eq!(prepared.timeout(), Duration::from_millis(1_234));
-        assert_eq!(prepared.retry_delay(1), Some(Duration::from_secs(1)));
-        assert_eq!(prepared.retry_delay(2), Some(Duration::from_secs(2)));
-        assert_eq!(prepared.retry_delay(3), None);
-
-        assert!(String::from_utf8(request_body(&prepared))
-            .unwrap()
-            .contains("\"_top_level\":1"));
-    }
-
-    #[test]
-    fn prepares_decoded_traces_with_top_level_tags() {
-        let mut metadata = metadata();
-        metadata.client_computed_top_level = false;
-        let prepared =
-            prepare_agentless_traces_request(v04_traces(), &metadata, &config()).unwrap();
-
-        assert!(String::from_utf8(request_body(&prepared))
+        assert!(String::from_utf8(request_body(request))
             .unwrap()
             .contains("\"_top_level\":1"));
     }
 
     #[test]
     fn json_request_uses_configured_api_key() {
+        let capabilities = TestCapabilities::default();
         let mut headers = HeaderMap::new();
         headers.insert(
             http::HeaderName::from_static("dd-api-key"),
             http::HeaderValue::from_static("caller-supplied-key"),
         );
 
-        let prepared = prepare_agentless_json_request(&config(), headers, b"[]".to_vec()).unwrap();
-        assert_eq!(
-            prepared.request().unwrap().headers()["dd-api-key"],
-            "test-api-key"
-        );
+        let result = futures::executor::block_on(send_agentless_json(
+            &capabilities,
+            &config(),
+            headers,
+            b"[]".to_vec(),
+        ));
+        assert!(result.is_ok());
+        let requests = capabilities.requests.lock().unwrap();
+        assert_eq!(requests[0].headers()["dd-api-key"], "test-api-key");
     }
 
     #[test]
     fn json_request_rejects_invalid_api_key() {
+        let capabilities = TestCapabilities::default();
         let mut invalid_config = config();
         invalid_config.api_key = "invalid\nkey".to_string();
 
-        let error =
-            prepare_agentless_json_request(&invalid_config, HeaderMap::new(), b"[]".to_vec())
-                .unwrap_err();
-        assert!(matches!(error, PrepareAgentlessError::InvalidApiKey));
+        let error = futures::executor::block_on(send_agentless_json(
+            &capabilities,
+            &invalid_config,
+            HeaderMap::new(),
+            b"[]".to_vec(),
+        ))
+        .unwrap_err();
+        assert!(matches!(error, AgentlessError::InvalidApiKey));
     }
 
     #[test]
     fn debug_output_redacts_agentless_secrets() {
-        let config = config();
-        assert!(!format!("{config:?}").contains("test-api-key"));
-
-        let prepared = prepare_agentless_v04_request(&v04_payload(), &metadata(), &config).unwrap();
-        let debug = format!("{prepared:?}");
-        assert!(!debug.contains("test-api-key"));
-        assert!(!debug.contains("operation"));
-        assert!(!debug.contains("resource-1"));
+        assert!(!format!("{:?}", config()).contains("test-api-key"));
     }
 }

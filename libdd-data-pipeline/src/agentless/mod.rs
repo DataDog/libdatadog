@@ -27,6 +27,5 @@ pub(crate) mod exporter;
 
 pub use exporter::send_agentless_traces_http;
 pub use libdd_data_pipeline_core::{
-    prepare_agentless_v04_request, AgentlessTraceConfig, PrepareAgentlessError,
-    PreparedAgentlessRequest, TracerMetadata, DEFAULT_AGENTLESS_TIMEOUT,
+    AgentlessTraceConfig, TracerMetadata, DEFAULT_AGENTLESS_TIMEOUT,
 };

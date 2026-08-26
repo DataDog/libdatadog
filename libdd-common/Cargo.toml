@@ -55,6 +55,8 @@ hyper-rustls = { version = "0.27.7", default-features = false, features = [
 rustls-webpki = { version = ">=0.103.13", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Target gating keeps these dependencies out of WASM. They are also optional so
+# native callers using host-managed capabilities do not pull in an HTTP runtime.
 hyper = { workspace = true, features = ["http1", "client"], optional = true }
 hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"], optional = true }
 http-body = { version = "1.0", optional = true }

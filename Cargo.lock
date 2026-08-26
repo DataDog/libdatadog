@@ -3006,7 +3006,9 @@ name = "libdd-data-pipeline-core"
 version = "1.0.0"
 dependencies = [
  "bytes",
+ "futures",
  "http 1.1.0",
+ "libdd-capabilities",
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-utils",
