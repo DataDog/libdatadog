@@ -109,6 +109,7 @@ const FFI_FEATURES: &[&str] = &[
     "profiling",
     "telemetry",
     "data-pipeline",
+    "data-pipeline-agentless",
     "symbolizer",
     "crashtracker",
     "library-config",

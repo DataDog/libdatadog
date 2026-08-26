@@ -4,17 +4,64 @@
 //! Agentless HTTP/JSON trace exporter.
 
 use super::config::AgentlessTraceConfig;
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use crate::trace_exporter::error::{self, InternalErrorKind, RequestError, TraceExporterError};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
-use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+use libdd_trace_utils::{
+    send_with_retry::{
+        send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    },
+    trace_utils::TracerHeaderTags,
+    tracer_metadata::TracerMetadata,
 };
 use tracing::error;
 
 const AGENTLESS_MAX_RETRIES: u32 = 2;
 const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
+
+/// Build the HTTP headers required by the agentless intake.
+///
+/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
+/// and entity headers (container-id / entity-id / external-env) when available.
+pub(crate) fn build_agentless_headers(
+    metadata: &TracerMetadata,
+    api_key: &str,
+    trace_count: usize,
+) -> Result<HeaderMap, TraceExporterError> {
+    let mut headers: HeaderMap = {
+        let tags: TracerHeaderTags = metadata.into();
+        tags.into()
+    };
+
+    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
+        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
+            "Invalid Datadog API key value for dd-api-key header".to_string(),
+        ))
+    })?;
+    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
+
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        libdd_common::header::APPLICATION_JSON,
+    );
+
+    headers.insert(
+        http::HeaderName::from_static("x-datadog-trace-count"),
+        http::HeaderValue::from(trace_count),
+    );
+
+    for (name, value) in libdd_common::entity_id::get_entity_headers() {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
+        }
+    }
+
+    Ok(headers)
+}
 
 /// Send an agentless trace payload (JSON bytes) to the configured intake with retries.
 ///

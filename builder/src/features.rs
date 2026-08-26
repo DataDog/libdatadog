@@ -13,6 +13,8 @@ pub struct Selection {
     pub telemetry: bool,
     pub data_pipeline: bool,
     pub data_pipeline_compression: bool,
+    pub data_pipeline_stats_obfuscation: bool,
+    pub data_pipeline_agentless: bool,
     pub crashtracker: bool,
     pub symbolizer: bool,
     pub library_config: bool,
@@ -33,6 +35,8 @@ impl Selection {
             telemetry: cfg!(feature = "telemetry"),
             data_pipeline: cfg!(feature = "data-pipeline"),
             data_pipeline_compression: cfg!(feature = "data-pipeline-compression"),
+            data_pipeline_stats_obfuscation: cfg!(feature = "data-pipeline-stats-obfuscation"),
+            data_pipeline_agentless: cfg!(feature = "data-pipeline-agentless"),
             crashtracker: cfg!(feature = "crashtracker"),
             symbolizer: cfg!(feature = "symbolizer"),
             library_config: cfg!(feature = "library-config"),
@@ -70,6 +74,12 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     }
     if selection.data_pipeline_compression {
         features.push("data-pipeline-compression");
+    }
+    if selection.data_pipeline_stats_obfuscation {
+        features.push("data-pipeline-stats-obfuscation");
+    }
+    if selection.data_pipeline_agentless {
+        features.push("data-pipeline-agentless");
     }
     if selection.crashtracker {
         features.extend([
@@ -117,6 +127,8 @@ mod tests {
         |s| s.telemetry = true,
         |s| s.data_pipeline = true,
         |s| s.data_pipeline_compression = true,
+        |s| s.data_pipeline_stats_obfuscation = true,
+        |s| s.data_pipeline_agentless = true,
         |s| s.crashtracker = true,
         |s| s.symbolizer = true,
         |s| s.library_config = true,
@@ -173,6 +185,8 @@ mod tests {
             telemetry: true,
             data_pipeline: true,
             data_pipeline_compression: true,
+            data_pipeline_stats_obfuscation: true,
+            data_pipeline_agentless: true,
             crashtracker: true,
             symbolizer: true,
             library_config: true,
@@ -193,6 +207,8 @@ mod tests {
                 "ddtelemetry-ffi",
                 "data-pipeline-ffi",
                 "data-pipeline-compression",
+                "data-pipeline-stats-obfuscation",
+                "data-pipeline-agentless",
                 "crashtracker-ffi",
                 "crashtracker-collector",
                 "crashtracker-receiver",

@@ -18,7 +18,6 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -67,49 +66,6 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
-
-/// Build the HTTP headers required by the agentless intake.
-///
-/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
-/// and entity headers (container-id / entity-id / external-env) when available.
-fn build_agentless_headers(
-    metadata: &TracerMetadata,
-    api_key: &str,
-    trace_count: usize,
-) -> Result<HeaderMap, TraceExporterError> {
-    let mut headers: HeaderMap = {
-        let tags: TracerHeaderTags = metadata.into();
-        tags.into()
-    };
-
-    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
-        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
-            "Invalid Datadog API key value for dd-api-key header".to_string(),
-        ))
-    })?;
-    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
-
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
-    );
-
-    headers.insert(
-        http::HeaderName::from_static("x-datadog-trace-count"),
-        http::HeaderValue::from(trace_count),
-    );
-
-    for (name, value) in libdd_common::entity_id::get_entity_headers() {
-        if let (Ok(name), Ok(value)) = (
-            http::HeaderName::from_bytes(name.as_bytes()),
-            http::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, value);
-        }
-    }
-
-    Ok(headers)
-}
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -271,12 +227,10 @@ pub struct TraceExporter<
     otlp_config: Option<OtlpTraceConfig>,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
-    agentless_config: Option<AgentlessTraceConfig>,
-    /// Obfuscation configuration applied to every span before agentless export. Only the
-    /// agentless path obfuscates: spans dropped by stats sampling (which agentless mode never
-    /// performs) are never obfuscated, since they are not sent to the intake.
-    #[cfg(feature = "stats-obfuscation")]
-    obfuscation_config: libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig,
+    #[cfg(feature = "agentless")]
+    agentless_config: Option<crate::agentless::AgentlessTraceConfig>,
+    #[cfg(not(feature = "agentless"))]
+    agentless_config: Option<std::convert::Infallible>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
@@ -658,23 +612,22 @@ impl<
     }
 
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
+    #[cfg(feature = "agentless")]
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
-        config: &AgentlessTraceConfig,
+        config: &crate::agentless::AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Obfuscate every span we are about to send to the intake
-        #[cfg(feature = "stats-obfuscation")]
+
         for chunk in traces.iter_mut() {
             for span in chunk.iter_mut() {
                 libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
                     span,
-                    &self.obfuscation_config,
+                    &config.obfuscation_config,
                 );
             }
         }
-        #[cfg(not(feature = "stats-obfuscation"))]
-        let _ = &mut traces; // silence the mutable warning
 
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
@@ -686,9 +639,19 @@ impl<
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
 
-        let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
+        let headers = crate::agentless::build_agentless_headers(
+            &self.metadata,
+            &config.api_key,
+            trace_count,
+        )?;
 
-        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        crate::agentless::send_agentless_traces_http(
+            &self.capabilities,
+            config,
+            headers,
+            json_body,
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -822,15 +785,21 @@ impl<
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+            #[cfg(feature = "agentless")]
+            {
+                // For agentless we want to tag top level spans, but not perform
+                // stats aggregation or span drops
+                if !self.client_computed_top_level {
+                    for chunk in traces.iter_mut() {
+                        libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+                    }
                 }
-            }
 
-            return self.send_agentless_traces_inner(traces, config).await;
+                return self.send_agentless_traces_inner(traces, config).await;
+            }
+            // unreachable
+            #[cfg(not(feature = "agentless"))]
+            match *config {}
         }
 
         // Process stats computation and drop non-sampled (p0) chunks.
@@ -2253,6 +2222,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     fn test_agentless_export_via_builder() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -2307,6 +2277,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -2373,9 +2344,9 @@ mod tests {
         mock_intake.assert();
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "agentless")]
     fn test_agentless_obfuscates_every_exported_span() {
         // Obfuscation runs in the agentless path on every span that is sent to the
         // intake. With `remove_query_string` enabled, the `secret=bar` query parameter

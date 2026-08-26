@@ -94,6 +94,20 @@ pub struct TraceExporterConfig {
     output_to_log: bool,
     log_max_line_size: Option<usize>,
     stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    /// Full URL to POST traces to for agentless export (e.g.
+    /// `https://public-trace-http-intake.logs.datadoghq.com/v1/input`).
+    #[cfg(feature = "agentless")]
+    agentless_endpoint: Option<String>,
+    /// Datadog API key sent in the `dd-api-key` header for agentless export.
+    #[cfg(feature = "agentless")]
+    agentless_api_key: Option<String>,
+    /// Agentless request timeout in milliseconds. `None` uses the builder default (15s).
+    #[cfg(feature = "agentless")]
+    agentless_timeout_ms: Option<u64>,
+    /// Span obfuscation config for the agentless export path, as a JSON string. Deserialized
+    /// into `ObfuscationConfig` at build time.
+    #[cfg(feature = "agentless")]
+    obfuscation_config_json: Option<String>,
 }
 
 #[no_mangle]
@@ -609,6 +623,117 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_li
     CardinalityLimitConfig::default()
 }
 
+/// Enables agentless APM trace export and sets the intake URL and API key.
+///
+/// When set, APM trace spans are sent directly to the Datadog HTTP intake in JSON format
+/// (`POST /v1/input`) instead of through the Datadog Agent. Agentless trace export is mutually
+/// exclusive with both an agent URL ([`ddog_trace_exporter_config_set_url`]) and an OTLP endpoint
+/// ([`ddog_trace_exporter_config_set_otlp_endpoint`]); combining either with this setter causes
+/// [`ddog_trace_exporter_new`] to return an error.
+///
+/// Only available when the `agentless` cargo feature is enabled.
+#[cfg(feature = "agentless")]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+    api_key: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.agentless_endpoint = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            handle.agentless_api_key = match sanitize_string(api_key) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the request timeout (in milliseconds) used by the agentless intake transport.
+///
+/// Defaults to 15 seconds when unset. Calling this without also setting an agentless endpoint
+/// causes [`ddog_trace_exporter_new`] to return an error.
+///
+/// Only available when the `agentless` cargo feature is enabled.
+#[cfg(feature = "agentless")]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
+    config: Option<&mut TraceExporterConfig>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.agentless_timeout_ms = Some(timeout_ms);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the span obfuscation configuration from a JSON string.
+///
+/// `json` is deserialized into `ObfuscationConfig` (the same struct the Datadog Agent uses),
+/// which controls obfuscation of HTTP URLs, SQL resources, Redis/Valkey commands, memcached
+/// commands, credit-card numbers, elasticsearch/opensearch/mongodb bodies, and tag-replace
+/// rules. Obfuscation is applied to every span on the agentless export path (see
+/// [`ddog_trace_exporter_config_set_agentless_endpoint`]); it has no effect on the agent path.
+///
+/// Returns an error if `json` is not valid UTF-8 or fails to deserialize. Example:
+/// ```c
+/// ddog_trace_exporter_config_set_obfuscation_config(
+///   cfg, DDOG_CHARSLICE_C(
+///     "{\"http\":{\"remove_query_string\":true},"
+///     "\"credit_cards\":{\"enabled\":true}}"));
+/// ```
+///
+/// Only available when the `agentless` cargo feature is enabled.
+#[cfg(feature = "agentless")]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
+    config: Option<&mut TraceExporterConfig>,
+    json: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let json = match json.try_to_utf8() {
+                Ok(s) => s,
+                Err(_) => {
+                    return Some(Box::new(ExporterError::new(
+                        ErrorCode::InvalidInput,
+                        &ErrorCode::InvalidInput.to_string(),
+                    )))
+                }
+            };
+            match serde_json::from_str::<
+                libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig,
+            >(json)
+            {
+                Ok(_cfg) => {
+                    handle.obfuscation_config_json = Some(json.to_string());
+                    None
+                }
+                Err(e) => Some(Box::new(ExporterError::new(
+                    ErrorCode::InvalidInput,
+                    &format!("invalid obfuscation config JSON: {e}"),
+                ))),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
 /// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
 /// environments (e.g. AWS Lambda) when no agent is reachable.
@@ -734,6 +859,37 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if config.output_to_log {
                 builder.set_output_to_log(config.log_max_line_size);
+            }
+
+            // Agentless export path (enables span obfuscation). Mutually exclusive with an
+            // agent URL and an OTLP endpoint; the builder validates this and returns an
+            // error we map to ExporterError below.
+            #[cfg(feature = "agentless")]
+            if let Some(ref url) = config.agentless_endpoint {
+                let api_key = config.agentless_api_key.as_deref().unwrap_or("");
+                builder.set_agentless_endpoint(url, api_key);
+                if let Some(timeout_ms) = config.agentless_timeout_ms {
+                    builder.set_agentless_timeout(Duration::from_millis(timeout_ms));
+                }
+            }
+            #[cfg(feature = "agentless")]
+            if let Some(ref json) = config.obfuscation_config_json {
+                match serde_json::from_str::<
+                    libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig,
+                >(json)
+                {
+                    Ok(cfg) => {
+                        builder.set_span_obfuscation_config(cfg);
+                    }
+                    // The setter already validated this JSON, so a parse failure here is a
+                    // programming error; surface it as a build error.
+                    Err(e) => {
+                        return Some(Box::new(ExporterError::new(
+                            ErrorCode::InvalidInput,
+                            &format!("invalid obfuscation config JSON: {e}"),
+                        )))
+                    }
+                }
             }
 
             match builder.build() {
