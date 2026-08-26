@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "10.1.0"
+version = "11.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -48,8 +48,8 @@ rustc-hash = "2.1.1"
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
-libdd-trace-normalization = { version = "3.0.1", path = "../libdd-trace-normalization" }
-libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
+libdd-trace-normalization = { version = "4.0.0", path = "../libdd-trace-normalization" }
+libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
 libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
