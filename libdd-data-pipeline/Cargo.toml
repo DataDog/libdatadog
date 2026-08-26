@@ -97,7 +97,7 @@ zstd = { version = "0.13", default-features = false }
 zrip = { version = "=0.6.0", default-features = false, features = ["alloc"] }
 
 [features]
-default = ["https", "telemetry", "agentless"]
+default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
 https = [
     "libdd-common/https",
