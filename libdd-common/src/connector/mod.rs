@@ -24,14 +24,14 @@ use conn_stream::{ConnStream, ConnStreamError};
 mod proxy;
 
 #[derive(Clone)]
-// `proxy::HttpsProxyConnector` is crate internal, and the field anyway not pub.
+// `proxy::HttpProxyConnector` is crate internal, and the field anyway not pub.
 #[allow(private_interfaces)]
 pub enum Connector {
     Http(connect::HttpConnector),
     #[cfg(feature = "tls-core")]
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
     #[cfg(feature = "hyper-proxy")]
-    HttpsProxy(Box<proxy::HttpsProxyConnector>),
+    Proxy(Box<proxy::HttpProxyConnector>),
 }
 
 static DEFAULT_CONNECTOR: LazyLock<Connector> = LazyLock::new(Connector::new);
@@ -48,7 +48,7 @@ impl Connector {
     fn new() -> Self {
         #[cfg(feature = "hyper-proxy")]
         {
-            Connector::HttpsProxy(Box::new(proxy::HttpsProxyConnector::new(
+            Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
                 Self::new_no_proxy(),
             )))
         }
@@ -93,7 +93,7 @@ impl Connector {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
             #[cfg(feature = "hyper-proxy")]
-            Self::HttpsProxy(p) => p.build_conn_stream(uri, require_tls),
+            Self::Proxy(p) => p.build_conn_stream(uri, require_tls),
         }
     }
 }
@@ -196,7 +196,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
             #[cfg(feature = "tls-core")]
             Connector::Https(c) => c.poll_ready(cx),
             #[cfg(feature = "hyper-proxy")]
-            Connector::HttpsProxy(p) => p.poll_ready(cx),
+            Connector::Proxy(p) => p.poll_ready(cx),
         }
     }
 }

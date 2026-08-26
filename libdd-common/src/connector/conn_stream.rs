@@ -19,7 +19,6 @@ pub enum ConnStream {
         #[pin]
         transport: TokioIo<tokio::net::TcpStream>,
     },
-    #[cfg(feature = "tls-core")]
     Tls {
         #[pin]
         transport: wrapped::BoxedConn,
@@ -36,12 +35,14 @@ pub enum ConnStream {
     },
 }
 
-#[cfg(feature = "tls-core")]
 /// Wrapped connection, usable from hyper directly, or e.g. a hyper proxy wrapper
 mod wrapped {
     use super::*;
 
-    pub trait EstablishedConn: hyper::rt::Read + hyper::rt::Write + connect::Connection + Send {}
+    pub trait EstablishedConn:
+        hyper::rt::Read + hyper::rt::Write + connect::Connection + Send
+    {
+    }
 
     impl<T: hyper::rt::Read + hyper::rt::Write + connect::Connection + Send> EstablishedConn for T {}
 
@@ -79,7 +80,10 @@ mod wrapped {
             self.get_mut().0.as_mut().poll_write(cx, buf)
         }
 
-        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
             self.get_mut().0.as_mut().poll_flush(cx)
         }
 
@@ -174,6 +178,26 @@ impl ConnStream {
             })
         }
     }
+
+    pub fn from_tunnel_with_uri<C>(
+        c: &mut C,
+        uri: hyper::Uri,
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static
+    where
+        C: Service<hyper::Uri> + 'static,
+        C::Response:
+            hyper::rt::Read + hyper::rt::Write + connect::Connection + Send + Unpin + 'static,
+        C::Future: Send + 'static,
+        C::Error: Into<Box<dyn core::error::Error + Send + Sync>>,
+    {
+        let stream_fut = c.call(uri);
+        async move {
+            let stream = stream_fut.await.map_err(Into::into)?;
+            Ok(ConnStream::Tls {
+                transport: wrapped::BoxedConn::new(stream),
+            })
+        }
+    }
 }
 
 impl hyper::rt::Read for ConnStream {
@@ -184,7 +208,6 @@ impl hyper::rt::Read for ConnStream {
     ) -> Poll<std::io::Result<()>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_read(cx, buf),
-            #[cfg(feature = "tls-core")]
             ConnStreamProj::Tls { transport } => transport.poll_read(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_read(cx, buf),
@@ -198,7 +221,6 @@ impl connect::Connection for ConnStream {
     fn connected(&self) -> connect::Connected {
         match self {
             Self::Tcp { transport } => transport.connected(),
-            #[cfg(feature = "tls-core")]
             Self::Tls { transport } => transport.connected(),
             #[cfg(unix)]
             Self::Udp { transport: _ } => connect::Connected::new(),
@@ -216,7 +238,6 @@ impl hyper::rt::Write for ConnStream {
     ) -> Poll<Result<usize, std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_write(cx, buf),
-            #[cfg(feature = "tls-core")]
             ConnStreamProj::Tls { transport } => transport.poll_write(cx, buf),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_write(cx, buf),
@@ -231,7 +252,6 @@ impl hyper::rt::Write for ConnStream {
     ) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_shutdown(cx),
-            #[cfg(feature = "tls-core")]
             ConnStreamProj::Tls { transport } => transport.poll_shutdown(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_shutdown(cx),
@@ -243,7 +263,6 @@ impl hyper::rt::Write for ConnStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
         match self.project() {
             ConnStreamProj::Tcp { transport } => transport.poll_flush(cx),
-            #[cfg(feature = "tls-core")]
             ConnStreamProj::Tls { transport } => transport.poll_flush(cx),
             #[cfg(unix)]
             ConnStreamProj::Udp { transport } => transport.poll_flush(cx),

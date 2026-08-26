@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The proxy environment variables are read only once, ever, on the first
-//! `HttpsProxyConnector` constructed in the process (see `PROXY_MATCHER` in
+//! `HttpProxyConnector` constructed in the process (see `PROXY_MATCHER` in
 //! `libdd_common::connector::proxy`) to avoid racing a concurrent `setenv`.
-//! This file must therefore stay the only test that touches `HTTPS_PROXY` in
-//! this binary, and must set it before constructing its first `HttpClient`.
+//! Therefore, there must be only a single test in thie file that touches
+//! `HTTPS_PROXY`, and must set it before constructing its first `HttpClient`.
 #![cfg(feature = "hyper-proxy")]
 
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};

@@ -10,7 +10,9 @@ use hyper_util::client::legacy::connect::{proxy::Tunnel, HttpConnector};
 use hyper_util::client::proxy::matcher::Matcher;
 
 use super::conn_stream::{ConnStream, ConnStreamError};
-use super::{https, Connector};
+#[cfg(feature = "tls-core")]
+use super::https;
+use super::Connector;
 
 // Read getenv only once at init to avoid concurrency issues with the environment.
 static PROXY_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::from_env);
@@ -18,16 +20,20 @@ static PROXY_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::from_env);
 /// Wraps a direct `Connector` to additionally honor the `HTTP(S)_PROXY`/`http(s)_proxy`
 /// and `NO_PROXY`/`no_proxy` environment variables.
 #[derive(Clone)]
-pub(super) struct HttpsProxyConnector {
+pub(super) struct HttpProxyConnector {
     matcher: &'static Matcher,
+    #[cfg(feature = "tls-core")]
     tls_config: Option<rustls::ClientConfig>,
+    #[cfg(feature = "tls-core")]
     proxy_dialer: Option<hyper_rustls::HttpsConnector<HttpConnector>>,
     direct: Connector,
 }
 
-impl HttpsProxyConnector {
+impl HttpProxyConnector {
     pub(super) fn new(direct: Connector) -> Self {
+        #[cfg(feature = "tls-core")]
         let tls_config = https::build_tls_config().ok();
+        #[cfg(feature = "tls-core")]
         let proxy_dialer = tls_config.clone().map(|tls_config| {
             hyper_rustls::HttpsConnectorBuilder::new()
                 .with_tls_config(tls_config)
@@ -37,7 +43,9 @@ impl HttpsProxyConnector {
         });
         Self {
             matcher: &PROXY_MATCHER,
+            #[cfg(feature = "tls-core")]
             tls_config,
+            #[cfg(feature = "tls-core")]
             proxy_dialer,
             direct,
         }
@@ -52,25 +60,33 @@ impl HttpsProxyConnector {
         uri: hyper::Uri,
         require_tls: bool,
     ) -> BoxFuture<'static, Result<ConnStream, ConnStreamError>> {
-        if require_tls {
-            if let (Some(tls_config), Some(proxy_dialer), Some(intercept)) = (
-                &self.tls_config,
-                &self.proxy_dialer,
-                self.matcher.intercept(&uri),
-            ) {
-                let mut tunnel = Tunnel::new(intercept.uri().clone(), proxy_dialer.clone());
-                if let Some(auth) = intercept.basic_auth() {
-                    tunnel = tunnel.with_auth(auth.clone());
-                }
+        let Some(intercept) = self.matcher.intercept(&uri) else {
+            return tower_service::Service::call(&mut self.direct, uri);
+        };
 
-                let mut https = hyper_rustls::HttpsConnectorBuilder::new()
-                    .with_tls_config(tls_config.clone())
-                    .https_or_http()
-                    .enable_http1()
-                    .wrap_connector(tunnel);
-
-                return ConnStream::from_https_connector_with_uri(&mut https, uri, true).boxed();
+        #[cfg(feature = "tls-core")]
+        if let (Some(tls_config), Some(proxy_dialer)) = (&self.tls_config, &self.proxy_dialer) {
+            let mut tunnel = Tunnel::new(intercept.uri().clone(), proxy_dialer.clone());
+            if let Some(auth) = intercept.basic_auth() {
+                tunnel = tunnel.with_auth(auth.clone());
             }
+
+            let mut https = hyper_rustls::HttpsConnectorBuilder::new()
+                .with_tls_config(tls_config.clone())
+                .https_or_http()
+                .enable_http1()
+                .wrap_connector(tunnel);
+
+            return ConnStream::from_https_connector_with_uri(&mut https, uri, require_tls).boxed();
+        }
+
+        // No crypto provider is available, proxy only via http
+        if !require_tls && intercept.uri().scheme_str() == Some("http") {
+            let mut tunnel = Tunnel::new(intercept.uri().clone(), HttpConnector::new());
+            if let Some(auth) = intercept.basic_auth() {
+                tunnel = tunnel.with_auth(auth.clone());
+            }
+            return ConnStream::from_tunnel_with_uri(&mut tunnel, uri).boxed();
         }
 
         tower_service::Service::call(&mut self.direct, uri)

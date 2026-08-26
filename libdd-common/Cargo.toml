@@ -107,8 +107,8 @@ regex-lite = ["dep:regex-lite"]
 require-regex-full = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
-# Honor HTTPS_PROXY/NO_PROXY environment variables for the hyper connector,
-hyper-proxy = ["tls-core", "hyper-util/client-proxy"]
+# Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
+hyper-proxy = ["hyper-util/client-proxy"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
