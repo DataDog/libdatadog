@@ -239,7 +239,7 @@ impl<S, C: HttpClientCapability + SleepCapability> ConfigFetcherState<S, C> {
 }
 
 #[allow(clippy::large_enum_variant)]
-enum FetcherMode<C: HttpClientCapability> {
+enum FetcherMode<C: HttpClientCapability + SleepCapability> {
     Agent(PhantomData<C>),
     #[cfg(feature = "agentless")]
     Agentless(agentless::AgentlessFetcher<C>),
