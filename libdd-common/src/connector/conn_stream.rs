@@ -12,6 +12,8 @@ use pin_project::pin_project;
 
 #[pin_project(project=ConnStreamProj)]
 #[derive(Debug)]
+// `BoxedConn` is internal, and the field anyway not pub.
+#[allow(private_interfaces)]
 pub enum ConnStream {
     Tcp {
         #[pin]
@@ -20,8 +22,7 @@ pub enum ConnStream {
     #[cfg(feature = "tls-core")]
     Tls {
         #[pin]
-        transport:
-            Box<TokioIo<tokio_rustls::client::TlsStream<TokioIo<TokioIo<tokio::net::TcpStream>>>>>,
+        transport: wrapped::BoxedConn,
     },
     #[cfg(unix)]
     Udp {
@@ -33,6 +34,68 @@ pub enum ConnStream {
         #[pin]
         transport: TokioIo<tokio::net::windows::named_pipe::NamedPipeClient>,
     },
+}
+
+#[cfg(feature = "tls-core")]
+/// Wrapped connection, usable from hyper directly, or e.g. a hyper proxy wrapper
+mod wrapped {
+    use super::*;
+
+    pub trait EstablishedConn: hyper::rt::Read + hyper::rt::Write + connect::Connection + Send {}
+
+    impl<T: hyper::rt::Read + hyper::rt::Write + connect::Connection + Send> EstablishedConn for T {}
+
+    #[derive(Debug)]
+    pub struct BoxedConn(Pin<Box<dyn EstablishedConn>>);
+
+    impl core::fmt::Debug for dyn EstablishedConn {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str("EstablishedConn")
+        }
+    }
+
+    impl BoxedConn {
+        pub fn new<T: EstablishedConn + 'static>(inner: T) -> Self {
+            Self(Box::pin(inner))
+        }
+    }
+
+    impl hyper::rt::Read for BoxedConn {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: ReadBufCursor<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            self.get_mut().0.as_mut().poll_read(cx, buf)
+        }
+    }
+
+    impl hyper::rt::Write for BoxedConn {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<Result<usize, std::io::Error>> {
+            self.get_mut().0.as_mut().poll_write(cx, buf)
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), std::io::Error>> {
+            self.get_mut().0.as_mut().poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<Result<(), std::io::Error>> {
+            self.get_mut().0.as_mut().poll_shutdown(cx)
+        }
+    }
+
+    impl connect::Connection for BoxedConn {
+        fn connected(&self) -> connect::Connected {
+            self.0.connected()
+        }
+    }
 }
 
 pub type ConnStreamError = Box<dyn core::error::Error + Send + Sync>;
@@ -93,7 +156,9 @@ impl ConnStream {
         require_tls: bool,
     ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static
     where
-        C: Service<hyper::Uri, Response = TokioIo<tokio::net::TcpStream>> + 'static,
+        C: Service<hyper::Uri> + 'static,
+        C::Response:
+            hyper::rt::Read + hyper::rt::Write + connect::Connection + Send + Unpin + 'static,
         C::Future: Send + 'static,
         C::Error: Into<Box<dyn core::error::Error + Send + Sync>>,
     {
@@ -101,19 +166,12 @@ impl ConnStream {
         let stream_fut = c.call(uri.to_string().parse().unwrap());
         async move {
             let stream = stream_fut.await?;
-            match stream {
-                // move only require_tls
-                hyper_rustls::MaybeHttpsStream::Http(t) => {
-                    if require_tls {
-                        Err(super::errors::Error::CannotEstablishTlsConnection.into())
-                    } else {
-                        Ok(ConnStream::Tcp { transport: t })
-                    }
-                }
-                hyper_rustls::MaybeHttpsStream::Https(t) => Ok(ConnStream::Tls {
-                    transport: Box::from(t),
-                }),
+            if require_tls && matches!(stream, hyper_rustls::MaybeHttpsStream::Http(_)) {
+                return Err(super::errors::Error::CannotEstablishTlsConnection.into());
             }
+            Ok(ConnStream::Tls {
+                transport: wrapped::BoxedConn::new(stream),
+            })
         }
     }
 }
@@ -141,10 +199,7 @@ impl connect::Connection for ConnStream {
         match self {
             Self::Tcp { transport } => transport.connected(),
             #[cfg(feature = "tls-core")]
-            Self::Tls { transport } => {
-                let (tcp, _) = transport.inner().get_ref();
-                tcp.inner().inner().connected()
-            }
+            Self::Tls { transport } => transport.connected(),
             #[cfg(unix)]
             Self::Udp { transport: _ } => connect::Connected::new(),
             #[cfg(windows)]

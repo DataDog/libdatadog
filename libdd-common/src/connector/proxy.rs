@@ -15,22 +15,30 @@ use super::{https, Connector};
 // Read getenv only once at init to avoid concurrency issues with the environment.
 static PROXY_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::from_env);
 
-/// Wraps a direct `Connector` to additionally honor the `HTTPS_PROXY`/`https_proxy`
+/// Wraps a direct `Connector` to additionally honor the `HTTP(S)_PROXY`/`http(s)_proxy`
 /// and `NO_PROXY`/`no_proxy` environment variables.
 #[derive(Clone)]
 pub(super) struct HttpsProxyConnector {
     matcher: &'static Matcher,
     tls_config: Option<rustls::ClientConfig>,
-    http: HttpConnector,
+    proxy_dialer: Option<hyper_rustls::HttpsConnector<HttpConnector>>,
     direct: Connector,
 }
 
 impl HttpsProxyConnector {
     pub(super) fn new(direct: Connector) -> Self {
+        let tls_config = https::build_tls_config().ok();
+        let proxy_dialer = tls_config.clone().map(|tls_config| {
+            hyper_rustls::HttpsConnectorBuilder::new()
+                .with_tls_config(tls_config)
+                .https_or_http()
+                .enable_http1()
+                .build()
+        });
         Self {
             matcher: &PROXY_MATCHER,
-            tls_config: https::build_tls_config().ok(),
-            http: HttpConnector::new(),
+            tls_config,
+            proxy_dialer,
             direct,
         }
     }
@@ -45,10 +53,12 @@ impl HttpsProxyConnector {
         require_tls: bool,
     ) -> BoxFuture<'static, Result<ConnStream, ConnStreamError>> {
         if require_tls {
-            if let (Some(tls_config), Some(intercept)) =
-                (&self.tls_config, self.matcher.intercept(&uri))
-            {
-                let mut tunnel = Tunnel::new(intercept.uri().clone(), self.http.clone());
+            if let (Some(tls_config), Some(proxy_dialer), Some(intercept)) = (
+                &self.tls_config,
+                &self.proxy_dialer,
+                self.matcher.intercept(&uri),
+            ) {
+                let mut tunnel = Tunnel::new(intercept.uri().clone(), proxy_dialer.clone());
                 if let Some(auth) = intercept.basic_auth() {
                     tunnel = tunnel.with_auth(auth.clone());
                 }

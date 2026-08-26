@@ -123,9 +123,23 @@ mod https {
     #[cfg(not(feature = "https"))]
     fn ensure_crypto_provider_initialized() {}
 
+    #[cfg(any(feature = "https", feature = "fips"))]
+    fn require_crypto_provider() -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    #[cfg(not(any(feature = "https", feature = "fips")))]
+    fn require_crypto_provider() -> anyhow::Result<()> {
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            anyhow::bail!("no rustls CryptoProvider installed");
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "use_webpki_roots")]
     pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        require_crypto_provider()?;
 
         Ok(ClientConfig::builder()
             .with_webpki_roots()
@@ -140,6 +154,7 @@ mod https {
         use rustls_platform_verifier::BuilderVerifierExt;
 
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        require_crypto_provider()?;
 
         Ok(ClientConfig::builder()
             .with_platform_verifier()?
