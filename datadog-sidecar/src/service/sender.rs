@@ -14,7 +14,7 @@
 use crate::service::{
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
-        SidecarInterfaceRequest,
+        SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -23,6 +23,7 @@ use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::ShmHandle;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
@@ -406,6 +407,48 @@ impl SidecarSender {
             .try_send_send_trace_v04_bytes(instance_id, data, headers);
     }
 
+    pub fn send_trace_v1_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_shm(
+            instance_id,
+            handle,
+            len,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
+    }
+
+    pub fn send_trace_v1_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_bytes(
+            instance_id,
+            data,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
+    }
+
     pub fn send_debugger_data_shm(
         &mut self,
         instance_id: InstanceId,
@@ -483,6 +526,23 @@ impl SidecarSender {
 
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_write_timeout(d)
+    }
+
+    pub fn ensure_appsec_started(
+        &mut self,
+        log_file_path: Vec<u8>,
+        log_level: String,
+    ) -> Result<bool, libdd_ipc::codec::DecodeError> {
+        self.channel
+            .call_ensure_appsec_started(log_file_path, log_level)
+    }
+
+    pub fn send_appsec_message(
+        &mut self,
+        request: &SidecarInterfaceClientRequest<'_>,
+    ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
