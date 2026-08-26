@@ -16,19 +16,28 @@ use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
+use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
+use libdd_trace_utils::tracer_payload::TraceChunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
 use manual_future::ManualFutureCompleter;
+use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
 
+#[cfg(unix)]
+use crate::appsec::AppSecManager;
 use crate::config::get_product_endpoint;
+#[cfg(unix)]
+use crate::config::AppSecConfig;
 use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
@@ -42,6 +51,8 @@ use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
     SpanConcentratorState, StatsConfig,
 };
+#[cfg(unix)]
+use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
@@ -52,7 +63,7 @@ use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
-use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.
@@ -118,6 +129,9 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// AppSec lifecycle and active backend, when supplied by the embedding application.
+    #[cfg(unix)]
+    appsec: Option<Arc<AppSecManager>>,
     /// Sidecar-owned EVP flagevaluation coalescer, shared across PHP request lifetimes.
     pub(crate) ffe_flagevaluation_coalescer: ffe_flagevaluation_flusher::FlagEvaluationCoalescer,
 }
@@ -135,6 +149,10 @@ struct ConnectionSidecarHandler {
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
     /// The connection this handler serves.
     connection: OwnedServerConn,
+    /// The client_id of the currently active appsec logical client on this connection, if any.
+    /// Updated by send_appsec_message; read by cleanup to fire on_disconnect.
+    #[cfg(unix)]
+    appsec_client_id: Mutex<Option<u64>>,
 }
 
 impl ConnectionSidecarHandler {
@@ -151,6 +169,8 @@ impl ConnectionSidecarHandler {
             instances: Default::default(),
             metric_registrations: Default::default(),
             connection,
+            #[cfg(unix)]
+            appsec_client_id: Mutex::new(None),
         }
     }
 
@@ -160,6 +180,19 @@ impl ConnectionSidecarHandler {
 
     async fn cleanup(&self) {
         let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
+
+        // Notify the appsec helper of the per-client disconnect before session
+        // teardown. This lets it evict the exact ClientKey for this connection
+        // without touching sibling workers that share the same session_id.
+        #[cfg(unix)]
+        {
+            let client_id_opt = *self.appsec_client_id.lock_or_panic();
+            if let (Some(session_id), Some(client_id)) = (self.session_id.get(), client_id_opt) {
+                if let Some(appsec) = self.server.appsec.as_ref() {
+                    appsec.disconnect(session_id, client_id);
+                }
+            }
+        }
 
         if let Some(session_id) = self.session_id.get() {
             let stop = {
@@ -195,6 +228,31 @@ impl ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    #[cfg(unix)]
+    pub(crate) fn with_appsec_telemetry(
+        mut self,
+        telemetry: InProcessTelemetryClientFactory,
+    ) -> Self {
+        self.appsec = Some(Arc::new(AppSecManager::new(telemetry)));
+        self
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn ensure_appsec_started(&self, config: &AppSecConfig) -> bool {
+        let Some(appsec) = self.appsec.as_ref() else {
+            error!("AppSec is unavailable: no lifecycle manager was configured");
+            return false;
+        };
+        appsec.ensure_started(config).await
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn shutdown_appsec(&self) {
+        if let Some(appsec) = self.appsec.as_ref() {
+            appsec.shutdown().await;
+        }
+    }
+
     /// Accepts a new connection and starts processing requests.
     ///
     /// This function creates a per-connection `ConnectionSidecarHandler` and serves the connection,
@@ -254,6 +312,17 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+
+        // Failsafe: evict any remaining appsec clients for this session.
+        // cleanup() already fires per-client notifications (client_id != 0)
+        // before decrementing the session counter, so in the normal path this
+        // is a no-op. client_id == 0 signals a session-wide sweep.
+        #[cfg(unix)]
+        {
+            if let Some(appsec) = self.appsec.as_ref() {
+                appsec.disconnect(session_id, 0);
+            }
+        }
     }
 
     fn send_trace_v04(
@@ -270,27 +339,64 @@ impl SidecarServer {
                 return;
             }
         };
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
+    }
 
-        debug!(
-            "Received {} bytes of data for {:?} with headers {:?}",
-            data.len(),
-            target,
-            headers
-        );
-
-        match decode_to_trace_chunks(data, TraceEncoding::V04) {
+    /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
+    /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
+    /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
+    ///
+    /// Unlike `send_trace_v04`, only the generic bool/int flags plus `lang_interpreter`/
+    /// `lang_vendor` (which have no equivalent in the V1 payload model) cross the IPC boundary —
+    /// no full `TracerHeaderTags`/`SerializedTracerHeaderTags` envelope. The remaining fields
+    /// (`lang`, `lang_version`, `tracer_version`, `container_id`) are read back out of the
+    /// decoded V1 payload once it's available below and still forwarded to the agent as
+    /// `Datadog-Meta-*`/`Datadog-Container-Id` headers: the agent relies on those headers, not
+    /// just the payload body, to identify the source of malformed payloads or misbehaving
+    /// tracers when it can't decode the body, and populating them only on the agent side would
+    /// leave a gap whenever a tracer is upgraded ahead of its agent.
+    ///
+    /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
+    /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
+    /// `tracer::Config::set_endpoint`.
+    fn send_trace_v1(
+        &self,
+        generic: TracerGenericTags,
+        lang_interpreter: &str,
+        lang_vendor: &str,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+    ) {
+        match decode_to_trace_chunks(data, TraceEncoding::V1) {
             Ok((payload, size)) => {
-                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let mut data = SendData::new(
-                    size,
-                    payload.into_tracer_payload_collection(),
-                    headers,
-                    target,
+                let TraceChunks::V1(tracer_payload) = &payload else {
+                    unreachable!(
+                        "decode_to_trace_chunks(_, TraceEncoding::V1) always returns TraceChunks::V1"
+                    );
+                };
+                // Cheap refcounted clones: decouples the header strings from `payload`'s
+                // borrow so `payload` can still be moved into `enqueue_trace` below.
+                let lang = tracer_payload.language_name.clone();
+                let lang_version = tracer_payload.language_version.clone();
+                let tracer_version = tracer_payload.tracer_version.clone();
+                let container_id = tracer_payload.container_id.clone();
+
+                let headers = TracerHeaderTags {
+                    lang: lang.borrow(),
+                    lang_version: lang_version.borrow(),
+                    lang_interpreter,
+                    lang_vendor,
+                    tracer_version: tracer_version.borrow(),
+                    container_id: container_id.borrow(),
+                    generic,
+                };
+                debug!(
+                    "Received {} bytes of data for {:?} with headers {:?}",
+                    size, target, headers
                 );
-                let strategy =
-                    RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
-                data.set_retry_strategy(strategy);
-                self.trace_flusher.enqueue(data);
+                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
+                self.enqueue_trace(payload, size, headers, target, retry_interval);
             }
             Err(e) => {
                 error!(
@@ -299,6 +405,54 @@ impl SidecarServer {
                 )
             }
         }
+    }
+
+    fn send_trace(
+        &self,
+        headers: TracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+        encoding: TraceEncoding,
+    ) {
+        debug!(
+            "Received {} bytes of data for {:?} with headers {:?}",
+            data.len(),
+            target,
+            headers
+        );
+
+        match decode_to_trace_chunks(data, encoding) {
+            Ok((payload, size)) => {
+                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
+                self.enqueue_trace(payload, size, headers, target, retry_interval);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to collect trace chunks from msgpack with error {:?}",
+                    e
+                )
+            }
+        }
+    }
+
+    fn enqueue_trace(
+        &self,
+        payload: TraceChunks<BytesData>,
+        size: usize,
+        headers: TracerHeaderTags,
+        target: &Endpoint,
+        retry_interval: u64,
+    ) {
+        let mut data = SendData::new(
+            size,
+            payload.into_tracer_payload_collection(),
+            headers,
+            target,
+        );
+        let strategy = RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
+        data.set_retry_strategy(strategy);
+        self.trace_flusher.enqueue(data);
     }
 
     #[cfg(windows)]
@@ -962,6 +1116,79 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
+    async fn send_trace_v1_shm(
+        &self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        _len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        let bytes = tinybytes::Bytes::from(mapped);
+                        server.send_trace_v1(
+                            generic,
+                            &lang_interpreter,
+                            &lang_vendor,
+                            bytes,
+                            &endpoint,
+                            retry_interval,
+                        );
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        } else {
+            warn!(
+                "Received trace data ({handle:?}) for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
+    async fn send_trace_v1_bytes(
+        &self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+
+        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                let bytes = tinybytes::Bytes::from(data);
+                server.send_trace_v1(
+                    generic,
+                    &lang_interpreter,
+                    &lang_vendor,
+                    bytes,
+                    &endpoint,
+                    retry_interval,
+                );
+            });
+        } else {
+            warn!(
+                "Received trace data for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
     async fn send_debugger_data_shm(
         &self,
         instance_id: InstanceId,
@@ -1219,6 +1446,103 @@ impl SidecarInterface for ConnectionSidecarHandler {
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
     }
+
+    async fn ensure_appsec_started(&self, log_file_path: Vec<u8>, log_level: String) -> bool {
+        #[cfg(unix)]
+        {
+            let config = AppSecConfig {
+                log_file_path: std::ffi::OsString::from_vec(log_file_path),
+                log_level,
+            };
+            self.server.ensure_appsec_started(&config).await
+        }
+        #[cfg(not(unix))]
+        {
+            _ = (log_file_path, log_level);
+            false
+        }
+    }
+
+    async fn send_appsec_message(&self, client_id: u64, data: Vec<u8>) -> (Vec<u8>, bool) {
+        #[cfg(unix)]
+        {
+            let Some(appsec) = self.server.appsec.as_ref() else {
+                warn!("appsec: no backend is available");
+                return (vec![], true /* disconnect */);
+            };
+
+            let Some(session_id) = self.session_id.get() else {
+                warn!(
+                    "appsec: extension has sent an appsec message on a connection \
+                     without a session id"
+                );
+                return (vec![], true /* disconnect */);
+            };
+
+            // Update the tracked active client and determine whether an old
+            // client_id must be eagerly evicted before dispatching the message.
+            //
+            // Cases:
+            //  stored=None,    incoming=0  → no-op (waiting for first real id)
+            //  stored=None,    incoming=N  → reject: tell client to reconnect;
+            //                                sidecar could have restarted and this id
+            //                                belong to a separate php
+            //  stored=Some(N), incoming=N  → steady state, no-op
+            //  stored=Some(P), incoming=0  → extension abandons client: evict P, clear
+            //  stored=Some(P), incoming=N≠P → bug: log, evict P, tell client to reconnect
+            let (evict, reject) = match (*self.appsec_client_id.lock_or_panic(), client_id) {
+                (None, 0) => (None, false),
+                (None, _) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} without this \
+                        connection having memory of it (sidecar restarted?)"
+                    );
+                    // do not evict: after a restart another client may have claimed this id
+                    (None, true)
+                }
+                (Some(prev), 0) => {
+                    warn!(
+                        "appsec: extension abandoned client associated with \
+                        this connection (client_id {prev})"
+                    );
+                    (Some(prev), false)
+                }
+                // normal case: extension resumes associated client
+                (Some(prev), client_id) if prev == client_id => (None, false),
+                // bug: extension sends a different client_id on the same connection
+                (Some(prev), client_id) => {
+                    warn!(
+                        "appsec: extension sends client_id {client_id} on \
+                         connection associated with a different client (client_id {prev})"
+                    );
+                    (Some(prev), true)
+                }
+            };
+
+            if let Some(prev) = evict {
+                appsec.disconnect(session_id, prev);
+            }
+
+            if reject {
+                // tell extension to forget client_id and redo client_init
+                return (vec![], true /* disconnect */);
+            }
+
+            let Some(response) = appsec.send_message(session_id, client_id, data).await else {
+                info!("appsec: not in running phase anymore");
+                return (vec![], true /* disconnect */);
+            };
+            if response.client_id != client_id {
+                *self.appsec_client_id.lock_or_panic() = Some(response.client_id);
+            }
+            (response.data, response.disconnect)
+        }
+        #[cfg(not(unix))]
+        {
+            _ = (client_id, data);
+            (vec![], false)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1258,6 +1582,7 @@ mod tests {
             subject_attributes_json: "{}".to_owned(),
             allocation_key: "alloc".to_owned(),
             variant: "variant".to_owned(),
+            serial_id: None,
         }
     }
 
@@ -1517,6 +1842,105 @@ mod tests {
 
         assert_eq!(exposures_mock.calls_async().await, 0);
         assert_eq!(metrics_mock.calls_async().await, 0);
+    }
+
+    fn sample_v1_trace_payload_bytes() -> Vec<u8> {
+        use libdd_tinybytes::BytesString;
+        use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
+        use libdd_trace_utils::span::v1::{Span as V1Span, TraceChunkBytes, TracerPayloadBytes};
+
+        fn bs(s: &str) -> BytesString {
+            BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
+        }
+
+        let span = V1Span {
+            service: bs("svc"),
+            name: bs("GET /users"),
+            resource: bs("/users"),
+            span_id: 42,
+            start: 1_700_000_000_000,
+            duration: 1_500,
+            ..Default::default()
+        };
+
+        let chunk = TraceChunkBytes {
+            trace_id: [1u8; 16],
+            spans: vec![span],
+            ..Default::default()
+        };
+
+        let payload = TracerPayloadBytes {
+            language_name: bs("rust"),
+            language_version: bs("1.87"),
+            tracer_version: bs("9.9.9"),
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+
+        to_vec_from_v1(&payload)
+    }
+
+    /// Agentful sessions have their trace endpoint normalized to `/v0.4/traces` by
+    /// `tracer::Config::set_endpoint` since it doesn't know ahead of time which encoding will be
+    /// used. This exercises the full `send_trace_v1_bytes` chain to ensure V1 payloads are
+    /// redirected to the agent's `/v1.0/traces` route instead, and that `lang_interpreter`/
+    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers, alongside
+    /// `lang`/`lang_version`/`tracer_version` (which are read back out of the decoded V1 payload
+    /// — see `send_trace_v1`).
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_routes_to_v1_endpoint() {
+        let http_server = MockServer::start_async().await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1.0/traces")
+                    .header("datadog-meta-lang-interpreter", "cpython")
+                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor")
+                    .header("datadog-meta-lang", "rust")
+                    .header("datadog-meta-lang-version", "1.87")
+                    .header("datadog-meta-tracer-version", "9.9.9");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.4/traces");
+                then.status(200);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        handler
+            .send_trace_v1_bytes(
+                instance_id,
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+
+        // send_trace_v1_bytes spawns the actual send, so give it a chance to enqueue before
+        // forcing the flusher to flush and join.
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        v1_mock.assert_async().await;
+        assert_eq!(v04_mock.calls_async().await, 0);
     }
 }
 

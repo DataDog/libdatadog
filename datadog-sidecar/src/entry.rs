@@ -4,7 +4,7 @@
 use anyhow::Context;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
-use spawn_worker::{entrypoint, Stdio};
+use spawn_worker::{entrypoint, Entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
 use std::{
@@ -109,11 +109,22 @@ where
     }
 
     let server = SidecarServer::default();
+    // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
+    // actions before the receiver task gets its first poll.
+    let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
 
-    // Initialize telemetry sender synchronously before spawning the receiver task
-    // This ensures the sender is available immediately, avoiding race conditions
-    // where FFI calls might try to send telemetry before the receiver task starts
-    if let Some(rx) = init_telemetry_sender() {
+    #[cfg(unix)]
+    let server = server.with_appsec_telemetry(in_process_telemetry.clone());
+
+    #[cfg(unix)]
+    if let Some(appsec_config) = config.appsec_config.as_ref() {
+        server.ensure_appsec_started(appsec_config).await;
+    }
+
+    #[cfg(not(unix))]
+    drop(in_process_telemetry);
+
+    if let Some(rx) = telemetry_rx {
         tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
     }
 
@@ -155,6 +166,8 @@ where
     _ = telemetry_handle.await;
     server.shutdown();
     _ = server.trace_flusher.join().await;
+    #[cfg(unix)]
+    server.shutdown_appsec().await;
 
     Ok(())
 }
@@ -193,7 +206,15 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
+pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
+    daemonize_with_entrypoint(listener, cfg, entrypoint!(ddog_daemon_entry_point))
+}
+
+fn daemonize_with_entrypoint(
+    listener: IpcServer,
+    mut cfg: Config,
+    daemon_entrypoint: Entrypoint,
+) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
@@ -202,7 +223,7 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
         spawn_cfg.spawn_method(spawn_worker::SpawnMethod::Direct);
     }
 
-    spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
+    spawn_cfg.target(daemon_entrypoint);
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
@@ -259,15 +280,8 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
-    let mut lib_deps = cfg.library_dependencies;
-    if let Some(appsec) = cfg.appsec_config.as_ref() {
-        lib_deps.push(spawn_worker::LibDependency::Path(std::path::PathBuf::from(
-            appsec.shared_lib_path.clone(),
-        )));
-    }
-
     spawn_cfg
-        .shared_lib_dependencies(lib_deps)
+        .shared_lib_dependencies(cfg.library_dependencies)
         .wait_spawn()
         .map_err(io::Error::other)
         .context("Could not spawn the sidecar daemon")?;
@@ -276,6 +290,13 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+    start_or_connect_to_sidecar_with_entrypoint(cfg, entrypoint!(ddog_daemon_entry_point))
+}
+
+pub fn start_or_connect_to_sidecar_with_entrypoint(
+    cfg: Config,
+    daemon_entrypoint: Entrypoint,
+) -> anyhow::Result<SidecarTransport> {
     // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
     // attempt_listen so that the initial server pipe (created by this process and handed to the
     // daemon) uses the configured size.  The daemon restores the same value at startup so that
@@ -289,7 +310,7 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
 
     let err = match liaison.attempt_listen() {
         Ok(Some(listener)) => {
-            daemonize(listener, cfg)?;
+            daemonize_with_entrypoint(listener, cfg, daemon_entrypoint)?;
             None
         }
         Ok(None) => None,
