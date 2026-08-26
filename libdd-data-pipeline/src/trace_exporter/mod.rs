@@ -655,9 +655,14 @@ impl<
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        mut traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        for chunk in &mut traces {
+            for span in chunk.iter_mut() {
+                span.dedup();
+            }
+        }
         let trace_count = traces.len();
         let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
             &traces,
