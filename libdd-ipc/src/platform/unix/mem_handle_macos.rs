@@ -172,6 +172,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
 
         // SAFETY: we'll overwrite the original memory later
         let mut handle: T = unsafe { std::ptr::read(self) }.into();
+        let previous_size = handle.get_shm().size;
 
         #[allow(clippy::unwrap_used)]
         let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
@@ -195,6 +196,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
             }
             Ok(())
         })();
+        // If publishing the new size failed, restore the previous local size so a
+        // subsequent `ensure_space` call for the same size retries publication
+        // instead of assuming it already succeeded.
+        if mapped.is_err() {
+            handle.get_shm_mut().size = previous_size;
+        }
 
         #[allow(clippy::unwrap_used)]
         unsafe {

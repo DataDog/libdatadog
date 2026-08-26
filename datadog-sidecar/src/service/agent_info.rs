@@ -116,7 +116,6 @@ impl AgentInfoFetcher {
                     match fetched {
                         Ok(FetchInfoStatus::SameState) => {}
                         Ok(FetchInfoStatus::NewState(status)) => {
-                            state = Some(status.state_hash);
                             if writer.is_none() {
                                 writer = match OneWayShmWriter::<NamedShmHandle>::new(info_path(
                                     &endpoint,
@@ -128,12 +127,25 @@ impl AgentInfoFetcher {
                                     }
                                 };
                             }
-                            if let Some(ref writer) = writer {
-                                if let Err(e) =
-                                    writer.write(&serde_json::to_vec(&status.info).unwrap())
-                                {
-                                    error!("Failed to write agent info shm segment: {e}");
+                            // Only advance the state hash once the new payload has actually been
+                            // published to shared memory; otherwise the agent will keep reporting
+                            // `SameState` and other-process shm readers would never observe the
+                            // update. Leaving `state` unchanged makes us fetch and retry the write
+                            // on the next iteration.
+                            let published = match writer {
+                                Some(ref writer) => {
+                                    match writer.write(&serde_json::to_vec(&status.info).unwrap()) {
+                                        Ok(()) => true,
+                                        Err(e) => {
+                                            error!("Failed to write agent info shm segment: {e}");
+                                            false
+                                        }
+                                    }
                                 }
+                                None => false,
+                            };
+                            if published {
+                                state = Some(status.state_hash);
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));

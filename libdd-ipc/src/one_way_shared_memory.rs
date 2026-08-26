@@ -284,7 +284,9 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
                 #[allow(clippy::unwrap_used)]
                 let handle = reader.handle.as_mut().unwrap();
                 if let Err(e) = handle.ensure_space(size) {
-                    tracing::warn!("Failed to grow shared-memory reader mapping to {size} bytes: {e}");
+                    tracing::warn!(
+                        "Failed to grow shared-memory reader mapping to {size} bytes: {e}"
+                    );
                     return None;
                 }
 

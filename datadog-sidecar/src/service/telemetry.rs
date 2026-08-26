@@ -492,9 +492,7 @@ impl TelemetryCachedClient {
             match OneWayShmWriter::<NamedShmHandle>::new(self.shm_path.clone()) {
                 Ok(writer) => self.shm_writer = Some(writer),
                 Err(e) => {
-                    warn!(
-                        "Failed to (re)create telemetry shared memory segment: {e}"
-                    );
+                    warn!("Failed to (re)create telemetry shared memory segment: {e}");
                     return;
                 }
             }

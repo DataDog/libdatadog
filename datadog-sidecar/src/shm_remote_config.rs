@@ -165,8 +165,22 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Option<ShmLimiter<()>>,
+    limiter: Mutex<Option<ShmLimiter<()>>>,
     refcount: FileRefcountData,
+}
+
+fn alloc_live_debugging_limiter() -> Option<ShmLimiter<()>> {
+    crate::tracer::with_shm_limiter(|mem| mem.alloc()).and_then(|result| {
+        result
+            .inspect_err(|e| {
+                warn!(
+                    "Failed to allocate a shared-memory rate limiter slot for \
+                         live debugging config (will retry on the next remote config \
+                         fetch): {e}"
+                );
+            })
+            .ok()
+    })
 }
 
 impl RefcountedFile for StoredShmFile {
@@ -186,21 +200,11 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                crate::tracer::with_shm_limiter(|mem| mem.alloc()).and_then(|result| {
-                    result
-                        .inspect_err(|e| {
-                            warn!(
-                                "Failed to allocate a shared-memory rate limiter slot for \
-                                     live debugging config (will retry on the next remote config \
-                                     fetch): {e}"
-                            );
-                        })
-                        .ok()
-                })
+            limiter: Mutex::new(if path.product() == RemoteConfigProduct::LiveDebugging {
+                alloc_live_debugging_limiter()
             } else {
                 None
-            },
+            }),
             refcount: FileRefcountData::new(version, path),
         }))
     }
@@ -212,6 +216,12 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
+        if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging {
+            let mut limiter = file.limiter.lock_or_panic();
+            if limiter.is_none() {
+                *limiter = alloc_live_debugging_limiter();
+            }
+        }
         Ok(())
     }
 }
@@ -290,7 +300,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 file.handle.lock_or_panic().as_ref().unwrap().get_path()
             });
             serialized.push(b':');
-            if let Some(ref limiter) = file.limiter {
+            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
             } else {
                 serialized.push(b'0');
