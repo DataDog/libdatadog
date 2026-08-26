@@ -250,59 +250,103 @@ pub extern "C" fn ddog_v1_chunk_new_span(
     }
 }
 
-macro_rules! span_str_setter {
-    ($fn_name:ident, $field:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[no_mangle]
-        pub extern "C" fn $fn_name(
-            builder: &mut TracerPayloadV1Builder,
-            chunk: usize,
-            span: usize,
-            id: u32,
-        ) {
-            let value = builder.resolve(id);
-            if let Some(s) = builder.span_mut(chunk, span) {
-                s.$field = value;
-            }
-        }
-    };
+/// Sets the span service (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_service(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.service = value;
+    }
 }
 
-span_str_setter!(
-    ddog_v1_set_span_service,
-    service,
-    "Sets the span service (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_name,
-    name,
-    "Sets the span name (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_resource,
-    resource,
-    "Sets the span resource (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_type,
-    r#type,
-    "Sets the span type (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_env,
-    env,
-    "Sets the span env (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_version,
-    version,
-    "Sets the span version (interned id)."
-);
-span_str_setter!(
-    ddog_v1_set_span_component,
-    component,
-    "Sets the span component (interned id)."
-);
+/// Sets the span name (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_name(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.name = value;
+    }
+}
+
+/// Sets the span resource (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_resource(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.resource = value;
+    }
+}
+
+/// Sets the span type (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_type(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.r#type = value;
+    }
+}
+
+/// Sets the span env (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_env(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.env = value;
+    }
+}
+
+/// Sets the span version (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_version(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.version = value;
+    }
+}
+
+/// Sets the span component (interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_set_span_component(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    id: u32,
+) {
+    let value = builder.resolve(id);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        s.component = value;
+    }
+}
 
 /// Sets the span id.
 #[no_mangle]
@@ -382,50 +426,69 @@ pub extern "C" fn ddog_v1_set_span_kind(
     }
 }
 
-macro_rules! span_attr_setter {
-    ($fn_name:ident, $value_ty:ty, $make:expr, $doc:literal) => {
-        #[doc = $doc]
-        #[no_mangle]
-        pub extern "C" fn $fn_name(
-            builder: &mut TracerPayloadV1Builder,
-            chunk: usize,
-            span: usize,
-            key_id: u32,
-            value: $value_ty,
-        ) {
-            let key = builder.resolve(key_id);
-            let attr = $make(builder, value);
-            if let Some(s) = builder.span_mut(chunk, span) {
-                insert_attr(&mut s.attributes, key, attr);
-            }
-        }
-    };
+/// Adds a string span attribute (key and value are interned ids).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_span_attr_str(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key_id: u32,
+    value: u32,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::String(builder.resolve(value));
+    if let Some(s) = builder.span_mut(chunk, span) {
+        insert_attr(&mut s.attributes, key, attr);
+    }
 }
 
-span_attr_setter!(
-    ddog_v1_add_span_attr_str,
-    u32,
-    |b: &TracerPayloadV1Builder, id: u32| AttributeValueBytes::String(b.resolve(id)),
-    "Adds a string span attribute (key and value are interned ids)."
-);
-span_attr_setter!(
-    ddog_v1_add_span_attr_int,
-    i64,
-    |_b: &TracerPayloadV1Builder, v: i64| AttributeValueBytes::Int(v),
-    "Adds an integer span attribute (key is an interned id)."
-);
-span_attr_setter!(
-    ddog_v1_add_span_attr_double,
-    f64,
-    |_b: &TracerPayloadV1Builder, v: f64| AttributeValueBytes::Float(v),
-    "Adds a double span attribute (key is an interned id)."
-);
-span_attr_setter!(
-    ddog_v1_add_span_attr_bool,
-    bool,
-    |_b: &TracerPayloadV1Builder, v: bool| AttributeValueBytes::Bool(v),
-    "Adds a boolean span attribute (key is an interned id)."
-);
+/// Adds an integer span attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_span_attr_int(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key_id: u32,
+    value: i64,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Int(value);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        insert_attr(&mut s.attributes, key, attr);
+    }
+}
+
+/// Adds a double span attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_span_attr_double(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key_id: u32,
+    value: f64,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Float(value);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        insert_attr(&mut s.attributes, key, attr);
+    }
+}
+
+/// Adds a boolean span attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_span_attr_bool(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key_id: u32,
+    value: bool,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Bool(value);
+    if let Some(s) = builder.span_mut(chunk, span) {
+        insert_attr(&mut s.attributes, key, attr);
+    }
+}
 
 /// Adds a bytes-valued span attribute. The key is an interned id; the value bytes are copied
 /// verbatim (not interned) and encoded as msgpack `bin`.
@@ -584,51 +647,73 @@ pub extern "C" fn ddog_v1_set_event_name(
     }
 }
 
-macro_rules! event_attr_setter {
-    ($fn_name:ident, $value_ty:ty, $make:expr, $doc:literal) => {
-        #[doc = $doc]
-        #[no_mangle]
-        pub extern "C" fn $fn_name(
-            builder: &mut TracerPayloadV1Builder,
-            chunk: usize,
-            span: usize,
-            event: usize,
-            key_id: u32,
-            value: $value_ty,
-        ) {
-            let key = builder.resolve(key_id);
-            let attr = $make(builder, value);
-            if let Some(e) = builder.event_mut(chunk, span, event) {
-                insert_attr(&mut e.attributes, key, attr);
-            }
-        }
-    };
+/// Adds a string event attribute (key and value are interned ids).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_event_attr_str(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    key_id: u32,
+    value: u32,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::String(builder.resolve(value));
+    if let Some(e) = builder.event_mut(chunk, span, event) {
+        insert_attr(&mut e.attributes, key, attr);
+    }
 }
 
-event_attr_setter!(
-    ddog_v1_add_event_attr_str,
-    u32,
-    |b: &TracerPayloadV1Builder, id: u32| AttributeValueBytes::String(b.resolve(id)),
-    "Adds a string event attribute (key and value are interned ids)."
-);
-event_attr_setter!(
-    ddog_v1_add_event_attr_int,
-    i64,
-    |_b: &TracerPayloadV1Builder, v: i64| AttributeValueBytes::Int(v),
-    "Adds an integer event attribute (key is an interned id)."
-);
-event_attr_setter!(
-    ddog_v1_add_event_attr_double,
-    f64,
-    |_b: &TracerPayloadV1Builder, v: f64| AttributeValueBytes::Float(v),
-    "Adds a double event attribute (key is an interned id)."
-);
-event_attr_setter!(
-    ddog_v1_add_event_attr_bool,
-    bool,
-    |_b: &TracerPayloadV1Builder, v: bool| AttributeValueBytes::Bool(v),
-    "Adds a boolean event attribute (key is an interned id)."
-);
+/// Adds an integer event attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_event_attr_int(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    key_id: u32,
+    value: i64,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Int(value);
+    if let Some(e) = builder.event_mut(chunk, span, event) {
+        insert_attr(&mut e.attributes, key, attr);
+    }
+}
+
+/// Adds a double event attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_event_attr_double(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    key_id: u32,
+    value: f64,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Float(value);
+    if let Some(e) = builder.event_mut(chunk, span, event) {
+        insert_attr(&mut e.attributes, key, attr);
+    }
+}
+
+/// Adds a boolean event attribute (key is an interned id).
+#[no_mangle]
+pub extern "C" fn ddog_v1_add_event_attr_bool(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    key_id: u32,
+    value: bool,
+) {
+    let key = builder.resolve(key_id);
+    let attr = AttributeValueBytes::Bool(value);
+    if let Some(e) = builder.event_mut(chunk, span, event) {
+        insert_attr(&mut e.attributes, key, attr);
+    }
+}
 
 // ------------------- Payload-level metadata -------------------
 
