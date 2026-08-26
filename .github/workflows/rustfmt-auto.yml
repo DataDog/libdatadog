@@ -1,7 +1,27 @@
 name: Rustfmt Auto
+
+# Security model:
+# Use`pull_request_target` which runs the definition from the default branch instead, which 
+# also pins the OIDC `ref` and `job_workflow_ref` claims to `refs/heads/main`, so
+# the trust policy can require a protected ref like the repository's other STS policies do.
+# The trade-off of `pull_request_target` is that the job context is privileged, so the
+# work is split in two: 
+# 1.`rustfmt` checks out the pull request and runs cargo fmt with no token and no `id-token`
+# permission.
+# 2. `rustfmt-commit` only applies the resulting patch and pushes it only using verified tools
+# from the image, in this case 'git'. Not that --force-with-lease is used which makes the push
+# a no-op if the branch moved on from the revision that was formatted this prevents overwriting
+# newer commits. Not using third-party tools in this job is deliberate as it prevents using
+# uncontrolled code with elevated permissions.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, labeled]
+
+permissions: {}
+
+concurrency:
+  group: rustfmt-auto-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   rustfmt:
@@ -9,34 +29,117 @@ jobs:
     if: >-
       contains(github.event.pull_request.labels.*.name, 'commit-rustfmt-changes') &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      !startsWith(github.head_ref, 'mq-working-branch')
+      !startsWith(github.event.pull_request.head.ref, 'mq-working-branch')
     permissions:
-      id-token: write
-      contents: write
+      contents: read
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    outputs:
+      changed: ${{ steps.patch.outputs.changed }}
     steps:
-      - name: Checkout sources
+      - name: Checkout pull request sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
+          # Pin to the head SHA rather than the branch: the commit job pushes on top of
+          # this exact revision.
+          ref: ${{ github.event.pull_request.head.sha }}
+          submodules: recursive
+          persist-credentials: false
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: |
+          set -euo pipefail
+          version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)
+          # The file comes from the pull request and the value is interpolated into the
+          # step names below, so only accept the exact shape rustup expects.
+          if [[ ! "$version" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error::unexpected channel in nightly-toolchain.toml: $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install ${{ steps.nightly-version.outputs.version }} toolchain and rustfmt
+        env:
+          TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          rustup set profile minimal
+          rustup install "$TOOLCHAIN"
+          rustup component add rustfmt --toolchain "$TOOLCHAIN"
+      - name: Run rustfmt
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+        run: cargo fmt --all
+      - name: Collect formatting patch
+        id: patch
+        run: |
+          set -euo pipefail
+          # Restrict the patch to Rust sources. It is applied by a privileged job, so it
+          # must not be able to carry edits to workflows, CI config or submodules.
+          git diff --output=rustfmt.patch -- '*.rs'
+          if [[ -s rustfmt.patch ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing to reformat." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload formatting patch
+        if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        with:
+          name: rustfmt-patch
+          path: rustfmt.patch
+          retention-days: 1
+
+  rustfmt-commit:
+    needs: rustfmt
+    if: needs.rustfmt.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout the formatted revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Download formatting patch
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # 4.3.0
+        with:
+          name: rustfmt-patch
+          path: ${{ runner.temp }}/rustfmt-patch
+      - name: Apply formatting patch
+        run: |
+          set -euo pipefail
+          git apply --whitespace=nowarn -- "$RUNNER_TEMP/rustfmt-patch/rustfmt.patch"
+          # The patch was produced from pull-request-controlled sources: confirm it only
+          # modified tracked Rust files before committing it with a privileged token.
+          unexpected=$(git status --porcelain -z | tr '\0' '\n' | grep -v -e '^$' -e '^ M .*\.rs$' || true)
+          if [[ -n "$unexpected" ]]; then
+            echo "::error::formatting patch touched unexpected paths:"
+            echo "$unexpected"
+            exit 1
+          fi
       - name: Get GitHub App token
         uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
         with:
           scope: DataDog/libdatadog
           policy: self.write.rustfmt
-      - name: Read nightly version from nightly-toolchain.toml
-        id: nightly-version
-        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
-      - name: Install ${{ steps.nightly-version.outputs.version }} toolchain and rustfmt
-        run: |
-          rustup install ${{ steps.nightly-version.outputs.version }}
-          rustup component add rustfmt --toolchain ${{ steps.nightly-version.outputs.version }}
-      - name: Run rustfmt and commit changes
-        uses: mbrobbel/rustfmt-check@e7ac5685995bd39fb14f6c83fa6f10627e92e680 # master
+      - name: Commit and push
         env:
-          # Override rust-toolchain.toml so rustfmt runs on nightly (required by
-          # the unstable_features in rustfmt.toml) instead of the workspace MSRV.
-          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
-        with:
-          token: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --all --message 'style: apply rustfmt'
+          if ! git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+                 "HEAD:refs/heads/${HEAD_REF}" \
+                 --force-with-lease="refs/heads/${HEAD_REF}:${HEAD_SHA}"; then
+            echo "::error::could not push the formatting commit; ${HEAD_REF} has moved past ${HEAD_SHA}. Remove and re-add the commit-rustfmt-changes label to retry."
+            exit 1
+          fi
