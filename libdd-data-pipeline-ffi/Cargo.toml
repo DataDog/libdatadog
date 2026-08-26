@@ -51,4 +51,4 @@ rmp = { version = "0.8.14", default-features = false }
 tokio-util = "0.7.11"
 tracing.workspace = true
 serde_json = { workspace = true, optional = true }
-libdd-trace-obfuscation = { version = "6.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
+libdd-trace-obfuscation = { version = "7.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
