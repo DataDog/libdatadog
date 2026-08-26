@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
-use crate::agentless::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
+use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]

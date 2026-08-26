@@ -4,10 +4,9 @@
 //! Agentless trace export error adapter.
 
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
-use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_data_pipeline_core::{
-    send_agentless_json, send_agentless_traces as send_traces, AgentlessError, AgentlessTraceConfig,
+    send_agentless_traces as send_traces, AgentlessError, AgentlessTraceConfig,
 };
 use libdd_trace_utils::send_with_retry::SendWithRetryError;
 use libdd_trace_utils::span::TraceData;
@@ -25,18 +24,6 @@ where
     C: HttpClientCapability + SleepCapability,
 {
     send_traces(capabilities, traces, metadata, config)
-        .await
-        .map_err(map_agentless_error)
-}
-
-/// Sends an encoded agentless JSON request using executor-provided capabilities.
-pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
-    capabilities: &C,
-    config: &AgentlessTraceConfig,
-    headers: HeaderMap,
-    json_body: Vec<u8>,
-) -> Result<(), TraceExporterError> {
-    send_agentless_json(capabilities, config, headers, json_body)
         .await
         .map_err(map_agentless_error)
 }

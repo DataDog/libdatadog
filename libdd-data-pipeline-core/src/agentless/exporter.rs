@@ -1,8 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{fmt, time::Duration};
+//! Agentless HTTP/JSON trace exporter.
 
+use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
@@ -15,31 +16,6 @@ use thiserror::Error;
 
 const AGENTLESS_MAX_RETRIES: u32 = 2;
 const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
-
-/// Default timeout for one agentless request attempt.
-pub const DEFAULT_AGENTLESS_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Agentless trace request configuration.
-#[derive(Clone)]
-pub struct AgentlessTraceConfig {
-    /// Full URL to POST traces to.
-    pub endpoint_url: String,
-    /// Datadog API key used for the `dd-api-key` header.
-    pub api_key: String,
-    /// Timeout for one request attempt.
-    pub timeout: Duration,
-}
-
-impl fmt::Debug for AgentlessTraceConfig {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AgentlessTraceConfig")
-            .field("endpoint_url", &self.endpoint_url)
-            .field("api_key", &"<redacted>")
-            .field("timeout", &self.timeout)
-            .finish()
-    }
-}
 
 /// An error encountered while sending agentless traces.
 #[derive(Debug, Error)]
@@ -84,7 +60,7 @@ where
 /// Sends an encoded agentless JSON request.
 ///
 /// The configured API key replaces any `dd-api-key` value in `headers`.
-pub async fn send_agentless_json<C>(
+async fn send_agentless_json<C>(
     capabilities: &C,
     config: &AgentlessTraceConfig,
     mut headers: HeaderMap,
@@ -156,7 +132,10 @@ mod tests {
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     #[derive(Clone, Debug, Default)]
     struct TestCapabilities {

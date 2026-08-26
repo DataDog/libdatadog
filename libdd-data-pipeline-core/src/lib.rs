@@ -10,7 +10,6 @@
 mod agentless;
 
 pub use agentless::{
-    send_agentless_json, send_agentless_traces, AgentlessError, AgentlessTraceConfig,
-    DEFAULT_AGENTLESS_TIMEOUT,
+    send_agentless_traces, AgentlessError, AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT,
 };
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
