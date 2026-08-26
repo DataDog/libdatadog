@@ -153,14 +153,14 @@ jobs:
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
-            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
-              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
             fi
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
