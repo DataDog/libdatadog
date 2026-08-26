@@ -8,8 +8,10 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod span;
+pub mod span_v1;
 
 use crate::span::TracesBytes;
+use crate::span_v1::{populate_payload_metadata, TracerPayloadV1Builder};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
@@ -1963,44 +1965,17 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
-/// Payload-level tracer metadata for the V1 msgpack encoder; mirrors `TracerMetadata`.
+/// Payload-level tracer metadata for the V1 send path that is NOT already carried by the sender's
+/// `tracer_headers_tags`. The lang/lang_version/lang_interpreter/lang_vendor/tracer_version and
+/// container_id fields live in `SenderParameters::tracer_headers_tags` and are routed from there,
+/// so they are not duplicated here.
 #[repr(C)]
 pub struct TracerMetadataV1 {
     pub hostname: CharSlice<'static>,
     pub env: CharSlice<'static>,
     pub app_version: CharSlice<'static>,
     pub runtime_id: CharSlice<'static>,
-    pub service: CharSlice<'static>,
-    pub tracer_version: CharSlice<'static>,
-    pub language_name: CharSlice<'static>,
-    pub language_version: CharSlice<'static>,
-    pub language_interpreter: CharSlice<'static>,
-    pub language_interpreter_vendor: CharSlice<'static>,
     pub git_commit_sha: CharSlice<'static>,
-    pub process_tags: CharSlice<'static>,
-}
-
-impl TracerMetadataV1 {
-    fn to_tracer_metadata(&self) -> libdd_trace_utils::tracer_metadata::TracerMetadata {
-        libdd_trace_utils::tracer_metadata::TracerMetadata {
-            hostname: self.hostname.to_utf8_lossy().into_owned(),
-            env: self.env.to_utf8_lossy().into_owned(),
-            app_version: self.app_version.to_utf8_lossy().into_owned(),
-            runtime_id: self.runtime_id.to_utf8_lossy().into_owned(),
-            service: self.service.to_utf8_lossy().into_owned(),
-            tracer_version: self.tracer_version.to_utf8_lossy().into_owned(),
-            language: self.language_name.to_utf8_lossy().into_owned(),
-            language_version: self.language_version.to_utf8_lossy().into_owned(),
-            language_interpreter: self.language_interpreter.to_utf8_lossy().into_owned(),
-            language_interpreter_vendor: self
-                .language_interpreter_vendor
-                .to_utf8_lossy()
-                .into_owned(),
-            git_commit_sha: self.git_commit_sha.to_utf8_lossy().into_owned(),
-            process_tags: self.process_tags.to_utf8_lossy().into_owned(),
-            ..Default::default()
-        }
-    }
 }
 
 #[no_mangle]
@@ -2089,16 +2064,23 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // );
 }
 
-/// V1 counterpart of `ddog_send_traces_to_sidecar`: encodes `traces` as a V1 `TracerPayload`
-/// using `metadata`, then sends it to the sidecar for the agent's `/v1.0/traces` endpoint.
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: encodes the native V1 `TracerPayload` built via
+/// the [`crate::span_v1`] builder (natively, without the v0.4→v1 upgrade converter), then sends it
+/// to the sidecar for the agent's `/v1.0/traces` endpoint. Consumes `builder`.
+///
+/// Payload-level metadata is sourced at send time: the lang/lang_version/tracer_version and
+/// container_id come from `parameters.tracer_headers_tags`, while hostname/env/app_version/
+/// runtime_id/git_commit_sha come from `metadata`. lang_interpreter/lang_vendor are forwarded to
+/// the sidecar as HTTP header tags (they are not part of the V1 wire payload).
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
-    traces: &mut TracesBytes,
+    builder: Box<TracerPayloadV1Builder>,
     parameters: &mut SenderParameters,
     metadata: &TracerMetadataV1,
 ) {
-    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+    let mut payload = builder.into_payload();
+    let size: usize = payload.chunks.iter().map(|c| c.spans.len()).sum();
 
     // Check connection to the sidecar
     if parameters.transport.is_closed() {
@@ -2109,7 +2091,30 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
         return;
     }
 
-    let tracer_metadata = metadata.to_tracer_metadata();
+    let tags = &parameters.tracer_headers_tags;
+    populate_payload_metadata(
+        &mut payload,
+        &tags.container_id.to_utf8_lossy(),
+        &tags.lang.to_utf8_lossy(),
+        &tags.lang_version.to_utf8_lossy(),
+        &tags.tracer_version.to_utf8_lossy(),
+        &metadata.runtime_id.to_utf8_lossy(),
+        &metadata.env.to_utf8_lossy(),
+        &metadata.hostname.to_utf8_lossy(),
+        &metadata.app_version.to_utf8_lossy(),
+        &metadata.git_commit_sha.to_utf8_lossy(),
+    );
+
+    let lang_interpreter = parameters
+        .tracer_headers_tags
+        .lang_interpreter
+        .to_utf8_lossy()
+        .into_owned();
+    let lang_vendor = parameters
+        .tracer_headers_tags
+        .lang_vendor
+        .to_utf8_lossy()
+        .into_owned();
 
     // Create and map shared memory
     let shm = check!(
@@ -2119,20 +2124,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
 
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
-    for chunk in traces.iter_mut() {
-        for span in chunk.iter_mut() {
-            span.dedup();
-        }
-    }
-
-    // Write traces to the shared memory as a V1 payload
+    // Write traces to the shared memory as a native V1 payload
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v1::write_to_slice_from_v04(
-        &mut shm_slice,
-        traces,
-        &tracer_metadata,
-    ) {
+    let written = match msgpack_encoder::v1::write_to_slice_from_v1(&mut shm_slice, &payload) {
         Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");
@@ -2156,11 +2151,8 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
             client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
             ..Default::default()
         },
-        metadata.language_interpreter.to_utf8_lossy().into_owned(),
-        metadata
-            .language_interpreter_vendor
-            .to_utf8_lossy()
-            .into_owned(),
+        lang_interpreter.clone(),
+        lang_vendor.clone(),
     );
 
     // Retry sending traces via bytes if there was an error
@@ -2168,21 +2160,14 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
         match blocking::send_trace_v1_bytes(
             &mut parameters.transport,
             &parameters.instance_id,
-            msgpack_encoder::v1::to_vec_with_capacity_from_v04(
-                traces,
-                written as u32,
-                &tracer_metadata,
-            ),
+            msgpack_encoder::v1::to_vec_with_capacity_from_v1(&payload, written as u32),
             TracerGenericTags {
                 client_computed_top_level: parameters.tracer_headers_tags.client_computed_top_level,
                 client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
                 ..Default::default()
             },
-            metadata.language_interpreter.to_utf8_lossy().into_owned(),
-            metadata
-                .language_interpreter_vendor
-                .to_utf8_lossy()
-                .into_owned(),
+            lang_interpreter,
+            lang_vendor,
         ) {
             Ok(_) => {}
             Err(_) => tracing::debug!(
