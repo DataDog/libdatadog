@@ -2894,7 +2894,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "blazesym",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3108,7 +3108,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-gotter"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc-macros"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3525,7 +3525,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3537,7 +3537,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3554,7 +3554,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "4.0.1"
+version = "5.0.0"
 dependencies = [
  "bolero",
  "prost",
@@ -3568,7 +3568,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3599,7 +3599,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "10.1.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3646,7 +3646,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
