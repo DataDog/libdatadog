@@ -39,6 +39,9 @@ env:
 jobs:
   validate-inputs:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       crates: ${{ steps.normalize.outputs.crates }}
       crates_display: ${{ steps.normalize.outputs.crates_display }}
@@ -47,10 +50,18 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
+
       - name: Exclude from Green CI
+        continue-on-error: true
         env:
           DATADOG_SITE: datadoghq.com
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
         run: ./scripts/exclude-from-green-ci.sh
 
       - name: Normalize and validate crate list
@@ -204,9 +215,14 @@ jobs:
       - name: Read nightly version from nightly-toolchain.toml
         id: nightly-version
         run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb #nightly
         with:
           toolchain: ${{ steps.nightly-version.outputs.version }}

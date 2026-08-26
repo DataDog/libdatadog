@@ -4,7 +4,7 @@ description = "Detects program crashes and reports them to datadog backend."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-crashtracker"
 edition.workspace = true
-version = "2.0.0"
+version = "2.0.1"
 rust-version.workspace = true
 license.workspace = true
 autobenches = false
@@ -42,7 +42,7 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libdd-gotter = { version = "1.0.0", path = "../libdd-gotter" }
+libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
 libdd-libunwind-sys = { version = "1.0.3" }
 
 [dependencies]
