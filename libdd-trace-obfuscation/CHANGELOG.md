@@ -2,6 +2,13 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v6.0.0..libdd-trace-obfuscation-v7.0.0) - 2026-08-25
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+- Bump `libdd-trace-utils` to a new major version (`^10.1.0` → `^11.0.0`)
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v5.0.0..libdd-trace-obfuscation-v6.0.0) - 2026-08-17
 
 ### Changed

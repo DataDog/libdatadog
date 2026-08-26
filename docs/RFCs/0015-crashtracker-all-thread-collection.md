@@ -231,24 +231,28 @@ The process source needs `/proc/{pid}` to exist. The ELF retry reads the
 binary from disk and needs nothing from the live process, which is what
 keeps function names available once the process is gone.
 
-Whether that matters depends on how the receiver was reached:
+Normalization still depends on that process, since it reads
+`/proc/{pid}/maps`, and a frame that fails to normalize has no ELF
+location to retry against and stays unsymbolized. The ELF retry
+therefore does not by itself make symbolization independent of the
+crashing process; it only covers the second phase.
 
-- **Unix-socket sidecar** (`async_receiver_entry_point_unix_listener` and
-  `async_receiver_entry_point_unix_socket`): the crashing process is
-  released *before* symbolization. `receive_report_from_stream` owns the
-  `UnixStream` and drops it on return, delivering the POLLHUP the crashing
-  process is waiting on in `wait_for_pollhup`. Thread collection happens
-  inside that function, so unwinding sees a live process, but both
-  symbolization phases race the process's teardown.
-- **Fork/exec receiver** (`receiver_entry_point_stdin`): the stream wraps
-  `tokio::io::stdin()`, and dropping that handle does not close fd 0. The
-  peer therefore stays open until the receiver process exits, after
-  symbolization and upload, so the crashing process is still available
-  throughout.
+The crashing process blocks in `wait_for_pollhup` until the receiver
+closes the collector connection, so the receiver controls how long it
+stays alive. `receiver_entry_point` therefore owns the stream and
+borrows it to `receive_report_from_stream`, holding it open across both
+symbolization phases and closing it only afterwards. Normalization is
+consequently guaranteed a live process rather than racing its teardown.
 
-Normalization reads `/proc/{pid}/maps` and so depends on that process.
-A frame that fails to normalize has no ELF location to retry against and
-stays unsymbolized.
+The close MUST happen before the upload. Nothing after symbolization
+reads from the crashing process, and leaving the connection open through
+a network round-trip to a slow or unreachable endpoint would extend the
+pause the crashing application sees by that latency.
+
+This ordering only binds the Unix-socket sidecar path, where the stream
+is the socket itself. Under `receiver_entry_point_stdin` the stream
+wraps `tokio::io::stdin()`; dropping that handle does not close fd 0, so
+the peer stays open until the receiver process exits regardless.
 
 Symbolization failure MUST NOT cost the report. A frame that resolves
 through neither source keeps its `ip`, `sp`, and whatever normalization
