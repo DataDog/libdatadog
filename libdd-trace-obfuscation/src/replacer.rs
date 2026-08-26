@@ -105,6 +105,10 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
                 for (_, tag_value) in &mut span.meta {
                     apply_rule(rule, tag_value);
                 }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
                 apply_rule(rule, &mut span.resource);
             }
             "resource.name" => {
@@ -127,6 +131,11 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
                 for tag_value in span.meta.values_mut() {
                     rule.apply(tag_value, scratch_space);
                 }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                rule.apply(&mut span.resource, scratch_space);
             }
             "resource.name" => {
                 rule.apply(&mut span.resource, scratch_space);
