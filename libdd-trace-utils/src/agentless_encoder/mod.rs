@@ -481,13 +481,13 @@ fn dedup_first_wins_v1<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
 }
 
 /// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for the
-/// `meta` (string-valued) and `metrics` (numeric) buckets. `Bytes` has no flattened form and is
-/// routed to `meta_struct` by the caller before recursing.
+/// `meta` (string-valued), `metrics` (numeric), and `meta_struct` (`Bytes`) buckets.
 fn flatten_attr_into_v1<T: TraceData>(
     key: &mut String,
     v: &AttributeValueV1<T>,
     meta_out: &mut Vec<(String, String)>,
     metrics_out: &mut Vec<(String, f64)>,
+    bytes_out: &mut Vec<(String, T::Bytes)>,
 ) {
     match v {
         AttributeValueV1::String(s) => meta_out.push((key.clone(), s.borrow().to_owned())),
@@ -496,15 +496,13 @@ fn flatten_attr_into_v1<T: TraceData>(
         }
         AttributeValueV1::Int(i) => metrics_out.push((key.clone(), *i as f64)),
         AttributeValueV1::Float(f) => metrics_out.push((key.clone(), *f)),
-        AttributeValueV1::Bytes(_) => {
-            // Callers filter `Bytes` out before recursing; unreachable in practice.
-        }
+        AttributeValueV1::Bytes(b) => bytes_out.push((key.clone(), b.clone())),
         AttributeValueV1::List(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
                 let _ = write!(key, "{i}");
-                flatten_attr_into_v1(key, item, meta_out, metrics_out);
+                flatten_attr_into_v1(key, item, meta_out, metrics_out, bytes_out);
                 key.truncate(base_len);
             }
         }
@@ -513,28 +511,25 @@ fn flatten_attr_into_v1<T: TraceData>(
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
                 key.push_str(k.borrow());
-                flatten_attr_into_v1(key, v, meta_out, metrics_out);
+                flatten_attr_into_v1(key, v, meta_out, metrics_out, bytes_out);
                 key.truncate(base_len);
             }
         }
     }
 }
 
-/// Leaves collected by [`collect_attrs_v1`]: `meta` entries, `metrics` entries, and raw
-/// `meta_struct`-bound `Bytes` entries.
-type CollectedAttrsV1<'a, T> = (
+/// Leaves collected by [`collect_attrs_v1`]: `meta`, `metrics`, and `meta_struct` (`Bytes`)
+/// entries.
+type CollectedAttrsV1<T> = (
     Vec<(String, String)>,
     Vec<(String, f64)>,
-    Vec<(&'a <T as TraceData>::Text, &'a <T as TraceData>::Bytes)>,
+    Vec<(String, <T as TraceData>::Bytes)>,
 );
 
 /// Merges a span's attributes with its chunk's (span overrides chunk on key collision),
 /// drops attributes colliding with a [`PROMOTED_ATTR_KEYS_V1`] name, and splits the rest into
-/// `meta` leaves, `metrics` leaves, and raw `meta_struct`-bound `Bytes` entries.
-fn collect_attrs_v1<'a, T: TraceData>(
-    span: &'a SpanV1<T>,
-    chunk: &'a TraceChunk<T>,
-) -> CollectedAttrsV1<'a, T> {
+/// `meta` leaves, `metrics` leaves, and `meta_struct` (`Bytes`) leaves.
+fn collect_attrs_v1<T: TraceData>(span: &SpanV1<T>, chunk: &TraceChunk<T>) -> CollectedAttrsV1<T> {
     let span_attrs_dd = span.attributes.defensive_dedup();
     let chunk_attrs_dd = chunk.attributes.defensive_dedup();
     let merged_attrs = span_attrs_dd
@@ -547,22 +542,23 @@ fn collect_attrs_v1<'a, T: TraceData>(
 
     let mut meta_leaves: Vec<(String, String)> = Vec::new();
     let mut metrics_leaves: Vec<(String, f64)> = Vec::new();
-    let mut bytes_attrs: Vec<(&T::Text, &T::Bytes)> = Vec::new();
+    let mut bytes_leaves: Vec<(String, T::Bytes)> = Vec::new();
     let mut key_buf = String::new();
     for (k, v) in merged_attrs {
-        match v {
-            AttributeValueV1::Bytes(b) => bytes_attrs.push((k, b)),
-            _ => {
-                key_buf.clear();
-                key_buf.push_str(k.borrow());
-                flatten_attr_into_v1(&mut key_buf, v, &mut meta_leaves, &mut metrics_leaves);
-            }
-        }
+        key_buf.clear();
+        key_buf.push_str(k.borrow());
+        flatten_attr_into_v1(
+            &mut key_buf,
+            v,
+            &mut meta_leaves,
+            &mut metrics_leaves,
+            &mut bytes_leaves,
+        );
     }
     (
         dedup_first_wins_v1(meta_leaves),
         dedup_first_wins_v1(metrics_leaves),
-        bytes_attrs,
+        dedup_first_wins_v1(bytes_leaves),
     )
 }
 
@@ -806,13 +802,12 @@ fn encode_span_v1<T: TraceData, S: Serializer>(
     if !bytes_attrs.is_empty() {
         map.serialize_entry(
             "meta_struct",
-            &ser_fn!(<T: TraceData> |ser, span: &'a SpanV1<T>, bytes_attrs: &'a Vec<(&'a T::Text, &'a T::Bytes)>| {
+            &ser_fn!(<T: TraceData> |ser, span: &'a SpanV1<T>, bytes_attrs: &'a Vec<(String, T::Bytes)>| {
                 let _ = span;
                 let mut ms = ser.serialize_map(None)?;
                 for (k, v) in bytes_attrs.iter() {
-                    let key: &str = (*k).borrow();
-                    let raw: &[u8] = (*v).borrow();
-                    ms.serialize_entry(key, &MsgpackAsJson(raw))?;
+                    let raw: &[u8] = v.borrow();
+                    ms.serialize_entry(k, &MsgpackAsJson(raw))?;
                 }
                 ms.end()
             }),

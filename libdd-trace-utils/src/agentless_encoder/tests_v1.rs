@@ -368,6 +368,34 @@ fn meta_struct_field_omitted_when_no_bytes_attributes() {
 
 #[cfg_attr(miri, ignore)]
 #[test]
+fn nested_bytes_attribute_in_list_is_routed_to_meta_struct() {
+    let payload = rmp_serde::to_vec(&42u32).unwrap();
+
+    let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+    attrs.insert(
+        bs("items"),
+        AttributeValue::List(vec![
+            AttributeValue::String(bs("first")),
+            AttributeValue::Bytes(libdd_tinybytes::Bytes::from(payload)),
+        ]),
+    );
+    let span = SpanBytes {
+        attributes: attrs,
+        ..minimal_span()
+    };
+    let out = encode_first_span(&[minimal_chunk([0u8; 16], span)]);
+
+    assert_eq!(out["meta"]["items.0"], "first");
+    // Previously silently dropped: a `Bytes` value nested inside a `List` has no flattened
+    // string/numeric form, so it must be routed to `meta_struct` like a top-level `Bytes` would.
+    let ms = out["meta_struct"]
+        .as_object()
+        .expect("meta_struct must be present and a JSON object");
+    assert_eq!(ms["items.1"], 42);
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
 fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     inner.insert(bs("b"), AttributeValue::String(bs("v")));
