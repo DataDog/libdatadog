@@ -33,8 +33,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          if gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" \
-               --jq '.labels[].name' | grep -qx 'skip-pr-title-semver-check'; then
+          if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.labels[].name'); then
+            echo "ERROR: could not read labels for PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
+
+          if grep -qx 'skip-pr-title-semver-check' <<< "$LABELS"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Label skip-pr-title-semver-check is set; skipping semver checks."
           else
