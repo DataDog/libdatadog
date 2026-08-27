@@ -2,15 +2,13 @@
 # This job discovers, builds, and uploads all cargo-fuzz targets to the internal fuzzing infrastructure
 # See ci/README_FUZZING.md for more information
 
-variables:
-  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
-
 fuzz:
   tags: ["arch:amd64"]
   needs: []
   image:
     name: $BASE_CI_IMAGE
   rules:
+    - !reference [.untrusted_ref_guard, rules]
     # runs on gitlab schedule and on merge to main.
     # Also allow manual run in branches for ease of debug / testing
     - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "schedule"'
