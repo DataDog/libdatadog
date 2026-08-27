@@ -100,7 +100,7 @@ impl MockHttp {
 // the request future always wins.
 impl libdd_capabilities::SleepCapability for MockHttp {
     fn new() -> Self {
-        <Self as HttpClientCapability>::new_client()
+        panic!("agentless fetcher must use the injected sleep capability")
     }
 
     fn sleep(
