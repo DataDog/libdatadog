@@ -1,13 +1,20 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "http-client")]
 use futures::future::BoxFuture;
+#[cfg(feature = "http-client")]
 use futures::{future, FutureExt};
+#[cfg(feature = "http-client")]
 use hyper_util::client::legacy::connect;
 
+#[cfg(feature = "http-client")]
 use core::future::Future;
+#[cfg(feature = "http-client")]
 use core::pin::Pin;
+#[cfg(feature = "http-client")]
 use core::task::{Context, Poll};
+#[cfg(feature = "http-client")]
 use std::sync::LazyLock;
 
 #[cfg(unix)]
@@ -17,12 +24,15 @@ pub mod named_pipe;
 
 pub mod errors;
 
+#[cfg(feature = "http-client")]
 mod conn_stream;
+#[cfg(feature = "http-client")]
 use conn_stream::{ConnStream, ConnStreamError};
 
 #[cfg(feature = "hyper-proxy")]
 mod proxy;
 
+#[cfg(feature = "http-client")]
 #[derive(Clone)]
 // `proxy::HttpProxyConnector` is crate internal, and the field anyway not pub.
 #[allow(private_interfaces)]
@@ -34,14 +44,17 @@ pub enum Connector {
     Proxy(Box<proxy::HttpProxyConnector>),
 }
 
+#[cfg(feature = "http-client")]
 static DEFAULT_CONNECTOR: LazyLock<Connector> = LazyLock::new(Connector::new);
 
+#[cfg(feature = "http-client")]
 impl Default for Connector {
     fn default() -> Self {
         DEFAULT_CONNECTOR.clone()
     }
 }
 
+#[cfg(feature = "http-client")]
 impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
@@ -172,6 +185,7 @@ mod https {
     }
 }
 
+#[cfg(feature = "http-client")]
 impl tower_service::Service<hyper::Uri> for Connector {
     type Response = ConnStream;
     type Error = ConnStreamError;
@@ -201,7 +215,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http-client"))]
 mod tests {
     use crate::http_common;
     #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]

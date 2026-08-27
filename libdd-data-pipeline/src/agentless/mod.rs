@@ -28,4 +28,3 @@ pub(crate) mod exporter;
 pub(crate) mod stats;
 
 pub use config::AgentlessTraceConfig;
-pub use exporter::send_agentless_traces_http;

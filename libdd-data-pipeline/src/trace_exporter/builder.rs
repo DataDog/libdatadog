@@ -12,13 +12,16 @@ use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
+#[cfg(feature = "telemetry")]
+use crate::trace_exporter::TelemetryInstrumentationSessions;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
+    TraceExporterOutputFormat, TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
+#[cfg(feature = "telemetry")]
+use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;

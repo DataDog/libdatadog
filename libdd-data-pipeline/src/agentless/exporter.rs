@@ -1,104 +1,82 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Agentless HTTP/JSON trace exporter.
+//! Agentless trace export error adapter.
 
-use super::config::AgentlessTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
-use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+use libdd_data_pipeline_core::{
+    send_agentless_traces as send_traces, AgentlessError, AgentlessTraceConfig,
 };
+use libdd_trace_utils::send_with_retry::SendWithRetryError;
+use libdd_trace_utils::span::TraceData;
+use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 
-const AGENTLESS_MAX_RETRIES: u32 = 2;
-const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
-
-/// Send an agentless trace payload (JSON bytes) to the configured intake with retries.
-///
-/// `headers` should already contain all required headers (api key, content-type, meta-*,
-/// entity, trace-count, etc.). `test_token` is forwarded as `X-Datadog-Test-Session-Token`
-/// when set, enabling snapshot tests against a local mock.
-pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapability>(
+pub(crate) async fn send_agentless_traces<T, C>(
     capabilities: &C,
+    traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
-    headers: HeaderMap,
-    json_body: Vec<u8>,
-) -> Result<(), TraceExporterError> {
-    let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
-        TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-            "Invalid agentless endpoint URL: {e}"
-        )))
-    })?;
-
-    let target = Endpoint {
-        url,
-        timeout_ms: config.timeout.as_millis() as u64,
-        ..Endpoint::default()
-    };
-
-    let retry_strategy = RetryStrategy::new(
-        AGENTLESS_MAX_RETRIES,
-        AGENTLESS_RETRY_DELAY_MS,
-        RetryBackoffType::Exponential,
-        None,
-    );
-
-    #[cfg(feature = "compression")]
-    let compression_strategy = CompressionStrategy::Zstd { level: 1 };
-    #[cfg(not(feature = "compression"))]
-    let compression_strategy = CompressionStrategy::None;
-
-    match send_with_retry(
+    suppress_compute_stats: bool,
+) -> Result<(), TraceExporterError>
+where
+    T: TraceData,
+    C: HttpClientCapability + SleepCapability,
+{
+    send_traces(
         capabilities,
-        &target,
-        json_body,
-        &headers,
-        &retry_strategy,
-        compression_strategy,
+        traces,
+        metadata,
+        config,
+        suppress_compute_stats,
     )
     .await
-    {
-        Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e)),
+    .map_err(map_agentless_error)
+}
+
+fn map_agentless_error(error: AgentlessError) -> TraceExporterError {
+    match error {
+        AgentlessError::Send(error) => map_send_error(*error),
+        error => {
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(error.to_string()))
+        }
     }
 }
 
-fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
-    match err {
+fn map_send_error(error: SendWithRetryError) -> TraceExporterError {
+    match error {
         SendWithRetryError::Http(response, _) => {
             let status = response.status();
-            let body_str = String::from_utf8_lossy(response.body());
+            let body = String::from_utf8_lossy(response.body());
             match status.as_u16() {
                 401 | 403 => error!(
                     status = status.as_u16(),
-                    body = %body_str,
+                    body = %body,
                     "Agentless authentication failed. Verify DD_API_KEY is valid."
                 ),
                 404 => error!(
                     status = status.as_u16(),
-                    body = %body_str,
+                    body = %body,
                     "Agentless endpoint not found. Verify DD_SITE is correctly configured."
                 ),
                 429 => error!(
                     status = status.as_u16(),
-                    body = %body_str,
+                    body = %body,
                     "Agentless intake rate-limited the request. Traces were dropped."
                 ),
                 500..=599 => error!(
                     status = status.as_u16(),
-                    body = %body_str,
+                    body = %body,
                     "Agentless intake returned a server error. Traces were dropped."
                 ),
                 _ => error!(
                     status = status.as_u16(),
-                    body = %body_str,
+                    body = %body,
                     "Agentless intake returned an unexpected status."
                 ),
             }
-            TraceExporterError::Request(RequestError::new(status, &body_str))
+            TraceExporterError::Request(RequestError::new(status, &body))
         }
         SendWithRetryError::Timeout(_) => {
             TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut))
