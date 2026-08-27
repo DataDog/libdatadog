@@ -135,6 +135,30 @@ const SAMPLING_PRIORITY_KEY: &str = "_sampling_priority_v1";
 const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
+/// Returns the trace-level sampling decision stored on the first span carrying a priority.
+///
+/// A missing priority is treated as sampled, matching the agent's no-priority policy.
+pub fn chunk_sampling_decision<T>(chunk: &[Span<T>]) -> bool
+where
+    T: TraceData,
+{
+    chunk
+        .iter()
+        .find_map(|span| span.metrics.get(SAMPLING_PRIORITY_KEY))
+        .is_none_or(|priority| *priority > 0.0)
+}
+
+/// Returns whether a span may be retained independently from a rejected trace.
+pub fn is_span_sampled_independently<T>(span: &Span<T>) -> bool
+where
+    T: TraceData,
+{
+    span.metrics
+        .get(SAMPLING_SINGLE_SPAN_MECHANISM)
+        .is_some_and(|mechanism| *mechanism == 8.0)
+        || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
+}
+
 /// Remove spans and chunks from a TraceCollection only keeping the ones that may be sampled by
 /// the agent.
 ///
@@ -160,10 +184,7 @@ where
         }
 
         // PrioritySampler and NoPrioritySampler
-        let chunk_priority = chunk
-            .iter()
-            .find_map(|s| s.metrics.get(SAMPLING_PRIORITY_KEY));
-        if chunk_priority.is_none_or(|p| *p > 0.0) {
+        if chunk_sampling_decision(chunk) {
             // We send chunks with positive priority or no priority
             return true;
         }
@@ -172,12 +193,7 @@ where
         // List of spans to keep even if the chunk is dropped
         let mut sampled_indexes = Vec::new();
         for (index, span) in chunk.iter().enumerate() {
-            if span
-                .metrics
-                .get(SAMPLING_SINGLE_SPAN_MECHANISM)
-                .is_some_and(|m| *m == 8.0)
-                || span.metrics.contains_key(SAMPLING_ANALYTICS_RATE_KEY)
-            {
+            if is_span_sampled_independently(span) {
                 // We send spans sampled by single-span sampling or analyzed spans
                 sampled_indexes.push(index);
             }

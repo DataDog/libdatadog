@@ -7,7 +7,7 @@
 pub(crate) mod json_serializer;
 pub mod mapper;
 
-pub use mapper::map_traces_to_otlp;
+pub use mapper::{map_traces_to_otlp, map_traces_to_otlp_with_sampling_decisions};
 
 pub use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;

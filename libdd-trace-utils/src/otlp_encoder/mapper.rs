@@ -10,6 +10,7 @@
 //! encoders in sync because there is only one IR.
 
 use super::OtlpResourceInfo;
+use crate::span::trace_utils::chunk_sampling_decision;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use std::borrow::Borrow;
@@ -93,10 +94,7 @@ fn chunk_trace_id_high<T: TraceData>(chunk: &[Span<T>]) -> u64 {
 /// Resolve the chunk's trace-level sampling decision using the same first-priority policy as
 /// v04 `drop_chunks`.
 fn chunk_sampling_flags<T: TraceData>(chunk: &[Span<T>]) -> u32 {
-    let priority = chunk
-        .iter()
-        .find_map(|span| span.metrics.get("_sampling_priority_v1"));
-    priority.is_none_or(|priority| *priority > 0.0) as u32
+    u32::from(chunk_sampling_decision(chunk))
 }
 
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
@@ -312,18 +310,56 @@ pub fn map_traces_to_otlp<T: TraceData>(
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
+    map_traces_to_otlp_inner(
+        trace_chunks,
+        resource_info,
+        otel_trace_semantics_enabled,
+        None,
+    )
+}
+
+/// Maps trace chunks paired with sampling decisions captured before chunk filtering.
+///
+/// Pairing each chunk with its decision preserves a rejected trace-level decision when filtering
+/// retains only a single sampled span and removes the span that carried `_sampling_priority_v1`.
+pub fn map_traces_to_otlp_with_sampling_decisions<T: TraceData>(
+    trace_chunks_with_sampling_decisions: Vec<(Vec<Span<T>>, bool)>,
+    resource_info: &OtlpResourceInfo,
+    otel_trace_semantics_enabled: bool,
+) -> ProtoReq {
+    let (trace_chunks, sampling_decisions): (Vec<_>, Vec<_>) =
+        trace_chunks_with_sampling_decisions.into_iter().unzip();
+    map_traces_to_otlp_inner(
+        trace_chunks,
+        resource_info,
+        otel_trace_semantics_enabled,
+        Some(&sampling_decisions),
+    )
+}
+
+fn map_traces_to_otlp_inner<T: TraceData>(
+    trace_chunks: Vec<Vec<Span<T>>>,
+    resource_info: &OtlpResourceInfo,
+    otel_trace_semantics_enabled: bool,
+    sampling_decisions: Option<&[bool]>,
+) -> ProtoReq {
     let resource = build_resource(resource_info);
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
-    for chunk in &trace_chunks {
+    for (chunk_index, chunk) in trace_chunks.iter().enumerate() {
         // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
         // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
         // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
         let high = chunk_trace_id_high(chunk);
         // Sampling priority is a trace-level decision but may be attached to only one span in the
         // chunk. OTLP requires the sampled flag on every span in the trace.
-        let flags = chunk_sampling_flags(chunk);
+        let flags = sampling_decisions
+            .and_then(|decisions| decisions.get(chunk_index))
+            .map_or_else(
+                || chunk_sampling_flags(chunk),
+                |sampled| u32::from(*sampled),
+            );
         for span in chunk {
             all_spans.push(map_span(
                 span,
@@ -1343,6 +1379,27 @@ mod tests {
         };
         span.metrics.insert("_sampling_priority_v1".into(), 0.0);
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(s.flags, 0);
+    }
+
+    #[test]
+    fn preserved_unsampled_decision_overrides_missing_priority() {
+        let resource_info = OtlpResourceInfo::default();
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("single-span-sampled"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+
+        let req = map_traces_to_otlp_with_sampling_decisions(
+            vec![(vec![span], false)],
+            &resource_info,
+            false,
+        );
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.flags, 0);
     }

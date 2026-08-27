@@ -19,7 +19,10 @@ use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
 use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::{
+    map_traces_to_otlp_with_sampling_decisions, send_otlp_traces_http, OtlpResourceInfo,
+    OtlpTraceConfig,
+};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -55,6 +58,7 @@ use libdd_trace_utils::send_with_retry::{
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+use std::collections::HashSet;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
@@ -67,6 +71,40 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+
+type RejectedSampledSpanKeys = HashSet<(u128, u64)>;
+
+fn capture_rejected_sampled_spans<T: TraceData>(
+    traces: &[Vec<Span<T>>],
+) -> RejectedSampledSpanKeys {
+    let mut rejected_sampled_spans = HashSet::new();
+    for chunk in traces {
+        if !libdd_trace_utils::span::trace_utils::chunk_sampling_decision(chunk) {
+            for span in chunk.iter().filter(|span| {
+                libdd_trace_utils::span::trace_utils::is_span_sampled_independently(span)
+            }) {
+                rejected_sampled_spans.insert((span.trace_id, span.span_id));
+            }
+        }
+    }
+    rejected_sampled_spans
+}
+
+fn pair_with_sampling_decisions<T: TraceData>(
+    traces: Vec<Vec<Span<T>>>,
+    rejected_sampled_spans: &RejectedSampledSpanKeys,
+) -> Vec<(Vec<Span<T>>, bool)> {
+    traces
+        .into_iter()
+        .map(|chunk| {
+            let sampled = libdd_trace_utils::span::trace_utils::chunk_sampling_decision(&chunk)
+                && !chunk
+                    .iter()
+                    .any(|span| rejected_sampled_spans.contains(&(span.trace_id, span.span_id)));
+            (chunk, sampled)
+        })
+        .collect()
+}
 
 /// Build the HTTP headers required by the agentless intake.
 ///
@@ -677,7 +715,7 @@ impl<
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        traces_with_sampling_decisions: Vec<(Vec<Span<T>>, bool)>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
         let resource_info = {
@@ -697,8 +735,11 @@ impl<
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire
         // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
         // the mapper.
-        let request =
-            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
+        let request = map_traces_to_otlp_with_sampling_decisions(
+            traces_with_sampling_decisions,
+            &resource_info,
+            config.otel_trace_semantics_enabled,
+        );
         let body = config.protocol.encode(&request).map_err(|e| {
             error!("OTLP serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
@@ -815,6 +856,14 @@ impl<
             return self.send_agentless_traces_inner(traces, config).await;
         }
 
+        // Filtering can remove the span carrying the trace-level priority while retaining a
+        // single sampled span. Remember those independently sampled spans from rejected chunks so
+        // each retained chunk can still emit the correct OTLP sampled flag.
+        let rejected_sampled_spans = self
+            .otlp_config
+            .as_ref()
+            .map(|_| capture_rejected_sampled_spans(&traces));
+
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         stats::process_traces_for_stats(
@@ -836,12 +885,18 @@ impl<
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(ref config) = self.otlp_config {
+        if let (Some(config), Some(rejected_sampled_spans)) =
+            (self.otlp_config.as_ref(), rejected_sampled_spans.as_ref())
+        {
             libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            let traces_with_sampling_decisions =
+                pair_with_sampling_decisions(traces, rejected_sampled_spans);
+            return self
+                .send_otlp_traces_inner(traces_with_sampling_decisions, config)
+                .await;
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
@@ -1135,6 +1190,42 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
+
+    #[test]
+    fn sampling_decisions_survive_filtering_for_duplicate_trace_ids() {
+        let mut root = SpanBytes {
+            trace_id: 1,
+            span_id: 1,
+            ..Default::default()
+        };
+        root.metrics.insert("_sampling_priority_v1".into(), 0.0);
+        let mut child = SpanBytes {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 1,
+            ..Default::default()
+        };
+        child
+            .metrics
+            .insert("_dd.span_sampling.mechanism".into(), 8.0);
+        let independently_sampled_chunk = vec![SpanBytes {
+            trace_id: 1,
+            span_id: 3,
+            ..Default::default()
+        }];
+        let mut traces = vec![vec![root, child], independently_sampled_chunk];
+
+        let rejected_sampled_spans = capture_rejected_sampled_spans(&traces);
+        libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+        let traces_with_sampling_decisions =
+            pair_with_sampling_decisions(traces, &rejected_sampled_spans);
+
+        assert_eq!(traces_with_sampling_decisions.len(), 2);
+        assert_eq!(traces_with_sampling_decisions[0].0[0].span_id, 2);
+        assert!(!traces_with_sampling_decisions[0].1);
+        assert_eq!(traces_with_sampling_decisions[1].0[0].span_id, 3);
+        assert!(traces_with_sampling_decisions[1].1);
+    }
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -2223,6 +2314,77 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "OTLP send should succeed: {:?}",
+            result.err()
+        );
+        mock_otlp.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_otlp_export_preserves_rejected_decision_after_stats_filtering() {
+        let server = MockServer::start();
+        let mock_otlp = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/traces")
+                .header("Content-Type", "application/json")
+                .is_true(|request| {
+                    let Ok(payload) =
+                        serde_json::from_slice::<serde_json::Value>(request.body_ref())
+                    else {
+                        return false;
+                    };
+                    let Some(spans) =
+                        payload["resourceSpans"][0]["scopeSpans"][0]["spans"].as_array()
+                    else {
+                        return false;
+                    };
+                    spans.len() == 1
+                        && spans[0]["spanId"] == "0000000000000002"
+                        && spans[0].get("flags").is_none()
+                });
+            then.status(200).body("");
+        });
+
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
+        let metrics_endpoint = format!("{}/v1/metrics", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_service("svc")
+            .set_otlp_endpoint(&otlp_endpoint)
+            .set_otlp_metrics_endpoint(&metrics_endpoint)
+            .enable_stats(Duration::from_secs(60))
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let mut root = SpanBytes {
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            ..Default::default()
+        };
+        root.metrics.insert("_sampling_priority_v1".into(), 0.0);
+        let mut child = SpanBytes {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 1,
+            start: 1010,
+            duration: 50,
+            ..Default::default()
+        };
+        child
+            .metrics
+            .insert("_dd.span_sampling.mechanism".into(), 8.0);
+
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[vec![root, child]]);
         let result = exporter.send(data.as_ref());
 
         assert!(

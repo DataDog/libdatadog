@@ -171,7 +171,12 @@ fn float_to_u32(f: f64) -> Option<u32> {
     if !f.is_finite() || f.floor() != f || f < 0.0 || (u32::MAX as f64) < f {
         return None;
     }
+    // The checks above guarantee the finite integral value is representable without loss.
     Some(f as u32)
+}
+
+fn is_valid_http_status_code(code: &u32) -> bool {
+    (100..600).contains(code)
 }
 
 /// The HTTP method, under either naming convention, or "" when the span carries neither.
@@ -198,11 +203,19 @@ fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
 /// so a stray `http.status_code: ""` cannot hide a valid `http.response.status_code`.
 fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
     for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(code) = span.get_metrics(key).and_then(float_to_u32) {
+        if let Some(code) = span
+            .get_metrics(key)
+            .and_then(float_to_u32)
+            .filter(is_valid_http_status_code)
+        {
             return code;
         }
 
-        if let Some(code) = span.get_meta(key).and_then(|value| value.parse().ok()) {
+        if let Some(code) = span
+            .get_meta(key)
+            .and_then(|value| value.parse().ok())
+            .filter(is_valid_http_status_code)
+        {
             return code;
         }
     }
@@ -886,6 +899,52 @@ mod tests {
                     parent_id: 0,
                     meta: vec![("http.response.status_code".into(), "418".into())].into(),
                     metrics: vec![("http.status_code".into(), f64::NAN)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // An out-of-range numeric status must not shadow a valid fallback under the OTel name.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.response.status_code".into(), "418".into())].into(),
+                    metrics: vec![("http.status_code".into(), 600.0)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 418,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Out-of-range metadata must also fall through to a valid numeric OTel status.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.status_code".into(), "99".into())].into(),
+                    metrics: vec![("http.response.status_code".into(), 418.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
