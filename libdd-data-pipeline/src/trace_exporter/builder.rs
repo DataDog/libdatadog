@@ -924,7 +924,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 span_kinds,
                 self.peer_tags.clone(),
                 self.stats_cardinality_limits,
-                vec![],
+                self.additional_metric_tag_keys.clone(),
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_config,
             )));
