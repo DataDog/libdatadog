@@ -144,6 +144,20 @@ jobs:
             # shellcheck disable=SC2086
             cargo build $PACKAGES --verbose
           fi
+      - name: "[${{ steps.rust-version.outputs.version}}] check minimal native features"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | \
+            grep -Eq "libdd-(common|dogstatsd-client|http-client|trace-utils)"; then
+            cargo check -p libdd-dogstatsd-client --no-default-features
+            cargo check -p libdd-http-client --no-default-features \
+              --features hyper-backend
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features mini_agent
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features test-utils
+          fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
@@ -153,14 +167,14 @@ jobs:
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
-            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
-              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
             fi
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
