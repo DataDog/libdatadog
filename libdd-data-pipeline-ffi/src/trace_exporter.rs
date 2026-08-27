@@ -96,17 +96,13 @@ pub struct TraceExporterConfig {
     stats_cardinality_limits: Option<CardinalityLimitConfig>,
     /// Full URL to POST traces to for agentless export (e.g.
     /// `https://public-trace-http-intake.logs.datadoghq.com/v1/input`).
-    #[cfg(feature = "agentless")]
     agentless_endpoint: Option<String>,
     /// Datadog API key sent in the `dd-api-key` header for agentless export.
-    #[cfg(feature = "agentless")]
     agentless_api_key: Option<String>,
     /// Agentless request timeout in milliseconds. `None` uses the builder default (15s).
-    #[cfg(feature = "agentless")]
     agentless_timeout_ms: Option<u64>,
     /// Span obfuscation config for the agentless export path, as a JSON string. Deserialized
     /// into `ObfuscationConfig` at build time.
-    #[cfg(feature = "agentless")]
     obfuscation_config_json: Option<String>,
 }
 
@@ -630,9 +626,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_li
 /// exclusive with both an agent URL ([`ddog_trace_exporter_config_set_url`]) and an OTLP endpoint
 /// ([`ddog_trace_exporter_config_set_otlp_endpoint`]); combining either with this setter causes
 /// [`ddog_trace_exporter_new`] to return an error.
-///
-/// Only available when the `agentless` cargo feature is enabled.
-#[cfg(feature = "agentless")]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
     config: Option<&mut TraceExporterConfig>,
@@ -661,9 +654,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
 ///
 /// Defaults to 15 seconds when unset. Calling this without also setting an agentless endpoint
 /// causes [`ddog_trace_exporter_new`] to return an error.
-///
-/// Only available when the `agentless` cargo feature is enabled.
-#[cfg(feature = "agentless")]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
     config: Option<&mut TraceExporterConfig>,
@@ -695,9 +685,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
 ///     "{\"http\":{\"remove_query_string\":true},"
 ///     "\"credit_cards\":{\"enabled\":true}}"));
 /// ```
-///
-/// Only available when the `agentless` cargo feature is enabled.
-#[cfg(feature = "agentless")]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
     config: Option<&mut TraceExporterConfig>,
@@ -864,7 +851,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             // Agentless export path (enables span obfuscation). Mutually exclusive with an
             // agent URL and an OTLP endpoint; the builder validates this and returns an
             // error we map to ExporterError below.
-            #[cfg(feature = "agentless")]
             if let Some(ref url) = config.agentless_endpoint {
                 let api_key = config.agentless_api_key.as_deref().unwrap_or("");
                 builder.set_agentless_endpoint(url, api_key);
@@ -872,7 +858,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                     builder.set_agentless_timeout(Duration::from_millis(timeout_ms));
                 }
             }
-            #[cfg(feature = "agentless")]
             if let Some(ref json) = config.obfuscation_config_json {
                 match serde_json::from_str::<
                     libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig,

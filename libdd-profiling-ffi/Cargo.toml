@@ -48,12 +48,8 @@ data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 # Enable zstd compression for the agentless trace intake sender.
 data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
 # Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
-# surface of its own; lets a release artifact ship stats obfuscation without the
-# agentless export path.
+# surface of its own; only compiles the capability into the linked crate.
 data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
-# Enable agentless APM trace export (and span obfuscation on that path) over the
-# C FFI.
-data-pipeline-agentless = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/agentless"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]

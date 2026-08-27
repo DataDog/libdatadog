@@ -18,6 +18,8 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::agentless::exporter::send_agentless_traces;
+use crate::agentless::AgentlessTraceConfig;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -227,10 +229,7 @@ pub struct TraceExporter<
     otlp_config: Option<OtlpTraceConfig>,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
-    #[cfg(feature = "agentless")]
-    agentless_config: Option<crate::agentless::AgentlessTraceConfig>,
-    #[cfg(not(feature = "agentless"))]
-    agentless_config: Option<std::convert::Infallible>,
+    agentless_config: Option<AgentlessTraceConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
@@ -612,19 +611,12 @@ impl<
     }
 
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
-    #[cfg(feature = "agentless")]
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
-        config: &crate::agentless::AgentlessTraceConfig,
+        config: &AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        crate::agentless::exporter::send_agentless_traces(
-            &self.capabilities,
-            traces,
-            &self.metadata,
-            config,
-        )
-        .await?;
+        send_agentless_traces(&self.capabilities, traces, &self.metadata, config).await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -757,12 +749,8 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        match &self.agentless_config {
-            #[cfg(feature = "agentless")]
-            Some(config) => return self.send_agentless_traces_inner(traces, config).await,
-            #[cfg(not(feature = "agentless"))]
-            Some(never_cfg) => match *never_cfg {},
-            None => {}
+        if let Some(ref config) = self.agentless_config {
+            return self.send_agentless_traces_inner(traces, config).await;
         }
 
         // Process stats computation and drop non-sampled (p0) chunks.
@@ -2185,7 +2173,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "agentless")]
     fn test_agentless_export_via_builder() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -2240,7 +2227,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "agentless")]
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
@@ -2309,7 +2295,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "agentless")]
     fn test_agentless_obfuscates_every_exported_span() {
         // Obfuscation runs in the agentless path on every span that is sent to the
         // intake. With `remove_query_string` enabled, the `secret=bar` query parameter
