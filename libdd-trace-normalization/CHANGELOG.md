@@ -2,6 +2,12 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v3.0.1..libdd-trace-normalization-v4.0.0) - 2026-08-25
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v3.0.0..libdd-trace-normalization-v3.0.1) - 2026-08-07
 
 ### Changed

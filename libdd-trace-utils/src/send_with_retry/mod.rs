@@ -11,6 +11,7 @@ pub(crate) mod compression;
 pub use compression::CompressionStrategy;
 
 use bytes::Bytes;
+use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
@@ -137,9 +138,8 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         for (key, value) in headers {
             builder = builder.header(key, value);
         }
-        // headers_mut is only None if the builder is in an error state
-        if let Some(h) = builder.headers_mut() {
-            compression::add_headers(h, compression_strategy);
+        if let Some(headers) = builder.headers_mut() {
+            compression::add_headers(headers, compression_strategy);
         }
         let req = match builder.body(payload.clone()) {
             Ok(r) => r,
@@ -148,10 +148,12 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             }
         };
 
-        let result = tokio::select! {
-            biased;
-            r = capabilities.request(req) => Ok(r),
-            _ = capabilities.sleep(timeout) => Err(()),
+        let request = capabilities.request(req);
+        let timeout = capabilities.sleep(timeout);
+        futures::pin_mut!(request, timeout);
+        let result = match select(request, timeout).await {
+            Either::Left((response, _)) => Ok(response),
+            Either::Right(((), _)) => Err(()),
         };
 
         match result {

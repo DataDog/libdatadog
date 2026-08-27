@@ -7,6 +7,7 @@ use super::*;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
+use std::borrow::Cow;
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -45,11 +46,11 @@ fn get_test_span<'a>(
         parent_id,
         duration,
         start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, offset) as i64 - duration,
-        service,
-        name: "query",
-        resource,
+        service: Cow::Borrowed(service),
+        name: Cow::Borrowed("query"),
+        resource: Cow::Borrowed(resource),
         error,
-        r#type: "db",
+        r#type: Cow::Borrowed("db"),
         ..Default::default()
     }
 }
@@ -71,11 +72,11 @@ fn get_test_span_with_meta<'a>(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
     for (k, v) in meta {
-        span.meta.insert(*k, *v);
+        span.meta.insert(Cow::Borrowed(*k), Cow::Borrowed(*v));
     }
     span.metrics = VecMap::new();
     for (k, v) in metrics {
-        span.metrics.insert(*k, *v);
+        span.metrics.insert(Cow::Borrowed(*k), *v);
     }
     span
 }
@@ -688,7 +689,7 @@ fn test_ignore_partial_spans() {
         .get_mut(0)
         .unwrap()
         .metrics
-        .insert("_dd.partial_version", 830604.0);
+        .insert(Cow::Borrowed("_dd.partial_version"), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
@@ -1230,112 +1231,112 @@ fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
         (
             SpanSlice {
-                meta: vec![("span.kind", "server")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("server"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "consumer")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("consumer"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "client")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("client"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "producer")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("producer"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "internal")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("internal"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "SERVER")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("SERVER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "CONSUMER")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CONSUMER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "CLIENT")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CLIENT"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "PRODUCER")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("PRODUCER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "INTERNAL")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("INTERNAL"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "SerVER")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("SerVER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "ConSUMeR")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("ConSUMeR"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "CLiENT")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CLiENT"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "PROducER")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("PROducER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "INtERNAL")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("INtERNAL"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: vec![("span.kind", "")].into(),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed(""))].into(),
                 ..Default::default()
             },
             false,
@@ -2931,10 +2932,10 @@ fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: boo
         duration,
         start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, 5) as i64 - duration,
         error: 0,
-        name: &"query".repeat(20_000),
-        resource: &"🤠".repeat(20_000),
-        service: &"A".repeat(20_000),
-        r#type: &"🫵".repeat(20_000),
+        name: Cow::Owned("query".repeat(20_000)),
+        resource: Cow::Owned("🤠".repeat(20_000)),
+        service: Cow::Owned("A".repeat(20_000)),
+        r#type: Cow::Owned("🫵".repeat(20_000)),
         ..Default::default()
     };
 

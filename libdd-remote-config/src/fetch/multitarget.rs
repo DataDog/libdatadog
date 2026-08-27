@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities, FileStorage,
-    RefcountedFile, RefcountingStorage, RefcountingStorageStats, SharedFetcher,
+    random_uuid_string, ConfigApplyState, ConfigFetcherState, ConfigInvariants,
+    ConfigProductCapabilities, FileStorage, RefcountedFile, RefcountingStorage,
+    RefcountingStorageStats, SharedFetcher,
 };
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
@@ -219,7 +220,7 @@ where
     }
 
     fn generate_synthetic_id() -> String {
-        uuid::Uuid::new_v4().to_string()
+        random_uuid_string()
     }
 
     fn remove_target(

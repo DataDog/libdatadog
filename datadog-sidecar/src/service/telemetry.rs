@@ -58,6 +58,66 @@ pub enum InternalTelemetryAction {
     AddMetricPoint((f64, String, Vec<Tag>)),
 }
 
+/// Creates telemetry clients for in-process components such as the embedded AppSec helper.
+#[derive(Clone)]
+pub struct InProcessTelemetryClientFactory {
+    sender: mpsc::Sender<InternalTelemetryActions>,
+}
+
+impl InProcessTelemetryClientFactory {
+    fn new(sender: mpsc::Sender<InternalTelemetryActions>) -> Self {
+        Self { sender }
+    }
+
+    pub fn create_client(
+        &self,
+        instance_id: InstanceId,
+        service_name: String,
+        env_name: String,
+    ) -> InProcessTelemetryClient {
+        InProcessTelemetryClient {
+            sender: self.sender.clone(),
+            instance_id,
+            service_name,
+            env_name,
+        }
+    }
+}
+
+/// A telemetry submission route bound to one logical client and application.
+///
+/// The cached telemetry worker is deliberately resolved by the receiver for every batch so this
+/// handle remains valid across cache eviction, worker replacement, and delayed session setup.
+#[derive(Clone)]
+pub struct InProcessTelemetryClient {
+    sender: mpsc::Sender<InternalTelemetryActions>,
+    instance_id: InstanceId,
+    service_name: String,
+    env_name: String,
+}
+
+impl InProcessTelemetryClient {
+    pub fn with_new_service_env(&self, service_name: String, env_name: String) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            instance_id: self.instance_id.clone(),
+            service_name,
+            env_name,
+        }
+    }
+
+    pub fn submit(&self, action: InternalTelemetryAction) -> Result<(), String> {
+        self.sender
+            .try_send(InternalTelemetryActions {
+                instance_id: self.instance_id.clone(),
+                service_name: self.service_name.clone(),
+                env_name: self.env_name.clone(),
+                actions: vec![action],
+            })
+            .map_err(|e| format!("Failed to send telemetry action: {e}"))
+    }
+}
+
 pub(crate) async fn telemetry_action_receiver_task(
     sidecar: SidecarServer,
     mut rx: mpsc::Receiver<InternalTelemetryActions>,
@@ -599,8 +659,11 @@ impl TelemetryCachedClientSet {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         let key = (service.to_string(), env.to_string());
 
-        let map = self.inner.lock_or_panic();
-        map.get(&key).map(|e| e.client.clone())
+        let mut map = self.inner.lock_or_panic();
+        map.get_mut(&key).map(|entry| {
+            entry.last_used = Instant::now();
+            entry.client.clone()
+        })
     }
 
     pub fn get_or_create<F>(
@@ -673,13 +736,17 @@ pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryAct
         .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
 }
 
-pub(crate) fn init_telemetry_sender() -> Option<mpsc::Receiver<InternalTelemetryActions>> {
+pub(crate) fn init_telemetry_sender() -> (
+    InProcessTelemetryClientFactory,
+    Option<mpsc::Receiver<InternalTelemetryActions>>,
+) {
     let (tx, rx) = mpsc::channel(1000);
-    if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
+    if TELEMETRY_ACTION_SENDER.set(tx.clone()).is_err() {
         warn!("Telemetry action sender already initialized");
-        return None;
+        let sender = TELEMETRY_ACTION_SENDER.get().cloned().unwrap_or(tx);
+        return (InProcessTelemetryClientFactory::new(sender), None);
     }
-    Some(rx)
+    (InProcessTelemetryClientFactory::new(tx), Some(rx))
 }
 
 fn get_telemetry_client(
@@ -719,4 +786,45 @@ fn get_telemetry_client(
         move || session_config,
         process_tags,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_process_client_keeps_instance_and_rebinds_application() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let submitter = InProcessTelemetryClientFactory::new(sender);
+        let client = submitter.create_client(
+            InstanceId::new("session", "runtime"),
+            "service-a".to_string(),
+            "env-a".to_string(),
+        );
+
+        client
+            .submit(InternalTelemetryAction::TelemetryAction(
+                TelemetryActions::Lifecycle(LifecycleAction::Start),
+            ))
+            .expect("first action should fit in the channel");
+        let first = receiver
+            .try_recv()
+            .expect("first action should be available");
+        assert_eq!(first.instance_id, InstanceId::new("session", "runtime"));
+        assert_eq!(first.service_name, "service-a");
+        assert_eq!(first.env_name, "env-a");
+
+        let rebound = client.with_new_service_env("service-b".to_string(), "env-b".to_string());
+        rebound
+            .submit(InternalTelemetryAction::TelemetryAction(
+                TelemetryActions::Lifecycle(LifecycleAction::Stop),
+            ))
+            .expect("second action should fit in the channel");
+        let second = receiver
+            .try_recv()
+            .expect("second action should be available");
+        assert_eq!(second.instance_id, InstanceId::new("session", "runtime"));
+        assert_eq!(second.service_name, "service-b");
+        assert_eq!(second.env_name, "env-b");
+    }
 }
