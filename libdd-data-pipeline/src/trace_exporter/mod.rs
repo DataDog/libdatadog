@@ -18,7 +18,6 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::send_agentless_traces;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -619,7 +618,13 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &crate::agentless::AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        send_agentless_traces(&self.capabilities, traces, &self.metadata, config).await?;
+        crate::agentless::exporter::send_agentless_traces(
+            &self.capabilities,
+            traces,
+            &self.metadata,
+            config,
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -752,8 +757,12 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        if let Some(ref config) = self.agentless_config {
-            return self.send_agentless_traces_inner(traces, config).await;
+        match &self.agentless_config {
+            #[cfg(feature = "agentless")]
+            Some(config) => return self.send_agentless_traces_inner(traces, config).await,
+            #[cfg(not(feature = "agentless"))]
+            Some(never_cfg) => match *never_cfg {},
+            None => {}
         }
 
         // Process stats computation and drop non-sampled (p0) chunks.
