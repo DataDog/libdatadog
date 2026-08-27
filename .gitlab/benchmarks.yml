@@ -24,6 +24,7 @@
         # hand it to that code for free.
         git -C /platform remote set-url origin "https://gitlab.ddbuild.io/DataDog/benchmarking-platform"
       )
+    - unset CI_JOB_TOKEN
 
 # The benchmark suite is sharded across parallel jobs to reduce wall-clock time. Each shard runs
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
