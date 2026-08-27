@@ -18,7 +18,15 @@ default = ["https", "reqwest-backend"]
 # installed explicitly by libdd-common's connector init.
 https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
-hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+hyper-backend = [
+    "dep:libdd-common",
+    "libdd-common/http-client",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+]
+# Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
+hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
 
 [dependencies]

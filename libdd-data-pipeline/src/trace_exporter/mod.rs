@@ -18,6 +18,7 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::agentless::exporter::send_agentless_traces;
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -615,43 +616,10 @@ impl<
     #[cfg(feature = "agentless")]
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
-        mut traces: Vec<Vec<Span<T>>>,
+        traces: Vec<Vec<Span<T>>>,
         config: &crate::agentless::AgentlessTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // Obfuscate every span we are about to send to the intake
-
-        for chunk in traces.iter_mut() {
-            for span in chunk.iter_mut() {
-                libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
-                    span,
-                    &config.obfuscation_config,
-                );
-            }
-        }
-
-        let trace_count = traces.len();
-        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-            &traces,
-            &self.metadata,
-        )
-        .map_err(|e| {
-            error!("Agentless JSON serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })?;
-
-        let headers = crate::agentless::build_agentless_headers(
-            &self.metadata,
-            &config.api_key,
-            trace_count,
-        )?;
-
-        crate::agentless::send_agentless_traces_http(
-            &self.capabilities,
-            config,
-            headers,
-            json_body,
-        )
-        .await?;
+        send_agentless_traces(&self.capabilities, traces, &self.metadata, config).await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -785,21 +753,7 @@ impl<
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         if let Some(ref config) = self.agentless_config {
-            #[cfg(feature = "agentless")]
-            {
-                // For agentless we want to tag top level spans, but not perform
-                // stats aggregation or span drops
-                if !self.client_computed_top_level {
-                    for chunk in traces.iter_mut() {
-                        libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                    }
-                }
-
-                return self.send_agentless_traces_inner(traces, config).await;
-            }
-            // unreachable
-            #[cfg(not(feature = "agentless"))]
-            match *config {}
+            return self.send_agentless_traces_inner(traces, config).await;
         }
 
         // Process stats computation and drop non-sampled (p0) chunks.
