@@ -357,7 +357,7 @@ mod tests {
                     ]
         expected    [
                         HashMap::from([
-                            ("resource.name", "this is stage"),
+                            ("resource.name", "that is stage"),
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("other.url", "some/guid/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
