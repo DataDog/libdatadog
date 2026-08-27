@@ -959,7 +959,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 capabilities.clone(),
                 #[cfg(feature = "telemetry")]
                 None,
-                dogstatsd.clone(),
+                if self.health_metrics_enabled {
+                    dogstatsd.clone()
+                } else {
+                    None
+                },
             );
             let worker_handle = shared_runtime
                 .spawn_worker(stats_exporter, self.restart_after_fork)
