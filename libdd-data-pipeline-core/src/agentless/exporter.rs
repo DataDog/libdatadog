@@ -50,6 +50,11 @@ where
             compute_top_level_span(chunk);
         }
     }
+    for chunk in &mut traces {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
     let trace_count = traces.len();
     let json_body = libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata)
         .map_err(AgentlessError::Serialization)?;
