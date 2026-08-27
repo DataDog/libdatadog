@@ -559,7 +559,7 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
-    use libdd_trace_utils::test_utils::poll_for_mock_hit;
+    use libdd_trace_utils::test_utils::{poll_for_mock_hit, poll_for_mock_hits};
     use std::borrow::Cow;
     use time::Duration;
     use time::SystemTime;
@@ -717,6 +717,67 @@ mod tests {
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    /// The agentless intake retries on server errors (unlike the agent path, which
+    /// does not retry). A `503` response must trigger `AGENTLESS_STATS_MAX_RETRIES`
+    /// additional attempts (3 total: 1 initial + 2 retries) before `send` returns
+    /// an error.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_agentless_stats_fail_retries() {
+        use super::AgentlessStatsTarget;
+
+        let server = MockServer::start_async().await;
+
+        let mut mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .header("dd-api-key", "test-api-key")
+                    .path("/api/v0.2/stats");
+                then.status(503)
+                    .header("content-type", "application/json")
+                    .body(r#"{"status":"error"}"#);
+            })
+            .await;
+
+        let target = AgentlessStatsTarget {
+            endpoint: Endpoint {
+                api_key: Some("test-api-key".into()),
+                ..Endpoint::from_slice(&server.url("/api/v0.2/stats"))
+            },
+            version: "1.2.3-libdatadog".to_string(),
+        };
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new_agentless(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            target,
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.expect_err("agentless stats send should fail after exhausting retries");
+
+        // 1 initial attempt + AGENTLESS_STATS_MAX_RETRIES (2) retries = 3 hits. The
+        // exponential backoff starts at 1s, so allow a generous poll window.
+        assert!(
+            poll_for_mock_hits(
+                &mut mock,
+                80,
+                100,
+                (AGENTLESS_STATS_MAX_RETRIES + 1) as usize
+            )
+            .await,
+            "Expected {} attempts (initial + retries) for the agentless intake",
+            AGENTLESS_STATS_MAX_RETRIES + 1
+        );
     }
 
     #[cfg_attr(miri, ignore)]
