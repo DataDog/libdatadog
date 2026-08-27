@@ -942,6 +942,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 git_commit_sha: self.git_commit_sha.clone(),
                 process_tags: self.process_tags.clone(),
                 service: self.service.clone(),
+                // The Agent normally enriches `container_id` downstream. In agentless
+                // mode there is no Agent, so forward the caller-configured container id
+                // to preserve container identity in the stats payload.
+                container_id: self.container_id.clone(),
             };
 
             // TODO(agentless-stats): the Datadog Agent's stats writer emits the following

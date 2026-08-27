@@ -519,3 +519,55 @@ fn test_builder_rejects_agentless_stats_with_otlp_stats() {
         "unexpected error message: {msg}"
     );
 }
+
+/// The caller-configured container id must be preserved on the agentless stats
+/// `ClientStatsPayload` (the Agent would normally enrich it downstream).
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_agentless_stats_preserves_container_id() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let mock_clone = mock.clone();
+    task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_language("rust")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service("test-svc")
+            .set_hostname("test-host")
+            .set_container_id("container-123");
+
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("build failed");
+
+        exporter
+            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .expect("send_trace_chunks failed");
+        exporter.shutdown(None).expect("shutdown failed");
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    let reqs = mock.captured_requests();
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("stats request not found");
+
+    let payload: pb::StatsPayload =
+        rmp_serde::from_slice(&stats_req.body).expect("stats body must be valid msgpack");
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
+    assert_eq!(
+        payload.stats[0].container_id, "container-123",
+        "agentless stats must preserve the caller-configured container id"
+    );
+}

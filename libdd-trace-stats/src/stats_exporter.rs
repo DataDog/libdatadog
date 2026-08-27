@@ -90,6 +90,7 @@ pub struct StatsMetadata {
     pub git_commit_sha: String,
     pub process_tags: String,
     pub service: String,
+    pub container_id: String,
 }
 
 impl<'a> From<&'a StatsMetadata> for TracerHeaderTags<'a> {
@@ -120,6 +121,7 @@ impl From<TracerMetadata> for StatsMetadata {
             git_commit_sha: m.git_commit_sha,
             process_tags: m.process_tags,
             service: m.service,
+            container_id: String::new(),
         }
     }
 }
