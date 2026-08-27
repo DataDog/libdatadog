@@ -520,6 +520,37 @@ fn test_builder_rejects_agentless_stats_with_otlp_stats() {
     );
 }
 
+/// A relative agentless stats endpoint (no scheme/authority) must be rejected
+/// at build time rather than silently losing every flush in the background
+/// worker.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn test_builder_rejects_relative_agentless_stats_endpoint() {
+    let mock = MockHttpCapabilities::new();
+    mock.register_on_current_thread();
+
+    for bad_url in [
+        "/api/v0.2/stats",
+        "stats.example.com/api/v0.2/stats",
+        "ftp://stats.example.com/api/v0.2/stats",
+    ] {
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint(bad_url)
+            .enable_stats(STATS_BUCKET);
+
+        let err = builder
+            .build::<MockHttpCapabilities>()
+            .expect_err(&format!("relative endpoint {bad_url:?} should be rejected"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("agentless stats endpoint") || msg.contains("Invalid URI"),
+            "unexpected error message for {bad_url:?}: {msg}"
+        );
+    }
+}
+
 /// The caller-configured container id must be preserved on the agentless stats
 /// `ClientStatsPayload` (the Agent would normally enrich it downstream).
 #[cfg_attr(miri, ignore)]

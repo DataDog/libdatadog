@@ -523,6 +523,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// - The `stats-obfuscation` crate feature must be enabled. Unlike the agent-assisted path
     ///   (where the Agent obfuscates SQL/Redis resources before forwarding stats), the agentless
     ///   path sends stats directly to the intake with no downstream obfuscation.
+    /// - `url` must be a fully-qualified URL with an `http`/`https` scheme and a host/authority
+    ///   (e.g. `https://trace.agent.{DD_SITE}/api/v0.2/stats`). A relative path is rejected at
+    ///   build time because the background worker cannot route a request to it.
     ///
     /// Authentication reuses the agentless API key configured via
     /// [`Self::set_agentless_endpoint`].
@@ -1139,6 +1142,36 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                         .to_string(),
                 ),
             ));
+        }
+
+        // The agentless stats endpoint must be a fully-qualified URL: an `http`/`https`
+        // scheme plus a host/authority. A relative path such as `/api/v0.2/stats` parses
+        // successfully here, but the background stats worker cannot issue a request
+        // against it and would discard the resulting send error in `Worker::run`,
+        // silently losing every flush. Fail fast at build time instead.
+        if let Some(endpoint) = self.agentless_stats_endpoint.as_deref() {
+            let uri = parse_uri(endpoint).map_err(|e: anyhow::Error| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+            })?;
+            let scheme = uri.scheme_str().ok_or_else(|| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(format!(
+                    "agentless stats endpoint {endpoint:?} must include an http(s) scheme"
+                )))
+            })?;
+            if !matches!(scheme, "http" | "https") {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(format!(
+                        "agentless stats endpoint {endpoint:?} must use http or https, got {scheme}"
+                    )),
+                ));
+            }
+            if uri.host().is_none() {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(format!(
+                        "agentless stats endpoint {endpoint:?} must include a host/authority"
+                    )),
+                ));
+            }
         }
 
         // Agentless stats bypass the Agent, so nothing downstream obfuscates SQL/Redis
