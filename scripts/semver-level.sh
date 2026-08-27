@@ -77,6 +77,30 @@ normalize_api_line() {
     sed -E 's/^[+-]//; s/#\[[^]]*\]//g; s/\b(const|async|unsafe)\b//g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
+# Echo the unique target kinds ("lib", "bin", "proc-macro", ...) cargo reports for
+# crate $1 in the workspace rooted at $2 (default: the current checkout).
+crate_target_kinds() {
+    local crate=$1 root=${2:-.}
+    cargo metadata --format-version=1 --no-deps --manifest-path "$root/Cargo.toml" 2>/dev/null \
+        | jq -r --arg crate "$crate" \
+            '[.packages[] | select(.name == $crate) | .targets[].kind[]] | unique | join(" ")'
+}
+
+# Echo the target kinds at a specific revision. crate ($1) at revision ($2).
+crate_target_kinds_at_rev() {
+    local crate=$1 rev=$2
+    local tree kinds
+    tree=$(mktemp -d) || return 1
+    if ! git archive "$rev" | tar -x -C "$tree"; then
+        echo "Error: could not extract $rev to read target kinds for $crate" >&2
+        rm -rf "$tree"
+        return 1
+    fi
+    kinds=$(crate_target_kinds "$crate" "$tree")
+    rm -rf "$tree"
+    echo "$kinds"
+}
+
 compute_semver_results() {
     local crate=$1
     local baseline=$2
@@ -112,9 +136,7 @@ compute_semver_results() {
     # or renamed macro is still caught as a major change.
     # ----------------------------------------------------------------
     local target_kinds has_lib=false has_proc_macro=false
-    target_kinds=$(cargo metadata --format-version=1 --no-deps 2>/dev/null \
-        | jq -r --arg crate "$crate" \
-            '[.packages[] | select(.name == $crate) | .targets[].kind[]] | unique | join(" ")')
+    target_kinds=$(crate_target_kinds "$crate")
 
     if [[ -z "$target_kinds" ]]; then
         echo "Error: $crate has no targets in cargo metadata (unknown crate?)" >&2
@@ -150,6 +172,45 @@ compute_semver_results() {
     fi
 
     # ----------------------------------------------------------------
+    # 0c) Check changes in the crate type.
+    #
+    # If crate changes its type the following block will detect it in order to
+    # adjust the semver level changes since current tools will miss that case.
+    # ----------------------------------------------------------------
+    local baseline_kinds="" baseline_has_lib=false baseline_has_proc_macro=false
+    if ! $crate_is_new; then
+        if ! baseline_kinds=$(crate_target_kinds_at_rev "$crate" "$baseline"); then
+            exit 1
+        fi
+        if [[ " $baseline_kinds " == *" lib "* ]]; then
+            baseline_has_lib=true
+        fi
+        if [[ " $baseline_kinds " == *" proc-macro "* ]]; then
+            baseline_has_proc_macro=true
+        fi
+        log_verbose "Target kinds for $crate at $baseline: ${baseline_kinds:-none}"
+    fi
+
+    # A crate carries a comparable public API only through its library or
+    # proc-macro target.
+    local api_before=false api_now=false
+    if $baseline_has_lib || $baseline_has_proc_macro; then
+        api_before=true
+    fi
+    if $has_lib || $has_proc_macro; then
+        api_now=true
+    fi
+
+    local target_change_level="none" target_change_reason=""
+    if $api_before && ! $api_now; then
+        target_change_level="major"
+        target_change_reason="Library/proc-macro target removed (baseline: $baseline_kinds, now: $target_kinds)"
+    elif ! $api_before && $api_now && ! $crate_is_new; then
+        target_change_level="minor"
+        target_change_reason="Library/proc-macro target added (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
+    fi
+
+    # ----------------------------------------------------------------
     # 1) cargo-semver-checks (type-signature lints) — library targets only.
     # ----------------------------------------------------------------
     local semver_level="none"
@@ -161,8 +222,14 @@ compute_semver_results() {
         semver_level="minor"
         semver_reason="New crate (not present in baseline)"
         log_verbose "Skipping cargo-semver-checks: new crate, treat as minor"
-    elif ! $has_lib; then
-        log_verbose "Skipping cargo-semver-checks: $crate has no library target"
+    elif [[ "$target_change_level" != "none" ]]; then
+        # Decided in (0c): the crate gained or lost its whole API surface, which
+        # neither tool can diff.
+        semver_level="$target_change_level"
+        semver_reason="$target_change_reason"
+        log_verbose "Skipping cargo-semver-checks: $target_change_reason"
+    elif ! $has_lib || ! $baseline_has_lib; then
+        log_verbose "Skipping cargo-semver-checks: $crate has no library target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
         SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
         SEMVER_EXIT_CODE=$?
@@ -210,8 +277,8 @@ compute_semver_results() {
     # normalize and compare the old vs new signatures (see the Changed handling
     # below) before combining the result with semver-checks via max_level. Skip
     # only when there is no baseline (new crate), when semver-checks already
-    # flagged major (cannot go higher), or when the crate has neither a library
-    # nor a proc-macro target, leaving cargo-public-api nothing to document.
+    # flagged major (cannot go higher), or when either rev lacks a library and a
+    # proc-macro target, leaving cargo-public-api nothing to diff on that side.
     #
     # Requires cargo-public-api >= 0.52.0: earlier versions include function
     # parameter names in signatures, so a non-breaking parameter *rename* also
@@ -228,8 +295,10 @@ compute_semver_results() {
         log_verbose "Skipping cargo-public-api: new crate (no baseline)"
     elif [[ "$semver_level" == "major" ]]; then
         log_verbose "Skipping cargo-public-api: cargo-semver-checks already at major"
-    elif ! $has_lib && ! $has_proc_macro; then
-        log_verbose "Skipping cargo-public-api: $crate has no library or proc-macro target"
+    elif ! $api_now || ! $api_before; then
+        # Nothing to diff: at least one rev has no library or proc-macro target.
+        # When that is a change rather than the status quo, (0c) already scored it.
+        log_verbose "Skipping cargo-public-api: $crate has no library or proc-macro target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
         # --all-features matches the cargo-semver-checks invocation above, so both
         # tools compare the same API surface. It is load-bearing for proc-macro
