@@ -451,9 +451,10 @@ fn build_agentless_request(
 ) -> anyhow::Result<StatsRequest> {
     let mut client_payload = encode_stats_payload(meta, sequence, buckets);
     // Unlike the Agent path, no Agent enriches the payload downstream, so populate the
-    // informative `lang`/`tracer_version` fields ourselves.
+    // informative `lang`/`tracer_version`/`container_id` fields ourselves.
     client_payload.lang = meta.language.clone();
     client_payload.tracer_version = meta.tracer_version.clone();
+    client_payload.container_id = meta.container_id.clone();
     let payload = build_stats_payload(
         client_payload,
         meta.hostname.clone(),
