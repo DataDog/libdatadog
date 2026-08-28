@@ -65,6 +65,20 @@ for crate in ${BENCH_PACKAGES}; do
   done
 done
 
+# Start the shared compiler cache if this image has one. Best-effort: nodes can still be serving
+# a pre-sccache image, and a cache problem must never fail a benchmark job.
+start_compiler_cache() {
+  if ! command -v sccache > /dev/null 2>&1; then
+    message "sccache not present in this image; building without a compiler cache"
+    return 1
+  fi
+  if ! sccache --start-server > /dev/null 2>&1; then
+    message "sccache: server startup failed; building without a compiler cache (see ${SCCACHE_ERROR_LOG:-unset})"
+    return 1
+  fi
+  return 0
+}
+
 if (( ${#package_args[@]} == 0 )); then
   message "No benchmarkable crates present in this checkout; nothing to run."
 else
@@ -73,7 +87,19 @@ else
     feature_args=(--features "$(IFS=,; echo "${features[*]}")")
   fi
   message "Benchmarking crates:${package_args[*]}"
-  cargo bench "${package_args[@]}" "${feature_args[@]}" -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+
+  criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
+
+  # Compile and measure in separate invocations so no sccache server is alive while anything is
+  # timed. Safe only because cargo does not treat a RUSTC_WRAPPER change as a fingerprint change
+  # (checked on 1.87.0); if that stopped holding, the measuring run would rebuild the workspace.
+  if start_compiler_cache; then
+    RUSTC_WRAPPER=sccache cargo bench "${package_args[@]}" "${feature_args[@]}" --no-run
+    sccache --show-stats || :
+    sccache --stop-server > /dev/null 2>&1 || :
+  fi
+
+  cargo bench "${package_args[@]}" "${feature_args[@]}" -- "${criterion_args[@]}"
 fi
 message "Finished running benchmarks"
 

@@ -114,6 +114,19 @@ benchmarks:
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
     FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
 
+    # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix, not
+    # libddprof-build's: that pipeline builds --release and cargo bench uses [profile.bench], so
+    # the -C flags -- and therefore the cache keys -- never match.
+    SCCACHE_BUCKET: dd-ci-artefacts-build-stable
+    SCCACHE_REGION: us-east-1
+    SCCACHE_S3_KEY_PREFIX: libdatadog/benchmarks/sccache
+    SCCACHE_ERROR_LOG: /tmp/sccache.log
+    # Required: candidate and baseline compile at different absolute paths below this one, and
+    # without a basedir sccache keys on the path, so they would share nothing.
+    SCCACHE_BASEDIRS: /platform/workspace
+    # Incompatible with a shared compiler cache.
+    CARGO_INCREMENTAL: "0"
+
 # Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
 # own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the
 # combined comment (pr-commenter uses --on-duplicate=replace, so exactly one job may comment).
