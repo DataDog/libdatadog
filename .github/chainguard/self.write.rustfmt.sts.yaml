@@ -1,9 +1,5 @@
 issuer: https://token.actions.githubusercontent.com
 
-# Pin policy to proper guards:
-# - Code went through review on main so 'ref' reflect that.
-# - The reference is protected.
-# - Assure the workflow provenance.
 subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:

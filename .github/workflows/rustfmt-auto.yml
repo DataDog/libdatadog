@@ -1,18 +1,11 @@
 name: Rustfmt Auto
 
-# Security model:
-# Use`pull_request_target` which runs the definition from the default branch instead, which 
-# also pins the OIDC `ref` and `job_workflow_ref` claims to `refs/heads/main`, so
-# the trust policy can require a protected ref like the repository's other STS policies do.
-# The trade-off of `pull_request_target` is that the job context is privileged, so the
-# work is split in two: 
-# 1.`rustfmt` checks out the pull request and runs cargo fmt with no token and no `id-token`
-# permission.
+# The job is deliberately splitted in two in order to avoid executing third-party with
+# elevated permissions:
+# 1.`rustfmt` checks out the pull request and runs cargo fmt in order to generate a patch.
 # 2. `rustfmt-commit` only applies the resulting patch and pushes it only using verified tools
-# from the image, in this case 'git'. Not that --force-with-lease is used which makes the push
-# a no-op if the branch moved on from the revision that was formatted this prevents overwriting
-# newer commits. Not using third-party tools in this job is deliberate as it prevents using
-# uncontrolled code with elevated permissions.
+# from the image, in this case 'git'. Not using third-party tools in this job is deliberate as
+# it prevents using uncontrolled code with elevated permissions.
 on:
   pull_request_target:
     types: [opened, reopened, labeled]
