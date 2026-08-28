@@ -615,7 +615,7 @@ impl<
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
-        stats_computed: bool,
+        client_side_stats: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
         // When local stats computation is active (agentless stats path), the
         // intake must not also compute stats for these traces.  Suppressing
@@ -625,7 +625,7 @@ impl<
             traces,
             &self.metadata,
             config,
-            stats_computed,
+            client_side_stats,
         )
         .await?;
         Ok(AgentResponse::Unchanged)
@@ -760,14 +760,11 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        let stats_computed = stats::process_traces_for_stats(
+        let client_side_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
-            // if agentless is enabled, we want to compute top-level
-            // regardless of wether stats is enabled or not``
-            self.agentless_config.is_some(),
             &self.trace_filterer.load(),
             #[cfg(feature = "telemetry")]
             self.telemetry.load_full().as_deref(),
@@ -784,7 +781,7 @@ impl<
                 return Ok(AgentResponse::Unchanged);
             }
             return self
-                .send_agentless_traces_inner(traces, config, stats_computed)
+                .send_agentless_traces_inner(traces, config, client_side_stats)
                 .await;
         }
 

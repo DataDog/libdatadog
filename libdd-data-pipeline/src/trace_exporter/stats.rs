@@ -335,7 +335,6 @@ pub(crate) fn process_traces_for_stats<
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-    force_compute_top_level: bool,
     trace_filterer: &TraceFilterer,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) -> bool {
@@ -375,13 +374,10 @@ pub(crate) fn process_traces_for_stats<
                 tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
             }
         }
-        return true;
-    } else if !client_computed_top_level && force_compute_top_level {
-        for chunk in traces.iter_mut() {
-            libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-        }
+        true
+    } else {
+        false
     }
-    false
 }
 
 /// V1 counterpart of [`add_spans_to_stats`], operating on

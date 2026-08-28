@@ -401,9 +401,9 @@ fn meta_struct_field_omitted_when_empty() {
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
-fn suppress_compute_stats_omits_marker_when_local_stats_enabled() {
+fn client_side_stats_omits_marker_when_local_stats_enabled() {
     // When the caller is computing and exporting stats locally (agentless stats
-    // path), `suppress_compute_stats = true` must prevent `_dd.compute_stats=1`
+    // path), `client_side_stats = true` must prevent `_dd.compute_stats=1`
     // from being injected so the intake does not double-count the traces.
     let span: Span<BytesData> = Span {
         service: bs("svc"),
@@ -421,7 +421,7 @@ fn suppress_compute_stats_omits_marker_when_local_stats_enabled() {
     let s = &v["traces"][0]["spans"][0];
     assert!(
         s["meta"].get("_dd.compute_stats").is_none(),
-        "_dd.compute_stats must not be injected when suppress_compute_stats is true"
+        "_dd.compute_stats must not be injected when client_side_stats is true"
     );
 
     // Without suppression: marker must be present (baseline sanity check).
@@ -439,6 +439,6 @@ fn suppress_compute_stats_omits_marker_when_local_stats_enabled() {
     let s = &v["traces"][0]["spans"][0];
     assert_eq!(
         s["meta"]["_dd.compute_stats"], "1",
-        "_dd.compute_stats must be injected when suppress_compute_stats is false"
+        "_dd.compute_stats must be injected when client_side_stats is false"
     );
 }

@@ -36,7 +36,7 @@ pub enum AgentlessError {
 
 /// Encodes and sends already-decoded v0.4 traces.
 ///
-/// When `suppress_compute_stats` is `true`, the encoder will **not** inject
+/// When `client_side_stats` is `true`, the encoder will **not** inject
 /// `meta["_dd.compute_stats"]="1"` on the first span of each chunk. Set this when
 /// the caller is already computing and exporting stats locally so that the intake
 /// does not double-count the same traces.
@@ -45,13 +45,15 @@ pub async fn send_agentless_traces<C, T>(
     mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
-    suppress_compute_stats: bool,
+    client_side_stats: bool,
 ) -> Result<(), AgentlessError>
 where
     C: HttpClientCapability + SleepCapability,
     T: TraceData,
 {
-    if !metadata.client_computed_top_level {
+    // Top-level tagging is already done before sending when client-side stats
+    // are active
+    if !metadata.client_computed_top_level && !client_side_stats {
         for chunk in &mut traces {
             compute_top_level_span(chunk);
         }
@@ -62,12 +64,9 @@ where
         }
     }
     let trace_count = traces.len();
-    let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-        &traces,
-        metadata,
-        suppress_compute_stats,
-    )
-    .map_err(AgentlessError::Serialization)?;
+    let json_body =
+        libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata, client_side_stats)
+            .map_err(AgentlessError::Serialization)?;
     let headers = build_agentless_headers(metadata, trace_count);
     send_agentless_json(capabilities, config, headers, json_body).await
 }

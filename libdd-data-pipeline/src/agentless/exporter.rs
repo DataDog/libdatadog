@@ -18,21 +18,15 @@ pub(crate) async fn send_agentless_traces<T, C>(
     traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
-    suppress_compute_stats: bool,
+    client_side_stats: bool,
 ) -> Result<(), TraceExporterError>
 where
     T: TraceData,
     C: HttpClientCapability + SleepCapability,
 {
-    send_traces(
-        capabilities,
-        traces,
-        metadata,
-        config,
-        suppress_compute_stats,
-    )
-    .await
-    .map_err(map_agentless_error)
+    send_traces(capabilities, traces, metadata, config, client_side_stats)
+        .await
+        .map_err(map_agentless_error)
 }
 
 fn map_agentless_error(error: AgentlessError) -> TraceExporterError {
