@@ -396,6 +396,34 @@ fn nested_bytes_attribute_in_list_is_routed_to_meta_struct() {
 
 #[cfg_attr(miri, ignore)]
 #[test]
+fn non_finite_metric_attributes_are_dropped() {
+    let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+    attrs.insert(bs("nan_metric"), AttributeValue::Float(f64::NAN));
+    attrs.insert(bs("inf_metric"), AttributeValue::Float(f64::INFINITY));
+    attrs.insert(
+        bs("neg_inf_metric"),
+        AttributeValue::Float(f64::NEG_INFINITY),
+    );
+    attrs.insert(bs("finite_metric"), AttributeValue::Float(1.5));
+    let span = SpanBytes {
+        attributes: attrs,
+        ..minimal_span()
+    };
+    let out = encode_first_span(&[minimal_chunk([0u8; 16], span)]);
+
+    // serde_json can't represent NaN/Inf; encoding must not error and these keys must be absent
+    // rather than serialized as `null` or aborting the whole payload.
+    let metrics = out["metrics"]
+        .as_object()
+        .expect("metrics must be present and a JSON object");
+    assert!(!metrics.contains_key("nan_metric"));
+    assert!(!metrics.contains_key("inf_metric"));
+    assert!(!metrics.contains_key("neg_inf_metric"));
+    assert_eq!(out["metrics"]["finite_metric"], 1.5);
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
 fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     inner.insert(bs("b"), AttributeValue::String(bs("v")));
