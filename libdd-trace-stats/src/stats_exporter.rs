@@ -351,9 +351,30 @@ impl<
         let split = groups.len() > 1;
         // All fragments of one flush share a single sequence id, as the Agent does.
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+        let mut errors = Vec::new();
         for group in groups {
-            self.send_single_payload(group, obfuscated, split, sequence)
-                .await?;
+            if let Err(e) = self
+                .send_single_payload(group, obfuscated, split, sequence)
+                .await
+            {
+                errors.push(e);
+            }
+        }
+        if let Some(last_err) = errors.pop() {
+            if !errors.is_empty() {
+                struct AdditionalErrors(Vec<anyhow::Error>);
+                impl std::fmt::Display for AdditionalErrors {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        writeln!(f, "with {} additional errors:", self.0.len())?;
+                        for e in &self.0 {
+                            writeln!(f, "{e}")?;
+                        }
+                        Ok(())
+                    }
+                }
+                return Err(last_err.context(AdditionalErrors(errors)));
+            }
+            return Err(last_err);
         }
         Ok(())
     }
