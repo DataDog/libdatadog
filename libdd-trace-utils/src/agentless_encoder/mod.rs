@@ -223,7 +223,7 @@ fn encode_span<T: TraceData, S: Serializer>(
             let mut compute_stats_seen = false;
 
             let mut meta = ser.serialize_map(None)?;
-            for (k, v) in span.meta.iter() {
+            for (k, v) in span.meta.defensive_dedup().iter() {
                 let key: &str = k.borrow();
                 match key {
                     "_dd.p.tid" => p_tid_seen = true,
@@ -265,7 +265,7 @@ fn encode_span<T: TraceData, S: Serializer>(
         &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
             let mut metrics = ser.serialize_map(None)?;
             let mut trace_root_seen = false;
-            for (k, v) in span.metrics.iter() {
+            for (k, v) in span.metrics.defensive_dedup().iter() {
                 let key: &str = k.borrow();
                 // serde_json refuses to serialize NaN/Inf; drop them silently.
                 if v.is_finite() {

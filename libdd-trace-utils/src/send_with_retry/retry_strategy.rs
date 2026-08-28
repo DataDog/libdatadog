@@ -80,7 +80,9 @@ impl RetryStrategy {
             max_retries,
             delay_ms: Duration::from_millis(delay_ms),
             backoff_type,
-            jitter: jitter.map(Duration::from_millis),
+            jitter: jitter
+                .filter(|jitter_ms| *jitter_ms != 0)
+                .map(Duration::from_millis),
         }
     }
     /// Delays the next request attempt based on the retry strategy.
@@ -93,19 +95,27 @@ impl RetryStrategy {
     /// * `attempt`: The number of the current attempt (1-indexed).
     /// * `capabilities`: Provides the sleep capability for the delay.
     pub(crate) async fn delay<C: SleepCapability>(&self, attempt: u32, capabilities: &C) {
-        let delay = match self.backoff_type {
-            RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
-            RetryBackoffType::Constant => self.delay_ms,
-            RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
+        capabilities.sleep(self.delay_for_attempt(attempt)).await;
+    }
+
+    fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let retry_index = attempt.saturating_sub(1);
+        let multiplier = match self.backoff_type {
+            RetryBackoffType::Exponential => 2u32.checked_pow(retry_index).unwrap_or(u32::MAX),
+            RetryBackoffType::Constant => 1,
+            RetryBackoffType::Linear => retry_index.saturating_add(1),
         };
+        let delay = self
+            .delay_ms
+            .checked_mul(multiplier)
+            .unwrap_or(Duration::MAX);
 
         if let Some(jitter) = self.jitter {
-            let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-            capabilities
-                .sleep(delay + Duration::from_millis(jitter))
-                .await;
+            let jitter_ms = u64::try_from(jitter.as_millis()).unwrap_or(u64::MAX);
+            let randomized_ms = rand::random::<u64>() % jitter_ms;
+            delay.saturating_add(Duration::from_millis(randomized_ms))
         } else {
-            capabilities.sleep(delay).await;
+            delay
         }
     }
 
@@ -298,6 +308,35 @@ mod tests {
             retry_strategy.max_retries(),
             17,
             "Max retries did not match expected value"
+        );
+    }
+
+    #[test]
+    fn test_retry_delays() {
+        let retry_strategy = RetryStrategy::new(3, 100, RetryBackoffType::Exponential, None);
+
+        assert_eq!(
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retry_strategy.delay_for_attempt(2),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            retry_strategy.delay_for_attempt(3),
+            Duration::from_millis(400)
+        );
+    }
+
+    #[test]
+    fn test_zero_jitter_is_supported() {
+        let retry_strategy = RetryStrategy::new(1, 100, RetryBackoffType::Constant, Some(0));
+
+        assert_eq!(retry_strategy.jitter, None);
+        assert_eq!(
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
         );
     }
 }
