@@ -15,6 +15,14 @@ use anyhow::Context;
 use serde::Deserialize;
 use std::fmt::{Display, Formatter};
 
+/// Default per-second sampling for log probes that emit a snapshot — either a
+/// full `captureSnapshot` or capture expressions. Mirrors the tracer snapshot
+/// rate; emitting these under the log rate limit spikes apm-processing CPU
+/// (DEBUG-5730).
+const SNAPSHOT_SAMPLING_SNAPSHOTS_PER_SECOND: u32 = 1;
+/// Default per-second sampling for plain (non-snapshot) log probes.
+const LOG_SAMPLING_SNAPSHOTS_PER_SECOND: u32 = 5000;
+
 pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
     let parsed: RawTopLevelItem = serde_json::from_str(json)?;
     fn err<T>(result: Result<T, (&'static str, RawExpr)>) -> anyhow::Result<T> {
@@ -29,7 +37,7 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                 sampling_snapshots_per_second: parsed
                     .sampling
                     .map(|s| s.snapshots_per_second)
-                    .unwrap_or(5000),
+                    .unwrap_or(LOG_SAMPLING_SNAPSHOTS_PER_SECOND),
             })
         }
         probe_type => LiveDebuggingData::Probe({
@@ -90,7 +98,24 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                         sampling_snapshots_per_second: parsed
                             .sampling
                             .map(|s| s.snapshots_per_second)
-                            .unwrap_or(5000),
+                            .unwrap_or_else(|| {
+                                // Match the tracer rate policy: a probe that emits a
+                                // snapshot (full snapshot or capture expressions)
+                                // defaults to the snapshot rate; a plain log probe to
+                                // the log rate. Absent explicit sampling, a snapshot at
+                                // the log rate spikes apm-processing CPU (DEBUG-5730).
+                                let emits_snapshot = parsed.capture_snapshot.unwrap_or(false)
+                                    || parsed
+                                        .capture_expressions
+                                        .as_ref()
+                                        .map(|v| !v.is_empty())
+                                        .unwrap_or(false);
+                                if emits_snapshot {
+                                    SNAPSHOT_SAMPLING_SNAPSHOTS_PER_SECOND
+                                } else {
+                                    LOG_SAMPLING_SNAPSHOTS_PER_SECOND
+                                }
+                            }),
                         capture_expressions: {
                             let mut exprs = vec![];
                             for raw in parsed.capture_expressions.unwrap_or_default() {
@@ -860,6 +885,118 @@ mod tests {
             assert!(matches!(kind, MetricKind::Count));
             assert_eq!(name, "showVetList.callcount");
             assert_eq!(value.to_string(), "arg");
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_capture_expressions_default_sampling_is_snapshot_rate() {
+        // DEBUG-5730: a log probe carrying capture expressions with no explicit
+        // sampling must default to the snapshot rate (1/s), not the log default
+        // (5000/s), which spikes apm-processing CPU.
+        let json = r#"
+{
+  "id": "3242910d-d2ff-4679-85cc-bfc317d74e8f",
+  "version": 1,
+  "type": "LOG_PROBE",
+  "where": {
+    "typeName": "VetController",
+    "methodName": "showVetList"
+  },
+  "template": "captured",
+  "segments": [{"str": "captured"}],
+  "captureExpressions": [
+    {
+      "name": "foo",
+      "expr": {"dsl": "arg", "json": {"ref": "arg"}}
+    }
+  ]
+}
+"#;
+
+        let parsed = parse_json(json).unwrap();
+        if let LiveDebuggingData::Probe(Probe {
+            probe:
+                ProbeType::Log(LogProbe {
+                    sampling_snapshots_per_second,
+                    capture_expressions,
+                    capture_snapshot,
+                    ..
+                }),
+            ..
+        }) = parsed
+        {
+            assert_eq!(capture_expressions.len(), 1);
+            assert!(!capture_snapshot);
+            assert_eq!(sampling_snapshots_per_second, 1);
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_snapshot_probe_default_sampling_is_snapshot_rate() {
+        // A captureSnapshot probe with no explicit sampling defaults to the
+        // snapshot rate (1/s), matching the tracer policy.
+        let json = r#"
+{
+  "id": "4242910d-d2ff-4679-85cc-bfc317d74e8f",
+  "version": 1,
+  "type": "LOG_PROBE",
+  "where": {"typeName": "X", "methodName": "y"},
+  "template": "hi",
+  "segments": [{"str": "hi"}],
+  "captureSnapshot": true
+}
+"#;
+        let parsed = parse_json(json).unwrap();
+        if let LiveDebuggingData::Probe(Probe {
+            probe:
+                ProbeType::Log(LogProbe {
+                    sampling_snapshots_per_second,
+                    capture_snapshot,
+                    ..
+                }),
+            ..
+        }) = parsed
+        {
+            assert!(capture_snapshot);
+            assert_eq!(sampling_snapshots_per_second, 1);
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_plain_log_probe_default_sampling_is_log_rate() {
+        // A plain log probe (no snapshot, no capture expressions, no sampling)
+        // keeps the log rate default.
+        let json = r#"
+{
+  "id": "5242910d-d2ff-4679-85cc-bfc317d74e8f",
+  "version": 1,
+  "type": "LOG_PROBE",
+  "where": {"typeName": "X", "methodName": "y"},
+  "template": "hi",
+  "segments": [{"str": "hi"}]
+}
+"#;
+        let parsed = parse_json(json).unwrap();
+        if let LiveDebuggingData::Probe(Probe {
+            probe:
+                ProbeType::Log(LogProbe {
+                    sampling_snapshots_per_second,
+                    capture_snapshot,
+                    capture_expressions,
+                    ..
+                }),
+            ..
+        }) = parsed
+        {
+            assert!(!capture_snapshot);
+            assert!(capture_expressions.is_empty());
+            assert_eq!(sampling_snapshots_per_second, 5000);
         } else {
             unreachable!();
         }
