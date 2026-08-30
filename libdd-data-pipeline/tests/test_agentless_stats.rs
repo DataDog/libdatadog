@@ -654,9 +654,10 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
 
     let groups = grouped_stats_from_request(stats_req);
     assert!(
-        groups
+        groups.iter().any(|g| g
+            .additional_metric_tags
             .iter()
-            .any(|g| g.additional_metric_tags.iter().any(|t| t == "my.tag:my-value")),
+            .any(|t| t == "my.tag:my-value")),
         "agentless stats must fold the configured additional metric tag key onto the \
          aggregation key; got groups: {groups:#?}"
     );
