@@ -602,3 +602,62 @@ async fn test_agentless_stats_preserves_container_id() {
         "agentless stats must preserve the caller-configured container id"
     );
 }
+
+/// Keys set via `set_additional_metric_tag_keys` must reach the agentless concentrator
+/// (the builder previously passed `vec![]`, silently dropping them).
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_agentless_stats_honors_additional_metric_tag_keys() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let mock_clone = mock.clone();
+    task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let mut span = make_root_span(1, Some(1.0), 0);
+        span.meta.insert(
+            BytesString::from_static("my.tag"),
+            BytesString::from_static("my-value"),
+        );
+
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_additional_metric_tag_keys(vec!["my.tag".to_string()])
+            .set_language("rust")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service("test-svc")
+            .set_hostname("test-host");
+
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("build failed");
+
+        exporter
+            .send_trace_chunks(vec![vec![span]], None)
+            .expect("send_trace_chunks failed");
+        exporter.shutdown(None).expect("shutdown failed");
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    let reqs = mock.captured_requests();
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("stats request not found");
+
+    let groups = grouped_stats_from_request(stats_req);
+    assert!(
+        groups
+            .iter()
+            .any(|g| g.additional_metric_tags.iter().any(|t| t == "my.tag:my-value")),
+        "agentless stats must fold the configured additional metric tag key onto the \
+         aggregation key; got groups: {groups:#?}"
+    );
+}
