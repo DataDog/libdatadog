@@ -554,6 +554,20 @@ jobs:
           COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
+      - name: Hint crates left out of the proposal affected by its major bumps
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          "${WORKFLOW_SCRIPTS_ROOT}/release-excluded-crates-hints.sh" \
+            --api-changes /tmp/api-changes-with-major-bumps.json \
+            --out-markdown /tmp/excluded-crates-hints.md
+
+          # Empty when nothing is affected; the PR body and this summary then stay unchanged.
+          if [ -s /tmp/excluded-crates-hints.md ]; then
+            cat /tmp/excluded-crates-hints.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Push commits (verified)
         if: ${{ !inputs.bypass_standard_checks }}
         uses: DataDog/commit-headless@action/v2.0.3
@@ -575,6 +589,7 @@ jobs:
             /tmp/commits-by-crate.json
             /tmp/api-changes.json
             /tmp/api-changes-with-major-bumps.json
+            /tmp/excluded-crates-hints.md
           retention-days: 1
 
       - name: Cleanup on failure
@@ -657,6 +672,11 @@ jobs:
             NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
           fi
 
+          HINTS_NOTE=""
+          if [ -s /tmp/excluded-crates-hints.md ]; then
+            HINTS_NOTE=$'\n'"$(cat /tmp/excluded-crates-hints.md)"$'\n\n'
+          fi
+
           # PR body from api-changes-with-major-bumps.json: the crates actually being released,
           # i.e. api-changes.json minus the pending candidates that did not earn a major bump,
           # with tags/versions updated for those that did.
@@ -697,7 +717,7 @@ jobs:
 
           This PR contains version bumps based on public API changes and commits since last release.
 
-          ${HOTFIX_NOTE}${NON_DEFAULT}${COMMITS_AND_API_BODY}"
+          ${HOTFIX_NOTE}${NON_DEFAULT}${HINTS_NOTE}${COMMITS_AND_API_BODY}"
 
           echo "$PR_BODY" > /tmp/pr-body.md
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
