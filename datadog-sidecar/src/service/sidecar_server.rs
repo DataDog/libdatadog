@@ -15,6 +15,7 @@ use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
@@ -33,6 +34,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
+use futures::FutureExt;
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
@@ -197,6 +200,18 @@ impl ConnectionSidecarHandler {
     }
 }
 
+/// The trace route the agent advertises in `/info` once it supports the V1 trace protocol.
+const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+
+/// Returns whether the agent's `/info` response advertises the `/v1.0/traces` endpoint. Matches
+/// `TraceExporter::refresh_v1_active`'s check so the sidecar and in-process exporter negotiate V1
+/// identically.
+fn agent_info_advertises_v1(info: &AgentInfoStruct) -> bool {
+    info.endpoints
+        .as_ref()
+        .is_some_and(|e| e.iter().any(|p| p == V1_TRACES_ENDPOINT))
+}
+
 impl SidecarServer {
     /// Accepts a new connection and starts processing requests.
     ///
@@ -290,18 +305,29 @@ impl SidecarServer {
     /// tracers when it can't decode the body, and populating them only on the agent side would
     /// leave a gap whenever a tracer is upgraded ahead of its agent.
     ///
-    /// `target` is `tracer::Config::endpoint_v1`, already normalized to the agent's
-    /// `/v1.0/traces` route (or the shared intake URL for agentless sessions) by
-    /// `tracer::Config::set_endpoint`.
+    /// Sends a V1-encoded trace payload, negotiating the wire format with the receiving agent.
+    ///
+    /// `v1_target` is `tracer::Config::endpoint_v1` (`/v1.0/traces`, or the shared intake URL for
+    /// agentless sessions) and `v04_target` is `tracer::Config::endpoint` (`/v0.4/traces`), both
+    /// already normalized by `tracer::Config::set_endpoint`.
+    ///
+    /// The agent's advertised `/info` endpoints decide the route (see [`Self::agent_supports_v1`],
+    /// which mirrors `TraceExporter::effective_output_format`): when the agent advertises
+    /// `/v1.0/traces` — or the session is agentless — the payload is sent as V1 to `v1_target`.
+    /// Otherwise it is downgraded to v0.4 (`msgpack_encoder::v04::to_vec_from_v1`) and sent to
+    /// `v04_target`, so old agents keep working while the tracer always emits V1.
+    #[allow(clippy::too_many_arguments)]
     fn send_trace_v1(
         &self,
         generic: TracerGenericTags,
         lang_interpreter: &str,
         lang_vendor: &str,
         data: tinybytes::Bytes,
-        target: &Endpoint,
+        v1_target: &Endpoint,
+        v04_target: &Endpoint,
         retry_interval: u64,
     ) {
+        let supports_v1 = self.agent_supports_v1(v04_target);
         match decode_to_trace_chunks(data, TraceEncoding::V1) {
             Ok((payload, size)) => {
                 let TraceChunks::V1(tracer_payload) = &payload else {
@@ -325,12 +351,40 @@ impl SidecarServer {
                     container_id: container_id.borrow(),
                     generic,
                 };
-                debug!(
-                    "Received {} bytes of data for {:?} with headers {:?}",
-                    size, target, headers
-                );
-                trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                self.enqueue_trace(payload, size, headers, target, retry_interval);
+
+                if supports_v1 {
+                    debug!(
+                        "Received {} bytes of data for {:?} with headers {:?}",
+                        size, v1_target, headers
+                    );
+                    trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
+                    self.enqueue_trace(payload, size, headers, v1_target, retry_interval);
+                    return;
+                }
+
+                // Agent doesn't advertise `/v1.0/traces`: downgrade to v0.4 and re-decode the
+                // v0.4 bytes back into a v0.4 chunk collection so the existing v0.4 send path
+                // handles serialization/retries unchanged.
+                let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(tracer_payload);
+                match decode_to_trace_chunks(tinybytes::Bytes::from(v04_bytes), TraceEncoding::V04) {
+                    Ok((v04_payload, v04_size)) => {
+                        debug!(
+                            "Agent does not advertise /v1.0/traces; downgrading to v0.4 ({} bytes) for {:?} with headers {:?}",
+                            v04_size, v04_target, headers
+                        );
+                        self.enqueue_trace(
+                            v04_payload,
+                            v04_size,
+                            headers,
+                            v04_target,
+                            retry_interval,
+                        );
+                    }
+                    Err(e) => error!(
+                        "Failed to re-decode downgraded v0.4 trace payload with error {:?}",
+                        e
+                    ),
+                }
             }
             Err(e) => {
                 error!(
@@ -339,6 +393,24 @@ impl SidecarServer {
                 )
             }
         }
+    }
+
+    /// Non-blocking negotiation for the V1 trace path: returns whether the receiving agent can
+    /// accept V1 (`/v1.0/traces`). Mirrors `TraceExporter::effective_output_format` — fail closed
+    /// to v0.4 until the agent's `/info` advertises the endpoint, so we never send V1 to an agent
+    /// that can't decode it. Agentless intake (`api_key` set) is encoding-agnostic and always
+    /// V1-capable.
+    fn agent_supports_v1(&self, v04_target: &Endpoint) -> bool {
+        if v04_target.api_key.is_some() {
+            return true;
+        }
+        // Ensure an `/info` fetcher is running for this endpoint and peek its cached result
+        // without blocking the send path (the guard keeps the fetcher warm after it drops).
+        let guard = self.agent_infos.query_for(v04_target.clone());
+        guard
+            .get()
+            .now_or_never()
+            .is_some_and(|info| agent_info_advertises_v1(&info))
     }
 
     fn send_trace(
@@ -1062,7 +1134,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) =
+            (trace_config.endpoint_v1.clone(), trace_config.endpoint.clone())
+        {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
@@ -1074,7 +1148,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             &lang_interpreter,
                             &lang_vendor,
                             bytes,
-                            &endpoint,
+                            &v1_endpoint,
+                            &v04_endpoint,
                             retry_interval,
                         );
                     }
@@ -1101,7 +1176,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
 
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) =
+            (trace_config.endpoint_v1.clone(), trace_config.endpoint.clone())
+        {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
@@ -1111,7 +1188,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     &lang_interpreter,
                     &lang_vendor,
                     bytes,
-                    &endpoint,
+                    &v1_endpoint,
+                    &v04_endpoint,
                     retry_interval,
                 );
             });
@@ -1716,16 +1794,49 @@ mod tests {
         to_vec_from_v1(&payload)
     }
 
+    /// Adds an `/info` mock advertising `endpoints`, then primes the sidecar's agent-info cache for
+    /// `v04_endpoint` and returns the guard (kept alive so the fetched info stays cached). The
+    /// send path peeks this cache non-blockingly, so it must be resolved before the trace is sent.
+    async fn prime_agent_info(
+        http_server: &MockServer,
+        server: &SidecarServer,
+        v04_endpoint: Endpoint,
+        endpoints: &[&str],
+    ) -> crate::service::agent_info::AgentInfoGuard {
+        let body = serde_json::json!({ "endpoints": endpoints }).to_string();
+        http_server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .header("datadog-agent-state", "state-hash-1")
+                    .body(body);
+            })
+            .await;
+        let guard = server.agent_infos.query_for(v04_endpoint);
+        // Await the initial fetch so the cached future is resolved by the time we send.
+        guard.get().await;
+        guard
+    }
+
+    fn v04_trace_endpoint(server: &SidecarServer, session_id: &str) -> Endpoint {
+        server
+            .get_session(session_id)
+            .get_trace_config()
+            .endpoint
+            .clone()
+            .expect("trace endpoint must be set")
+    }
+
     /// Agentful sessions have their trace endpoint normalized to `/v0.4/traces` by
     /// `tracer::Config::set_endpoint` since it doesn't know ahead of time which encoding will be
-    /// used. This exercises the full `send_trace_v1_bytes` chain to ensure V1 payloads are
-    /// redirected to the agent's `/v1.0/traces` route instead, and that `lang_interpreter`/
-    /// `lang_vendor` (which the V1 payload model has no room for) survive as headers, alongside
-    /// `lang`/`lang_version`/`tracer_version` (which are read back out of the decoded V1 payload
-    /// — see `send_trace_v1`).
+    /// used. When the agent's `/info` advertises `/v1.0/traces`, `send_trace_v1_bytes` routes V1
+    /// payloads to that route, and `lang_interpreter`/`lang_vendor` (which the V1 payload model has
+    /// no room for) survive as headers alongside `lang`/`lang_version`/`tracer_version` (read back
+    /// out of the decoded V1 payload — see `send_trace_v1`).
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn send_trace_v1_bytes_routes_to_v1_endpoint() {
+    async fn send_trace_v1_bytes_routes_to_v1_endpoint_when_agent_advertises_v1() {
         let http_server = MockServer::start_async().await;
         let v1_mock = http_server
             .mock_async(|when, then| {
@@ -1760,6 +1871,15 @@ mod tests {
                 cfg.set_endpoint(endpoint).unwrap();
             });
 
+        let v04_endpoint = v04_trace_endpoint(&handler.server, &instance_id.session_id);
+        let _info_guard = prime_agent_info(
+            &http_server,
+            &handler.server,
+            v04_endpoint,
+            &["/v0.4/traces", "/v1.0/traces"],
+        )
+        .await;
+
         handler
             .send_trace_v1_bytes(
                 instance_id,
@@ -1777,6 +1897,73 @@ mod tests {
 
         v1_mock.assert_async().await;
         assert_eq!(v04_mock.calls_async().await, 0);
+    }
+
+    /// When the agent's `/info` does not advertise `/v1.0/traces`, `send_trace_v1_bytes` must
+    /// downgrade the V1 payload to v0.4 (via `msgpack_encoder::v04::to_vec_from_v1`) and send it to
+    /// the agent's `/v0.4/traces` route instead, so old agents keep receiving traces. Mirrors
+    /// `TraceExporter::effective_output_format`'s fail-closed fallback.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_trace_v1_bytes_downgrades_to_v04_when_agent_lacks_v1() {
+        let http_server = MockServer::start_async().await;
+        let v1_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1.0/traces");
+                then.status(200);
+            })
+            .await;
+        let v04_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v0.4/traces")
+                    .header("datadog-meta-lang-interpreter", "cpython")
+                    .header("datadog-meta-lang-interpreter-vendor", "cpython-vendor")
+                    .header("datadog-meta-lang", "rust")
+                    .header("datadog-meta-lang-version", "1.87")
+                    .header("datadog-meta-tracer-version", "9.9.9");
+                then.status(200);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        let v04_endpoint = v04_trace_endpoint(&handler.server, &instance_id.session_id);
+        let _info_guard = prime_agent_info(
+            &http_server,
+            &handler.server,
+            v04_endpoint,
+            &["/v0.4/traces"],
+        )
+        .await;
+
+        handler
+            .send_trace_v1_bytes(
+                instance_id,
+                sample_v1_trace_payload_bytes(),
+                TracerGenericTags::default(),
+                "cpython".to_owned(),
+                "cpython-vendor".to_owned(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+        handler.server.trace_flusher.join().await.unwrap();
+
+        v04_mock.assert_async().await;
+        assert_eq!(v1_mock.calls_async().await, 0);
     }
 }
 
