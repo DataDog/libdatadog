@@ -58,11 +58,19 @@ where
             compute_top_level_span(chunk);
         }
     }
-    for chunk in &mut traces {
+    for chunk in traces.iter_mut() {
         for span in chunk.iter_mut() {
+            // Obfuscate every span we are about to send to the intake
+            libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
+                span,
+                &config.obfuscation_config,
+            );
+
+            // Remove duplicate attributes before serialization
             span.dedup();
         }
     }
+
     let trace_count = traces.len();
     let json_body =
         libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata, client_side_stats)
@@ -145,6 +153,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::{
         sync::{Arc, Mutex},
@@ -202,6 +211,7 @@ mod tests {
             endpoint_url: "https://example.test/v1/input".to_string(),
             api_key: "test-api-key".to_string(),
             timeout: Duration::from_millis(1_234),
+            obfuscation_config: ObfuscationConfig::default(),
         }
     }
 

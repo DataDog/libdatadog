@@ -2306,6 +2306,86 @@ mod tests {
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_obfuscates_every_exported_span() {
+        // Obfuscation runs in the agentless path on every span that is sent to the
+        // intake. With `remove_query_string` enabled, the `secret=bar` query parameter
+        // must be stripped from `http.url` before the payload is POSTed.
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            fn body_is_obfuscated(body: &str) -> bool {
+                !body.contains("secret=bar") && body.contains("http://foo.com/path?")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                let Ok(body) = body else {
+                    return false;
+                };
+                body_is_obfuscated(&String::from_utf8(body).unwrap())
+            });
+            #[cfg(not(feature = "compression"))]
+            let when =
+                when.is_true(|req| body_is_obfuscated(&String::from_utf8(req.body_vec()).unwrap()));
+            let _ = when;
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "test-api-key")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_span_obfuscation_config({
+                let mut cfg =
+                    libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig::default();
+                cfg.http.remove_query_string = true;
+                cfg
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let mut span = SpanBytes {
+            name: BytesString::from_slice(b"http.request").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("GET /path"),
+            r#type: BytesString::from_static("http"),
+            trace_id: 0xdead_beef,
+            span_id: 2,
+            parent_id: 0,
+            start: 2_500_000_000,
+            duration: 1_000_000,
+            error: 0,
+            ..Default::default()
+        };
+        span.meta.insert(
+            BytesString::from_static("http.url"),
+            BytesString::from_static("http://foo.com/path?secret=bar"),
+        );
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![span]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
+        // The mock only matches when the body is obfuscated, so a successful call here
+        // proves the query string was stripped before the request was sent.
+        mock_intake.assert();
+    }
 }
 
 #[cfg(test)]

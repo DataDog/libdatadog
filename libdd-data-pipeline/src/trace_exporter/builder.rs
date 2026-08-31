@@ -28,6 +28,7 @@ use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
+use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
@@ -85,6 +86,8 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     client_side_stats_obfuscation_enabled: bool,
+    /// Span obfuscation configuration applied on the agentless export path
+    span_obfuscation_config: ObfuscationConfig,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     #[cfg(feature = "telemetry")]
@@ -161,6 +164,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats_cardinality_limits: None,
             #[cfg(feature = "stats-obfuscation")]
             client_side_stats_obfuscation_enabled: false,
+            span_obfuscation_config: ObfuscationConfig::default(),
             #[cfg(feature = "telemetry")]
             telemetry: None,
             #[cfg(feature = "telemetry")]
@@ -394,6 +398,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     #[cfg(feature = "stats-obfuscation")]
     pub fn enable_client_side_stats_obfuscation(&mut self) -> &mut Self {
         self.client_side_stats_obfuscation_enabled = true;
+        self
+    }
+
+    /// Replace the span obfuscation configuration. The builder starts from
+    /// [`ObfuscationConfig::default`] (which mirrors the Datadog Agent defaults)
+    ///
+    /// Only applied in the agentless export path.
+    pub fn set_span_obfuscation_config(&mut self, config: ObfuscationConfig) -> &mut Self {
+        self.span_obfuscation_config = config;
         self
     }
 
@@ -777,6 +790,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 endpoint_url: url,
                 api_key,
                 timeout: self.agentless_timeout.unwrap_or(DEFAULT_AGENTLESS_TIMEOUT),
+                obfuscation_config: self.span_obfuscation_config,
             }),
             _ => None,
         };
