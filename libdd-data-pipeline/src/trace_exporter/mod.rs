@@ -355,8 +355,8 @@ impl<
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
 
@@ -603,8 +603,8 @@ impl<
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
@@ -615,8 +615,19 @@ impl<
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &AgentlessTraceConfig,
+        client_side_stats: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        send_agentless_traces(&self.capabilities, traces, &self.metadata, config).await?;
+        // When local stats computation is active (agentless stats path), the
+        // intake must not also compute stats for these traces.  Suppressing
+        // `_dd.compute_stats=1` prevents double-counting.
+        send_agentless_traces(
+            &self.capabilities,
+            traces,
+            &self.metadata,
+            config,
+            client_side_stats,
+        )
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -749,13 +760,7 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        if let Some(ref config) = self.agentless_config {
-            return self.send_agentless_traces_inner(traces, config).await;
-        }
-
-        // Process stats computation and drop non-sampled (p0) chunks.
-        // This must run before the OTLP path so that unsampled spans are not exported.
-        stats::process_traces_for_stats(
+        let client_side_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
@@ -769,6 +774,15 @@ impl<
             for span in chunk.iter_mut() {
                 span.dedup();
             }
+        }
+
+        if let Some(ref config) = self.agentless_config {
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+            return self
+                .send_agentless_traces_inner(traces, config, client_side_stats)
+                .await;
         }
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
