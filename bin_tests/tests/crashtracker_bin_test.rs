@@ -490,6 +490,7 @@ fn test_crash_tracking_multi_thread_collection() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+
 /// Spawns default max threads and verifies the crash report contains all of them.
 #[test]
 #[cfg(target_os = "linux")]
