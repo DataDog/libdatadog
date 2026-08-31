@@ -160,6 +160,30 @@ fn insert_attr(
     map.insert(to_bytes_string(key), value);
 }
 
+/// Deep-clones an attribute value. `AttributeValue` can't derive `Clone` (its `T` marker isn't
+/// `Clone`, same reason its `PartialEq` is hand-written), so a small recursive clone is used to copy
+/// a value between spans in [`ddog_v1_transfer_span_attr`]. All leaf payloads (`BytesString`,
+/// `Bytes`, `VecMap`) are themselves `Clone`.
+fn clone_attr(value: &AttributeValueBytes) -> AttributeValueBytes {
+    match value {
+        AttributeValueBytes::String(s) => AttributeValueBytes::String(s.clone()),
+        AttributeValueBytes::Float(f) => AttributeValueBytes::Float(*f),
+        AttributeValueBytes::Int(i) => AttributeValueBytes::Int(*i),
+        AttributeValueBytes::Bool(b) => AttributeValueBytes::Bool(*b),
+        AttributeValueBytes::Bytes(b) => AttributeValueBytes::Bytes(b.clone()),
+        AttributeValueBytes::KeyValue(m) => {
+            let mut cloned = VecMap::with_capacity(m.len());
+            for (k, v) in m.iter() {
+                cloned.insert(k.clone(), clone_attr(v));
+            }
+            AttributeValueBytes::KeyValue(cloned)
+        }
+        AttributeValueBytes::List(list) => {
+            AttributeValueBytes::List(list.iter().map(clone_attr).collect())
+        }
+    }
+}
+
 /// Maps an attribute value to its exported [`DDOG_V1_ATTR_*`] type tag.
 fn value_type(value: &AttributeValueBytes) -> u32 {
     match value {
@@ -577,6 +601,83 @@ pub extern "C" fn ddog_v1_add_span_attr_bytes(
     if let Some(s) = builder.span_mut(chunk, span) {
         insert_attr(&mut s.attributes, key, AttributeValueBytes::Bytes(bytes));
     }
+}
+
+/// Returns whether the span carries an attribute under `key`. Mirrors the v0.4
+/// `ddog_has_span_meta`/`ddog_has_span_metrics` existence checks used to avoid overwriting a value
+/// business logic already set (the span-array flatteners only add a key when it is absent).
+#[no_mangle]
+pub extern "C" fn ddog_v1_has_span_attr(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key: CharSlice,
+) -> bool {
+    let key = to_bytes_string(key);
+    builder
+        .span(chunk, span)
+        .is_some_and(|s| s.attributes.contains_key(&key))
+}
+
+/// Removes the attribute under `key` from the span, returning whether it was present. Mirrors the
+/// v0.4 `ddog_del_span_meta_str`/`ddog_del_span_metrics_str` deletes (e.g. dropping `error.ignored`
+/// after finalization).
+#[no_mangle]
+pub extern "C" fn ddog_v1_del_span_attr(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    key: CharSlice,
+) -> bool {
+    let key = to_bytes_string(key);
+    match builder.span_mut(chunk, span) {
+        Some(s) => {
+            let existed = s.attributes.contains_key(&key);
+            s.attributes.remove_slow(&key);
+            existed
+        }
+        None => false,
+    }
+}
+
+/// Copies the attribute under `key` from `from_span` onto `to_span` (both within `chunk`), returning
+/// whether the source carried it. When `delete_source` is set, the attribute is also removed from
+/// `from_span`. Replicates the v0.4 `transfer_meta_data`/`transfer_metrics_data` helpers used in the
+/// inferred-span merge (data moves from the root span into the inferred/proxy span); the unified V1
+/// attribute map subsumes both the string `meta` and numeric `metrics` cases with a single,
+/// type-preserving copy.
+///
+/// The read (clone of the source value) completes before any mutable borrow, so the whole operation
+/// is routed through the single `&mut TracerPayloadV1Builder` without aliasing. A missing source key
+/// or a missing destination span is a no-op returning `false` (nothing is deleted from the source in
+/// that case).
+#[no_mangle]
+pub extern "C" fn ddog_v1_transfer_span_attr(
+    builder: &mut TracerPayloadV1Builder,
+    chunk: usize,
+    from_span: usize,
+    to_span: usize,
+    key: CharSlice,
+    delete_source: bool,
+) -> bool {
+    let key = to_bytes_string(key);
+    let value = match builder
+        .span(chunk, from_span)
+        .and_then(|s| s.attributes.get(&key))
+    {
+        Some(v) => clone_attr(v),
+        None => return false,
+    };
+    match builder.span_mut(chunk, to_span) {
+        Some(dst) => dst.attributes.insert(key.clone(), value),
+        None => return false,
+    }
+    if delete_source {
+        if let Some(src) = builder.span_mut(chunk, from_span) {
+            src.attributes.remove_slow(&key);
+        }
+    }
+    true
 }
 
 // ------------------- Span link construction -------------------
@@ -1759,6 +1860,91 @@ mod tests {
             assert!(
                 encoded.windows(s.len()).any(|w| w == *s),
                 "{} should appear in payload (container_id must not be dropped)",
+                std::str::from_utf8(s).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn has_and_del_span_attr_round_trip() {
+        let mut b = TracerPayloadV1Builder::default();
+        let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
+        let si = ddog_v1_chunk_new_span(&mut b, ci);
+        ddog_v1_add_span_attr_str(&mut b, ci, si, cs("error.ignored"), cs("1"));
+        ddog_v1_add_span_attr_int(&mut b, ci, si, cs("keep"), 7);
+
+        // has: present vs absent.
+        assert!(ddog_v1_has_span_attr(&b, ci, si, cs("error.ignored")));
+        assert!(ddog_v1_has_span_attr(&b, ci, si, cs("keep")));
+        assert!(!ddog_v1_has_span_attr(&b, ci, si, cs("missing")));
+        // out-of-range span is safe.
+        assert!(!ddog_v1_has_span_attr(&b, ci, 99, cs("keep")));
+
+        // del: returns whether it existed and actually removes it.
+        assert!(ddog_v1_del_span_attr(&mut b, ci, si, cs("error.ignored")));
+        assert!(!ddog_v1_has_span_attr(&b, ci, si, cs("error.ignored")));
+        // deleting again reports absence.
+        assert!(!ddog_v1_del_span_attr(&mut b, ci, si, cs("error.ignored")));
+        // untouched sibling survives.
+        assert!(ddog_v1_has_span_attr(&b, ci, si, cs("keep")));
+        assert_eq!(ddog_v1_get_span_attr_count(&b, ci, si), 1);
+    }
+
+    #[test]
+    fn transfer_span_attr_copies_and_optionally_deletes() {
+        let mut b = TracerPayloadV1Builder::default();
+        let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
+        let root = ddog_v1_chunk_new_span(&mut b, ci);
+        let inferred = ddog_v1_chunk_new_span(&mut b, ci);
+
+        // A string meta-like attr (copy, keep source) and a numeric metric-like attr (move).
+        ddog_v1_add_span_attr_str(&mut b, ci, root, cs("error.message"), cs("boom"));
+        ddog_v1_add_span_attr_double(&mut b, ci, root, cs("_dd.agent_psr"), 0.5);
+
+        // meta copy without deleting the source (mirrors delete_source=false).
+        assert!(ddog_v1_transfer_span_attr(
+            &mut b,
+            ci,
+            root,
+            inferred,
+            cs("error.message"),
+            false
+        ));
+        assert!(ddog_v1_has_span_attr(&b, ci, root, cs("error.message")));
+        assert!(ddog_v1_has_span_attr(&b, ci, inferred, cs("error.message")));
+        // value is preserved (String, "boom") on the destination.
+        assert_eq!(ddog_v1_get_span_attr_count(&b, ci, inferred), 1);
+        assert_eq!(ddog_v1_get_span_attr_key(&b, ci, inferred, 0).to_utf8_lossy(), "error.message");
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, inferred, 0), DDOG_V1_ATTR_STRING);
+        assert_eq!(ddog_v1_get_span_attr_str(&b, ci, inferred, 0).to_utf8_lossy(), "boom");
+
+        // metric move with deletion of the source (mirrors delete_source=true).
+        assert!(ddog_v1_transfer_span_attr(
+            &mut b,
+            ci,
+            root,
+            inferred,
+            cs("_dd.agent_psr"),
+            true
+        ));
+        assert!(!ddog_v1_has_span_attr(&b, ci, root, cs("_dd.agent_psr")));
+        assert!(ddog_v1_has_span_attr(&b, ci, inferred, cs("_dd.agent_psr")));
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, inferred, 1), DDOG_V1_ATTR_DOUBLE);
+        assert_eq!(ddog_v1_get_span_attr_double(&b, ci, inferred, 1), 0.5);
+
+        // absent source key is a no-op (destination untouched, nothing deleted).
+        assert!(!ddog_v1_transfer_span_attr(&mut b, ci, root, inferred, cs("missing"), true));
+        assert_eq!(ddog_v1_get_span_attr_count(&b, ci, inferred), 2);
+
+        // encode still yields a valid, non-empty V1 payload with the transferred keys present.
+        ddog_v1_set_span_id(&mut b, ci, root, 1);
+        ddog_v1_set_span_id(&mut b, ci, inferred, 2);
+        let encoded = to_vec_from_v1(&b.into_payload());
+        assert!(!encoded.is_empty());
+        for s in &[b"error.message" as &[u8], b"boom", b"_dd.agent_psr"] {
+            assert!(
+                encoded.windows(s.len()).any(|w| w == *s),
+                "{} should appear",
                 std::str::from_utf8(s).unwrap()
             );
         }
