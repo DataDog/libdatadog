@@ -15,10 +15,11 @@
 //! use libdd_sampling::v04_span::{V04AttributeFactory, V04SamplingData, V04SamplingTag};
 //! use libdd_sampling::DatadogSampler;
 //! use libdd_trace_utils::span::{v04::Span, SliceData};
+//! use std::borrow::Cow::*;
 //!
 //! let mut span = Span::<SliceData<'_>>::default();
-//! span.name = "my-operation";
-//! span.service = "my-service";
+//! span.name = Borrowed("my-operation");
+//! span.service = Borrowed("my-service");
 //! span.trace_id = 1234567890u128;
 //!
 //! let sampler = DatadogSampler::new(vec![], 100);
@@ -251,9 +252,9 @@ mod tests {
         resource: &'static str,
     ) -> Span<SliceData<'static>> {
         Span {
-            name,
-            service,
-            resource,
+            name: Cow::Borrowed(name),
+            service: Cow::Borrowed(service),
+            resource: Cow::Borrowed(resource),
             ..Default::default()
         }
     }
@@ -305,8 +306,12 @@ mod tests {
     #[test]
     fn test_v04_span_properties_with_meta() {
         let mut span = make_span("op", "svc", "res");
-        span.meta.insert("env", "staging");
-        span.meta.insert("http.url", "https://example.com");
+        span.meta
+            .insert(Cow::Borrowed("env"), Cow::Borrowed("staging"));
+        span.meta.insert(
+            Cow::Borrowed("http.url"),
+            Cow::Borrowed("https://example.com"),
+        );
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.env(), "staging");
@@ -319,7 +324,8 @@ mod tests {
     #[test]
     fn test_v04_span_properties_status_code_from_metrics() {
         let mut span = make_span("op", "svc", "res");
-        span.metrics.insert("http.status_code", 200.0);
+        span.metrics
+            .insert(Cow::Borrowed("http.status_code"), 200.0);
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.status_code(), Some(200));
@@ -329,7 +335,8 @@ mod tests {
     #[test]
     fn test_v04_span_properties_status_code_from_meta() {
         let mut span = make_span("op", "svc", "res");
-        span.meta.insert("http.status_code", "404");
+        span.meta
+            .insert(Cow::Borrowed("http.status_code"), Cow::Borrowed("404"));
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.status_code(), Some(404));
@@ -338,7 +345,8 @@ mod tests {
     #[test]
     fn test_v04_span_properties_metrics_in_attributes() {
         let mut span = make_span("op", "svc", "res");
-        span.metrics.insert("_sampling_priority_v1", 1.0);
+        span.metrics
+            .insert(Cow::Borrowed("_sampling_priority_v1"), 1.0);
 
         let props = V04SpanProperties::from_span(&span);
         let attr = props
@@ -379,7 +387,8 @@ mod tests {
         // compiler resolves correctly.
         let sampler = DatadogSampler::new(vec![], 100);
         let mut span = make_span("op", "my-service", "my-resource");
-        span.meta.insert("env", "prod");
+        span.meta
+            .insert(Cow::Borrowed("env"), Cow::Borrowed("prod"));
         let data = V04SamplingData {
             is_parent_sampled: None,
             span: &span,
@@ -497,8 +506,8 @@ mod tests {
     fn test_integration_tags_apply_to_span() {
         let sampler = DatadogSampler::new(vec![], 100);
         let span = Span::<SliceData<'static>> {
-            name: "op",
-            service: "svc",
+            name: Cow::Borrowed("op"),
+            service: Cow::Borrowed("svc"),
             ..Default::default()
         };
 
@@ -519,7 +528,7 @@ mod tests {
                         assert!(!value.is_empty());
                     }
                     V04SamplingTag::Metric { key, value } => {
-                        out_span.metrics.insert(key, value);
+                        out_span.metrics.insert(Cow::Borrowed(key), value);
                     }
                 }
             }

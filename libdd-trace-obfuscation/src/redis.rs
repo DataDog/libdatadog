@@ -20,6 +20,36 @@ fn go_toupper(c: char) -> char {
     }
 }
 
+/// Quantizes a Redis query, returning `None` for empty input.
+///
+/// The dispatch gate (span type and tag presence) is the real precheck. The tokenizer rewrites
+/// any non-empty command, so only empty input is skipped.
+#[must_use]
+pub fn quantize_redis(query: &str) -> Option<String> {
+    if query.is_empty() {
+        return None;
+    }
+    Some(quantize_redis_string(query))
+}
+
+/// Obfuscates a Redis command, returning `None` for empty input.
+#[must_use]
+pub fn obfuscate_redis(cmd: &str) -> Option<String> {
+    if cmd.is_empty() {
+        return None;
+    }
+    Some(obfuscate_redis_string(cmd))
+}
+
+/// Removes all Redis arguments, returning `None` for empty input.
+#[must_use]
+pub fn obfuscate_redis_remove_all_args(redis_cmd: &str) -> Option<String> {
+    if redis_cmd.is_empty() {
+        return None;
+    }
+    Some(remove_all_redis_args(redis_cmd))
+}
+
 /// Returns a quantized version of a Redis query, keeping only up to 3 command names.
 pub fn quantize_redis_string(query: &str) -> String {
     let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
@@ -84,7 +114,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
     // Go's newRedisTokenizer calls bytes.TrimSpace before tokenizing
     let cmd = cmd.trim();
     let mut tokenizer = RedisTokenizer::new(cmd);
-    let s = &mut String::new();
+    let mut s = String::new();
     let mut cmd: Option<&str> = None;
     let mut args: Vec<&str> = Vec::new();
 
@@ -93,7 +123,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
         match res.token_type {
             RedisTokenType::RedisTokenCommand => {
                 if let Some(cmd) = cmd {
-                    args = obfuscate_redis_cmd(s, cmd, args);
+                    args = obfuscate_redis_cmd(&mut s, cmd, args);
                     s.push('\n');
                 }
                 cmd = Some(res.token);
@@ -102,11 +132,11 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             RedisTokenType::RedisTokenArgument => args.push(res.token),
         }
         if res.done {
-            obfuscate_redis_cmd(s, cmd.unwrap_or_default(), args);
+            obfuscate_redis_cmd(&mut s, cmd.unwrap_or_default(), args);
             break;
         }
     }
-    s.clone()
+    s
 }
 
 fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str>) -> Vec<&'a str> {

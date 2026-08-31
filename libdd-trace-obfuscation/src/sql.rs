@@ -2208,6 +2208,18 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> St
     }
 }
 
+/// Obfuscates a SQL string, returning `None` for empty input.
+///
+/// Non-empty SQL is always obfuscated and mirrored into `sql.query` by callers, so empty input is
+/// the only case skipped.
+#[must_use]
+pub fn obfuscate_sql_opt(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> Option<String> {
+    if s.is_empty() {
+        return None;
+    }
+    Some(obfuscate_sql(s, config, dbms))
+}
+
 /// Obfuscates a SQL string with default configuration.
 #[must_use]
 pub fn obfuscate_sql_string(s: &str) -> String {

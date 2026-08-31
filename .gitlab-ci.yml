@@ -5,10 +5,21 @@ variables:
     value: "main"
     description: "downstream jobs are triggered on this branch"
 
+  # To bump: docker buildx imagetools inspect registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:c23806c552973ba3177ec77377e0ed597cb70b05b116561e96ade5e47e0706e4
+
+  # To bump: get commit sha from repo: https://gitlab.ddbuild.io/DataDog/benchmarking-platform branch: libdatadog/benchmarks
+  BENCHMARKING_PLATFORM_SHA: "1d6ed8466bbe6e8fca75f899a7ec3bdc3003ce4e"
+
 include:
   - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+
+.untrusted_ref_guard:
+  rules:
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_REPOSITORY && $CI_EXTERNAL_PULL_REQUEST_SOURCE_REPOSITORY != $CI_EXTERNAL_PULL_REQUEST_TARGET_REPOSITORY'
+      when: never
 
 trigger_internal_build:
   variables:

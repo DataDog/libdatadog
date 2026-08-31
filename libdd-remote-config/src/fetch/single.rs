@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState, ConfigInvariants,
-    ConfigProductCapabilities, FileStorage,
+    random_uuid_string, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
+    ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -53,7 +53,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
                 options.capabilities,
             ),
             runtime_id,
-            client_id: uuid::Uuid::new_v4().to_string(),
+            client_id: random_uuid_string(),
             client_state: ConfigClientState::default(),
         })
     }
@@ -79,7 +79,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
                 options.capabilities,
             ),
             runtime_id,
-            client_id: uuid::Uuid::new_v4().to_string(),
+            client_id: random_uuid_string(),
             client_state: ConfigClientState::default(),
         }
     }

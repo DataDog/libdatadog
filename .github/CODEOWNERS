@@ -17,7 +17,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
-.gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
@@ -93,10 +93,11 @@ spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog
 symbolizer-ffi                       @DataDog/libdatadog-profiling
 tests/run-package-tests.ps1          @DataDog/apm-common-components-core
 tests/spawn_from_lib/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
+tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/libdatadog-apm
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
-fuzz/                                @DataDog/chaos-platform
+fuzz/                                @DataDog/chaos-engineering
 
 # Nix
 *.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core
@@ -114,6 +115,3 @@ datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php 
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
 
-
-# Vendored deps
-vendor/tuf/                          @DataDog/libdatadog-core
