@@ -202,9 +202,13 @@ fn test_crash_tracking_bin_assert_fail() {
 ///
 /// This verifies that `PR_SET_PTRACER` is correctly called in the unhandled exception
 /// path so the receiver can ptrace the still-alive parent process.
+///
+/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
+/// report `yama ptrace_scope = 2` at the moment
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
+#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -350,9 +354,13 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///   - Exactly one thread has `crashed=true` (the crashing thread).
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
+///
+/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
+/// report `yama ptrace_scope = 2` at the moment.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
+#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_multi_thread_collection() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -615,9 +623,13 @@ fn test_crash_tracking_sidecar_basic() {
 /// Tests that collect_all_threads works with a sidecar (Unix socket) receiver.
 /// This exercises the SO_PEERCRED path in crash_handler.rs that resolves the
 /// receiver PID for PR_SET_PTRACER when receiver.handle.pid is None.
+///
+/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
+/// report `yama ptrace_scope = 2` at the moment.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
+#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_sidecar_multi_thread_collection() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
     const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
