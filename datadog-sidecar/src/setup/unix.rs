@@ -13,6 +13,8 @@ use crate::setup::Liaison;
 use libdd_ipc::platform::locks::FLock;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
+static THREAD_RANDOM_ID: LazyLock<u64> = LazyLock::new(rand::random);
+
 #[cfg(feature = "logging")]
 use log::{debug, warn};
 #[cfg(not(feature = "logging"))]
@@ -38,11 +40,16 @@ fn ensure_dir_exists<P: AsRef<Path>>(path: P) -> io::Result<()> {
 pub struct SharedDirLiaison {
     socket_path: PathBuf,
     lock_path: PathBuf,
+    authenticate_peer: bool,
 }
 
 impl Liaison for SharedDirLiaison {
     fn connect_to_server(&self) -> io::Result<SeqpacketConn> {
-        SeqpacketConn::connect(&self.socket_path)
+        if self.authenticate_peer {
+            SeqpacketConn::connect(&self.socket_path)
+        } else {
+            SeqpacketConn::connect_unchecked(&self.socket_path)
+        }
     }
 
     fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
@@ -78,7 +85,7 @@ impl Liaison for SharedDirLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        static PROCESS_RANDOM_ID: LazyLock<u16> = LazyLock::new(rand::random);
+        static PROCESS_RANDOM_ID: LazyLock<u64> = LazyLock::new(rand::random);
 
         let pid = std::process::id();
         let liason_path = env::temp_dir().join(format!("libdatadog.{}.{pid}", *PROCESS_RANDOM_ID));
@@ -102,6 +109,7 @@ impl SharedDirLiaison {
         Self {
             socket_path,
             lock_path,
+            authenticate_peer: true,
         }
     }
 
@@ -111,7 +119,12 @@ impl SharedDirLiaison {
 
     pub fn ipc_for_pid(pid: u32) -> Self {
         let base_dir = env::temp_dir().join("libdatadog");
-        let versioned_socket_basename = format!("libdd.{}@{}.sock", crate::sidecar_version!(), pid);
+        let versioned_socket_basename = format!(
+            "libdd.{}@{}-{}.sock",
+            crate::sidecar_version!(),
+            pid,
+            *THREAD_RANDOM_ID
+        );
         let socket_path = base_dir.join(&versioned_socket_basename);
         let lock_path = base_dir
             .join(&versioned_socket_basename)
@@ -119,12 +132,17 @@ impl SharedDirLiaison {
         Self {
             socket_path,
             lock_path,
+            authenticate_peer: false,
         }
     }
 
     /// The filesystem socket path this liaison binds/connects to.
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+
+    pub fn initialize_thread_channel_id() {
+        LazyLock::force(&THREAD_RANDOM_ID);
     }
 }
 
@@ -149,14 +167,21 @@ mod linux {
 
     use super::Liaison;
 
+    static THREAD_RANDOM_ID: std::sync::LazyLock<u64> = std::sync::LazyLock::new(rand::random);
+
     pub struct AbstractUnixSocketLiaison {
         path: PathBuf,
+        authenticate_peer: bool,
     }
     pub type DefaultLiason = AbstractUnixSocketLiaison;
 
     impl Liaison for AbstractUnixSocketLiaison {
         fn connect_to_server(&self) -> io::Result<SeqpacketConn> {
-            platform::sockets::connect_abstract(&self.path)
+            if self.authenticate_peer {
+                platform::sockets::connect_abstract(&self.path)
+            } else {
+                platform::sockets::connect_abstract_unchecked(&self.path)
+            }
         }
 
         fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
@@ -172,25 +197,38 @@ mod linux {
                 concat!("libdatadog/", crate::sidecar_version!(), "@{}.sock"),
                 crate::primary_sidecar_identifier()
             ));
-            Self { path }
+            Self {
+                path,
+                authenticate_peer: true,
+            }
         }
 
         fn ipc_per_process() -> AbstractUnixSocketLiaison {
+            static PROCESS_RANDOM_ID: std::sync::LazyLock<u64> =
+                std::sync::LazyLock::new(rand::random);
+
             let path = PathBuf::from(format!(
-                concat!("libdatadog/", crate::sidecar_version!(), ".{}.sock"),
-                getpid()
+                concat!("libdatadog/", crate::sidecar_version!(), ".{}-{}.sock"),
+                getpid(),
+                *PROCESS_RANDOM_ID
             ));
-            Self { path }
+            Self {
+                path,
+                authenticate_peer: true,
+            }
         }
     }
 
     impl AbstractUnixSocketLiaison {
         pub fn ipc_for_pid(pid: u32) -> Self {
             let path = PathBuf::from(format!(
-                concat!("libdatadog/", crate::sidecar_version!(), "@{}.sock"),
-                pid
+                concat!("libdatadog/", crate::sidecar_version!(), "@{}-{}.sock"),
+                pid, *THREAD_RANDOM_ID
             ));
-            Self { path }
+            Self {
+                path,
+                authenticate_peer: false,
+            }
         }
 
         /// The abstract socket name this liaison binds/connects to.
@@ -199,6 +237,10 @@ mod linux {
         /// IPC socket the sidecar listens on.
         pub fn path(&self) -> &std::path::Path {
             &self.path
+        }
+
+        pub fn initialize_thread_channel_id() {
+            std::sync::LazyLock::force(&THREAD_RANDOM_ID);
         }
     }
 

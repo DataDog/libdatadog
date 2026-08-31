@@ -46,6 +46,12 @@ impl MasterListener {
             return Err(io::Error::other("Master listener is already running"));
         }
 
+        // Initialize before forking so workers inherit the same unpredictable channel name.
+        #[cfg(target_os = "linux")]
+        AbstractUnixSocketLiaison::initialize_thread_channel_id();
+        #[cfg(not(target_os = "linux"))]
+        SharedDirLiaison::initialize_thread_channel_id();
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let thread_handle = thread::Builder::new()
@@ -131,6 +137,7 @@ async fn accept_socket_loop_thread(
     async_listener: AsyncFd<SeqpacketListener>,
     handler: Box<dyn Fn(SeqpacketConn)>,
     mut shutdown_rx: oneshot::Receiver<()>,
+    master_pid: u32,
 ) -> io::Result<()> {
     loop {
         tokio::select! {
@@ -141,8 +148,19 @@ async fn accept_socket_loop_thread(
             ready = async_listener.readable() => {
                 match ready {
                     Ok(mut guard) => {
-                        match guard.try_io(|inner| inner.get_ref().try_accept()) {
+                        match guard.try_io(|inner| inner.get_ref().try_accept_unchecked()) {
                             Ok(Ok(conn)) => {
+                                #[cfg(target_os = "linux")]
+                                if !is_process_descendant(
+                                    conn.peer_credentials()?.pid,
+                                    master_pid,
+                                ) {
+                                    error!(
+                                        "Rejected IPC connection from a process outside the master process tree"
+                                    );
+                                    continue;
+                                }
+
                                 // On the first connection, get the worker's UID and
                                 // fchown the SHM to that UID so cross-user access works when
                                 // the master runs as root and workers run as a different user.
@@ -170,6 +188,35 @@ async fn accept_socket_loop_thread(
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn is_process_descendant(mut pid: u32, ancestor_pid: u32) -> bool {
+    if pid == ancestor_pid {
+        return true;
+    }
+
+    for _ in 0..64 {
+        let status = match std::fs::read_to_string(format!("/proc/{pid}/status")) {
+            Ok(status) => status,
+            Err(_) => return false,
+        };
+        let parent_pid = status
+            .lines()
+            .find_map(|line| line.strip_prefix("PPid:")?.trim().parse::<u32>().ok());
+        let Some(parent_pid) = parent_pid else {
+            return false;
+        };
+        if parent_pid == ancestor_pid {
+            return true;
+        }
+        if parent_pid == 0 || parent_pid == pid {
+            return false;
+        }
+        pid = parent_pid;
+    }
+
+    false
 }
 
 /// Entry point for thread listener.
@@ -211,7 +258,7 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
         .block_on(async {
             let async_listener = listener.into_async_listener()?;
             crate::entry::main_loop(
-                move |handler| accept_socket_loop_thread(async_listener, handler, shutdown_rx),
+                move |handler| accept_socket_loop_thread(async_listener, handler, shutdown_rx, pid),
                 Arc::new(cancel),
                 loop_config,
             )
@@ -229,14 +276,21 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
 
+    let expected_pid = u32::try_from(pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "master PID must be positive"))?;
+
     #[cfg(target_os = "linux")]
-    let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);
+    let liaison = AbstractUnixSocketLiaison::ipc_for_pid(expected_pid);
     #[cfg(not(target_os = "linux"))]
-    let liaison = SharedDirLiaison::ipc_for_pid(pid as u32);
+    let liaison = SharedDirLiaison::ipc_for_pid(expected_pid);
 
     let conn = liaison
         .connect_to_server()
         .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
+    conn.verify_peer_pid(expected_pid)?;
+    if let Some(peer_pid) = conn.peer_pid().ok().and_then(|pid| i32::try_from(pid).ok()) {
+        libdd_crashtracker::set_expected_receiver_pid(peer_pid);
+    }
 
     info!("Successfully connected to master listener");
     Ok(Box::new(SidecarTransport::from(conn)))

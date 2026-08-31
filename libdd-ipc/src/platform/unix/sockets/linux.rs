@@ -45,8 +45,23 @@ impl SeqpacketListener {
     /// Accept a new connection (non-blocking in non-blocking mode).
     ///
     /// Skips intermittent connections left by `is_listening` probes: after `accept()`, peek to
-    /// check if the peer has already closed the connection (EOF). If so, discard and loop.
+    /// check if the peer has already closed the connection (EOF). If so, discard and loop. Peers
+    /// belonging to another Unix user are also discarded before the connection is returned.
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
+        loop {
+            let conn = self.try_accept_unchecked()?;
+            if conn.verify_peer_uid(unsafe { libc::geteuid() }).is_ok() {
+                return Ok(conn);
+            }
+            // Do not expose a connection from an untrusted Unix user to the IPC dispatcher.
+        }
+    }
+
+    /// Accept a connection without checking its Unix peer UID.
+    ///
+    /// This is reserved for the thread listener, which intentionally accepts workers running
+    /// under a different UID and authenticates those workers using the master PID instead.
+    pub fn try_accept_unchecked(&self) -> io::Result<SeqpacketConn> {
         loop {
             let new_fd = accept(self.inner.as_raw_fd()).map_err(io::Error::from)?;
             let owned = unsafe { OwnedFd::from_raw_fd(new_fd) };
@@ -86,18 +101,50 @@ impl SeqpacketConn {
 
     /// Connect to a filesystem socket path.
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::connect_inner(path, true)
+    }
+
+    /// Connect to a filesystem socket path without checking the Unix peer UID.
+    ///
+    /// This is reserved for the thread listener, which intentionally connects across UIDs and
+    /// authenticates the peer using its expected process ID.
+    pub fn connect_unchecked(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::connect_inner(path, false)
+    }
+
+    fn connect_inner(path: impl AsRef<Path>, verify_peer: bool) -> io::Result<Self> {
         let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
         connect(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
-        Self::from_owned(fd)
+        let conn = Self::from_owned(fd)?;
+        if verify_peer {
+            conn.verify_peer_uid(unsafe { libc::geteuid() })?;
+        }
+        Ok(conn)
     }
 
     /// Connect to a Linux abstract socket name.
     pub fn connect_abstract(name: &[u8]) -> io::Result<Self> {
+        Self::connect_abstract_inner(name, true)
+    }
+
+    /// Connect to a Linux abstract socket name without checking the Unix peer UID.
+    ///
+    /// This is reserved for the thread listener, which intentionally connects across UIDs and
+    /// authenticates the peer using its expected process ID.
+    pub fn connect_abstract_unchecked(name: &[u8]) -> io::Result<Self> {
+        Self::connect_abstract_inner(name, false)
+    }
+
+    fn connect_abstract_inner(name: &[u8], verify_peer: bool) -> io::Result<Self> {
         let fd = create_seqpacket_socket()?;
         let addr = UnixAddr::new_abstract(name).map_err(io::Error::from)?;
         connect(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
-        Self::from_owned(fd)
+        let conn = Self::from_owned(fd)?;
+        if verify_peer {
+            conn.verify_peer_uid(unsafe { libc::geteuid() })?;
+        }
+        Ok(conn)
     }
 }
 
@@ -114,6 +161,11 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
 /// Connect to a Linux abstract socket (path used as name bytes).
 pub fn connect_abstract<P: AsRef<Path>>(path: P) -> io::Result<SeqpacketConn> {
     SeqpacketConn::connect_abstract(path.as_ref().as_os_str().as_bytes())
+}
+
+/// Connect to a Linux abstract socket without checking the Unix peer UID.
+pub fn connect_abstract_unchecked<P: AsRef<Path>>(path: P) -> io::Result<SeqpacketConn> {
+    SeqpacketConn::connect_abstract_unchecked(path.as_ref().as_os_str().as_bytes())
 }
 
 /// Bind an abstract socket (path used as name bytes).
@@ -140,4 +192,24 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
         pid: cred.pid as u32,
         uid: cred.uid,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_uid_verification_rejects_a_different_uid() {
+        let (conn, _) = SeqpacketConn::socketpair().expect("socketpair");
+        let uid = unsafe { libc::geteuid() };
+
+        conn.verify_peer_uid(uid)
+            .expect("same UID should be accepted");
+        assert_eq!(
+            conn.verify_peer_uid(uid.wrapping_add(1))
+                .expect_err("different UID should be rejected")
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
 }

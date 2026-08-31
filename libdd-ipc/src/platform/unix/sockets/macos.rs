@@ -76,6 +76,20 @@ impl SeqpacketListener {
     /// Silently discards messages without SCM_RIGHTS (liveness probes from `is_listening`).
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
+            let conn = self.try_accept_unchecked()?;
+            if conn.verify_peer_uid(unsafe { libc::geteuid() }).is_ok() {
+                return Ok(conn);
+            }
+            // Do not expose a connection from an untrusted Unix user to the IPC dispatcher.
+        }
+    }
+
+    /// Accept a connection without checking its Unix peer UID.
+    ///
+    /// This is reserved for the thread listener, which intentionally accepts workers running
+    /// under a different UID and authenticates those workers using the master PID instead.
+    pub fn try_accept_unchecked(&self) -> io::Result<SeqpacketConn> {
+        loop {
             let mut buf = [0u8; 1];
             let (_, owned_fds) =
                 super::recvmsg_raw(self.inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)?;
@@ -117,6 +131,18 @@ impl SeqpacketConn {
     /// `SeqpacketConn` (closing `liveness_read`), `POLLHUP` appears on `liveness_write`
     /// and subsequent sends return `BrokenPipe`.
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::connect_inner(path, true)
+    }
+
+    /// Connect to a server without checking the Unix peer UID.
+    ///
+    /// This is reserved for the thread listener, which intentionally connects across UIDs and
+    /// authenticates the peer using its expected process ID.
+    pub fn connect_unchecked(path: impl AsRef<Path>) -> io::Result<Self> {
+        Self::connect_inner(path, false)
+    }
+
+    fn connect_inner(path: impl AsRef<Path>, verify_peer: bool) -> io::Result<Self> {
         let mut fds = [0i32; 2];
         if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) } == -1 {
             return Err(io::Error::last_os_error());
@@ -165,7 +191,11 @@ impl SeqpacketConn {
         // peer end of a SOCK_DGRAM socketpair disconnects this end even when the peer socket
         // is alive in the daemon via SCM_RIGHTS.
         // Keep liveness_w (liveness_write) to detect daemon death via POLLHUP.
-        Self::from_owned_pair(fd_client, fd_server, Some(liveness_write))
+        let conn = Self::from_owned_pair(fd_client, fd_server, Some(liveness_write))?;
+        if verify_peer {
+            conn.verify_peer_uid(unsafe { libc::geteuid() })?;
+        }
+        Ok(conn)
     }
 
     pub(super) fn poll_liveness_pipe(&self) -> io::Result<()> {
@@ -240,9 +270,14 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     {
         return Err(io::Error::last_os_error());
     }
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    if unsafe { libc::getpeereid(fd, &mut uid, &mut gid) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(PeerCredentials {
         pid: pid as u32,
-        uid: 0,
+        uid,
     })
 }
 

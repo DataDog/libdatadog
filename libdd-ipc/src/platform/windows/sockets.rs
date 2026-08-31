@@ -45,7 +45,7 @@ use winapi::um::handleapi::{CloseHandle, DuplicateHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
 use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentProcessId, OpenProcess};
 use winapi::um::winbase::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
-use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
+use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE, SECURITY_SQOS_PRESENT};
 
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
@@ -486,7 +486,9 @@ impl SeqpacketConn {
                 0,
                 null_mut(),
                 OPEN_EXISTING,
-                0, // synchronous, non-overlapped
+                // Request SECURITY_ANONYMOUS and mark the SQOS settings as present. The IPC
+                // server only transports bytes and must not be able to impersonate the client.
+                SECURITY_SQOS_PRESENT, // synchronous, non-overlapped
                 null_mut(),
             )
         };
@@ -614,6 +616,25 @@ impl SeqpacketConn {
             pid: self.peer_pid,
             uid: 0,
         })
+    }
+
+    /// Verify that the connected pipe was created by the expected process.
+    pub fn verify_peer_pid(&self, expected_pid: u32) -> io::Result<()> {
+        let mut server_pid: ULONG = 0;
+        if unsafe { GetNamedPipeServerProcessId(self.raw_handle() as HANDLE, &mut server_pid) } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        if server_pid != expected_pid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "IPC pipe server PID {} does not match expected PID {}",
+                    server_pid, expected_pid
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Non-blocking send.

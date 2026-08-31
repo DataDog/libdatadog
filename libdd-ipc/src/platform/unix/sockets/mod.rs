@@ -251,6 +251,36 @@ impl SeqpacketConn {
         get_peer_credentials(self.inner.as_raw_fd())
     }
 
+    /// Verify that the connected peer belongs to the expected Unix user.
+    pub fn verify_peer_uid(&self, expected_uid: u32) -> io::Result<()> {
+        let peer = self.peer_credentials()?;
+        if peer.uid != expected_uid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "IPC peer UID {} does not match expected UID {}",
+                    peer.uid, expected_uid
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Verify that the connected peer has the expected process ID.
+    pub fn verify_peer_pid(&self, expected_pid: u32) -> io::Result<()> {
+        let peer = self.peer_credentials()?;
+        if peer.pid != expected_pid {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "IPC peer PID {} does not match expected PID {}",
+                    peer.pid, expected_pid
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// Non-blocking send. Returns `Err(WouldBlock)` if the socket buffer is full.
     ///
     /// `data` is passed as `&mut Vec<u8>` for API symmetry with the Windows implementation

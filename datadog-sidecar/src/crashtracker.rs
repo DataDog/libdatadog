@@ -82,6 +82,31 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
     if socket::connect(fd.as_raw_fd(), &addr).is_err() {
         return -1;
     }
+
+    // This connector runs outside the normal libdd-ipc wrapper. Authenticate the peer before
+    // sending the crashtracker request so a process that squats the predictable socket cannot
+    // receive crash data. A registered receiver PID is stronger than the same-UID fallback and
+    // is set during the normal sidecar connection setup.
+    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut cred_len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let expected_pid = libdd_crashtracker::get_expected_receiver_pid();
+    let peer_authenticated = unsafe {
+        libc::getsockopt(
+            fd.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut _ as *mut libc::c_void,
+            &mut cred_len,
+        ) == 0
+    } && if expected_pid > 0 {
+        cred.pid == expected_pid
+    } else {
+        cred.uid == unsafe { libc::geteuid() }
+    };
+    if !peer_authenticated {
+        return -1;
+    }
+
     if socket::send(
         fd.as_raw_fd(),
         crashtracker_receiver_request_bytes(),

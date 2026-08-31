@@ -37,7 +37,10 @@ impl MasterListener {
             return Err(io::Error::other("Master listener is already running"));
         }
 
-        let liaison = NamedPipeLiaison::new(format!("libdatadog_{}_", pid));
+        // Initialize before forking so workers inherit the same unpredictable channel name.
+        NamedPipeLiaison::initialize_thread_channel_id();
+
+        let liaison = NamedPipeLiaison::ipc_for_pid(pid);
         let listener = liaison
             .attempt_listen()?
             .ok_or_else(|| io::Error::other("Failed to bind master listener pipe"))?;
@@ -163,10 +166,17 @@ fn run_listener_windows(
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener via named pipe (PID {})", pid);
 
-    let liaison = NamedPipeLiaison::new(format!("libdatadog_{}_", pid));
+    let expected_pid = u32::try_from(pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "master PID must be positive"))?;
+
+    let liaison = NamedPipeLiaison::ipc_for_pid(pid);
     let conn = liaison
         .connect_to_server()
         .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
+    conn.verify_peer_pid(expected_pid)?;
+    if let Some(peer_pid) = conn.peer_pid().ok().and_then(|pid| i32::try_from(pid).ok()) {
+        libdd_crashtracker::set_expected_receiver_pid(peer_pid);
+    }
 
     info!("Successfully connected to master listener");
     Ok(Box::new(SidecarTransport::from(conn)))

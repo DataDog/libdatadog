@@ -7,6 +7,9 @@ use libc::getpid;
 use libdd_ipc::platform::PIPE_PATH;
 use libdd_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
 use std::io;
+use std::sync::LazyLock;
+
+static THREAD_RANDOM_ID: LazyLock<u64> = LazyLock::new(rand::random);
 
 pub type IpcClient = AsyncConn;
 pub type IpcServer = SeqpacketListener;
@@ -38,11 +41,25 @@ impl Liaison for NamedPipeLiaison {
     }
 
     fn ipc_per_process() -> Self {
-        Self::new(format!("libdatadog_{}_", unsafe { getpid() }))
+        static PROCESS_RANDOM_ID: LazyLock<u64> = LazyLock::new(rand::random);
+
+        Self::new(format!(
+            "libdatadog_{}_{}-",
+            unsafe { getpid() },
+            *PROCESS_RANDOM_ID
+        ))
     }
 }
 
 impl NamedPipeLiaison {
+    pub fn ipc_for_pid(pid: i32) -> Self {
+        Self::new(format!("libdatadog_{}_{}-", pid, *THREAD_RANDOM_ID))
+    }
+
+    pub fn initialize_thread_channel_id() {
+        LazyLock::force(&THREAD_RANDOM_ID);
+    }
+
     pub fn new<P: AsRef<str>>(prefix: P) -> Self {
         Self {
             socket_path: format!(
