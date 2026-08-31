@@ -68,9 +68,22 @@ pub(super) fn carrier_from_eventbridge_body(body: &str) -> HashMap<String, Strin
 fn carrier_from_value(value: &Value) -> Option<HashMap<String, String>> {
     match value {
         Value::Object(_) => serde_json::from_value(value.clone()).ok(),
-        Value::String(s) => serde_json::from_str(s).ok(),
+        Value::String(s) => carrier_from_string(s),
         _ => None,
     }
+}
+
+fn carrier_from_string(s: &str) -> Option<HashMap<String, String>> {
+    if let Ok(carrier) = serde_json::from_str::<HashMap<String, String>>(s) {
+        return Some(carrier);
+    }
+
+    use base64::{engine::general_purpose::STANDARD, Engine};
+
+    STANDARD
+        .decode(s)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<HashMap<String, String>>(&bytes).ok())
 }
 
 impl Trigger for EventBridgeEvent {
@@ -148,5 +161,92 @@ impl Trigger for EventBridgeEvent {
 
     fn is_async(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_get_carrier_from_datadog_object() {
+        let event = event_with_datadog(json!({
+            "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+            "x-datadog-start-time": "1740000000"
+        }));
+
+        assert_eq!(
+            event.get_carrier(),
+            HashMap::from([
+                (
+                    "traceparent".to_string(),
+                    "00-11111111111111111111111111111111-2222222222222222-01".to_string()
+                ),
+                ("x-datadog-start-time".to_string(), "1740000000".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn test_get_carrier_from_datadog_json_string() {
+        let event = event_with_datadog(Value::String(json_carrier()));
+
+        assert_eq!(event.get_carrier(), expected_carrier());
+    }
+
+    #[test]
+    fn test_get_carrier_from_datadog_base64_json_string() {
+        let event = event_with_datadog(Value::String(base64_json_carrier()));
+
+        assert_eq!(event.get_carrier(), expected_carrier());
+    }
+
+    #[test]
+    fn test_carrier_from_transformed_eventbridge_body_with_base64_datadog() {
+        let body = json!({
+            "detail": {
+                "message": "hello through sns eventbridge pipe",
+                "_datadog": base64_json_carrier()
+            }
+        })
+        .to_string();
+
+        assert_eq!(carrier_from_eventbridge_body(&body), expected_carrier());
+    }
+
+    fn event_with_datadog(datadog: Value) -> EventBridgeEvent {
+        EventBridgeEvent {
+            id: "event-id".to_string(),
+            version: "0".to_string(),
+            account: "123456789012".to_string(),
+            time: "2026-08-04T00:00:00Z".to_string(),
+            region: "us-east-1".to_string(),
+            resources: vec![],
+            source: "rust-sqs-sample.client".to_string(),
+            detail_type: "WorkItemSubmitted".to_string(),
+            detail: json!({
+                "message": "hello through eventbridge",
+                "_datadog": datadog
+            }),
+            replay_name: None,
+        }
+    }
+
+    fn json_carrier() -> String {
+        serde_json::to_string(&expected_carrier()).unwrap()
+    }
+
+    fn base64_json_carrier() -> String {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+
+        STANDARD.encode(json_carrier())
+    }
+
+    fn expected_carrier() -> HashMap<String, String> {
+        HashMap::from([(
+            "traceparent".to_string(),
+            "00-11111111111111111111111111111111-2222222222222222-01".to_string(),
+        )])
     }
 }
