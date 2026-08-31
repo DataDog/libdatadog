@@ -50,13 +50,16 @@ where
             compute_top_level_span(chunk);
         }
     }
-    // Obfuscate every span we are about to send to the intake
     for chunk in traces.iter_mut() {
         for span in chunk.iter_mut() {
+            // Obfuscate every span we are about to send to the intake
             libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
                 span,
                 &config.obfuscation_config,
             );
+
+            // Remove duplicate attributes before serialization
+            span.dedup();
         }
     }
 
