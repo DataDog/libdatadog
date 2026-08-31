@@ -86,6 +86,7 @@ scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
 scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
 scripts/publication-order.sh         @DataDog/apm-common-components-core
 scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
+scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
 scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
 scripts/release-version-bumps.sh     @DataDog/apm-common-components-core
 scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core

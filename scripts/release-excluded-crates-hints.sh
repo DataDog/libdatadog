@@ -73,7 +73,7 @@ write_markdown() {
         [
           "### :warning: Crates left out of this proposal affected by its major bumps",
           "",
-          "These publishable workspace crates are not part of this release but their dependency requirement was rewritten on this branch while their published version still requires the old major. If they're a dependency on your deployment not including them in the release could result in duplicate packages or symbol incompatibility.",
+          "These publishable workspace crates are not part of this release but their dependency requirement was rewritten on this branch while their published version still requires the old major. If they are a dependency on your deployment not including them in the release could result in duplicate packages or symbol incompatibility.",
           "",
           (.[] | "- `\(.dependency)` `\(.previous_version)` → `\(.new_version)` affects: "
                  + (.affected | map("`\(.name)`") | join(", ")))
