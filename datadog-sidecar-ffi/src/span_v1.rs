@@ -4,21 +4,20 @@
 //! Index-based FFI builder for the native V1 trace payload
 //! ([`libdd_trace_utils::span::v1::TracerPayload`]).
 //!
-//! Unlike the v0.4 builder in [`crate::span`] — which stores strings inline on each span — this
-//! builder owns a **value-keyed intern table**. The C caller interns each string once via
-//! [`ddog_v1_intern_string`], gets back a stable `u32` id, and references strings by id in every
-//! subsequent call. This lets the caller keep its own `zend_string*`→id cache for the per-pointer
-//! fast path without weakening deduplication: equal strings always map to the same id (and thus a
-//! single [`BytesString`] allocation).
+//! This builder stores **real, readable strings** ([`BytesString`]) directly on each
+//! [`SpanBytes`]/[`TraceChunkBytes`]/[`TracerPayloadBytes`] field, mirroring the v0.4 builder in
+//! [`crate::span`]. Setters take a [`CharSlice`] and store its content verbatim; getters hand back
+//! short-lived [`CharSlice`] borrows over the stored strings. There is no build-time string interning
+//! table: wire-level string deduplication is performed independently by the V1 encoder's own
+//! streaming table at encode time, so an in-memory intern table would only add cost while blocking
+//! introspection of the built payload.
 //!
 //! The builder is index-based rather than pointer-based (chunks/spans/links/events are addressed by
-//! their `usize` position, not by a returned `&mut` handle). This is deliberate: interning mutates
-//! the builder, so handing out `&mut` handles into the same builder that `ddog_v1_intern_string`
-//! later mutates would alias under Stacked Borrows. Addressing by index routes every operation
-//! through a single `&mut TracerPayloadV1Builder`, which is sound and lets us build the native
-//! [`TracerPayloadBytes`] directly (no intermediate id-typed model). Wire-level string
-//! deduplication is still performed independently by the encoder's own streaming table at encode
-//! time; the intern table here only dedups the in-memory builder representation.
+//! their `usize` position, not by a returned `&mut` handle). This is deliberate: every mutating
+//! operation is routed through a single `&mut TracerPayloadV1Builder`, so we never hand a `&mut`
+//! into the payload out to C while the builder is still live (which would alias under Stacked
+//! Borrows). Read-only getters take a shared `&TracerPayloadV1Builder` and return borrows tied to
+//! it, which is likewise sound.
 //!
 //! Payload-level metadata (container id, language, tracer version, runtime id, env, hostname,
 //! app version, git commit sha) is NOT set through this builder: it is applied at send time from
@@ -32,62 +31,54 @@ use libdd_trace_utils::span::v1::{
     TracerPayloadBytes,
 };
 use libdd_trace_utils::span::vec_map::VecMap;
-use std::collections::HashMap;
+use std::borrow::Cow;
 
-/// Builds a native V1 [`TracerPayloadBytes`] while interning every string once.
+/// Attribute value type tags returned by the `ddog_v1_get_*_attr_type` getters. They let a C caller
+/// pick the matching typed value getter (`_attr_str`/`_attr_int`/`_attr_double`/`_attr_bool`/
+/// `_attr_bytes`) for a given attribute index.
+pub const DDOG_V1_ATTR_STRING: u32 = 0;
+pub const DDOG_V1_ATTR_INT: u32 = 1;
+pub const DDOG_V1_ATTR_DOUBLE: u32 = 2;
+pub const DDOG_V1_ATTR_BOOL: u32 = 3;
+pub const DDOG_V1_ATTR_BYTES: u32 = 4;
+pub const DDOG_V1_ATTR_KEYVALUE: u32 = 5;
+pub const DDOG_V1_ATTR_LIST: u32 = 6;
+
+/// Builds a native V1 [`TracerPayloadBytes`] holding readable strings.
+#[derive(Default)]
 pub struct TracerPayloadV1Builder {
-    /// Value-keyed intern table: string content → id. Guarantees equal strings share one id.
-    intern_map: HashMap<String, u32>,
-    /// id → interned string. `strings[0]` is always the empty string (id 0).
-    strings: Vec<BytesString>,
     /// The native V1 payload being assembled. Only chunks/spans are populated here; payload-level
     /// metadata is applied at send time.
     payload: TracerPayloadBytes,
 }
 
-impl Default for TracerPayloadV1Builder {
-    fn default() -> Self {
-        let mut intern_map = HashMap::new();
-        intern_map.insert(String::new(), 0);
-        Self {
-            intern_map,
-            strings: vec![BytesString::default()],
-            payload: TracerPayloadBytes::default(),
-        }
-    }
-}
-
 impl TracerPayloadV1Builder {
-    /// Interns `slice`, returning its stable id. The empty string is always id 0.
-    fn intern(&mut self, slice: CharSlice) -> u32 {
-        if slice.is_empty() {
-            return 0;
-        }
-        let s = String::from_utf8_lossy(slice.as_bytes()).into_owned();
-        if let Some(&id) = self.intern_map.get(&s) {
-            return id;
-        }
-        let id = self.strings.len() as u32;
-        self.strings.push(BytesString::from_string(s.clone()));
-        self.intern_map.insert(s, id);
-        id
-    }
-
-    /// Resolves an id to its interned string. Out-of-range ids resolve to the empty string.
-    fn resolve(&self, id: u32) -> BytesString {
-        self.strings.get(id as usize).cloned().unwrap_or_default()
+    fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
+        self.payload.chunks.get(chunk)
     }
 
     fn chunk_mut(&mut self, chunk: usize) -> Option<&mut TraceChunkBytes> {
         self.payload.chunks.get_mut(chunk)
     }
 
+    fn span(&self, chunk: usize, span: usize) -> Option<&SpanBytes> {
+        self.payload.chunks.get(chunk)?.spans.get(span)
+    }
+
     fn span_mut(&mut self, chunk: usize, span: usize) -> Option<&mut SpanBytes> {
         self.payload.chunks.get_mut(chunk)?.spans.get_mut(span)
     }
 
+    fn link(&self, chunk: usize, span: usize, link: usize) -> Option<&SpanLinkBytes> {
+        self.span(chunk, span)?.span_links.get(link)
+    }
+
     fn link_mut(&mut self, chunk: usize, span: usize, link: usize) -> Option<&mut SpanLinkBytes> {
         self.span_mut(chunk, span)?.span_links.get_mut(link)
+    }
+
+    fn event(&self, chunk: usize, span: usize, event: usize) -> Option<&SpanEventBytes> {
+        self.span(chunk, span)?.span_events.get(event)
     }
 
     fn event_mut(
@@ -113,15 +104,129 @@ fn trace_id_bytes(high: u64, low: u64) -> [u8; 16] {
     bytes
 }
 
-fn insert_attr(
-    map: &mut VecMap<BytesString, AttributeValueBytes>,
-    key: BytesString,
-    value: AttributeValueBytes,
-) {
-    if key.as_str().is_empty() {
+/// High 64 bits of a 16-byte big-endian trace id.
+fn trace_id_high(bytes: &[u8; 16]) -> u64 {
+    let mut half = [0u8; 8];
+    half.copy_from_slice(&bytes[..8]);
+    u64::from_be_bytes(half)
+}
+
+/// Low 64 bits of a 16-byte big-endian trace id.
+fn trace_id_low(bytes: &[u8; 16]) -> u64 {
+    let mut half = [0u8; 8];
+    half.copy_from_slice(&bytes[8..]);
+    u64::from_be_bytes(half)
+}
+
+/// Converts a `CharSlice` into an owned `BytesString`, replacing invalid UTF-8 with the
+/// replacement character (mirrors the v0.4 builder's `convert_char_slice_to_bytes_string`).
+fn to_bytes_string(slice: CharSlice) -> BytesString {
+    match String::from_utf8_lossy(slice.as_bytes()) {
+        Cow::Owned(s) => s.into(),
+        Cow::Borrowed(_) => unsafe {
+            // Safety: a borrowed `str` from `from_utf8_lossy` is the original slice, which is thus
+            // valid UTF-8.
+            BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
+        },
+    }
+}
+
+/// Sets a string field from a `CharSlice`, leaving it unchanged (default/empty) for an empty slice.
+#[inline]
+fn set_string_field(field: &mut BytesString, slice: CharSlice) {
+    if slice.is_empty() {
         return;
     }
-    map.insert(key, value);
+    *field = to_bytes_string(slice);
+}
+
+/// Borrows a stored `BytesString` as a short-lived `CharSlice`.
+#[inline]
+fn char_slice_of(field: &BytesString) -> CharSlice<'_> {
+    let s = field.as_str();
+    // Safety: `BytesString` guarantees valid UTF-8; the returned slice borrows from `field`, so the
+    // backing allocation stays live and immutable for the slice's lifetime.
+    unsafe { CharSlice::from_raw_parts(s.as_ptr().cast(), s.len()) }
+}
+
+fn insert_attr(
+    map: &mut VecMap<BytesString, AttributeValueBytes>,
+    key: CharSlice,
+    value: AttributeValueBytes,
+) {
+    if key.is_empty() {
+        return;
+    }
+    map.insert(to_bytes_string(key), value);
+}
+
+/// Maps an attribute value to its exported [`DDOG_V1_ATTR_*`] type tag.
+fn value_type(value: &AttributeValueBytes) -> u32 {
+    match value {
+        AttributeValueBytes::String(_) => DDOG_V1_ATTR_STRING,
+        AttributeValueBytes::Int(_) => DDOG_V1_ATTR_INT,
+        AttributeValueBytes::Float(_) => DDOG_V1_ATTR_DOUBLE,
+        AttributeValueBytes::Bool(_) => DDOG_V1_ATTR_BOOL,
+        AttributeValueBytes::Bytes(_) => DDOG_V1_ATTR_BYTES,
+        AttributeValueBytes::KeyValue(_) => DDOG_V1_ATTR_KEYVALUE,
+        AttributeValueBytes::List(_) => DDOG_V1_ATTR_LIST,
+    }
+}
+
+// ---- Attribute-map read helpers (shared by chunk/span/link/event attr getters) ----
+
+fn attr_count(map: &VecMap<BytesString, AttributeValueBytes>) -> usize {
+    map.len()
+}
+
+fn attr_key_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> CharSlice<'_> {
+    match map.iter().nth(idx) {
+        Some((k, _)) => char_slice_of(k),
+        None => CharSlice::empty(),
+    }
+}
+
+fn attr_type_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> u32 {
+    match map.iter().nth(idx) {
+        Some((_, v)) => value_type(v),
+        None => DDOG_V1_ATTR_STRING,
+    }
+}
+
+fn attr_str_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> CharSlice<'_> {
+    match map.iter().nth(idx) {
+        Some((_, AttributeValueBytes::String(s))) => char_slice_of(s),
+        _ => CharSlice::empty(),
+    }
+}
+
+fn attr_bytes_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> CharSlice<'_> {
+    match map.iter().nth(idx) {
+        Some((_, AttributeValueBytes::Bytes(b))) => {
+            // Safety: the returned slice borrows from `b`, which stays live and immutable for the
+            // slice's lifetime.
+            unsafe { CharSlice::from_raw_parts(b.as_ref().as_ptr().cast(), b.len()) }
+        }
+        _ => CharSlice::empty(),
+    }
+}
+
+fn attr_int_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> i64 {
+    match map.iter().nth(idx) {
+        Some((_, AttributeValueBytes::Int(v))) => *v,
+        _ => 0,
+    }
+}
+
+fn attr_double_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> f64 {
+    match map.iter().nth(idx) {
+        Some((_, AttributeValueBytes::Float(v))) => *v,
+        _ => 0.0,
+    }
+}
+
+fn attr_bool_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> bool {
+    matches!(map.iter().nth(idx), Some((_, AttributeValueBytes::Bool(true))))
 }
 
 // ------------------- Builder lifecycle -------------------
@@ -137,23 +242,9 @@ pub extern "C" fn ddog_v1_new_builder() -> Box<TracerPayloadV1Builder> {
 #[no_mangle]
 pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadV1Builder>) {}
 
-/// Interns `string` into the builder's value-keyed table and returns its stable id. Equal strings
-/// (including across chunks/spans) always return the same id; the empty string is always id 0.
-#[no_mangle]
-pub extern "C" fn ddog_v1_intern_string(
-    builder: &mut TracerPayloadV1Builder,
-    string: CharSlice,
-) -> u32 {
-    builder.intern(string)
-}
-
 // ------------------- Chunk construction -------------------
 
 /// Appends a new (empty) chunk with the given 128-bit trace id, returning its index.
-///
-/// A chunk must be fully built (all its spans/links/events) before the next chunk is created:
-/// creating a chunk may reallocate the chunk vector and invalidate positions cached as raw
-/// pointers. Indices remain valid.
 #[no_mangle]
 pub extern "C" fn ddog_v1_builder_new_chunk(
     builder: &mut TracerPayloadV1Builder,
@@ -179,16 +270,15 @@ pub extern "C" fn ddog_v1_set_chunk_sampling_priority(
     }
 }
 
-/// Sets the chunk origin (v0.4 `_dd.origin`) from an interned id.
+/// Sets the chunk origin (v0.4 `_dd.origin`).
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_chunk_origin(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
-    origin_id: u32,
+    origin: CharSlice,
 ) {
-    let origin = builder.resolve(origin_id);
     if let Some(c) = builder.chunk_mut(chunk) {
-        c.origin = origin;
+        set_string_field(&mut c.origin, origin);
     }
 }
 
@@ -216,26 +306,23 @@ pub extern "C" fn ddog_v1_set_chunk_dropped_trace(
     }
 }
 
-/// Adds a string-valued chunk-level attribute (key and value are interned ids).
+/// Adds a string-valued chunk-level attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_chunk_attr_str(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
-    key_id: u32,
-    value_id: u32,
+    key: CharSlice,
+    value: CharSlice,
 ) {
-    let key = builder.resolve(key_id);
-    let value = builder.resolve(value_id);
+    let value = AttributeValueBytes::String(to_bytes_string(value));
     if let Some(c) = builder.chunk_mut(chunk) {
-        insert_attr(&mut c.attributes, key, AttributeValueBytes::String(value));
+        insert_attr(&mut c.attributes, key, value);
     }
 }
 
 // ------------------- Span construction -------------------
 
 /// Appends a new (empty) span to `chunk`, returning its index within that chunk.
-///
-/// A span must be fully built before the next span is created in the same chunk.
 #[no_mangle]
 pub extern "C" fn ddog_v1_chunk_new_span(
     builder: &mut TracerPayloadV1Builder,
@@ -250,101 +337,94 @@ pub extern "C" fn ddog_v1_chunk_new_span(
     }
 }
 
-/// Sets the span service (interned id).
+/// Sets the span service.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_service(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.service = value;
+        set_string_field(&mut s.service, value);
     }
 }
 
-/// Sets the span name (interned id).
+/// Sets the span name.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_name(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.name = value;
+        set_string_field(&mut s.name, value);
     }
 }
 
-/// Sets the span resource (interned id).
+/// Sets the span resource.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_resource(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.resource = value;
+        set_string_field(&mut s.resource, value);
     }
 }
 
-/// Sets the span type (interned id).
+/// Sets the span type.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_type(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.r#type = value;
+        set_string_field(&mut s.r#type, value);
     }
 }
 
-/// Sets the span env (interned id).
+/// Sets the span env.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_env(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.env = value;
+        set_string_field(&mut s.env, value);
     }
 }
 
-/// Sets the span version (interned id).
+/// Sets the span version.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_version(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.version = value;
+        set_string_field(&mut s.version, value);
     }
 }
 
-/// Sets the span component (interned id).
+/// Sets the span component.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_span_component(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(s) = builder.span_mut(chunk, span) {
-        s.component = value;
+        set_string_field(&mut s.component, value);
     }
 }
 
@@ -426,81 +506,73 @@ pub extern "C" fn ddog_v1_set_span_kind(
     }
 }
 
-/// Adds a string span attribute (key and value are interned ids).
+/// Adds a string span attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_span_attr_str(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    key_id: u32,
-    value: u32,
+    key: CharSlice,
+    value: CharSlice,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::String(builder.resolve(value));
+    let attr = AttributeValueBytes::String(to_bytes_string(value));
     if let Some(s) = builder.span_mut(chunk, span) {
         insert_attr(&mut s.attributes, key, attr);
     }
 }
 
-/// Adds an integer span attribute (key is an interned id).
+/// Adds an integer span attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_span_attr_int(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    key_id: u32,
+    key: CharSlice,
     value: i64,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Int(value);
     if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, attr);
+        insert_attr(&mut s.attributes, key, AttributeValueBytes::Int(value));
     }
 }
 
-/// Adds a double span attribute (key is an interned id).
+/// Adds a double span attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_span_attr_double(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    key_id: u32,
+    key: CharSlice,
     value: f64,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Float(value);
     if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, attr);
+        insert_attr(&mut s.attributes, key, AttributeValueBytes::Float(value));
     }
 }
 
-/// Adds a boolean span attribute (key is an interned id).
+/// Adds a boolean span attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_span_attr_bool(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    key_id: u32,
+    key: CharSlice,
     value: bool,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Bool(value);
     if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, attr);
+        insert_attr(&mut s.attributes, key, AttributeValueBytes::Bool(value));
     }
 }
 
-/// Adds a bytes-valued span attribute. The key is an interned id; the value bytes are copied
-/// verbatim (not interned) and encoded as msgpack `bin`.
+/// Adds a bytes-valued span attribute. The value bytes are copied verbatim and encoded as msgpack
+/// `bin`.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_span_attr_bytes(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
-    key_id: u32,
+    key: CharSlice,
     value: CharSlice,
 ) {
-    let key = builder.resolve(key_id);
     let bytes = Bytes::copy_from_slice(value.as_bytes());
     if let Some(s) = builder.span_mut(chunk, span) {
         insert_attr(&mut s.attributes, key, AttributeValueBytes::Bytes(bytes));
@@ -568,35 +640,33 @@ pub extern "C" fn ddog_v1_set_link_flags(
     }
 }
 
-/// Sets the link tracestate (interned id).
+/// Sets the link tracestate.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_link_tracestate(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     link: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(l) = builder.link_mut(chunk, span, link) {
-        l.tracestate = value;
+        set_string_field(&mut l.tracestate, value);
     }
 }
 
-/// Adds a string-valued link attribute (key and value are interned ids).
+/// Adds a string-valued link attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_link_attr_str(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     link: usize,
-    key_id: u32,
-    value_id: u32,
+    key: CharSlice,
+    value: CharSlice,
 ) {
-    let key = builder.resolve(key_id);
-    let value = builder.resolve(value_id);
+    let attr = AttributeValueBytes::String(to_bytes_string(value));
     if let Some(l) = builder.link_mut(chunk, span, link) {
-        insert_attr(&mut l.attributes, key, AttributeValueBytes::String(value));
+        insert_attr(&mut l.attributes, key, attr);
     }
 }
 
@@ -632,87 +702,733 @@ pub extern "C" fn ddog_v1_set_event_time(
     }
 }
 
-/// Sets the event name (interned id).
+/// Sets the event name.
 #[no_mangle]
 pub extern "C" fn ddog_v1_set_event_name(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     event: usize,
-    id: u32,
+    value: CharSlice,
 ) {
-    let value = builder.resolve(id);
     if let Some(e) = builder.event_mut(chunk, span, event) {
-        e.name = value;
+        set_string_field(&mut e.name, value);
     }
 }
 
-/// Adds a string event attribute (key and value are interned ids).
+/// Adds a string event attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_event_attr_str(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     event: usize,
-    key_id: u32,
-    value: u32,
+    key: CharSlice,
+    value: CharSlice,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::String(builder.resolve(value));
+    let attr = AttributeValueBytes::String(to_bytes_string(value));
     if let Some(e) = builder.event_mut(chunk, span, event) {
         insert_attr(&mut e.attributes, key, attr);
     }
 }
 
-/// Adds an integer event attribute (key is an interned id).
+/// Adds an integer event attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_event_attr_int(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     event: usize,
-    key_id: u32,
+    key: CharSlice,
     value: i64,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Int(value);
     if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, attr);
+        insert_attr(&mut e.attributes, key, AttributeValueBytes::Int(value));
     }
 }
 
-/// Adds a double event attribute (key is an interned id).
+/// Adds a double event attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_event_attr_double(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     event: usize,
-    key_id: u32,
+    key: CharSlice,
     value: f64,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Float(value);
     if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, attr);
+        insert_attr(&mut e.attributes, key, AttributeValueBytes::Float(value));
     }
 }
 
-/// Adds a boolean event attribute (key is an interned id).
+/// Adds a boolean event attribute.
 #[no_mangle]
 pub extern "C" fn ddog_v1_add_event_attr_bool(
     builder: &mut TracerPayloadV1Builder,
     chunk: usize,
     span: usize,
     event: usize,
-    key_id: u32,
+    key: CharSlice,
     value: bool,
 ) {
-    let key = builder.resolve(key_id);
-    let attr = AttributeValueBytes::Bool(value);
     if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, attr);
+        insert_attr(&mut e.attributes, key, AttributeValueBytes::Bool(value));
     }
+}
+
+// ------------------- Introspection getters -------------------
+//
+// All getters take a shared `&TracerPayloadV1Builder` and return either scalars or `CharSlice`
+// borrows tied to the builder, so the built payload can be read back (e.g. to reconstruct the
+// classic v0.4 span array in userland) without ever handing a `&mut` into the payload to C.
+
+/// Number of chunks in the builder.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_count(builder: &TracerPayloadV1Builder) -> usize {
+    builder.payload.chunks.len()
+}
+
+/// Number of spans in `chunk`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_count(builder: &TracerPayloadV1Builder, chunk: usize) -> usize {
+    builder.chunk(chunk).map_or(0, |c| c.spans.len())
+}
+
+/// Number of links on a span.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> usize {
+    builder.span(chunk, span).map_or(0, |s| s.span_links.len())
+}
+
+/// Number of events on a span.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> usize {
+    builder.span(chunk, span).map_or(0, |s| s.span_events.len())
+}
+
+// ---- Chunk getters ----
+
+/// High 64 bits of the chunk's 128-bit trace id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_trace_id_high(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> u64 {
+    builder.chunk(chunk).map_or(0, |c| trace_id_high(&c.trace_id))
+}
+
+/// Low 64 bits of the chunk's 128-bit trace id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_trace_id_low(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> u64 {
+    builder.chunk(chunk).map_or(0, |c| trace_id_low(&c.trace_id))
+}
+
+/// Reads the chunk sampling priority; returns `false` (and leaves `out` untouched) when unset.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_sampling_priority(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    out: &mut i32,
+) -> bool {
+    match builder.chunk(chunk).and_then(|c| c.priority) {
+        Some(p) => {
+            *out = p;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Reads the chunk sampling mechanism; returns `false` (and leaves `out` untouched) when unset.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_sampling_mechanism(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    out: &mut u32,
+) -> bool {
+    match builder.chunk(chunk).and_then(|c| c.sampling_mechanism) {
+        Some(m) => {
+            *out = m;
+            true
+        }
+        None => false,
+    }
+}
+
+/// The chunk origin (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_origin(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> CharSlice<'_> {
+    match builder.chunk(chunk) {
+        Some(c) => char_slice_of(&c.origin),
+        None => CharSlice::empty(),
+    }
+}
+
+/// Whether the chunk is a dropped (p0) trace.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_dropped_trace(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> bool {
+    builder.chunk(chunk).is_some_and(|c| c.dropped_trace)
+}
+
+/// Number of chunk-level attributes.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_attr_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> usize {
+    builder.chunk(chunk).map_or(0, |c| attr_count(&c.attributes))
+}
+
+/// Key of the chunk attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_attr_key(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.chunk(chunk) {
+        Some(c) => attr_key_at(&c.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// [`DDOG_V1_ATTR_*`] type tag of the chunk attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_attr_type(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    idx: usize,
+) -> u32 {
+    builder
+        .chunk(chunk)
+        .map_or(DDOG_V1_ATTR_STRING, |c| attr_type_at(&c.attributes, idx))
+}
+
+/// String value of the chunk attribute at `idx` (empty unless it is a string).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_attr_str(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.chunk(chunk) {
+        Some(c) => attr_str_at(&c.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+// ---- Span getters ----
+
+/// The span service (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_service(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.service),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span name (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_name(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.name),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span resource (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_resource(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.resource),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span type (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_type(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.r#type),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span env (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_env(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.env),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span version (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_version(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.version),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span component (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_component(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => char_slice_of(&s.component),
+        None => CharSlice::empty(),
+    }
+}
+
+/// The span id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_id(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> u64 {
+    builder.span(chunk, span).map_or(0, |s| s.span_id)
+}
+
+/// The span parent id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_parent_id(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> u64 {
+    builder.span(chunk, span).map_or(0, |s| s.parent_id)
+}
+
+/// The span start time (unix nanos).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_start(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> i64 {
+    builder.span(chunk, span).map_or(0, |s| s.start)
+}
+
+/// The span duration (nanos).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_duration(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> i64 {
+    builder.span(chunk, span).map_or(0, |s| s.duration)
+}
+
+/// The span error flag.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_error(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> bool {
+    builder.span(chunk, span).is_some_and(|s| s.error)
+}
+
+/// The span kind as its OTEL wire value.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_kind(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> u32 {
+    builder
+        .span(chunk, span)
+        .map_or(SpanKind::default() as u32, |s| s.span_kind as u32)
+}
+
+/// Number of attributes on a span.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> usize {
+    builder
+        .span(chunk, span)
+        .map_or(0, |s| attr_count(&s.attributes))
+}
+
+/// Key of the span attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_key(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => attr_key_at(&s.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// [`DDOG_V1_ATTR_*`] type tag of the span attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_type(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> u32 {
+    builder
+        .span(chunk, span)
+        .map_or(DDOG_V1_ATTR_STRING, |s| attr_type_at(&s.attributes, idx))
+}
+
+/// String value of the span attribute at `idx` (empty unless it is a string).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_str(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => attr_str_at(&s.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// Integer value of the span attribute at `idx` (0 unless it is an int).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_int(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> i64 {
+    builder
+        .span(chunk, span)
+        .map_or(0, |s| attr_int_at(&s.attributes, idx))
+}
+
+/// Double value of the span attribute at `idx` (0.0 unless it is a double).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_double(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> f64 {
+    builder
+        .span(chunk, span)
+        .map_or(0.0, |s| attr_double_at(&s.attributes, idx))
+}
+
+/// Boolean value of the span attribute at `idx` (false unless it is a true bool).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_bool(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> bool {
+    builder
+        .span(chunk, span)
+        .is_some_and(|s| attr_bool_at(&s.attributes, idx))
+}
+
+/// Bytes value of the span attribute at `idx` (empty unless it is a bytes value).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_span_attr_bytes(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.span(chunk, span) {
+        Some(s) => attr_bytes_at(&s.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+// ---- Link getters ----
+
+/// High 64 bits of the link's 128-bit trace id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_trace_id_high(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> u64 {
+    builder
+        .link(chunk, span, link)
+        .map_or(0, |l| trace_id_high(&l.trace_id))
+}
+
+/// Low 64 bits of the link's 128-bit trace id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_trace_id_low(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> u64 {
+    builder
+        .link(chunk, span, link)
+        .map_or(0, |l| trace_id_low(&l.trace_id))
+}
+
+/// The link span id.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_span_id(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> u64 {
+    builder.link(chunk, span, link).map_or(0, |l| l.span_id)
+}
+
+/// The link flags.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_flags(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> u32 {
+    builder.link(chunk, span, link).map_or(0, |l| l.flags)
+}
+
+/// The link tracestate (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_tracestate(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> CharSlice<'_> {
+    match builder.link(chunk, span, link) {
+        Some(l) => char_slice_of(&l.tracestate),
+        None => CharSlice::empty(),
+    }
+}
+
+/// Number of attributes on a link.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_attr_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+) -> usize {
+    builder
+        .link(chunk, span, link)
+        .map_or(0, |l| attr_count(&l.attributes))
+}
+
+/// Key of the link attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_attr_key(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.link(chunk, span, link) {
+        Some(l) => attr_key_at(&l.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// String value of the link attribute at `idx` (empty unless it is a string).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_link_attr_str(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    link: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.link(chunk, span, link) {
+        Some(l) => attr_str_at(&l.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+// ---- Event getters ----
+
+/// The event time (unix nanos).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_time(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+) -> u64 {
+    builder
+        .event(chunk, span, event)
+        .map_or(0, |e| e.time_unix_nano)
+}
+
+/// The event name (empty if unset).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_name(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+) -> CharSlice<'_> {
+    match builder.event(chunk, span, event) {
+        Some(e) => char_slice_of(&e.name),
+        None => CharSlice::empty(),
+    }
+}
+
+/// Number of attributes on an event.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_count(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+) -> usize {
+    builder
+        .event(chunk, span, event)
+        .map_or(0, |e| attr_count(&e.attributes))
+}
+
+/// Key of the event attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_key(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.event(chunk, span, event) {
+        Some(e) => attr_key_at(&e.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// [`DDOG_V1_ATTR_*`] type tag of the event attribute at `idx`.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_type(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> u32 {
+    builder
+        .event(chunk, span, event)
+        .map_or(DDOG_V1_ATTR_STRING, |e| attr_type_at(&e.attributes, idx))
+}
+
+/// String value of the event attribute at `idx` (empty unless it is a string).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_str(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> CharSlice<'_> {
+    match builder.event(chunk, span, event) {
+        Some(e) => attr_str_at(&e.attributes, idx),
+        None => CharSlice::empty(),
+    }
+}
+
+/// Integer value of the event attribute at `idx` (0 unless it is an int).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_int(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> i64 {
+    builder
+        .event(chunk, span, event)
+        .map_or(0, |e| attr_int_at(&e.attributes, idx))
+}
+
+/// Double value of the event attribute at `idx` (0.0 unless it is a double).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_double(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> f64 {
+    builder
+        .event(chunk, span, event)
+        .map_or(0.0, |e| attr_double_at(&e.attributes, idx))
+}
+
+/// Boolean value of the event attribute at `idx` (false unless it is a true bool).
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_event_attr_bool(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+    event: usize,
+    idx: usize,
+) -> bool {
+    builder
+        .event(chunk, span, event)
+        .is_some_and(|e| attr_bool_at(&e.attributes, idx))
 }
 
 // ------------------- Payload-level metadata -------------------
@@ -763,46 +1479,21 @@ mod tests {
     }
 
     #[test]
-    fn intern_empty_is_zero_and_dedups() {
-        let mut b = TracerPayloadV1Builder::default();
-        assert_eq!(b.intern(CharSlice::empty()), 0);
-        assert_eq!(b.intern(cs("")), 0);
-        let a = b.intern(cs("svc"));
-        let a2 = b.intern(cs("svc"));
-        let c = b.intern(cs("other"));
-        assert_eq!(a, a2, "equal strings must share an id");
-        assert_ne!(a, c);
-        assert_eq!(a, 1);
-        assert_eq!(c, 2);
-        // id 0 always resolves to empty.
-        assert!(b.resolve(0).as_str().is_empty());
-        assert_eq!(b.resolve(a).as_str(), "svc");
-        // out-of-range id resolves to empty.
-        assert!(b.resolve(999).as_str().is_empty());
-    }
-
-    #[test]
     fn builds_span_with_promoted_and_typed_attributes() {
         let mut b = TracerPayloadV1Builder::default();
-        let svc = ddog_v1_intern_string(&mut b, cs("svc"));
-        let name = ddog_v1_intern_string(&mut b, cs("op"));
-        let res = ddog_v1_intern_string(&mut b, cs("res"));
-        let kstr = ddog_v1_intern_string(&mut b, cs("k_str"));
-        let vstr = ddog_v1_intern_string(&mut b, cs("v_str"));
-        let kint = ddog_v1_intern_string(&mut b, cs("k_int"));
 
         let ci = ddog_v1_builder_new_chunk(&mut b, 0, 0x0123456789abcdef);
         let si = ddog_v1_chunk_new_span(&mut b, ci);
-        ddog_v1_set_span_service(&mut b, ci, si, svc);
-        ddog_v1_set_span_name(&mut b, ci, si, name);
-        ddog_v1_set_span_resource(&mut b, ci, si, res);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
+        ddog_v1_set_span_name(&mut b, ci, si, cs("op"));
+        ddog_v1_set_span_resource(&mut b, ci, si, cs("res"));
         ddog_v1_set_span_id(&mut b, ci, si, 42);
         ddog_v1_set_span_start(&mut b, ci, si, 1_000);
         ddog_v1_set_span_duration(&mut b, ci, si, 500);
         ddog_v1_set_span_error(&mut b, ci, si, true);
         ddog_v1_set_span_kind(&mut b, ci, si, 2); // Server
-        ddog_v1_add_span_attr_str(&mut b, ci, si, kstr, vstr);
-        ddog_v1_add_span_attr_int(&mut b, ci, si, kint, 7);
+        ddog_v1_add_span_attr_str(&mut b, ci, si, cs("k_str"), cs("v_str"));
+        ddog_v1_add_span_attr_int(&mut b, ci, si, cs("k_int"), 7);
 
         let payload = b.into_payload();
         let encoded = to_vec_from_v1(&payload);
@@ -813,7 +1504,6 @@ mod tests {
             0xcd, 0xef,
         ];
         assert!(encoded.windows(16).any(|w| w == expected_tid));
-        // strings appear
         for s in &[b"svc" as &[u8], b"op", b"res", b"k_str", b"v_str", b"k_int"] {
             assert!(
                 encoded.windows(s.len()).any(|w| w == *s),
@@ -826,26 +1516,136 @@ mod tests {
     }
 
     #[test]
-    fn interning_streams_repeat_as_uint_id() {
-        // "shared" used as service in two chunks must appear as raw bytes exactly once on the
-        // wire; the second occurrence is a uint id emitted by the encoder's streaming table.
+    fn getters_round_trip_setters() {
         let mut b = TracerPayloadV1Builder::default();
-        let shared = ddog_v1_intern_string(&mut b, cs("shared"));
-        let op1 = ddog_v1_intern_string(&mut b, cs("op1"));
-        let op2 = ddog_v1_intern_string(&mut b, cs("op2"));
-        // Interning the same string again returns the same id (value-keyed dedup).
-        assert_eq!(ddog_v1_intern_string(&mut b, cs("shared")), shared);
+
+        let ci = ddog_v1_builder_new_chunk(&mut b, 0xaabb, 0xccdd);
+        ddog_v1_set_chunk_sampling_priority(&mut b, ci, 2);
+        ddog_v1_set_chunk_origin(&mut b, ci, cs("lambda"));
+        ddog_v1_set_chunk_sampling_mechanism(&mut b, ci, 4);
+        ddog_v1_set_chunk_dropped_trace(&mut b, ci, true);
+        ddog_v1_add_chunk_attr_str(&mut b, ci, cs("c_key"), cs("c_val"));
+
+        let si = ddog_v1_chunk_new_span(&mut b, ci);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
+        ddog_v1_set_span_name(&mut b, ci, si, cs("op"));
+        ddog_v1_set_span_resource(&mut b, ci, si, cs("res"));
+        ddog_v1_set_span_type(&mut b, ci, si, cs("web"));
+        ddog_v1_set_span_env(&mut b, ci, si, cs("prod"));
+        ddog_v1_set_span_version(&mut b, ci, si, cs("1.2.3"));
+        ddog_v1_set_span_component(&mut b, ci, si, cs("pdo"));
+        ddog_v1_set_span_id(&mut b, ci, si, 42);
+        ddog_v1_set_span_parent_id(&mut b, ci, si, 7);
+        ddog_v1_set_span_start(&mut b, ci, si, 1_000);
+        ddog_v1_set_span_duration(&mut b, ci, si, 500);
+        ddog_v1_set_span_error(&mut b, ci, si, true);
+        ddog_v1_set_span_kind(&mut b, ci, si, 3); // Client
+        ddog_v1_add_span_attr_str(&mut b, ci, si, cs("a_str"), cs("v"));
+        ddog_v1_add_span_attr_int(&mut b, ci, si, cs("a_int"), 11);
+        ddog_v1_add_span_attr_double(&mut b, ci, si, cs("a_dbl"), 1.5);
+        ddog_v1_add_span_attr_bool(&mut b, ci, si, cs("a_bool"), true);
+        ddog_v1_add_span_attr_bytes(&mut b, ci, si, cs("a_bytes"), cs("raw"));
+
+        let li = ddog_v1_span_new_link(&mut b, ci, si);
+        ddog_v1_set_link_trace_id(&mut b, ci, si, li, 0x11, 0x22);
+        ddog_v1_set_link_span_id(&mut b, ci, si, li, 9);
+        ddog_v1_set_link_flags(&mut b, ci, si, li, 1);
+        ddog_v1_set_link_tracestate(&mut b, ci, si, li, cs("dd=s:1"));
+        ddog_v1_add_link_attr_str(&mut b, ci, si, li, cs("l_key"), cs("l_val"));
+
+        let evi = ddog_v1_span_new_event(&mut b, ci, si);
+        ddog_v1_set_event_time(&mut b, ci, si, evi, 123);
+        ddog_v1_set_event_name(&mut b, ci, si, evi, cs("exception"));
+        ddog_v1_add_event_attr_int(&mut b, ci, si, evi, cs("e_int"), 5);
+
+        // Chunk getters.
+        assert_eq!(ddog_v1_get_chunk_count(&b), 1);
+        assert_eq!(ddog_v1_get_chunk_trace_id_high(&b, ci), 0xaabb);
+        assert_eq!(ddog_v1_get_chunk_trace_id_low(&b, ci), 0xccdd);
+        let mut prio = 0;
+        assert!(ddog_v1_get_chunk_sampling_priority(&b, ci, &mut prio));
+        assert_eq!(prio, 2);
+        let mut mech = 0;
+        assert!(ddog_v1_get_chunk_sampling_mechanism(&b, ci, &mut mech));
+        assert_eq!(mech, 4);
+        assert_eq!(ddog_v1_get_chunk_origin(&b, ci).to_utf8_lossy(), "lambda");
+        assert!(ddog_v1_get_chunk_dropped_trace(&b, ci));
+        assert_eq!(ddog_v1_get_chunk_attr_count(&b, ci), 1);
+        assert_eq!(ddog_v1_get_chunk_attr_key(&b, ci, 0).to_utf8_lossy(), "c_key");
+        assert_eq!(ddog_v1_get_chunk_attr_type(&b, ci, 0), DDOG_V1_ATTR_STRING);
+        assert_eq!(ddog_v1_get_chunk_attr_str(&b, ci, 0).to_utf8_lossy(), "c_val");
+
+        // Span getters.
+        assert_eq!(ddog_v1_get_span_count(&b, ci), 1);
+        assert_eq!(ddog_v1_get_span_service(&b, ci, si).to_utf8_lossy(), "svc");
+        assert_eq!(ddog_v1_get_span_name(&b, ci, si).to_utf8_lossy(), "op");
+        assert_eq!(ddog_v1_get_span_resource(&b, ci, si).to_utf8_lossy(), "res");
+        assert_eq!(ddog_v1_get_span_type(&b, ci, si).to_utf8_lossy(), "web");
+        assert_eq!(ddog_v1_get_span_env(&b, ci, si).to_utf8_lossy(), "prod");
+        assert_eq!(ddog_v1_get_span_version(&b, ci, si).to_utf8_lossy(), "1.2.3");
+        assert_eq!(ddog_v1_get_span_component(&b, ci, si).to_utf8_lossy(), "pdo");
+        assert_eq!(ddog_v1_get_span_id(&b, ci, si), 42);
+        assert_eq!(ddog_v1_get_span_parent_id(&b, ci, si), 7);
+        assert_eq!(ddog_v1_get_span_start(&b, ci, si), 1_000);
+        assert_eq!(ddog_v1_get_span_duration(&b, ci, si), 500);
+        assert!(ddog_v1_get_span_error(&b, ci, si));
+        assert_eq!(ddog_v1_get_span_kind(&b, ci, si), 3);
+
+        // Span attributes: 5 typed values in insertion order.
+        assert_eq!(ddog_v1_get_span_attr_count(&b, ci, si), 5);
+        assert_eq!(ddog_v1_get_span_attr_key(&b, ci, si, 0).to_utf8_lossy(), "a_str");
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 0), DDOG_V1_ATTR_STRING);
+        assert_eq!(ddog_v1_get_span_attr_str(&b, ci, si, 0).to_utf8_lossy(), "v");
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 1), DDOG_V1_ATTR_INT);
+        assert_eq!(ddog_v1_get_span_attr_int(&b, ci, si, 1), 11);
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 2), DDOG_V1_ATTR_DOUBLE);
+        assert_eq!(ddog_v1_get_span_attr_double(&b, ci, si, 2), 1.5);
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 3), DDOG_V1_ATTR_BOOL);
+        assert!(ddog_v1_get_span_attr_bool(&b, ci, si, 3));
+        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 4), DDOG_V1_ATTR_BYTES);
+        assert_eq!(ddog_v1_get_span_attr_bytes(&b, ci, si, 4).to_utf8_lossy(), "raw");
+
+        // Link getters.
+        assert_eq!(ddog_v1_get_link_count(&b, ci, si), 1);
+        assert_eq!(ddog_v1_get_link_trace_id_high(&b, ci, si, li), 0x11);
+        assert_eq!(ddog_v1_get_link_trace_id_low(&b, ci, si, li), 0x22);
+        assert_eq!(ddog_v1_get_link_span_id(&b, ci, si, li), 9);
+        assert_eq!(ddog_v1_get_link_flags(&b, ci, si, li), 1);
+        assert_eq!(ddog_v1_get_link_tracestate(&b, ci, si, li).to_utf8_lossy(), "dd=s:1");
+        assert_eq!(ddog_v1_get_link_attr_count(&b, ci, si, li), 1);
+        assert_eq!(ddog_v1_get_link_attr_key(&b, ci, si, li, 0).to_utf8_lossy(), "l_key");
+        assert_eq!(ddog_v1_get_link_attr_str(&b, ci, si, li, 0).to_utf8_lossy(), "l_val");
+
+        // Event getters.
+        assert_eq!(ddog_v1_get_event_count(&b, ci, si), 1);
+        assert_eq!(ddog_v1_get_event_time(&b, ci, si, evi), 123);
+        assert_eq!(ddog_v1_get_event_name(&b, ci, si, evi).to_utf8_lossy(), "exception");
+        assert_eq!(ddog_v1_get_event_attr_count(&b, ci, si, evi), 1);
+        assert_eq!(ddog_v1_get_event_attr_key(&b, ci, si, evi, 0).to_utf8_lossy(), "e_int");
+        assert_eq!(ddog_v1_get_event_attr_type(&b, ci, si, evi, 0), DDOG_V1_ATTR_INT);
+        assert_eq!(ddog_v1_get_event_attr_int(&b, ci, si, evi, 0), 5);
+
+        // Out-of-range access is safe and returns defaults.
+        assert_eq!(ddog_v1_get_span_service(&b, 99, 0).to_utf8_lossy(), "");
+        assert_eq!(ddog_v1_get_span_id(&b, 0, 99), 0);
+    }
+
+    #[test]
+    fn encoder_streams_repeated_string_once() {
+        // "shared" used as service in two chunks must appear as raw bytes exactly once on the
+        // wire: the encoder's streaming string table emits the second occurrence as a uint id.
+        let mut b = TracerPayloadV1Builder::default();
 
         let c0 = ddog_v1_builder_new_chunk(&mut b, 0, 1);
         let s0 = ddog_v1_chunk_new_span(&mut b, c0);
-        ddog_v1_set_span_service(&mut b, c0, s0, shared);
-        ddog_v1_set_span_name(&mut b, c0, s0, op1);
+        ddog_v1_set_span_service(&mut b, c0, s0, cs("shared"));
+        ddog_v1_set_span_name(&mut b, c0, s0, cs("op1"));
         ddog_v1_set_span_id(&mut b, c0, s0, 1);
 
         let c1 = ddog_v1_builder_new_chunk(&mut b, 0, 2);
         let s1 = ddog_v1_chunk_new_span(&mut b, c1);
-        ddog_v1_set_span_service(&mut b, c1, s1, shared);
-        ddog_v1_set_span_name(&mut b, c1, s1, op2);
+        ddog_v1_set_span_service(&mut b, c1, s1, cs("shared"));
+        ddog_v1_set_span_name(&mut b, c1, s1, cs("op2"));
         ddog_v1_set_span_id(&mut b, c1, s1, 2);
 
         let encoded = to_vec_from_v1(&b.into_payload());
@@ -862,29 +1662,23 @@ mod tests {
     #[test]
     fn builds_links_and_events() {
         let mut b = TracerPayloadV1Builder::default();
-        let svc = ddog_v1_intern_string(&mut b, cs("svc"));
-        let ev_name = ddog_v1_intern_string(&mut b, cs("exception"));
-        let ts = ddog_v1_intern_string(&mut b, cs("dd=s:1"));
-        let ak = ddog_v1_intern_string(&mut b, cs("link.attr"));
-        let av = ddog_v1_intern_string(&mut b, cs("link.val"));
-        let ek = ddog_v1_intern_string(&mut b, cs("ev.attr"));
 
         let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
         let si = ddog_v1_chunk_new_span(&mut b, ci);
-        ddog_v1_set_span_service(&mut b, ci, si, svc);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
         ddog_v1_set_span_id(&mut b, ci, si, 1);
 
         let li = ddog_v1_span_new_link(&mut b, ci, si);
         ddog_v1_set_link_trace_id(&mut b, ci, si, li, 0xaa, 0xbb);
         ddog_v1_set_link_span_id(&mut b, ci, si, li, 9);
         ddog_v1_set_link_flags(&mut b, ci, si, li, 1);
-        ddog_v1_set_link_tracestate(&mut b, ci, si, li, ts);
-        ddog_v1_add_link_attr_str(&mut b, ci, si, li, ak, av);
+        ddog_v1_set_link_tracestate(&mut b, ci, si, li, cs("dd=s:1"));
+        ddog_v1_add_link_attr_str(&mut b, ci, si, li, cs("link.attr"), cs("link.val"));
 
         let evi = ddog_v1_span_new_event(&mut b, ci, si);
         ddog_v1_set_event_time(&mut b, ci, si, evi, 123);
-        ddog_v1_set_event_name(&mut b, ci, si, evi, ev_name);
-        ddog_v1_add_event_attr_int(&mut b, ci, si, evi, ek, 5);
+        ddog_v1_set_event_name(&mut b, ci, si, evi, cs("exception"));
+        ddog_v1_add_event_attr_int(&mut b, ci, si, evi, cs("ev.attr"), 5);
 
         let encoded = to_vec_from_v1(&b.into_payload());
         for s in &[
@@ -911,15 +1705,13 @@ mod tests {
     #[test]
     fn chunk_level_fields_encoded() {
         let mut b = TracerPayloadV1Builder::default();
-        let origin = ddog_v1_intern_string(&mut b, cs("lambda"));
-        let svc = ddog_v1_intern_string(&mut b, cs("svc"));
         let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
         ddog_v1_set_chunk_sampling_priority(&mut b, ci, 2);
-        ddog_v1_set_chunk_origin(&mut b, ci, origin);
+        ddog_v1_set_chunk_origin(&mut b, ci, cs("lambda"));
         ddog_v1_set_chunk_sampling_mechanism(&mut b, ci, 4);
         ddog_v1_set_chunk_dropped_trace(&mut b, ci, true);
         let si = ddog_v1_chunk_new_span(&mut b, ci);
-        ddog_v1_set_span_service(&mut b, ci, si, svc);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
         ddog_v1_set_span_id(&mut b, ci, si, 1);
 
         let encoded = to_vec_from_v1(&b.into_payload());
@@ -933,10 +1725,9 @@ mod tests {
     #[test]
     fn populate_metadata_sets_container_id_and_fields() {
         let mut b = TracerPayloadV1Builder::default();
-        let svc = ddog_v1_intern_string(&mut b, cs("svc"));
         let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
         let si = ddog_v1_chunk_new_span(&mut b, ci);
-        ddog_v1_set_span_service(&mut b, ci, si, svc);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
         ddog_v1_set_span_id(&mut b, ci, si, 1);
         let mut payload = b.into_payload();
 

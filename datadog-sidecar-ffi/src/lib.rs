@@ -2224,6 +2224,59 @@ pub extern "C" fn ddog_serialize_trace_v1_into_charslice(
     unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
 }
 
+/// Transcodes an existing v0.4 trace collection (built with the v0.4 [`crate::span`] builder) into
+/// owned V1 msgpack bytes, for the in-process (non-sidecar) sender in `coms.c`. That sender builds
+/// v0.4 today; this lets it emit V1 to the agent's `/v1.0/traces` endpoint without a second builder,
+/// by upgrading the already-built v0.4 payload via [`msgpack_encoder::v1::to_vec_from_v04`]. When the
+/// agent isn't V1-capable, the caller sends its v0.4 bytes directly instead of calling this — so the
+/// V1 upgrade is an isolated, removable bolt-on gated by that endpoint check.
+///
+/// The V1 wire payload carries tracer metadata inline (v0.4 sends it as HTTP headers), so the
+/// promoted fields are supplied here exactly as the V1 sidecar path applies them:
+/// `container_id`/`language_name`/`language_version`/`tracer_version` from the caller's tracer header
+/// tags and `hostname`/`env`/`app_version`/`runtime_id`/`git_commit_sha` from `metadata`.
+///
+/// Consumes nothing; `traces` is deduped in place (as the v0.4 shm sender does) before encoding. The
+/// returned slice is an owned allocation that must be freed with [`crate::span::ddog_free_charslice`].
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn ddog_serialize_trace_v04_as_v1_into_charslice(
+    traces: &mut TracesBytes,
+    metadata: &TracerMetadataV1,
+    container_id: CharSlice,
+    language_name: CharSlice,
+    language_version: CharSlice,
+    tracer_version: CharSlice,
+) -> CharSlice<'static> {
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
+
+    let tracer_metadata = libdd_trace_utils::tracer_metadata::TracerMetadata {
+        hostname: metadata.hostname.to_utf8_lossy().into_owned(),
+        env: metadata.env.to_utf8_lossy().into_owned(),
+        app_version: metadata.app_version.to_utf8_lossy().into_owned(),
+        runtime_id: metadata.runtime_id.to_utf8_lossy().into_owned(),
+        tracer_version: tracer_version.to_utf8_lossy().into_owned(),
+        language: language_name.to_utf8_lossy().into_owned(),
+        language_version: language_version.to_utf8_lossy().into_owned(),
+        container_id: container_id.to_utf8_lossy().into_owned(),
+        git_commit_sha: metadata.git_commit_sha.to_utf8_lossy().into_owned(),
+        ..Default::default()
+    };
+
+    let boxed =
+        msgpack_encoder::v1::to_vec_from_v04(traces.as_slice(), &tracer_metadata).into_boxed_slice();
+    let boxed_len = boxed.len();
+    let leaked_ptr = Box::into_raw(boxed) as *const c_char;
+
+    // Safety: `leaked_ptr`/`boxed_len` describe the just-leaked owned allocation; ownership
+    // transfers to the caller, who must free it via `ddog_free_charslice`.
+    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
+}
+
 /// Drops the agent info reader.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -2261,28 +2314,24 @@ mod tests {
     #[test]
     fn serialize_trace_v1_into_charslice_yields_valid_v1_with_promoted_fields() {
         use crate::span_v1::{
-            ddog_v1_builder_new_chunk, ddog_v1_chunk_new_span, ddog_v1_intern_string,
-            ddog_v1_new_builder, ddog_v1_set_span_id, ddog_v1_set_span_name,
-            ddog_v1_set_span_service,
+            ddog_v1_builder_new_chunk, ddog_v1_chunk_new_span, ddog_v1_new_builder,
+            ddog_v1_set_span_id, ddog_v1_set_span_name, ddog_v1_set_span_service,
         };
 
         let mut builder = ddog_v1_new_builder();
+
         // A service string reused across two spans proves the encoder's streaming string table
         // (it must land on the wire exactly once).
-        let svc = ddog_v1_intern_string(&mut builder, CharSlice::from("svc-shared"));
-        let op1 = ddog_v1_intern_string(&mut builder, CharSlice::from("op-one"));
-        let op2 = ddog_v1_intern_string(&mut builder, CharSlice::from("op-two"));
-
         let c0 = ddog_v1_builder_new_chunk(&mut builder, 0, 1);
         let s0 = ddog_v1_chunk_new_span(&mut builder, c0);
-        ddog_v1_set_span_service(&mut builder, c0, s0, svc);
-        ddog_v1_set_span_name(&mut builder, c0, s0, op1);
+        ddog_v1_set_span_service(&mut builder, c0, s0, CharSlice::from("svc-shared"));
+        ddog_v1_set_span_name(&mut builder, c0, s0, CharSlice::from("op-one"));
         ddog_v1_set_span_id(&mut builder, c0, s0, 1);
 
         let c1 = ddog_v1_builder_new_chunk(&mut builder, 0, 2);
         let s1 = ddog_v1_chunk_new_span(&mut builder, c1);
-        ddog_v1_set_span_service(&mut builder, c1, s1, svc);
-        ddog_v1_set_span_name(&mut builder, c1, s1, op2);
+        ddog_v1_set_span_service(&mut builder, c1, s1, CharSlice::from("svc-shared"));
+        ddog_v1_set_span_name(&mut builder, c1, s1, CharSlice::from("op-two"));
         ddog_v1_set_span_id(&mut builder, c1, s1, 2);
 
         let metadata = TracerMetadataV1 {
@@ -2336,6 +2385,69 @@ mod tests {
             .filter(|w| *w == b"svc-shared")
             .count();
         assert_eq!(occurrences, 1, "repeated string must be interned on the wire");
+
+        // Safety: `slice` is the owned allocation just returned above.
+        unsafe { crate::span::ddog_free_charslice(slice) };
+    }
+
+    #[test]
+    fn serialize_trace_v04_as_v1_yields_valid_v1_with_promoted_fields() {
+        use crate::span::{
+            ddog_add_span_meta, ddog_get_traces, ddog_set_span_id, ddog_set_span_name,
+            ddog_set_span_service, ddog_trace_new_span, ddog_traces_new_trace,
+        };
+
+        // Build a v0.4 trace collection with the existing v0.4 builder.
+        let mut traces = ddog_get_traces();
+        let trace = ddog_traces_new_trace(&mut traces);
+        let span = ddog_trace_new_span(trace);
+        ddog_set_span_service(span, CharSlice::from("svc-04"));
+        ddog_set_span_name(span, CharSlice::from("op-04"));
+        ddog_set_span_id(span, 7);
+        ddog_add_span_meta(span, CharSlice::from("http.method"), CharSlice::from("GET"));
+
+        let metadata = TracerMetadataV1 {
+            hostname: CharSlice::from("host-1"),
+            env: CharSlice::from("staging"),
+            app_version: CharSlice::from("1.2.3"),
+            runtime_id: CharSlice::from("runtime-abc"),
+            git_commit_sha: CharSlice::from("deadbeefcafe"),
+        };
+
+        let slice = ddog_serialize_trace_v04_as_v1_into_charslice(
+            &mut traces,
+            &metadata,
+            CharSlice::from("container-xyz"),
+            CharSlice::from("php"),
+            CharSlice::from("8.2.0"),
+            CharSlice::from("9.8.7"),
+        );
+
+        assert!(!slice.is_empty(), "must produce non-empty msgpack");
+        let bytes = slice.as_bytes();
+
+        // Valid v1 msgpack: round-trips through the v1 decoder, consuming the whole buffer.
+        let (payload, consumed) = libdd_trace_utils::msgpack_decoder::v1::from_slice(bytes)
+            .expect("output must be valid v1 msgpack");
+        assert_eq!(consumed, bytes.len(), "decoder must consume the whole buffer");
+
+        // Promoted payload-level metadata fields survive the upgrade.
+        assert_eq!(payload.container_id, "container-xyz");
+        assert_eq!(payload.language_name, "php");
+        assert_eq!(payload.language_version, "8.2.0");
+        assert_eq!(payload.tracer_version, "9.8.7");
+        assert_eq!(payload.runtime_id, "runtime-abc");
+        assert_eq!(payload.chunks.len(), 1);
+        assert_eq!(payload.chunks[0].spans.len(), 1);
+
+        // The v0.4 span data is carried through the upgrade.
+        for s in &[b"svc-04" as &[u8], b"op-04", b"http.method", b"GET"] {
+            assert!(
+                bytes.windows(s.len()).any(|w| w == *s),
+                "{} should appear",
+                std::str::from_utf8(s).unwrap()
+            );
+        }
 
         // Safety: `slice` is the owned allocation just returned above.
         unsafe { crate::span::ddog_free_charslice(slice) };
