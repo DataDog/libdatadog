@@ -32,6 +32,8 @@ use libdd_trace_utils::span::v1::{
 };
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::borrow::Cow;
+use std::ffi::CString;
+use std::fmt::Write as _;
 
 /// Attribute value type tags returned by the `ddog_v1_get_*_attr_type` getters. They let a C caller
 /// pick the matching typed value getter (`_attr_str`/`_attr_int`/`_attr_double`/`_attr_bool`/
@@ -1570,6 +1572,107 @@ pub(crate) fn populate_payload_metadata(
     }
 }
 
+// ------------------- Debug logging -------------------
+
+/// Renders 16 big-endian trace-id bytes as a 32-char lowercase hex string.
+fn hex16(bytes: &[u8; 16]) -> String {
+    let mut s = String::with_capacity(32);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+/// Renders a typed V1 attribute value in a compact, readable form (strings quoted, byte blobs shown
+/// as a length, key-values/lists rendered recursively).
+fn render_attr_value(value: &AttributeValueBytes) -> String {
+    match value {
+        AttributeValueBytes::String(s) => format!("{:?}", s.as_str()),
+        AttributeValueBytes::Int(i) => i.to_string(),
+        AttributeValueBytes::Float(f) => f.to_string(),
+        AttributeValueBytes::Bool(b) => b.to_string(),
+        AttributeValueBytes::Bytes(b) => format!("<{} bytes>", b.len()),
+        AttributeValueBytes::KeyValue(m) => {
+            let inner: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{}: {}", k.as_str(), render_attr_value(v)))
+                .collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        AttributeValueBytes::List(list) => {
+            let inner: Vec<String> = list.iter().map(render_attr_value).collect();
+            format!("[{}]", inner.join(", "))
+        }
+    }
+}
+
+/// Renders a V1 span (plus its owning chunk's trace id) as the readable diagnostic string, covering
+/// service/name/resource/type, ids, timestamps, error/kind, the promoted fields (env/version/
+/// component), typed attributes, and link/event counts.
+fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> String {
+    let mut out = String::new();
+    if let Some(c) = chunk {
+        let _ = write!(out, "trace_id={} ", hex16(&c.trace_id));
+    }
+    let _ = write!(
+        out,
+        "service={:?} name={:?} resource={:?} type={:?} span_id={} parent_id={} \
+         start={} duration={} error={} kind={:?} env={:?} version={:?} component={:?}",
+        span.service.as_str(),
+        span.name.as_str(),
+        span.resource.as_str(),
+        span.r#type.as_str(),
+        span.span_id,
+        span.parent_id,
+        span.start,
+        span.duration,
+        span.error,
+        span.span_kind,
+        span.env.as_str(),
+        span.version.as_str(),
+        span.component.as_str(),
+    );
+    let attrs: Vec<String> = span
+        .attributes
+        .iter()
+        .map(|(k, v)| format!("{}={}", k.as_str(), render_attr_value(v)))
+        .collect();
+    let _ = write!(
+        out,
+        " attributes={{{}}} links={} events={}",
+        attrs.join(", "),
+        span.span_links.len(),
+        span.span_events.len(),
+    );
+    out
+}
+
+/// Renders the span at index `chunk`/`span` as a human-readable diagnostic string, mirroring the
+/// v0.4 [`crate::span::ddog_span_debug_log`] used by dd-trace-php to emit the `DD_TRACE_DEBUG`
+/// "[span] Encoding span: …" line on the V1 path. Unlike the v0.4 variant it is index-addressed (the
+/// V1 builder never hands out `&mut`/`&` span handles to C); an out-of-range index yields an empty
+/// slice.
+///
+/// The returned slice is an owned allocation that must be freed with the very same free function as
+/// the v0.4 variant, [`crate::span::ddog_free_charslice`].
+#[no_mangle]
+pub extern "C" fn ddog_v1_span_debug_log(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+    span: usize,
+) -> CharSlice<'static> {
+    let debug_str = match builder.span(chunk, span) {
+        Some(s) => render_span_debug(s, builder.chunk(chunk)),
+        None => String::new(),
+    };
+    let len = debug_str.len();
+    let cstring = CString::new(debug_str).unwrap_or_default();
+
+    // Safety: `CString` is an owned, valid UTF-8 string; the pointer is freed by
+    // `ddog_free_charslice`, exactly as for the v0.4 `ddog_span_debug_log`.
+    unsafe { CharSlice::from_raw_parts(cstring.into_raw().cast(), len) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1948,5 +2051,47 @@ mod tests {
                 std::str::from_utf8(s).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn span_debug_log_renders_readable_string() {
+        let mut b = TracerPayloadV1Builder::default();
+        let ci = ddog_v1_builder_new_chunk(&mut b, 0, 0xdead);
+        let si = ddog_v1_chunk_new_span(&mut b, ci);
+        ddog_v1_set_span_service(&mut b, ci, si, cs("my-service"));
+        ddog_v1_set_span_name(&mut b, ci, si, cs("my-operation"));
+        ddog_v1_set_span_resource(&mut b, ci, si, cs("GET /x"));
+        ddog_v1_set_span_id(&mut b, ci, si, 42);
+        ddog_v1_set_span_parent_id(&mut b, ci, si, 7);
+        ddog_v1_set_span_start(&mut b, ci, si, 1_000);
+        ddog_v1_set_span_duration(&mut b, ci, si, 500);
+        ddog_v1_set_span_error(&mut b, ci, si, true);
+        ddog_v1_set_span_kind(&mut b, ci, si, 2); // Server
+        ddog_v1_set_span_component(&mut b, ci, si, cs("pdo"));
+        ddog_v1_add_span_attr_int(&mut b, ci, si, cs("http.status_code"), 200);
+        let _ = ddog_v1_span_new_link(&mut b, ci, si);
+        let _ = ddog_v1_span_new_event(&mut b, ci, si);
+
+        let slice = ddog_v1_span_debug_log(&b, ci, si);
+        let rendered = slice.to_utf8_lossy().to_string();
+        assert!(!rendered.is_empty());
+        assert!(rendered.contains("my-service"), "service should appear: {rendered}");
+        assert!(rendered.contains("my-operation"), "name should appear: {rendered}");
+        assert!(rendered.contains("resource=\"GET /x\""), "resource should appear: {rendered}");
+        assert!(rendered.contains("span_id=42"));
+        assert!(rendered.contains("parent_id=7"));
+        assert!(rendered.contains("error=true"));
+        assert!(rendered.contains("kind=Server"));
+        assert!(rendered.contains("component=\"pdo\""));
+        assert!(rendered.contains("http.status_code=200"));
+        assert!(rendered.contains("links=1"));
+        assert!(rendered.contains("events=1"));
+        // Frees correctly via the same free function as the v0.4 variant.
+        unsafe { crate::span::ddog_free_charslice(slice) };
+
+        // Out-of-range index yields an empty (safely freeable) slice.
+        let empty = ddog_v1_span_debug_log(&b, 99, 0);
+        assert!(empty.to_utf8_lossy().is_empty());
+        unsafe { crate::span::ddog_free_charslice(empty) };
     }
 }
