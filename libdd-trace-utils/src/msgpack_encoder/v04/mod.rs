@@ -112,10 +112,11 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let mut buffer = vec![0u8; 1024];
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -144,9 +145,10 @@ pub fn write_to_slice_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -174,9 +176,10 @@ pub fn to_vec_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -213,9 +216,10 @@ pub fn to_vec_with_capacity_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];

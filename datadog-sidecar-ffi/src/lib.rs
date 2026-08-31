@@ -49,6 +49,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1157,6 +1158,72 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     MaybeError::None
 }
 
+/// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
+/// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+/// `/v1.0/traces` endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    shm_handle: Box<ShmHandle>,
+    len: usize,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_shm(
+        transport,
+        instance_id,
+        *shm_handle,
+        len,
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
+/// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
+/// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+/// endpoint.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    data: ffi::CharSlice,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let generic = TracerGenericTags {
+        client_computed_top_level: tracer_header_tags.client_computed_top_level,
+        client_computed_stats: tracer_header_tags.client_computed_stats,
+        ..Default::default()
+    };
+
+    try_c!(blocking::send_trace_v1_bytes(
+        transport,
+        instance_id,
+        data.as_bytes().to_vec(),
+        generic,
+        tracer_header_tags
+            .lang_interpreter
+            .to_utf8_lossy()
+            .into_owned(),
+        tracer_header_tags.lang_vendor.to_utf8_lossy().into_owned(),
+    ));
+
+    MaybeError::None
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
@@ -1209,6 +1276,8 @@ pub struct FfeExposure<'a> {
     pub subject_attributes_json: CharSlice<'a>,
     pub allocation_key: CharSlice<'a>,
     pub variant: CharSlice<'a>,
+    pub serial_id: i32,
+    pub has_serial_id: bool,
 }
 
 #[repr(C)]
@@ -1443,6 +1512,7 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         subject_attributes_json: char_slice_to_string(exposure.subject_attributes_json)?,
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
+        serial_id: exposure.has_serial_id.then_some(exposure.serial_id),
     })
 }
 
@@ -1994,6 +2064,66 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     let _ = transport.send_garbage();
 }
 
+/// Raw AppSec response returned by `ddog_sidecar_send_appsec_message`.
+///
+/// When `ptr` is non-null, the response must be freed by calling
+/// `ddog_sidecar_appsec_response_drop`.
+#[cfg(unix)]
+#[repr(C)]
+pub struct AppsecCResponse {
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub capacity: usize,
+    /// If true, the extension session should be disconnected after this response.
+    pub disconnect: bool,
+}
+
+/// Sends an AppSec message from the PHP extension through the sidecar to the registered helper.
+///
+/// The response is allocated by the sidecar and must be freed with
+/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
+///
+/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
+#[cfg(unix)]
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
+    transport: &mut Box<SidecarTransport>,
+    client_id: u64,
+    data: ffi::CharSlice,
+) -> AppsecCResponse {
+    match blocking::send_appsec_message(transport, client_id, data.as_bytes()) {
+        Ok((bytes, disconnect)) => {
+            let mut bytes = std::mem::ManuallyDrop::new(bytes);
+            AppsecCResponse {
+                ptr: bytes.as_mut_ptr(),
+                len: bytes.len(),
+                capacity: bytes.capacity(),
+                disconnect,
+            }
+        }
+        Err(_) => AppsecCResponse {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            capacity: 0,
+            disconnect: false,
+        },
+    }
+}
+
+/// Frees an `AppsecCResponse` that was returned by `ddog_sidecar_send_appsec_message`.
+#[cfg(unix)]
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
+    if !response.ptr.is_null() {
+        // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
+        // ddog_sidecar_send_appsec_message and use the sidecar's allocator.
+        unsafe {
+            let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2048,6 +2178,40 @@ mod tests {
         .expect("expected OTLP metrics endpoint");
 
         assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    fn ffi_exposure<'a>(serial_id: i32, has_serial_id: bool) -> FfeExposure<'a> {
+        FfeExposure {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: CharSlice::from("flag-a"),
+            subject_id: CharSlice::from("user-1"),
+            subject_attributes_json: CharSlice::from("{}"),
+            allocation_key: CharSlice::from("alloc-a"),
+            variant: CharSlice::from("blue"),
+            serial_id,
+            has_serial_id,
+        }
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_present_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(4242));
+    }
+
+    #[test]
+    fn ffe_exposure_carries_a_zero_serial_id() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(0, true)).unwrap();
+
+        assert_eq!(converted.serial_id, Some(0));
+    }
+
+    #[test]
+    fn ffe_exposure_ignores_the_serial_id_value_when_absent() {
+        let converted = ffe_exposure_from_ffi(&ffi_exposure(4242, false)).unwrap();
+
+        assert_eq!(converted.serial_id, None);
     }
 
     #[test]

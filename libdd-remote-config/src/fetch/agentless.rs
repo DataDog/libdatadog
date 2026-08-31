@@ -14,7 +14,7 @@ use http::{
     uri::{Authority, PathAndQuery},
     Method, Request, Uri,
 };
-use libdd_capabilities::{Bytes, HttpClientCapability};
+use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
@@ -139,6 +139,12 @@ pub struct AgentlessConfig {
     agentless_endpoint: Endpoint,
     /// Override the `agent_uuid` field sent to the RC backend.
     agent_uuid: Option<String>,
+    /// Override the embedded TUF config trust root, mirroring the Datadog Agent's
+    /// `DD_REMOTE_CONFIGURATION_CONFIG_ROOT` setting.
+    config_root_override: Option<Vec<u8>>,
+    /// Override the embedded TUF director trust root, mirroring the Datadog Agent's
+    /// `DD_REMOTE_CONFIGURATION_DIRECTOR_ROOT` setting.
+    director_root_override: Option<Vec<u8>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +172,8 @@ impl AgentlessConfig {
             hostname,
             agentless_endpoint,
             agent_uuid: None,
+            config_root_override: None,
+            director_root_override: None,
         })
     }
 
@@ -173,6 +181,22 @@ impl AgentlessConfig {
     #[must_use]
     pub fn with_agent_uuid(mut self, agent_uuid: String) -> Self {
         self.agent_uuid = Some(agent_uuid);
+        self
+    }
+
+    /// Override the embedded TUF config trust root with `root` (raw signed root
+    /// metadata JSON), instead of picking one of the embedded roots based on site.
+    #[must_use]
+    pub fn with_config_root(mut self, root: Vec<u8>) -> Self {
+        self.config_root_override = Some(root);
+        self
+    }
+
+    /// Override the embedded TUF director trust root with `root` (raw signed root
+    /// metadata JSON), instead of picking one of the embedded roots based on site.
+    #[must_use]
+    pub fn with_director_root(mut self, root: Vec<u8>) -> Self {
+        self.director_root_override = Some(root);
         self
     }
 
@@ -188,11 +212,20 @@ impl AgentlessConfig {
     pub fn agent_uuid(&self) -> Option<&str> {
         self.agent_uuid.as_deref()
     }
+
+    pub fn config_root_override(&self) -> Option<&[u8]> {
+        self.config_root_override.as_deref()
+    }
+
+    pub fn director_root_override(&self) -> Option<&[u8]> {
+        self.director_root_override.as_deref()
+    }
 }
 
-pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeCapabilities>;
 
-pub struct AgentlessFetcher<C: HttpClientCapability> {
+pub struct AgentlessFetcher<C: HttpClientCapability + SleepCapability> {
     http: C,
     opaque_backend_state: Vec<u8>,
     director_client: TUFClient,
@@ -304,7 +337,7 @@ impl<'a> TrustedTarget<'a> {
     }
 }
 
-impl<C: HttpClientCapability> AgentlessFetcher<C> {
+impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
     /// Create a new `AgentlessFetcher` client.
     ///
     /// # Errors
@@ -314,26 +347,33 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         endpoint: Endpoint,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        // Pick the embedded trust roots based on the endpoint's host.
+        // Pick the embedded trust roots based on the endpoint's host, unless overridden.
         let site = endpoint
             .url
             .host()
             .map(Site::from_host)
             .unwrap_or(Site::Prod);
 
+        let director_root = cfg
+            .director_root_override
+            .unwrap_or_else(|| site.embedded_director_root().to_vec());
+        let config_root = cfg
+            .config_root_override
+            .unwrap_or_else(|| site.embedded_config_root().to_vec());
+
         Ok(Self {
             endpoint,
             http: http_client,
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(site.embedded_director_root().to_vec()),
+                &RawSignedMetadata::new(director_root),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
             config_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(site.embedded_config_root().to_vec()),
+                &RawSignedMetadata::new(config_root),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
@@ -644,14 +684,16 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .method(method)
             .body(body)?;
         let timeout = Duration::from_millis(self.endpoint.timeout_ms);
-        let response = tokio::time::timeout(timeout, self.http.request(req))
-            .await
-            .map_err(|_| {
-                format_err!(
+        let response = tokio::select! {
+            biased;
+            result = self.http.request(req) => result?,
+            _ = self.http.sleep(timeout) => {
+                bail!(
                     "Remote config request timed out after {}ms",
                     self.endpoint.timeout_ms,
                 )
-            })??;
+            }
+        };
         Ok(response)
     }
 
@@ -1474,7 +1516,7 @@ mod tests {
             NativeAgentlessFetcher::new(
                 cfg,
                 endpoint,
-                libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
+                <libdd_capabilities_impl::NativeCapabilities as libdd_capabilities::HttpClientCapability>::new_without_connection_pooling(),
             )
             .await
             .unwrap_or_else(|e| panic!("failed to instantiate fetcher for site {site}: {e}"));
