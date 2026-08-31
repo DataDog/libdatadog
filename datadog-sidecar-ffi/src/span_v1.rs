@@ -92,8 +92,11 @@ impl TracerPayloadV1Builder {
         self.span_mut(chunk, span)?.span_events.get_mut(event)
     }
 
-    /// Consumes the builder, returning the assembled payload (chunks/spans only).
-    pub fn into_payload(self) -> TracerPayloadBytes {
+    /// Consumes the builder, returning the assembled payload (chunks/spans only). Attribute maps
+    /// are deduped here — the single finalize point before encoding — so the encoder finds the
+    /// deduped invariant already satisfied (no per-encode on-the-fly dedup or warning).
+    pub fn into_payload(mut self) -> TracerPayloadBytes {
+        self.payload.dedup();
         self.payload
     }
 }
