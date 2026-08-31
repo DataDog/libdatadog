@@ -104,16 +104,22 @@ truncate_details() {
 # Pull the failure blocks out of a cargo-semver-checks run, falling back to the tail of
 # the output when the run reported a level without emitting any `--- failure` block.
 #
-# The fallback used to read `grep -A 1000 ... | head -100 || tail -50`, which could never
-# fire: a pipeline's exit status is the last command's, and `head` succeeds even when
-# `grep` matched nothing, so such a run produced empty details rather than the intended
-# tail.
+# The fallback keeps only the last $tail_lines lines, which drops the *leading* ones —
+# the opposite end from what truncate_details cuts. It therefore marks the cut itself:
+# truncate_details, seeing only the already-shortened tail, would report no truncation
+# and leave the details looking complete.
 extract_semver_details() {
     local output=$1
-    local details
+    local tail_lines=50
+    local details total
     details=$(grep -A 1000 "^--- failure" <<< "$output")
     if [[ -z "$details" ]]; then
-        details=$(tail -50 <<< "$output")
+        total=$(wc -l <<< "$output")
+        details=$(tail -n "$tail_lines" <<< "$output")
+        if (( total > tail_lines )); then
+            details=$(printf '... (%d earlier lines omitted)\n%s\n' \
+                "$(( total - tail_lines ))" "$details")
+        fi
     fi
     truncate_details 100 <<< "$details"
 }
