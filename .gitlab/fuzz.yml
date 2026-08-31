@@ -21,7 +21,11 @@ fuzz:
       allow_failure: true
   timeout: 1h
   script:
-    - VAULT_VERSION=1.15.4 && curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip && unzip vault.zip && mv vault /usr/local/bin/vault && rm vault.zip && chmod +x /usr/local/bin/vault
+    - VAULT_VERSION=1.15.4
+    - VAULT_SHA256=f42f550713e87cceef2f29a4e2b754491697475e3d26c0c5616314e40edd8e1b
+    - curl -fsSL --retry 3 "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip
+    - echo "${VAULT_SHA256}  vault.zip" | sha256sum -c -
+    - unzip vault.zip && mv vault /usr/local/bin/vault && rm vault.zip && chmod +x /usr/local/bin/vault
     - NIGHTLY_VERSION=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2}' nightly-toolchain.toml)
     - rustup default "$NIGHTLY_VERSION"
     - cargo +"$NIGHTLY_VERSION" install cargo-fuzz --locked
