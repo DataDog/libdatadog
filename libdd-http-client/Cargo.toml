@@ -1,6 +1,6 @@
 [package]
 name = "libdd-http-client"
-version = "0.1.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,7 +18,15 @@ default = ["https", "reqwest-backend"]
 # installed explicitly by libdd-common's connector init.
 https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
-hyper-backend = ["dep:libdd-common", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+hyper-backend = [
+    "dep:libdd-common",
+    "libdd-common/http-client",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:http-body-util",
+]
+# Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
+hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
 
 [dependencies]
@@ -28,7 +36,7 @@ fastrand = "2"
 tokio = { workspace = true, features = ["rt", "time"] }
 reqwest = { version = "0.13", default-features = false, optional = true }
 rustls = { workspace = true, optional = true }
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, optional = true }
+libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy"] }
 http-body-util = { version = "0.1", optional = true }

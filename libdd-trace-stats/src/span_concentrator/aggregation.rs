@@ -8,7 +8,6 @@
 use hashbrown::{HashMap, HashSet};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::SpanText;
 use std::{
     borrow::{Borrow, Cow},
     hash::{DefaultHasher, Hash, Hasher as _},
@@ -428,12 +427,9 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
 }
 
 /// Return true if we care about peer tags on the span
-fn should_track_peer_tags<T>(span_kind: T) -> bool
-where
-    T: SpanText,
-{
+fn should_track_peer_tags(span_kind: &str) -> bool {
     matches!(
-        span_kind.borrow().to_lowercase().as_str(),
+        span_kind.to_lowercase().as_str(),
         "client" | "producer" | "consumer"
     )
 }
@@ -1221,12 +1217,16 @@ mod tests {
             // Span with peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: Cow::Borrowed("service"),
+                    name: Cow::Borrowed("op"),
+                    resource: Cow::Borrowed("res"),
                     span_id: 1,
                     parent_id: 0,
-                    meta: vec![("span.kind", "client"), ("aws.s3.bucket", "bucket-a")].into(),
+                    meta: vec![
+                        (Cow::Borrowed("span.kind"), Cow::Borrowed("client")),
+                        (Cow::Borrowed("aws.s3.bucket"), Cow::Borrowed("bucket-a")),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -1242,16 +1242,19 @@ mod tests {
             // Span with multiple peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: Cow::Borrowed("service"),
+                    name: Cow::Borrowed("op"),
+                    resource: Cow::Borrowed("res"),
                     span_id: 1,
                     parent_id: 0,
                     meta: vec![
-                        ("span.kind", "producer"),
-                        ("aws.s3.bucket", "bucket-a"),
-                        ("db.instance", "dynamo.test.us1"),
-                        ("db.system", "dynamodb"),
+                        (Cow::Borrowed("span.kind"), Cow::Borrowed("producer")),
+                        (Cow::Borrowed("aws.s3.bucket"), Cow::Borrowed("bucket-a")),
+                        (
+                            Cow::Borrowed("db.instance"),
+                            Cow::Borrowed("dynamo.test.us1"),
+                        ),
+                        (Cow::Borrowed("db.system"), Cow::Borrowed("dynamodb")),
                     ]
                     .into(),
                     ..Default::default()
@@ -1274,16 +1277,19 @@ mod tests {
             // server
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: Cow::Borrowed("service"),
+                    name: Cow::Borrowed("op"),
+                    resource: Cow::Borrowed("res"),
                     span_id: 1,
                     parent_id: 0,
                     meta: vec![
-                        ("span.kind", "server"),
-                        ("aws.s3.bucket", "bucket-a"),
-                        ("db.instance", "dynamo.test.us1"),
-                        ("db.system", "dynamodb"),
+                        (Cow::Borrowed("span.kind"), Cow::Borrowed("server")),
+                        (Cow::Borrowed("aws.s3.bucket"), Cow::Borrowed("bucket-a")),
+                        (
+                            Cow::Borrowed("db.instance"),
+                            Cow::Borrowed("dynamo.test.us1"),
+                        ),
+                        (Cow::Borrowed("db.system"), Cow::Borrowed("dynamodb")),
                     ]
                     .into(),
                     ..Default::default()
@@ -1330,15 +1336,15 @@ mod tests {
 
         // IPv4 address peer tag gets replaced with blocked-ip-address
         let span_ipv4 = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: Cow::Borrowed("service"),
+            name: Cow::Borrowed("op"),
+            resource: Cow::Borrowed("res"),
             span_id: 1,
             parent_id: 0,
             meta: vec![
-                ("span.kind", "client"),
-                ("peer.hostname", "10.1.2.3"),
-                ("db.instance", "my-db"),
+                (Cow::Borrowed("span.kind"), Cow::Borrowed("client")),
+                (Cow::Borrowed("peer.hostname"), Cow::Borrowed("10.1.2.3")),
+                (Cow::Borrowed("db.instance"), Cow::Borrowed("my-db")),
             ]
             .into(),
             ..Default::default()
@@ -1358,14 +1364,17 @@ mod tests {
 
         // IPv6 address peer tag gets replaced with blocked-ip-address
         let span_ipv6 = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: Cow::Borrowed("service"),
+            name: Cow::Borrowed("op"),
+            resource: Cow::Borrowed("res"),
             span_id: 1,
             parent_id: 0,
             meta: vec![
-                ("span.kind", "client"),
-                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+                (Cow::Borrowed("span.kind"), Cow::Borrowed("client")),
+                (
+                    Cow::Borrowed("peer.hostname"),
+                    Cow::Borrowed("2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+                ),
             ]
             .into(),
             ..Default::default()
@@ -1383,12 +1392,19 @@ mod tests {
 
         // Non-IP peer tags pass through unchanged
         let span_non_ip = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: Cow::Borrowed("service"),
+            name: Cow::Borrowed("op"),
+            resource: Cow::Borrowed("res"),
             span_id: 1,
             parent_id: 0,
-            meta: vec![("span.kind", "client"), ("db.instance", "dynamo.test.us1")].into(),
+            meta: vec![
+                (Cow::Borrowed("span.kind"), Cow::Borrowed("client")),
+                (
+                    Cow::Borrowed("db.instance"),
+                    Cow::Borrowed("dynamo.test.us1"),
+                ),
+            ]
+            .into(),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];

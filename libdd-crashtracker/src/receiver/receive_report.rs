@@ -324,9 +324,14 @@ fn process_line(
 ///    Some(CrashInfo)
 /// 2. `stdin` closes without a crash report (i.e. if the parent terminated normally). In this case
 ///    we return "None".
+///
+/// Borrows `stream` rather than consuming it. The crashing process blocks on
+/// POLLHUP from this connection, so closing it here would release that process
+/// before the caller has symbolized the report, and symbolization reads
+/// `/proc/<pid>/maps`. The caller decides when to close.
 pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
-    stream: impl AsyncBufReadExt + std::marker::Unpin,
+    stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
@@ -526,6 +531,8 @@ fn collect_and_add_thread_contexts(
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
 
+    let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
+
     let mut collected_threads = Vec::new();
 
     let incomplete = stream_thread_contexts(
@@ -533,18 +540,24 @@ fn collect_and_add_thread_contexts(
         crashing_tid,
         config.max_threads(),
         budget,
-        config.resolve_frames(),
         |tid, captured_context| {
             let (name, state) = read_thread_stat(parent_pid, tid);
             let name = name.unwrap_or_else(|| tid.to_string());
 
-            let stack = match captured_context {
+            let mut stack = match captured_context {
                 Some(ctx) => ctx.stack_trace.clone(),
                 None => StackTrace::new_incomplete(),
             };
 
+            let crashed = tid == crashing_tid;
+            if crashed {
+                if let Some((ip, sp)) = crash_site {
+                    drop_frames_above_crash_site(&mut stack, ip, sp);
+                }
+            }
+
             collected_threads.push(ThreadData {
-                crashed: tid == crashing_tid,
+                crashed,
                 name,
                 stack,
                 state,
@@ -559,6 +572,56 @@ fn collect_and_add_thread_contexts(
     let _ = builder.with_threads(collected_threads);
 
     Ok(())
+}
+
+/// The instruction and stack pointer the kernel saved when it delivered the fatal
+/// signal.
+///
+/// Returns `None` when the report carries no usable register state: an unhandled
+/// exception has no ucontext at all
+#[cfg(target_os = "linux")]
+fn crash_site_registers(ucontext: &Ucontext) -> Option<(u64, u64)> {
+    let (ip_name, sp_name) = match ucontext.arch.as_str() {
+        "x86_64" => ("rip", "rsp"),
+        "aarch64" => ("pc", "sp"),
+        _ => return None,
+    };
+    let ip = parse_hex_address(ucontext.registers.get(ip_name)?)?;
+    let sp = parse_hex_address(ucontext.registers.get(sp_name)?)?;
+    Some((ip, sp))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_hex_address(value: &str) -> Option<u64> {
+    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+}
+
+/// Drop the crashtracker's own frames from the top of the crashing thread's stack.
+///
+/// The receiver unwinds the crashing thread from its live registers, and by then that
+/// thread is parked inside our signal handler waiting for the receiver to finish. Its
+/// stack therefore begins inside libdatadog rather than at the faulting instruction,
+/// unlike `error.stack`, which libunwind seeds directly from the kernel-saved
+/// registers and which consequently never contains these frames.
+///
+/// Those same registers pinpoint the faulting frame, so everything above the frame
+/// matching them is ours. Instruction and stack pointer are matched as a pair rather
+/// than discarding frames below a stack-pointer threshold, because the handler may run
+/// on an alternate signal stack and such a stack is not guaranteed to be mapped below
+/// the thread's main stack.
+///
+/// When no frame matches, the stack is left untouched. An unwind that never reached the
+/// faulting frame is worth more intact than truncated on a guess.
+#[cfg(target_os = "linux")]
+fn drop_frames_above_crash_site(stack: &mut StackTrace, ip: u64, sp: u64) {
+    let is_crash_site = |frame: &StackFrame| {
+        frame.ip.as_deref().and_then(parse_hex_address) == Some(ip)
+            && frame.sp.as_deref().and_then(parse_hex_address) == Some(sp)
+    };
+
+    if let Some(crash_site) = stack.frames.iter().position(is_crash_site) {
+        stack.frames.drain(..crash_site);
+    }
 }
 
 /// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
@@ -672,10 +735,10 @@ mod tests {
         // Close without sending anything, as a parent that exited normally does.
         drop(sender);
 
-        let report =
-            receive_report_from_stream(Duration::from_secs(1), tokio::io::BufReader::new(receiver))
-                .await
-                .unwrap();
+        let mut stream = tokio::io::BufReader::new(receiver);
+        let report = receive_report_from_stream(Duration::from_secs(1), &mut stream)
+            .await
+            .unwrap();
         assert!(report.is_none());
 
         let request = server.await.unwrap();
@@ -991,5 +1054,152 @@ mod tests {
             "no config section should have been parsed"
         );
         assert!(builder.has_message());
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod crashing_thread_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn frame(ip: &str, sp: &str) -> StackFrame {
+        StackFrame {
+            ip: Some(ip.to_string()),
+            sp: Some(sp.to_string()),
+            ..StackFrame::new()
+        }
+    }
+
+    fn ucontext(arch: &str, registers: &[(&str, &str)]) -> Ucontext {
+        Ucontext {
+            arch: arch.to_string(),
+            registers: registers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<HashMap<_, _>>(),
+            raw: None,
+        }
+    }
+
+    /// The prefix mirrors a real report: the thread is parked in `poll` inside the
+    /// signal handler, and the frames beneath the trampoline are the actual crash.
+    fn parked_in_handler() -> StackTrace {
+        StackTrace::from_frames(
+            vec![
+                frame("0x7ddee3ca126f", "0x7ddee2f7cbe0"), // __libc_poll
+                frame("0x7ddee2b4f356", "0x7ddee2f7cc10"), // ProcessHandle::finish
+                frame("0x7ddee2b527db", "0x7ddee2f7cc80"), // handle_posix_sigaction
+                frame("0x7ddee3be1050", "0x7ddee2f7d4c0"), // __restore_rt
+                frame("0x7ddee3c2feec", "0x7ddee2f7da80"), // crash site
+                frame("0x7ddee3be1050", "0x7ddee2f7dac0"),
+                frame("0x7ddee2e9ccc0", "0x7ffe06975aa0"),
+            ],
+            false,
+        )
+    }
+
+    #[test]
+    fn crash_site_frame_becomes_the_first_frame() {
+        let mut stack = parked_in_handler();
+        drop_frames_above_crash_site(&mut stack, 0x7ddee3c2feec, 0x7ddee2f7da80);
+
+        assert_eq!(stack.frames.len(), 3);
+        assert_eq!(stack.frames[0].ip.as_deref(), Some("0x7ddee3c2feec"));
+        assert_eq!(stack.frames[0].sp.as_deref(), Some("0x7ddee2f7da80"));
+    }
+
+    /// The handler runs on an alternate signal stack, so its frames can sit at
+    /// addresses either side of the thread's own stack. Only the exact crash-site
+    /// frame may end the prefix.
+    #[test]
+    fn alternate_signal_stack_above_thread_stack_is_still_trimmed() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("0x1000", "0xffff0000"), // handler, on a higher-addressed alt stack
+                frame("0x1010", "0xffff0040"),
+                frame("0x2000", "0x7ffe0000"), // crash site, on the thread stack
+                frame("0x2010", "0x7ffe0040"),
+            ],
+            false,
+        );
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0000);
+
+        assert_eq!(stack.frames.len(), 2);
+        assert_eq!(stack.frames[0].ip.as_deref(), Some("0x2000"));
+    }
+
+    /// The ucontext block zero-pads its registers while unwound frames don't, so the
+    /// two must be compared as numbers rather than as strings.
+    #[test]
+    fn zero_padded_registers_match_unpadded_frames() {
+        let registers = crash_site_registers(&ucontext(
+            "x86_64",
+            &[("rip", "0x00007ddee3c2feec"), ("rsp", "0x00007ddee2f7da80")],
+        ))
+        .expect("x86_64 registers should parse");
+
+        let mut stack = parked_in_handler();
+        drop_frames_above_crash_site(&mut stack, registers.0, registers.1);
+
+        assert_eq!(stack.frames.len(), 3);
+    }
+
+    #[test]
+    fn stack_is_untouched_when_no_frame_matches() {
+        let mut stack = parked_in_handler();
+        let before = stack.frames.clone();
+        drop_frames_above_crash_site(&mut stack, 0xdead, 0xbeef);
+
+        assert_eq!(stack.frames, before);
+    }
+
+    #[test]
+    fn stack_is_untouched_when_it_already_starts_at_the_crash_site() {
+        let mut stack = StackTrace::from_frames(
+            vec![frame("0x2000", "0x7ffe0000"), frame("0x2010", "0x7ffe0040")],
+            false,
+        );
+        let before = stack.frames.clone();
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0000);
+
+        assert_eq!(stack.frames, before);
+    }
+
+    /// A frame sharing only the instruction pointer is a different activation of the
+    /// same function, not the crash site.
+    #[test]
+    fn matching_ip_alone_does_not_end_the_prefix() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("0x2000", "0x7ffe0000"), // recursive call, same ip
+                frame("0x2000", "0x7ffe0040"), // crash site
+            ],
+            false,
+        );
+        drop_frames_above_crash_site(&mut stack, 0x2000, 0x7ffe0040);
+
+        assert_eq!(stack.frames.len(), 1);
+        assert_eq!(stack.frames[0].sp.as_deref(), Some("0x7ffe0040"));
+    }
+
+    #[test]
+    fn registers_are_read_per_architecture() {
+        assert_eq!(
+            crash_site_registers(&ucontext("x86_64", &[("rip", "0x10"), ("rsp", "0x20")])),
+            Some((0x10, 0x20))
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("aarch64", &[("pc", "0x10"), ("sp", "0x20")])),
+            Some((0x10, 0x20))
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("riscv64", &[("pc", "0x10"), ("sp", "0x20")])),
+            None
+        );
+        assert_eq!(
+            crash_site_registers(&ucontext("x86_64", &[("rip", "0x10")])),
+            None,
+            "a ucontext missing the stack pointer yields no crash site"
+        );
     }
 }

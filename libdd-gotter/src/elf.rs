@@ -135,13 +135,8 @@ impl<'a> DynamicInfo<'a> {
         // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
         let base = u64_to_usize(info.dlpi_addr);
         let dyn_begin = (base + u64_to_usize(dyn_phdr.p_vaddr)) as *const Elf64_Dyn;
-        let containing_load_segment_end = |addr: usize| -> Option<usize> {
-            phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
-                let start = base.checked_add(u64_to_usize(p.p_vaddr))?;
-                let end = start.checked_add(u64_to_usize(p.p_memsz))?;
-                (addr >= start && addr < end).then_some(end)
-            })
-        };
+        let containing_load_segment_end =
+            |addr: usize| -> Option<usize> { find_containing_load_segment(phdrs, base, addr) };
         let correct = |a: u64| -> usize {
             let a = u64_to_usize(a);
             if a > base {
@@ -197,6 +192,45 @@ impl<'a> DynamicInfo<'a> {
             jmprels_size = 0;
         }
 
+        // Validate every raw pointer read from PT_DYNAMIC actually falls within one of this
+        // object's own PT_LOAD segments before trusting it for dereferencing.
+        // This is a sanity check to avoid crashing due to odd/corrupted dynamic entries.
+        let in_bounds = |addr: *const c_void, len: usize| -> bool {
+            let addr = addr as usize;
+            match containing_load_segment_end(addr) {
+                Some(end) => addr.checked_add(len).is_some_and(|limit| limit <= end),
+                None => false,
+            }
+        };
+        if strtab.is_null() || !in_bounds(strtab as *const c_void, strtab_size) {
+            strtab = core::ptr::null();
+        }
+        if symtab.is_null()
+            || !in_bounds(symtab as *const c_void, core::mem::size_of::<Elf64_Sym>())
+        {
+            symtab = core::ptr::null();
+        }
+        if rels.is_null() || !in_bounds(rels as *const c_void, rels_size) {
+            rels = core::ptr::null();
+            rels_size = 0;
+        }
+        if relas.is_null() || !in_bounds(relas as *const c_void, relas_size) {
+            relas = core::ptr::null();
+            relas_size = 0;
+        }
+        if jmprels.is_null() || !in_bounds(jmprels as *const c_void, jmprels_size) {
+            jmprels = core::ptr::null();
+            jmprels_size = 0;
+        }
+        const GNU_HASH_MIN_BYTES: usize = 4 * core::mem::size_of::<u32>();
+        if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void, GNU_HASH_MIN_BYTES) {
+            gnu_hash = core::ptr::null();
+        }
+        const SYSV_HASH_MIN_BYTES: usize = 2 * core::mem::size_of::<u32>();
+        if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void, SYSV_HASH_MIN_BYTES) {
+            sysv_hash = core::ptr::null();
+        }
+
         // Need at minimum strtab + symtab to resolve relocation symbol names.
         if strtab.is_null() || symtab.is_null() {
             return None;
@@ -230,6 +264,11 @@ impl<'a> DynamicInfo<'a> {
         } else {
             (sym_count_fallback(symtab, strtab, sysv_hash), 0)
         };
+
+        let max_syms = containing_load_segment_end(symtab as usize)
+            .map(|end| end.saturating_sub(symtab as usize) / core::mem::size_of::<Elf64_Sym>())
+            .unwrap_or(0);
+        let sym_count = sym_count.min(u32::try_from(max_syms).unwrap_or(u32::MAX));
 
         // SAFETY (applies to all `try_as_slice` calls below):
         //
@@ -587,6 +626,75 @@ pub fn check_sym(sym: &Elf64_Sym) -> bool {
         matches!(stt, 0 | 1 | 2 | 10)
 }
 
+/// Find the `PT_LOAD` segment in `phdrs` that contains `addr` (using
+/// `base` as the ELF object's load bias) and return the segment's end
+/// address.
+///
+/// on non-PIE executables `base` is 0 but the segments still have
+/// the correct absolute virtual addresses once `base` is added.
+fn find_containing_load_segment(
+    phdrs: &[libc::Elf64_Phdr],
+    base: usize,
+    addr: usize,
+) -> Option<usize> {
+    phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
+        let start = base.checked_add(u64_to_usize(p.p_vaddr))?;
+        let end = start.checked_add(u64_to_usize(p.p_memsz))?;
+        (addr >= start && addr < end).then_some(end)
+    })
+}
+
+/// Check whether `addr` falls within any of a loaded ELF object's
+/// `PT_LOAD` segments.
+///
+/// # Safety
+/// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
+unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
+    // SAFETY: caller guarantees `info` is a valid `dl_phdr_info` for a
+    // currently-loaded ELF object. `dlpi_phnum` is u16, so the
+    // conversion to usize is lossless.
+    let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
+    let base = u64_to_usize(info.dlpi_addr);
+    find_containing_load_segment(phdrs, base, addr).is_some()
+}
+
+/// Whether a `dl_iterate_phdr` entry is a pseudo-object that has no
+/// backing file and isn't relocated by ld.so the way a normal shared
+/// library is, so it shouldn't be handed to [`DynamicInfo::from_phdr`] or
+/// patched: the vdso (kernel-mapped directly at process creation) or
+/// glibc's separate dynamic-linker object.
+///
+/// The vdso's name varies by libc: glibc reports it as
+/// `"linux-vdso.so.1"`, but musl can report an empty name, indistinguishable
+/// from `dlpi_name` simply being absent. Checking also for `is_exe` here,
+/// as the main executable can also have an empty `dlpi_name`.
+///
+/// `lib_name` must be `None` only when the name is genuinely absent (null
+/// or zero-length), as produced by [`dlpi_name`].
+pub fn is_vdso_or_dynamic_linker(lib_name: Option<&str>, is_exe: bool) -> bool {
+    match lib_name {
+        None => !is_exe,
+        Some(name) => name.contains("linux-vdso") || name.contains("/ld-linux"),
+    }
+}
+
+/// Convert a `dl_phdr_info::dlpi_name` to `None` if the pointer is null or the name is empty.
+/// This helps to distinguish invalid UTF-8 from empty.
+///
+/// # Safety
+/// `ptr` must be null or point to a valid NUL-terminated C string, valid
+/// for the lifetime `'a` the caller assigns to the result.
+pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, str>> {
+    if ptr.is_null() {
+        return None;
+    }
+    let cstr = CStr::from_ptr(ptr);
+    if cstr.to_bytes().is_empty() {
+        return None;
+    }
+    Some(cstr.to_string_lossy())
+}
+
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
 /// stop iteration.
@@ -803,9 +911,30 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
 /// Null-sized symbols are ignored so hooks resolve to callable definitions.
 ///
 /// Uses `gnu_hash_lookup` for objects with `DT_GNU_HASH`, and falls
-/// back to a bounded linear dynsym scan for objects that only have
-/// `DT_HASH` (sysv).
+/// back to `sysv_hash_lookup` for objects that only have `DT_HASH`.
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, None)
+}
+
+/// Like [`lookup_symbol`], but also skips the library whose `PT_LOAD`
+/// segments contain `skip_addr`.
+///
+/// Used by [`hook_symbol_excluding_self`] to ensure `orig_out` resolves
+/// to the external definition rather than a same-name export from the
+/// hook's own library.
+fn lookup_symbol_excluding_addr(
+    name: &str,
+    not_this_symbol: usize,
+    skip_addr: usize,
+) -> Option<LookupResult> {
+    lookup_symbol_impl(name, not_this_symbol, Some(skip_addr))
+}
+
+fn lookup_symbol_impl(
+    name: &str,
+    not_this_symbol: usize,
+    skip_addr: Option<usize>,
+) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
     // SAFETY: iterate_libraries calls dl_iterate_phdr which guarantees
@@ -813,18 +942,22 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
     // mapped library. from_phdr's safety precondition (mapped for 'a)
     // is satisfied because the callback runs synchronously under the
     // loader lock.
-    iterate_libraries(|info, _is_exe| unsafe {
-        let lib_name = if info.dlpi_name.is_null() {
-            ""
-        } else {
-            CStr::from_ptr(info.dlpi_name).to_str().unwrap_or("")
-        };
-        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+    iterate_libraries(|info, is_exe| unsafe {
+        let lib_name = dlpi_name(info.dlpi_name);
+        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
             return false;
+        }
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
+                return false;
+            }
         }
         let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
         };
+        // Try GNU hash, then fall back to sysv hash
+        // for objects that only have DT_HASH.
         let sym = if dyn_info.has_gnu_hash() {
             gnu_hash_lookup(&dyn_info, needle)
         } else if dyn_info.has_sysv_hash() {
@@ -875,7 +1008,7 @@ pub enum HookError {
 }
 
 /// Hook a single symbol across all loaded ELF objects by patching their
-/// GOT entries.
+/// GOT entries, including the library that contains the hook function.
 ///
 /// This is a one-shot API: it patches every library that is loaded at
 /// call time. Libraries `dlopen`'d after this call will **not** be
@@ -899,12 +1032,54 @@ pub enum HookError {
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
 pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, None)
+}
+
+/// Like [`hook_symbol`], but skips the library that contains `hook_fn`.
+///
+/// Use this when the hook function forwards calls to the original via
+/// normal linkage (e.g. `libc::read(fd, buf, len)`) rather than through
+/// the stored `orig_addr`. By skipping the hook's own library during
+/// patching, its GOT entries remain pointed at the real symbol, so
+/// normal calls from within the hook don't recurse.
+///
+/// This also excludes the hook's library during symbol resolution, so
+/// even if it exports the hooked symbol under the same name, `orig_addr`
+/// will point to the external definition rather than the hook library's
+/// own export.
+///
+/// # Safety
+/// Same as [`hook_symbol`].
+pub unsafe fn hook_symbol_excluding_self(
+    symbol_name: &CStr,
+    hook_fn: usize,
+) -> Result<HookResult, HookError> {
+    hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn))
+}
+
+/// `skip_addr`: if `Some(addr)`, skip the library whose PT_LOAD segments
+/// contain `addr`. Used by `hook_symbol_excluding_self` to identify the
+/// hook's own library regardless of PIE vs non-PIE (where `dlpi_addr`
+/// may be 0 for the main executable).
+unsafe fn hook_symbol_impl(
+    symbol_name: &CStr,
+    hook_fn: usize,
+    skip_addr: Option<usize>,
+) -> Result<HookResult, HookError> {
     let symbol_name_bytes = symbol_name.to_bytes();
     let name_str = symbol_name
         .to_str()
         .map_err(|_| HookError::InvalidSymbolName)?;
 
-    let result = lookup_symbol(name_str, hook_fn).ok_or(HookError::SymbolNotFound)?;
+    // Resolve the original symbol, excluding both the hook_fn address
+    // and (if excluding self) the entire hook library so we don't
+    // accidentally resolve to a different export from the same object.
+    let result = if let Some(addr) = skip_addr {
+        lookup_symbol_excluding_addr(name_str, hook_fn, addr)
+    } else {
+        lookup_symbol(name_str, hook_fn)
+    }
+    .ok_or(HookError::SymbolNotFound)?;
 
     let mut entries_patched: usize = 0;
     let mut entries_failed: usize = 0;
@@ -914,22 +1089,23 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResu
     let patched_ptr = &mut entries_patched as *mut usize;
     let failed_ptr = &mut entries_failed as *mut usize;
 
-    iterate_libraries(|info, _is_exe| {
-        let lib_name = if info.dlpi_name.is_null() {
-            ""
-        } else {
-            // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
-            // NUL-terminated C string for the callback's duration.
-            unsafe { CStr::from_ptr(info.dlpi_name) }
-                .to_str()
-                .unwrap_or("")
-        };
-        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+    iterate_libraries(|info, is_exe| {
+        // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
+        // NUL-terminated C string for the callback's duration.
+        let lib_name = unsafe { dlpi_name(info.dlpi_name) };
+        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
             return false;
         }
+
+        // Skip the library containing skip_addr (the hook function).
+        if let Some(addr) = skip_addr {
+            if phdr_contains_addr(info, addr) {
+                return false;
+            }
+        }
+
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`; the library is mapped for the callback's
-        // duration.
+        // `dl_iterate_phdr`
         let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
             return false;
         };
@@ -1013,6 +1189,7 @@ unsafe fn patch_got_entries(
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
         let guard = PageProtGuard {
@@ -1060,7 +1237,7 @@ mod tests {
     fn test_gnu_hash_symbol_count_valid_single_chain() {
         // nbuckets=1, symbias=1, bloom_size=1 (2 u32 words), bloom_shift=0
         // bloom: [0, 0], bucket: [1], chain: [1 (LSB set = end)]
-        // → sym_count = 1 + 1 = 2
+        // sym_count = 1 + 1 = 2
         let data: [u32; 8] = [1, 1, 1, 0, 0, 0, 1, 1];
         assert_eq!(
             unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
@@ -1308,6 +1485,45 @@ mod tests {
         assert!(!is_got_pointer_reloc(u32::MAX));
     }
 
+    /// Verify that `hook_symbol_excluding_self` skips the library
+    /// containing the hook function. Uses `phdr_contains_addr` to identify
+    /// the hook's own library. Due to rust's testing infrastructure, this test only
+    /// covers PIE executables.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_hook_symbol_excluding_self_skips_own_library() {
+        // Use a dummy hook function defined in this test binary.
+        unsafe extern "C" fn dummy_hook() {}
+        let hook_addr = dummy_hook as *const () as usize;
+
+        // Count how many libraries would be visited with and without
+        // the self-skip.
+        let mut total_libs = 0usize;
+        let mut libs_excluding_self = 0usize;
+
+        iterate_libraries(|info, is_exe| {
+            let lib_name = unsafe { dlpi_name(info.dlpi_name) };
+            if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
+                return false;
+            }
+            if unsafe { DynamicInfo::from_phdr(info) }.is_none() {
+                return false;
+            }
+            total_libs += 1;
+            if !unsafe { phdr_contains_addr(info, hook_addr) } {
+                libs_excluding_self += 1;
+            }
+            false
+        });
+
+        assert!(total_libs > 0, "should find at least one library");
+        assert!(
+            libs_excluding_self < total_libs,
+            "excluding self should skip at least one library \
+             (total={total_libs}, excluding_self={libs_excluding_self})"
+        );
+    }
+
     /// Sanity check against real loaded libraries: the filter should
     /// accept some relocations (GOT entries exist) and reject some
     #[test]
@@ -1341,5 +1557,67 @@ mod tests {
             rejected > 0,
             "expected at least one non-GOT relocation to be filtered out"
         );
+    }
+
+    /// Helper to build a minimal `Elf64_Phdr` for testing.
+    fn make_load_phdr(vaddr: u64, memsz: u64) -> libc::Elf64_Phdr {
+        libc::Elf64_Phdr {
+            p_type: PT_LOAD,
+            p_flags: 0,
+            p_offset: 0,
+            p_vaddr: vaddr,
+            p_paddr: 0,
+            p_filesz: 0,
+            p_memsz: memsz,
+            p_align: 0,
+        }
+    }
+
+    #[test]
+    fn find_containing_load_segment_hit() {
+        let phdrs = [
+            make_load_phdr(0x1000, 0x2000), // [0x1000, 0x3000)
+            make_load_phdr(0x5000, 0x1000), // [0x5000, 0x6000)
+        ];
+        // Address inside the first segment returns its end.
+        assert_eq!(
+            find_containing_load_segment(&phdrs, 0, 0x2000),
+            Some(0x3000)
+        );
+        // Address inside the second segment.
+        assert_eq!(
+            find_containing_load_segment(&phdrs, 0, 0x5000),
+            Some(0x6000)
+        );
+    }
+
+    #[test]
+    fn find_containing_load_segment_miss() {
+        let phdrs = [make_load_phdr(0x1000, 0x2000)];
+        // Before the segment.
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x0FFF), None);
+        // At the end boundary (exclusive).
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x3000), None);
+    }
+
+    #[test]
+    fn find_containing_load_segment_with_base() {
+        let phdrs = [make_load_phdr(0x1000, 0x2000)];
+        let base = 0x4000_0000;
+        // Segment maps to [base + 0x1000, base + 0x3000).
+        assert_eq!(
+            find_containing_load_segment(&phdrs, base, base + 0x1000),
+            Some(base + 0x3000)
+        );
+        // Without base offset, miss.
+        assert_eq!(find_containing_load_segment(&phdrs, base, 0x1000), None);
+    }
+
+    #[test]
+    fn find_containing_load_segment_skips_non_load() {
+        let mut phdr = make_load_phdr(0x1000, 0x2000);
+        phdr.p_type = PT_DYNAMIC; // not PT_LOAD
+        let phdrs = [phdr];
+        assert_eq!(find_containing_load_segment(&phdrs, 0, 0x1500), None);
     }
 }

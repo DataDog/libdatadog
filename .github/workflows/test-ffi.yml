@@ -108,17 +108,24 @@ jobs:
           cache: false
 
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: "Generate profiling FFI"
         shell: bash
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+              git config --global core.longpaths true
+          fi
           cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
@@ -170,6 +177,8 @@ jobs:
       - name: "(Windows) Run FFI examples"
         shell: bash
         if: matrix.platform == 'windows-latest'
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
           cargo ffi-test
       - name: "Test building CXX bindings - Crashinfo (Unix)"
@@ -201,35 +210,3 @@ jobs:
         run: |
           cd examples/cxx
           .\build-profiling.ps1
-
-  ffi_bake:
-    strategy:
-      matrix:
-        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
-    name: "FFI ${{ matrix.target }} via docker bake"
-    needs: setup
-    if: needs.setup.outputs.packages-count != '0'
-    concurrency:
-      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-${{ matrix.target }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on:
-      labels: ubuntu-latest-16-cores
-      group: APM Larger Runners
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-        with:
-          submodules: recursive
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
-        with:
-          buildkitd-config: .github/buildkitd-16-cores.toml
-      - name: Build and Generate FFI
-        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
-        with:
-          targets: ${{ matrix.target }}
-          # Caching is useful, when it works. We are routinely hanging, maybe this:
-          # https://github.com/docker/buildx/issues/537
-          #set: |
-          #  *.cache-from=type=gha,scope=${{ matrix.target }}
-          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}

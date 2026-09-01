@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,13 @@ pub(crate) struct UniversalFlagConfigWire {
     pub created_at: Timestamp,
     /// Environment this configuration belongs to.
     pub environment: Environment,
+    /// Opt-in boolean for emitting full flag evaluation data from SDKs to Datadog. Flag evaluation
+    /// data may contain PII; defaults to `false` for privacy.
+    ///
+    /// Deserialized leniently: an absent, `null`, or non-boolean value falls back to `false`
+    /// instead of failing the parse of the whole configuration.
+    #[serde(default, deserialize_with = "deserialize_lenient_bool")]
+    pub observe_full_evaluation_data: bool,
     /// Flags configuration.
     ///
     /// Value is wrapped in `TryParse` so that if we fail to parse one flag (e.g., new server
@@ -28,6 +35,20 @@ pub(crate) struct UniversalFlagConfigWire {
 pub struct Environment {
     /// Name of the environment.
     pub name: Str,
+}
+
+/// Deserializes a boolean, falling back to `false` for any value that is not a JSON boolean.
+///
+/// Server-controlled optional booleans must never fail the parse of the whole configuration. A
+/// `null` or mistyped value would otherwise discard every flag and force SDKs onto their defaults.
+fn deserialize_lenient_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Deserialize to a generic `Value` first so that any JSON shape is consumed without error,
+    // then keep only a real boolean. Anything else becomes `false`.
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_bool().unwrap_or(false))
 }
 
 /// `TryParse` allows the subfield to fail parsing without failing the parsing of the whole
@@ -167,8 +188,8 @@ pub(crate) enum ConditionCheck {
     },
     Regex {
         expected_match: bool,
-        // As regex is supplied by user, we allow regex parse failure to not fail parsing and
-        // evaluation. Invalid regexes are simply ignored.
+        // Compile user-supplied regexes during ingestion so a failure rejects only the containing
+        // flag before evaluation.
         regex: Regex,
     },
     Membership {
@@ -180,7 +201,7 @@ pub(crate) enum ConditionCheck {
     },
     SemverComparison {
         operator: SemverComparisonOperator,
-        comparand: semver::Version,
+        comparand: ExtendedVersion,
     },
 }
 
@@ -274,7 +295,7 @@ impl From<Condition> for ConditionWire {
             } => (
                 operator.into(),
                 ConditionValue::Single(SingleConditionValue::String(Str::from(
-                    comparand.to_string().as_str(),
+                    comparand.original.as_ref(),
                 ))),
             ),
         };
@@ -404,9 +425,9 @@ impl TryFrom<ConditionWire> for Condition {
                         return Err(EvaluationError::ConfigurationParseError);
                     }
                 };
-                let comparand = semver::Version::parse(&semver_string).map_err(|err| {
+                let comparand = ExtendedVersion::parse(&semver_string).ok_or_else(|| {
                     log::warn!(
-                        "failed to parse condition: invalid semver {:?}: {err:?}",
+                        "failed to parse condition: invalid semver {:?}",
                         semver_string
                     );
                     EvaluationError::ConfigurationParseError
@@ -418,6 +439,82 @@ impl TryFrom<ConditionWire> for Condition {
             }
         };
         Ok(Condition { attribute, check })
+    }
+}
+
+/// A semantic version with one or more numeric core components.
+///
+/// The UFC format permits abbreviated and extended core versions. Missing components compare as
+/// zero; build metadata does not affect precedence, matching SemVer's comparison rules.
+#[derive(Debug, Clone)]
+pub(crate) struct ExtendedVersion {
+    original: Box<str>,
+    core: Box<[u64]>,
+    normalized: semver::Version,
+}
+
+impl ExtendedVersion {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        let (without_build, build) = match value.split_once('+') {
+            Some((version, build)) if !build.is_empty() && !build.contains('+') => {
+                (version, Some(build))
+            }
+            Some(_) => return None,
+            None => (value, None),
+        };
+        let (core, prerelease) = match without_build.split_once('-') {
+            Some((core, prerelease)) if !prerelease.is_empty() => (core, Some(prerelease)),
+            Some(_) => return None,
+            None => (without_build, None),
+        };
+
+        let core: Box<[u64]> = core
+            .split('.')
+            .map(|component| {
+                (!component.is_empty()
+                    && component.bytes().all(|byte| byte.is_ascii_digit())
+                    && (component == "0" || !component.starts_with('0')))
+                .then(|| component.parse().ok())?
+            })
+            .collect::<Option<Vec<_>>>()?
+            .into();
+        if core.is_empty() {
+            return None;
+        }
+
+        let mut normalized = format!(
+            "{}.{}.{}",
+            core[0],
+            *core.get(1).unwrap_or(&0),
+            *core.get(2).unwrap_or(&0)
+        );
+        if let Some(prerelease) = prerelease {
+            normalized.push('-');
+            normalized.push_str(prerelease);
+        }
+        if let Some(build) = build {
+            normalized.push('+');
+            normalized.push_str(build);
+        }
+
+        Some(Self {
+            original: value.into(),
+            core,
+            normalized: semver::Version::parse(&normalized).ok()?,
+        })
+    }
+
+    pub(crate) fn cmp_precedence(&self, other: &Self) -> Ordering {
+        let component_ordering = self
+            .core
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(0))
+            .zip(other.core.iter().copied().chain(std::iter::repeat(0)))
+            .take(self.core.len().max(other.core.len()))
+            .find_map(|(left, right)| (left != right).then(|| left.cmp(&right)));
+
+        component_ordering.unwrap_or_else(|| self.normalized.cmp_precedence(&other.normalized))
     }
 }
 
@@ -557,6 +654,71 @@ impl ShardRange {
 #[cfg(test)]
 mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
+
+    #[test]
+    fn observe_full_evaluation_data_defaults_to_false_when_absent() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(!ufc.observe_full_evaluation_data);
+    }
+
+    #[test]
+    fn observe_full_evaluation_data_parses_when_present() {
+        let ufc: UniversalFlagConfigWire = serde_json::from_str(
+            r#"
+              {
+                "createdAt": "2024-07-18T00:00:00Z",
+                "environment": { "name": "test" },
+                "observeFullEvaluationData": true,
+                "flags": {}
+              }
+            "#,
+        )
+        .unwrap();
+        assert!(ufc.observe_full_evaluation_data);
+    }
+
+    /// A malformed value for this field must never discard the rest of the configuration. Each
+    /// case must parse, fall back to `false`, and keep the sibling flag usable.
+    #[test]
+    fn observe_full_evaluation_data_falls_back_to_false_when_malformed() {
+        for malformed in [r#"null"#, r#""true""#, r#"1"#, r#"{}"#, r#"[]"#] {
+            let json = format!(
+                r#"
+                  {{
+                    "createdAt": "2024-07-18T00:00:00Z",
+                    "environment": {{ "name": "test" }},
+                    "observeFullEvaluationData": {malformed},
+                    "flags": {{ "my_flag": {{
+                      "key": "my_flag",
+                      "enabled": true,
+                      "variationType": "BOOLEAN",
+                      "variations": {{}},
+                      "allocations": []
+                    }} }}
+                  }}
+                "#
+            );
+            let ufc: UniversalFlagConfigWire = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("value {malformed} must not fail the parse: {e}"));
+            assert!(
+                !ufc.observe_full_evaluation_data,
+                "value {malformed} must fall back to false"
+            );
+            assert!(
+                ufc.flags.contains_key("my_flag"),
+                "value {malformed} must not discard sibling flags"
+            );
+        }
+    }
 
     #[test]
     fn parse_partially_if_unexpected() {

@@ -17,7 +17,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
-.gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
@@ -32,7 +32,7 @@ Cross.toml                           @DataDog/apm-common-components-core
 libdd-ffe                            @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
-datadog-ipc*/                        @DataDog/libdatadog-php
+libdd-ipc*/                          @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
 libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
@@ -40,7 +40,6 @@ datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/libdatadog
-docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
 libdd-agent-client                   @DataDog/apm-common-components-core
@@ -51,7 +50,7 @@ libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
-libdd-gotter/                      @DataDog/libdatadog @DataDog/libdatadog-profiling
+libdd-gotter/                        @DataDog/libdatadog @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
@@ -94,10 +93,11 @@ spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog
 symbolizer-ffi                       @DataDog/libdatadog-profiling
 tests/run-package-tests.ps1          @DataDog/apm-common-components-core
 tests/spawn_from_lib/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
+tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/libdatadog-apm
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
-fuzz/                                @DataDog/chaos-platform
+fuzz/                                @DataDog/chaos-engineering
 
 # Nix
 *.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core
@@ -114,3 +114,4 @@ libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabil
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
+

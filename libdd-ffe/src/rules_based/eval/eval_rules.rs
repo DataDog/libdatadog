@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::{
-    ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, SemverComparisonOperator},
+    ufc::{
+        ComparisonOperator, Condition, ConditionCheck, ExtendedVersion, RuleWire,
+        SemverComparisonOperator,
+    },
     Attribute, EvaluationContext,
 };
 
@@ -66,8 +69,8 @@ impl ConditionCheck {
                 comparand,
             } => {
                 let attr_str = attribute?.as_str()?;
-                let attr_version = semver::Version::parse(attr_str.as_ref()).ok()?;
-                let ordering = attr_version.cmp(comparand);
+                let attr_version = ExtendedVersion::parse(attr_str.as_ref())?;
+                let ordering = attr_version.cmp_precedence(comparand);
                 match operator {
                     SemverComparisonOperator::Eq => ordering.is_eq(),
                     SemverComparisonOperator::Neq => !ordering.is_eq(),
@@ -88,7 +91,10 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use crate::rules_based::{
-        ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, SemverComparisonOperator},
+        ufc::{
+            ComparisonOperator, Condition, ConditionCheck, ExtendedVersion, RuleWire,
+            SemverComparisonOperator,
+        },
         EvaluationContext,
     };
 
@@ -304,8 +310,8 @@ mod tests {
         )));
     }
 
-    fn semver(s: &str) -> semver::Version {
-        semver::Version::parse(s).unwrap()
+    fn semver(s: &str) -> ExtendedVersion {
+        ExtendedVersion::parse(s).unwrap()
     }
 
     #[test]
@@ -315,6 +321,7 @@ mod tests {
             comparand: semver("1.2.3"),
         };
         assert!(check.eval(Some(&"1.2.3".into())));
+        assert!(check.eval(Some(&"1.2.3+build.42".into())));
         assert!(!check.eval(Some(&"1.2.4".into())));
         assert!(!check.eval(Some(&"1.2.2".into())));
         assert!(!check.eval(None));
@@ -327,6 +334,7 @@ mod tests {
             comparand: semver("1.2.3"),
         };
         assert!(!check.eval(Some(&"1.2.3".into())));
+        assert!(!check.eval(Some(&"1.2.3+build.42".into())));
         assert!(check.eval(Some(&"1.2.4".into())));
         assert!(!check.eval(None));
     }
@@ -387,13 +395,32 @@ mod tests {
     }
 
     #[test]
-    fn semver_invalid_attribute_returns_false() {
+    fn semver_supports_indefinite_core_version_parts() {
+        let equal = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Eq,
+            comparand: semver("18.0.0"),
+        };
+        assert!(equal.eval(Some(&"18".into())));
+        assert!(equal.eval(Some(&"18.0".into())));
+        assert!(equal.eval(Some(&"18.0.0.0.0.0".into())));
+
+        let greater = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Gt,
+            comparand: semver("18.0.0.0.0.1"),
+        };
+        assert!(greater.eval(Some(&"18.0.0.0.0.2".into())));
+        assert!(greater.eval(Some(&"18.0.0.0.0.1.0.0.1".into())));
+    }
+
+    #[test]
+    fn semver_malformed_attribute_returns_false() {
         let check = ConditionCheck::SemverComparison {
             operator: SemverComparisonOperator::Gte,
             comparand: semver("1.0.0"),
         };
         assert!(!check.eval(Some(&"not-a-version".into())));
-        assert!(!check.eval(Some(&"1.2".into())));
+        assert!(!check.eval(Some(&"1..2".into())));
+        assert!(!check.eval(Some(&"1.02.3".into())));
         assert!(!check.eval(None));
     }
 }

@@ -15,10 +15,22 @@ use alloc::{collections::BTreeSet, fmt};
 use core::fmt::Display;
 use std::collections::HashSet;
 
-use libdd_trace_obfuscation::{obfuscate::obfuscate_span, obfuscation_config::ObfuscationConfig};
+use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_obfuscation::{
+    obfuscate::{obfuscate_pb_span, obfuscate_v04_span},
+    obfuscation_config::ObfuscationConfig,
+};
 use libdd_trace_protobuf::pb::{
-    attribute_any_value::AttributeAnyValueType, attribute_array_value::AttributeArrayValueType,
-    AttributeAnyValue, AttributeArray, AttributeArrayValue, Span, SpanEvent,
+    self, attribute_any_value::AttributeAnyValueType,
+    attribute_array_value::AttributeArrayValueType, AttributeAnyValue, AttributeArray,
+    AttributeArrayValue, Span, SpanEvent,
+};
+use libdd_trace_utils::span::{
+    v04::{
+        AttributeAnyValue as V04AttributeAnyValue, AttributeArrayValue as V04AttributeArrayValue,
+        SpanBytes, SpanEventBytes, SpanLinkBytes,
+    },
+    BytesData,
 };
 use serde::Deserialize;
 
@@ -48,15 +60,33 @@ fn test_obfuscate_span() {
     for Testcase {
         name,
         config,
-        input: mut span,
+        input,
         expected,
     } in testcases
     {
-        obfuscate_span(&mut span, &config);
-        if !span_equal(&span, &expected) {
+        // --- pb path (reference implementation) ---
+        let mut pb_span = input.clone();
+        obfuscate_pb_span(&mut pb_span, &config);
+        if !span_equal(&pb_span, &expected) {
             failures.push(format!(
-                "[{name}]: \n{}",
-                SpanComparison::new(&span, &expected)
+                "[{name} / pb]: \n{}",
+                SpanComparison::new(&pb_span, &expected)
+            ));
+        }
+
+        // --- v04 path (must produce feature parity with the pb path) ---
+        // The *same* fixture input is converted to a v04 span, obfuscated, then
+        // converted back to a pb span. Both paths are therefore checked against
+        // the *same* `expected` value with the *same* comparison logic, so any
+        // divergence between `obfuscate_pb_span` and `obfuscate_v04_span` shows
+        // up as a feature-parity failure tagged with `/ v04`.
+        let mut v04_span = pb_span_to_v04(&input);
+        obfuscate_v04_span(&mut v04_span, &config);
+        let pb_result = v04_span_to_pb(&v04_span);
+        if !span_equal(&pb_result, &expected) {
+            failures.push(format!(
+                "[{name} / v04]: \n{}",
+                SpanComparison::new(&pb_result, &expected)
             ));
         }
     }
@@ -66,6 +96,225 @@ fn test_obfuscate_span() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+// ---------------------------------------------------------------------------
+// pb::Span <-> v04::Span<BytesData> conversions
+//
+// These exist only so the fixture suite (deserialized into `pb::Span`) can drive
+// `obfuscate_v04_span` and be compared back against the same `pb::Span` expected
+// value. They are straightforward field-by-field mappings with no obfuscation
+// logic of their own.
+// ---------------------------------------------------------------------------
+
+fn bs(s: &str) -> BytesString {
+    BytesString::from_string(s.to_owned())
+}
+
+fn pb_span_to_v04(span: &pb::Span) -> SpanBytes {
+    SpanBytes {
+        service: bs(&span.service),
+        name: bs(&span.name),
+        resource: bs(&span.resource),
+        r#type: bs(&span.r#type),
+        trace_id: u128::from(span.trace_id),
+        span_id: span.span_id,
+        parent_id: span.parent_id,
+        start: span.start,
+        duration: span.duration,
+        error: span.error,
+        meta: span.meta.iter().map(|(k, v)| (bs(k), bs(v))).collect(),
+        metrics: span.metrics.iter().map(|(k, v)| (bs(k), *v)).collect(),
+        meta_struct: span
+            .meta_struct
+            .iter()
+            .map(|(k, v)| (bs(k), Bytes::copy_from_slice(v)))
+            .collect(),
+        span_links: span.span_links.iter().map(pb_span_link_to_v04).collect(),
+        span_events: span.span_events.iter().map(pb_span_event_to_v04).collect(),
+    }
+}
+
+fn v04_span_to_pb(span: &SpanBytes) -> pb::Span {
+    pb::Span {
+        service: span.service.as_str().to_owned(),
+        name: span.name.as_str().to_owned(),
+        resource: span.resource.as_str().to_owned(),
+        r#type: span.r#type.as_str().to_owned(),
+        // `trace_id` was widened from a pb `u64` in `pb_span_to_v04`, so this
+        // round-trip never truncates.
+        trace_id: u64::try_from(span.trace_id).unwrap(),
+        span_id: span.span_id,
+        parent_id: span.parent_id,
+        start: span.start,
+        duration: span.duration,
+        error: span.error,
+        meta: span
+            .meta
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), v.as_str().to_owned()))
+            .collect(),
+        metrics: span
+            .metrics
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), *v))
+            .collect(),
+        meta_struct: span
+            .meta_struct
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), v.to_vec()))
+            .collect(),
+        span_links: span.span_links.iter().map(v04_span_link_to_pb).collect(),
+        span_events: span.span_events.iter().map(v04_span_event_to_pb).collect(),
+    }
+}
+
+fn pb_span_link_to_v04(link: &pb::SpanLink) -> SpanLinkBytes {
+    SpanLinkBytes {
+        trace_id: link.trace_id,
+        trace_id_high: link.trace_id_high,
+        span_id: link.span_id,
+        attributes: link
+            .attributes
+            .iter()
+            .map(|(k, v)| (bs(k), bs(v)))
+            .collect(),
+        tracestate: bs(&link.tracestate),
+        flags: link.flags,
+    }
+}
+
+fn v04_span_link_to_pb(link: &SpanLinkBytes) -> pb::SpanLink {
+    pb::SpanLink {
+        trace_id: link.trace_id,
+        trace_id_high: link.trace_id_high,
+        span_id: link.span_id,
+        attributes: link
+            .attributes
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), v.as_str().to_owned()))
+            .collect(),
+        tracestate: link.tracestate.as_str().to_owned(),
+        flags: link.flags,
+    }
+}
+
+fn pb_span_event_to_v04(event: &pb::SpanEvent) -> SpanEventBytes {
+    SpanEventBytes {
+        time_unix_nano: event.time_unix_nano,
+        name: bs(&event.name),
+        attributes: event
+            .attributes
+            .iter()
+            .map(|(k, v)| (bs(k), pb_attr_any_value_to_v04(v)))
+            .collect(),
+    }
+}
+
+fn v04_span_event_to_pb(event: &SpanEventBytes) -> pb::SpanEvent {
+    pb::SpanEvent {
+        time_unix_nano: event.time_unix_nano,
+        name: event.name.as_str().to_owned(),
+        attributes: event
+            .attributes
+            .iter()
+            .map(|(k, v)| (k.as_str().to_owned(), v04_attr_any_value_to_pb(v)))
+            .collect(),
+    }
+}
+
+fn pb_attr_any_value_to_v04(v: &pb::AttributeAnyValue) -> V04AttributeAnyValue<BytesData> {
+    match AttributeAnyValueType::try_from(v.r#type).unwrap() {
+        AttributeAnyValueType::StringValue => {
+            V04AttributeAnyValue::SingleValue(V04AttributeArrayValue::String(bs(&v.string_value)))
+        }
+        AttributeAnyValueType::BoolValue => {
+            V04AttributeAnyValue::SingleValue(V04AttributeArrayValue::Boolean(v.bool_value))
+        }
+        AttributeAnyValueType::IntValue => {
+            V04AttributeAnyValue::SingleValue(V04AttributeArrayValue::Integer(v.int_value))
+        }
+        AttributeAnyValueType::DoubleValue => {
+            V04AttributeAnyValue::SingleValue(V04AttributeArrayValue::Double(v.double_value))
+        }
+        AttributeAnyValueType::ArrayValue => V04AttributeAnyValue::Array(
+            v.array_value
+                .as_ref()
+                .unwrap()
+                .values
+                .iter()
+                .map(pb_attr_array_value_to_v04)
+                .collect(),
+        ),
+    }
+}
+
+fn v04_attr_any_value_to_pb(v: &V04AttributeAnyValue<BytesData>) -> pb::AttributeAnyValue {
+    match v {
+        V04AttributeAnyValue::SingleValue(av) => match av {
+            V04AttributeArrayValue::String(s) => pb::AttributeAnyValue {
+                r#type: AttributeAnyValueType::StringValue.into(),
+                string_value: s.as_str().to_owned(),
+                ..Default::default()
+            },
+            V04AttributeArrayValue::Boolean(b) => pb::AttributeAnyValue {
+                r#type: AttributeAnyValueType::BoolValue.into(),
+                bool_value: *b,
+                ..Default::default()
+            },
+            V04AttributeArrayValue::Integer(i) => pb::AttributeAnyValue {
+                r#type: AttributeAnyValueType::IntValue.into(),
+                int_value: *i,
+                ..Default::default()
+            },
+            V04AttributeArrayValue::Double(d) => pb::AttributeAnyValue {
+                r#type: AttributeAnyValueType::DoubleValue.into(),
+                double_value: *d,
+                ..Default::default()
+            },
+        },
+        V04AttributeAnyValue::Array(values) => pb::AttributeAnyValue {
+            r#type: AttributeAnyValueType::ArrayValue.into(),
+            array_value: Some(pb::AttributeArray {
+                values: values.iter().map(v04_attr_array_value_to_pb).collect(),
+            }),
+            ..Default::default()
+        },
+    }
+}
+
+fn pb_attr_array_value_to_v04(e: &pb::AttributeArrayValue) -> V04AttributeArrayValue<BytesData> {
+    match AttributeArrayValueType::try_from(e.r#type).unwrap() {
+        AttributeArrayValueType::StringValue => V04AttributeArrayValue::String(bs(&e.string_value)),
+        AttributeArrayValueType::BoolValue => V04AttributeArrayValue::Boolean(e.bool_value),
+        AttributeArrayValueType::IntValue => V04AttributeArrayValue::Integer(e.int_value),
+        AttributeArrayValueType::DoubleValue => V04AttributeArrayValue::Double(e.double_value),
+    }
+}
+
+fn v04_attr_array_value_to_pb(e: &V04AttributeArrayValue<BytesData>) -> pb::AttributeArrayValue {
+    match e {
+        V04AttributeArrayValue::String(s) => pb::AttributeArrayValue {
+            r#type: AttributeArrayValueType::StringValue.into(),
+            string_value: s.as_str().to_owned(),
+            ..Default::default()
+        },
+        V04AttributeArrayValue::Boolean(b) => pb::AttributeArrayValue {
+            r#type: AttributeArrayValueType::BoolValue.into(),
+            bool_value: *b,
+            ..Default::default()
+        },
+        V04AttributeArrayValue::Integer(i) => pb::AttributeArrayValue {
+            r#type: AttributeArrayValueType::IntValue.into(),
+            int_value: *i,
+            ..Default::default()
+        },
+        V04AttributeArrayValue::Double(d) => pb::AttributeArrayValue {
+            r#type: AttributeArrayValueType::DoubleValue.into(),
+            double_value: *d,
+            ..Default::default()
+        },
+    }
 }
 
 fn span_equal(

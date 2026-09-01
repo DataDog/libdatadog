@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-obfuscation"
-version = "5.0.0"
+version = "7.0.0"
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
@@ -18,9 +18,9 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 percent-encoding = "2.1"
 log = "0.4"
 fluent-uri = "0.4.1"
-libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "9.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 
 [features]
 default = ["https"]
@@ -32,6 +32,7 @@ regex-lite = ["libdd-common/regex-lite"]
 duplicate = "0.4.1"
 criterion = { workspace = true, features = ["csv_output"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes" }
 
 [lib]
 bench = false

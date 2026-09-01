@@ -12,7 +12,7 @@ use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
 use crate::setup::Liaison;
 use crate::setup::NamedPipeLiaison;
-use datadog_ipc::{AsyncConn, SeqpacketListener};
+use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 

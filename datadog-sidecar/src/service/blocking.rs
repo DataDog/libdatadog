@@ -6,15 +6,16 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::SidecarInterfaceChannel;
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::sync::Mutex;
 use std::{
@@ -319,6 +320,48 @@ pub fn send_trace_v04_shm(
     Ok(())
 }
 
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(
+        instance_id.clone(),
+        data,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
+    Ok(())
+}
+
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(
+        instance_id.clone(),
+        handle,
+        len,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
+    Ok(())
+}
+
 /// Sends raw data from shared memory to the debugger endpoint.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
@@ -464,10 +507,24 @@ pub fn add_span_to_concentrator(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
-    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    span: libdd_ipc::shm_stats::OwnedShmSpanInput,
 ) -> io::Result<()> {
     lock_sender(transport)?.add_span_to_concentrator(env, version, span);
     Ok(())
+}
+
+/// Starts the AppSec backend in the sidecar and waits for initialization to
+/// complete before returning.
+pub fn ensure_appsec_started(
+    transport: &mut SidecarTransport,
+    log_file_path: Vec<u8>,
+    log_level: String,
+) -> io::Result<bool> {
+    transport.with_retry(|sender| {
+        sender
+            .ensure_appsec_started(log_file_path.clone(), log_level.clone())
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
 }
 
 /// Dumps the current state of the service.
@@ -478,6 +535,21 @@ pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
 /// Retrieves the current statistics of the service.
 pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
+}
+
+/// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message(
+    transport: &mut SidecarTransport,
+    client_id: u64,
+    data: &[u8],
+) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    transport.with_retry(|s| {
+        s.send_appsec_message(&request)
+            .map_err(|e| io::Error::other(e.to_string()))
+    })
 }
 
 /// Flushes traces/stats and/or telemetry, as specified by options.
@@ -496,7 +568,7 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(unix)]
 mod tests {
     use crate::service::blocking::SidecarTransport;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use tempfile::tempdir;
 
