@@ -216,7 +216,7 @@ pub fn obfuscate_url_string(
         return if remove_query_string || remove_path_digits {
             "?".to_string()
         } else {
-            strip_userinfo_best_effort(url, path_query_end)
+            strip_userinfo_best_effort(url, path_end)
         };
     }
 
@@ -792,6 +792,16 @@ mod tests {
             remove_path_digits  [false]
             input               ["http://user:password@foo.com/\u{1}"]
             expected_output     ["http://foo.com/\u{1}"];
+        ]
+        [
+            // Regression: an '@' in the query (not real userinfo) must not be mistaken for
+            // userinfo when a control char forces the best-effort stripping fallback. The
+            // authority scan must stop at the query delimiter, not the fragment delimiter.
+            test_name           [regression_control_char_query_at_not_mistaken_for_userinfo]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://example.com?email=a@b\u{0}"]
+            expected_output     ["http://example.com?email=a@b\u{0}"];
         ]
         [
             test_name           [parity_colon_both_false]
