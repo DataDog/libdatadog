@@ -24,6 +24,13 @@ pub(crate) enum TransportConfig {
     WindowsNamedPipe(std::ffi::OsString),
 }
 
+/// Idle timeout for connections kept alive by a client configured for periodic use (see
+/// [`HttpClientBuilder::periodic`]).
+///
+/// Kept much smaller than typical keep-alive timeouts on the receiving end (e.g. the Datadog
+/// agent), so that an idle pooled connection is dropped by our side before the receiver closes it.
+pub(crate) const PERIODIC_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Configuration for an [`crate::HttpClient`] instance.
 ///
 /// Constructed via [`crate::HttpClient::new`] or [`HttpClientBuilder::build`].
@@ -33,7 +40,9 @@ pub struct HttpClientConfig {
     timeout: Duration,
     treat_http_errors_as_errors: bool,
     retry: Option<RetryConfig>,
-    allow_connection_pooling: bool,
+    /// If this client is setup for periodic flushes. This mostly affects connection pooling, see
+    /// [`HttpClientBuilder::periodic`].
+    periodic: bool,
 }
 
 impl HttpClientConfig {
@@ -45,7 +54,7 @@ impl HttpClientConfig {
             timeout,
             treat_http_errors_as_errors: true,
             retry: None,
-            allow_connection_pooling: true,
+            periodic: false,
         }
     }
 
@@ -69,10 +78,9 @@ impl HttpClientConfig {
         self.retry.as_ref()
     }
 
-    /// Whether connection pooling can be used, when available. See
-    /// [HttpClientBuilder::allow_connection_pooling].
-    pub fn allow_connection_pooling(&self) -> bool {
-        self.allow_connection_pooling
+    /// If this client is setup for periodic flushes. See [HttpClientBuilder::periodic].
+    pub fn periodic(&self) -> bool {
+        self.periodic
     }
 }
 
@@ -86,7 +94,7 @@ pub struct HttpClientBuilder {
     treat_http_errors_as_errors: bool,
     retry: Option<RetryConfig>,
     transport: TransportConfig,
-    allow_connection_pooling: bool,
+    periodic: bool,
 }
 
 impl Default for HttpClientBuilder {
@@ -97,7 +105,7 @@ impl Default for HttpClientBuilder {
             treat_http_errors_as_errors: true,
             retry: Default::default(),
             transport: Default::default(),
-            allow_connection_pooling: true,
+            periodic: false,
         }
     }
 }
@@ -155,15 +163,28 @@ impl HttpClientBuilder {
         self
     }
 
-    /// Allow connection pooling. Defaults to `true`.
+    /// Set whether this client is used for periodic one-shot communication (typically
+    /// regularly flushing to the agent or to the backend). Defaults to `false`.
     ///
-    /// Note that whether pooling is actually used depends on the HTTP backend of
-    /// [crate], though both currently available backends (reqwest and hyper) support
-    /// pooling. This setting should be understood as: if set to `true`, the default behavior of the
-    /// underlying backend will be selected, which might or might not do connection pooling by
-    /// default. If set to `false`, we guarantee no connection pooling will happen.
-    pub fn allow_connection_pooling(mut self, allow: bool) -> Self {
-        self.allow_connection_pooling = allow;
+    /// Depending on the capabilities of the underlying backend, this setting either:
+    ///
+    /// - sets the lifetime of pooled connections to a timeout much smaller than 60s (e.g. 5s)
+    /// - disables connection pooling entirely if the timeout isn't configurable
+    /// - does nothing if there's no connection pooling support to begin with
+    ///
+    /// The rationale for having limited connection pooling is that we've experienced races when
+    /// the connection pooling timeout is higher than the keep-alive timeout of the receiving end.
+    /// It's then possible to pick an idle connection and start a request while the connection get
+    /// closed at the same time by the receiver, causing an error.
+    ///
+    /// Connection pooling was initially entirely disabled by this setting, but it happens that
+    /// we send multiple separate requests in a short span of time (e.g. for telemetry on very
+    /// short-lived apps). In that situation, if we're agentless, making separate HTTPS connections
+    /// is quite costly (can be on the order of magnitude of 0.5sec per connection). Having pooling
+    /// with a short lifetime is a better choice, since we can reuse the same connection for those
+    /// multiple consecutive requests, while avoiding the race condition.
+    pub fn periodic(mut self, periodic: bool) -> Self {
+        self.periodic = periodic;
         self
     }
 
@@ -183,7 +204,7 @@ impl HttpClientBuilder {
             timeout,
             treat_http_errors_as_errors: self.treat_http_errors_as_errors,
             retry: self.retry,
-            allow_connection_pooling: self.allow_connection_pooling,
+            periodic: self.periodic,
         };
         crate::HttpClient::from_config_and_transport(config, self.transport)
     }
@@ -268,26 +289,26 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
-    fn builder_allow_connection_pooling_defaults_true() {
+    fn builder_periodic_defaults_false() {
         ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))
             .build()
             .unwrap();
-        assert!(client.config().allow_connection_pooling());
+        assert!(!client.config().periodic());
     }
 
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
-    fn builder_allow_connection_pooling_set_false() {
+    fn builder_periodic_set_true() {
         ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))
-            .allow_connection_pooling(false)
+            .periodic(true)
             .build()
             .unwrap();
-        assert!(!client.config().allow_connection_pooling());
+        assert!(client.config().periodic());
     }
 }
