@@ -24,7 +24,9 @@ mod native {
     #[derive(Clone)]
     pub struct NativeHttpClient {
         client: Arc<OnceLock<GenericHttpClient<Connector>>>,
-        connection_pooling: bool,
+        /// If this client is setup for periodic flushes. This mostly affects connection pooling,
+        /// see [`HttpClientCapability::new_periodic`].
+        periodic: bool,
     }
 
     pub struct NativeBodySender(libdd_common::http_common::Sender);
@@ -39,19 +41,18 @@ mod native {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("NativeHttpClient")
                 .field("initialized", &self.client.get().is_some())
-                .field("connection_pooling", &self.connection_pooling)
+                .field("periodic", &self.periodic)
                 .finish()
         }
     }
 
     impl NativeHttpClient {
-        /// Like [`HttpClientCapability::new_client`], but sets a small lifetime on pooled
-        /// connections. See [`HttpClientCapability::new_without_connection_pooling`] for the
-        /// rationale.
-        pub fn new_without_connection_pooling() -> Self {
+        /// Like [`HttpClientCapability::new_client`], but disables connection pooling. See
+        /// [`HttpClientCapability::new_periodic`].
+        pub fn new_periodic() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: false,
+                periodic: true,
             }
         }
     }
@@ -112,12 +113,12 @@ mod native {
         fn new_client() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: true,
+                periodic: false,
             }
         }
 
-        fn new_without_connection_pooling() -> Self {
-            NativeHttpClient::new_without_connection_pooling()
+        fn new_periodic() -> Self {
+            NativeHttpClient::new_periodic()
         }
 
         #[allow(clippy::manual_async_fn)]
@@ -126,7 +127,7 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let connection_pooling = self.connection_pooling;
+            let periodic = self.periodic;
             let client_lock = self.client.clone();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
@@ -137,10 +138,10 @@ mod native {
 
                 let client = client_lock
                     .get_or_init(|| {
-                        if connection_pooling {
-                            new_default_client()
-                        } else {
+                        if periodic {
                             new_client_periodic()
+                        } else {
+                            new_default_client()
                         }
                     })
                     .clone();
