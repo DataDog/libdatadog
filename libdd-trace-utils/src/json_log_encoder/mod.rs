@@ -23,7 +23,7 @@ mod span;
 mod span_v1;
 
 use crate::span::v04::Span;
-use crate::span::v1::TraceChunk;
+use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
 use span::LogSpan;
 use span_v1::{ChunkContextV1, LogSpanV1};
@@ -144,19 +144,22 @@ pub fn encode_traces<T: TraceData>(
     Ok(stats)
 }
 
-/// Encodes v1 `traces` (grouped as [`TraceChunk`]s) into newline-delimited JSON "log
-/// exporter" lines, writing them to `out`. Same framing, packing, and oversized-span
-/// dropping behavior as [`encode_traces`] — see its docs — but takes v1
-/// [`TraceChunk`]/[`crate::span::v1::Span`] input and downgrades each span's unified
+/// Encodes a v1 [`TracerPayload`] into newline-delimited JSON "log exporter" lines,
+/// writing them to `out`. Same framing, packing, and oversized-span dropping behavior as
+/// [`encode_traces`] — see its docs — but takes v1
+/// [`TracerPayload`]/[`crate::span::v1::Span`] input and downgrades each span's unified
 /// attribute model back to the `meta`/`metrics`-shaped wire span via
 /// [`span_v1::LogSpanV1`], since the JSON log wire contract (consumed by the Datadog
-/// Forwarder Lambda) is unchanged by the v1 migration.
+/// Forwarder Lambda) is unchanged by the v1 migration. Payload-level `env`/`app_version`/
+/// `attributes` are propagated into every span (lowest precedence, below chunk and span
+/// level) — same convention as the msgpack v0.4 downgrade encoder's
+/// `encode_payload_from_v1`.
 ///
 /// # Errors
 ///
 /// Returns any [`std::io::Error`] produced while writing to `out`.
 pub fn encode_traces_v1<T: TraceData>(
-    chunks: &[TraceChunk<T>],
+    payload: &TracerPayload<T>,
     out: &mut impl Write,
     max_line_size: usize,
 ) -> std::io::Result<EncodeStats> {
@@ -171,8 +174,8 @@ pub fn encode_traces_v1<T: TraceData>(
     line.extend_from_slice(TRACE_PREFIX);
     let mut line_span_count: usize = 0;
 
-    for chunk in chunks {
-        let ctx = ChunkContextV1::new(chunk);
+    for chunk in &payload.chunks {
+        let ctx = ChunkContextV1::new(chunk, &payload.env, &payload.app_version, &payload.attributes);
         for span in &chunk.spans {
             span_buf.clear();
             serde_json::to_writer(&mut span_buf, &LogSpanV1(span, &ctx))

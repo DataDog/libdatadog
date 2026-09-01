@@ -12,7 +12,7 @@
 
 use libdd_capabilities::LogWriterCapability;
 use libdd_trace_utils::json_log_encoder::{encode_traces, encode_traces_v1, EncodeStats};
-use libdd_trace_utils::span::{v04::Span, v1::TraceChunk, TraceData};
+use libdd_trace_utils::span::{v04::Span, v1::TracerPayload, TraceData};
 
 /// Default maximum size of a single emitted log line, in bytes.
 ///
@@ -40,7 +40,7 @@ pub(crate) fn write_log_traces<C: LogWriterCapability + ?Sized, T: TraceData>(
     Ok(stats)
 }
 
-/// v1-native analog of [`write_log_traces`]. Encodes v1 [`TraceChunk`]s to the same
+/// v1-native analog of [`write_log_traces`]. Encodes a v1 [`TracerPayload`] to the same
 /// newline-delimited Forwarder JSON wire format and writes them through the log-output
 /// capability. Returns counts of spans written/dropped.
 ///
@@ -50,11 +50,11 @@ pub(crate) fn write_log_traces<C: LogWriterCapability + ?Sized, T: TraceData>(
 #[allow(dead_code)] // Not yet wired into a live send path; see APMSP-2812.
 pub(crate) fn write_log_traces_v1<C: LogWriterCapability + ?Sized, T: TraceData>(
     capabilities: &C,
-    chunks: &[TraceChunk<T>],
+    payload: &TracerPayload<T>,
     max_line_size: usize,
 ) -> std::io::Result<EncodeStats> {
     let mut buf: Vec<u8> = Vec::new();
-    let stats = encode_traces_v1(chunks, &mut buf, max_line_size)?;
+    let stats = encode_traces_v1(payload, &mut buf, max_line_size)?;
     if !buf.is_empty() {
         capabilities.write_log_output(&buf)?;
     }
@@ -116,17 +116,20 @@ mod tests {
     #[test]
     fn encodes_and_writes_through_capability_v1() {
         let cap = CapturingLog::default();
-        let chunks = vec![TraceChunk::<SliceData<'static>> {
-            trace_id: [0u8; 16],
-            spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
-                span_id: 2,
+        let payload = TracerPayload::<SliceData<'static>> {
+            chunks: vec![libdd_trace_utils::span::v1::TraceChunk::<SliceData<'static>> {
+                trace_id: [0u8; 16],
+                spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
+                    span_id: 2,
+                    ..Default::default()
+                }],
                 ..Default::default()
             }],
             ..Default::default()
-        }];
+        };
 
         let stats =
-            write_log_traces_v1(&cap, &chunks, DEFAULT_LOG_MAX_LINE_SIZE).expect("write ok");
+            write_log_traces_v1(&cap, &payload, DEFAULT_LOG_MAX_LINE_SIZE).expect("write ok");
         assert_eq!(stats.spans_written, 1);
         assert_eq!(stats.spans_dropped, 0);
 
@@ -142,8 +145,8 @@ mod tests {
     #[test]
     fn empty_chunks_do_not_call_capability_v1() {
         let cap = CapturingLog::default();
-        let chunks: Vec<TraceChunk<SliceData<'static>>> = vec![];
-        let stats = write_log_traces_v1(&cap, &chunks, DEFAULT_LOG_MAX_LINE_SIZE).expect("ok");
+        let payload = TracerPayload::<SliceData<'static>>::default();
+        let stats = write_log_traces_v1(&cap, &payload, DEFAULT_LOG_MAX_LINE_SIZE).expect("ok");
         assert_eq!(stats.spans_written, 0);
         assert!(cap.0.lock().expect("lock").is_empty());
     }

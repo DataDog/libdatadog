@@ -12,13 +12,13 @@
 //! convention. `Bytes` attributes have no JSON log representation and are dropped (same as
 //! `meta_struct` is never emitted for v0.4 — see [`super::span::LogSpan`]'s doc comment).
 //!
-//! Unlike the msgpack downgrade encoder, there is no payload-level `env`/`app_version`
-//! fallback here: chunk-level context (`trace_id`, `origin`, `priority`,
-//! `sampling_mechanism`, chunk attributes) is the only context propagated into each span,
-//! matching the [`TraceChunk`]-level granularity at which the log-export path operates.
+//! Like the msgpack downgrade encoder, payload-level `env`/`app_version`/`attributes` are
+//! propagated into every span as the lowest-precedence fallback (span > chunk > payload) —
+//! see [`crate::msgpack_encoder::v04::span_v1`]'s mapping table for the msgpack-side sibling
+//! of this convention.
 
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
-use crate::span::vec_map::DedupedVecMap;
+use crate::span::vec_map::{DedupedVecMap, VecMap};
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
@@ -44,17 +44,28 @@ const PROMOTED_ATTR_KEYS: &[&str] = &[
 ];
 
 /// Chunk-level context propagated into every span when downgrading to the JSON log shape.
-/// Built once per chunk and passed by reference to [`LogSpanV1`].
+/// Built once per chunk and passed by reference to [`LogSpanV1`]. Also carries
+/// payload-level fields (`payload_env`, `payload_app_version`, `payload_attrs_dd`), which
+/// apply as a fallback when the span/chunk don't set the equivalent field — mirrors
+/// `crate::msgpack_encoder::v04::span_v1::ChunkContext`.
 pub(super) struct ChunkContextV1<'a, T: TraceData> {
     pub trace_id: &'a [u8; 16],
     pub priority: Option<i32>,
     pub origin: &'a T::Text,
     pub sampling_mechanism: Option<u32>,
+    pub payload_env: &'a T::Text,
+    pub payload_app_version: &'a T::Text,
     pub attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
+    pub payload_attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
 }
 
 impl<'a, T: TraceData> ChunkContextV1<'a, T> {
-    pub(super) fn new(chunk: &'a TraceChunk<T>) -> Self {
+    pub(super) fn new(
+        chunk: &'a TraceChunk<T>,
+        payload_env: &'a T::Text,
+        payload_app_version: &'a T::Text,
+        payload_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
+    ) -> Self {
         // v0.4 has no wire-level equivalent of `dropped_trace`; force `USER_REJECT` (-1)
         // unless the chunk already carries a negative (reject-like) priority — same
         // convention as the msgpack downgrade encoder
@@ -69,7 +80,10 @@ impl<'a, T: TraceData> ChunkContextV1<'a, T> {
             priority,
             origin: &chunk.origin,
             sampling_mechanism: chunk.sampling_mechanism,
+            payload_env,
+            payload_app_version,
             attrs_dd: chunk.attributes.defensive_dedup(),
+            payload_attrs_dd: payload_attributes.defensive_dedup(),
         }
     }
 }
@@ -466,15 +480,20 @@ impl<T: TraceData> Serialize for LogSpanV1<'_, T> {
         let chunk = self.1;
 
         let span_attrs_dd = span.attributes.defensive_dedup();
-        // Precedence: span attributes override chunk attributes. Attributes sharing a name
-        // with a "promoted" dedicated field are dropped so the dedicated field always wins
-        // and each key is written at most once.
+        // Precedence: span attributes override chunk attributes override payload
+        // attributes. Attributes sharing a name with a "promoted" dedicated field are
+        // dropped so the dedicated field always wins and each key is written at most once.
         let merged_attrs = span_attrs_dd
             .iter()
             .filter(|(k, _)| !PROMOTED_ATTR_KEYS.contains(&(*k).borrow()))
             .chain(chunk.attrs_dd.iter().filter(|(k, _)| {
                 !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
                     && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+            }))
+            .chain(chunk.payload_attrs_dd.iter().filter(|(k, _)| {
+                !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
+                    && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+                    && !chunk.attrs_dd.iter().any(|(k2, _)| k2 == *k)
             }));
 
         let mut meta_leaves: Vec<(String, String)> = Vec::new();
@@ -494,8 +513,19 @@ impl<T: TraceData> Serialize for LogSpanV1<'_, T> {
         let metrics_leaves = dedup_first_wins(metrics_leaves);
 
         let kind_meta = span_kind_to_meta(span.span_kind);
-        let env: &str = span.env.borrow();
-        let version: &str = span.version.borrow();
+        // `env`/`version` fall back to the payload-level value when the span doesn't set
+        // its own — same convention as
+        // `crate::msgpack_encoder::v04::span_v1::encode_span`.
+        let env: &str = if !span.env.borrow().is_empty() {
+            span.env.borrow()
+        } else {
+            chunk.payload_env.borrow()
+        };
+        let version: &str = if !span.version.borrow().is_empty() {
+            span.version.borrow()
+        } else {
+            chunk.payload_app_version.borrow()
+        };
         let component: &str = span.component.borrow();
         let origin: &str = chunk.origin.borrow();
 
@@ -580,7 +610,7 @@ mod tests {
     use super::super::encode_traces_v1;
     use crate::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
-        TraceChunkBytes,
+        TraceChunkBytes, TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use libdd_tinybytes::BytesString;
@@ -612,11 +642,16 @@ mod tests {
         }
     }
 
-    /// Encodes `chunks` and parses the single emitted line back into a `serde_json::Value`,
-    /// returning the first span of the first trace for convenience.
-    fn encode_first_span(chunks: &[TraceChunkBytes]) -> Value {
+    /// Encodes a single `chunk` (wrapped in a default payload) and parses the emitted line
+    /// back into a `serde_json::Value`, returning the first span of the first trace for
+    /// convenience.
+    fn encode_first_span(chunk: TraceChunkBytes) -> Value {
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
         let mut out = Vec::new();
-        let stats = encode_traces_v1(chunks, &mut out, MAX).expect("encode ok");
+        let stats = encode_traces_v1(&payload, &mut out, MAX).expect("encode ok");
         assert_eq!(stats.spans_dropped, 0);
         let text = String::from_utf8(out).expect("utf8");
         let line = text.lines().next().expect("at least one line");
@@ -627,7 +662,7 @@ mod tests {
     #[test]
     fn basic_span_writes_required_fields() {
         let chunk = minimal_chunk([0u8; 16], minimal_span());
-        let span = encode_first_span(&[chunk]);
+        let span = encode_first_span(chunk);
 
         assert_eq!(span["service"], "svc");
         assert_eq!(span["name"], "op");
@@ -661,7 +696,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let meta = &out["meta"];
 
         assert_eq!(meta["env"], "prod");
@@ -673,7 +708,7 @@ mod tests {
     #[test]
     fn span_kind_internal_is_not_emitted() {
         let chunk = minimal_chunk([0u8; 16], minimal_span());
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert!(out.get("meta").is_none());
     }
 
@@ -688,7 +723,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let meta = &out["meta"];
 
         // The dedicated `span.env` field wins; the colliding attribute is dropped rather than
@@ -714,7 +749,7 @@ mod tests {
                 },
             )
         };
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["meta"]["k"], "from-span");
     }
 
@@ -737,13 +772,82 @@ mod tests {
             ..Default::default()
         };
 
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
         let mut out = Vec::new();
-        let stats = encode_traces_v1(&[chunk], &mut out, MAX).expect("encode ok");
+        let stats = encode_traces_v1(&payload, &mut out, MAX).expect("encode ok");
         assert_eq!(stats.spans_written, 2);
         let text = String::from_utf8(out).expect("utf8");
         let v: Value = serde_json::from_str(text.lines().next().unwrap()).expect("valid json");
         assert_eq!(v["traces"][0][0]["meta"]["shared"], "chunk-value");
         assert_eq!(v["traces"][0][1]["meta"]["shared"], "chunk-value");
+    }
+
+    #[test]
+    fn payload_env_and_app_version_are_used_when_span_leaves_them_unset() {
+        let payload = TracerPayloadBytes {
+            env: bs("prod"),
+            app_version: bs("2.0.0"),
+            chunks: vec![minimal_chunk([0u8; 16], minimal_span())],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        encode_traces_v1(&payload, &mut out, MAX).expect("encode ok");
+        let text = String::from_utf8(out).expect("utf8");
+        let v: Value = serde_json::from_str(text.lines().next().unwrap()).expect("valid json");
+        let meta = &v["traces"][0][0]["meta"];
+        assert_eq!(meta["env"], "prod");
+        assert_eq!(meta["version"], "2.0.0");
+    }
+
+    #[test]
+    fn span_env_takes_precedence_over_payload_env() {
+        let payload = TracerPayloadBytes {
+            env: bs("prod"),
+            chunks: vec![minimal_chunk(
+                [0u8; 16],
+                SpanBytes {
+                    env: bs("staging"),
+                    ..minimal_span()
+                },
+            )],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        encode_traces_v1(&payload, &mut out, MAX).expect("encode ok");
+        let text = String::from_utf8(out).expect("utf8");
+        let v: Value = serde_json::from_str(text.lines().next().unwrap()).expect("valid json");
+        assert_eq!(v["traces"][0][0]["meta"]["env"], "staging");
+    }
+
+    #[test]
+    fn payload_attributes_propagate_to_every_span_at_lowest_precedence() {
+        let mut payload_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        payload_attrs.insert(bs("shared"), AttributeValue::String(bs("payload-value")));
+        payload_attrs.insert(bs("k"), AttributeValue::String(bs("from-payload")));
+
+        let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        chunk_attrs.insert(bs("k"), AttributeValue::String(bs("from-chunk")));
+
+        let payload = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![TraceChunkBytes {
+                attributes: chunk_attrs,
+                ..minimal_chunk([0u8; 16], minimal_span())
+            }],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        encode_traces_v1(&payload, &mut out, MAX).expect("encode ok");
+        let text = String::from_utf8(out).expect("utf8");
+        let v: Value = serde_json::from_str(text.lines().next().unwrap()).expect("valid json");
+        let meta = &v["traces"][0][0]["meta"];
+        // Present only at the payload level: propagated as-is.
+        assert_eq!(meta["shared"], "payload-value");
+        // Present at both chunk and payload level: chunk wins.
+        assert_eq!(meta["k"], "from-chunk");
     }
 
     #[test]
@@ -760,7 +864,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         // Only one "a.0" entry can exist in a JSON object; this just asserts it's present and
         // that encoding didn't panic/duplicate-serialize.
         assert!(out["meta"]["a.0"].is_string());
@@ -772,7 +876,7 @@ mod tests {
         tid[..8].copy_from_slice(&0xDEAD_BEEF_CAFE_BABE_u64.to_be_bytes());
         tid[8..].copy_from_slice(&0x0123_4567_89AB_CDEF_u64.to_be_bytes());
         let chunk = minimal_chunk(tid, minimal_span());
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["trace_id"], "deadbeefcafebabe0123456789abcdef");
     }
 
@@ -781,7 +885,7 @@ mod tests {
         let mut tid = [0u8; 16];
         tid[8..].copy_from_slice(&42u64.to_be_bytes());
         let chunk = minimal_chunk(tid, minimal_span());
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["trace_id"], "000000000000002a");
     }
 
@@ -794,10 +898,10 @@ mod tests {
                 ..minimal_span()
             },
         );
-        assert_eq!(encode_first_span(&[chunk_err])["error"], 1);
+        assert_eq!(encode_first_span(chunk_err)["error"], 1);
 
         let chunk_ok = minimal_chunk([0u8; 16], minimal_span());
-        assert_eq!(encode_first_span(&[chunk_ok])["error"], 0);
+        assert_eq!(encode_first_span(chunk_ok)["error"], 0);
     }
 
     #[test]
@@ -811,7 +915,7 @@ mod tests {
                 ..minimal_span()
             },
         );
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["meta"]["http.method"], "GET");
     }
 
@@ -827,7 +931,7 @@ mod tests {
                 ..minimal_span()
             },
         );
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["meta"]["retry"], "true");
         assert_eq!(out["meta"]["cached"], "false");
     }
@@ -844,7 +948,7 @@ mod tests {
                 ..minimal_span()
             },
         );
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["metrics"]["duration_ms"], 12.5);
         assert_eq!(out["metrics"]["status"], 200.0);
     }
@@ -864,7 +968,7 @@ mod tests {
                 ..minimal_span()
             },
         );
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert!(out["meta"].get("blob").is_none());
         assert_eq!(out["meta"]["kept"], "yes");
     }
@@ -882,7 +986,7 @@ mod tests {
                 ..minimal_span()
             },
         );
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["meta"]["a.b"], "v");
     }
 
@@ -894,7 +998,7 @@ mod tests {
             sampling_mechanism: Some(3),
             ..minimal_chunk([0u8; 16], minimal_span())
         };
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["meta"]["_dd.origin"], "rum");
         assert_eq!(out["meta"]["_dd.p.dm"], "-3");
         assert_eq!(out["metrics"]["_sampling_priority_v1"], 1.0);
@@ -907,7 +1011,7 @@ mod tests {
             priority: Some(1),
             ..minimal_chunk([0u8; 16], minimal_span())
         };
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["metrics"]["_sampling_priority_v1"], -1.0);
     }
 
@@ -918,7 +1022,7 @@ mod tests {
             priority: Some(-2),
             ..minimal_chunk([0u8; 16], minimal_span())
         };
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["metrics"]["_sampling_priority_v1"], -2.0);
     }
 
@@ -938,7 +1042,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let link = &out["span_links"][0];
         assert_eq!(link["span_id"], 7);
         assert_eq!(link["attributes"]["kept"], "v");
@@ -960,7 +1064,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let link = &out["span_links"][0];
         assert_eq!(link["trace_id"], 0x0123_4567_89AB_CDEF_u64);
         assert_eq!(link["trace_id_high"], 0xDEAD_BEEF_CAFE_BABE_u64);
@@ -978,7 +1082,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert_eq!(out["span_links"][0]["flags"], 0b1);
     }
 
@@ -998,7 +1102,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let event = &out["span_events"][0];
         assert_eq!(event["time_unix_nano"], 123);
         assert_eq!(event["name"], "evt");
@@ -1039,7 +1143,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         let value = &out["span_events"][0]["attributes"]["list"];
         assert_eq!(value["type"], 4);
         assert_eq!(
@@ -1067,7 +1171,7 @@ mod tests {
             ..minimal_span()
         };
         let chunk = minimal_chunk([0u8; 16], span);
-        let out = encode_first_span(&[chunk]);
+        let out = encode_first_span(chunk);
         assert!(out["span_events"][0].get("attributes").is_none());
     }
 }
