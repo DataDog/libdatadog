@@ -348,7 +348,7 @@ mod tests_v1 {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
 
     fn bs(s: &str) -> BytesString {
-        BytesString::from_static(Box::leak(s.to_string().into_boxed_str()))
+        BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
     }
 
     fn minimal_span() -> Span<BytesData> {
