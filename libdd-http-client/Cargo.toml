@@ -38,9 +38,9 @@ reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
-hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy"] }
+# `tokio` is required for the pool timer used by periodic clients (see the hyper backend)
+hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy", "tokio"] }
 http-body-util = { workspace = true, optional = true }
-
 
 [dev-dependencies]
 httpmock.workspace = true

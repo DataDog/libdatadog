@@ -150,8 +150,13 @@ impl super::Backend for HyperBackend {
     ) -> Result<Self, HttpClientError> {
         let mut builder = http_common::client_builder();
 
-        if !client_config.allow_connection_pooling() {
-            builder.pool_max_idle_per_host(0);
+        if client_config.periodic() {
+            // Pool connections with a small idle timeout instead of disabling pooling entirely,
+            // so consecutive requests within a flush interval can still reuse a connection
+            // while avoiding reusing connections the receiver may have closed.
+            builder
+                .pool_timer(hyper_util::rt::TokioTimer::new())
+                .pool_idle_timeout(crate::config::PERIODIC_POOL_IDLE_TIMEOUT);
         }
 
         Ok(Self {
