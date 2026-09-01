@@ -3,6 +3,7 @@
 
 use core::convert::Infallible;
 use core::fmt;
+use core::time::Duration;
 
 use thiserror::Error;
 
@@ -80,6 +81,7 @@ mod native {
     use crate::connector::Connector;
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
+    use hyper_util::rt::TokioTimer;
     use pin_project::pin_project;
 
     impl From<hyper::Error> for ClientError {
@@ -115,15 +117,25 @@ mod native {
 
     pub type ResponseFuture = hyper_util::client::legacy::ResponseFuture;
 
+    /// Idle timeout for connections kept alive by a client configured for periodic use (see
+    /// [`new_client_periodic`]).
+    ///
+    /// Kept much smaller than typical keep-alive timeouts on the receiving end (e.g. the Datadog
+    /// agent), so that an idle pooled connection is dropped by our side before the receiver closes
+    /// it.
+    pub(crate) const PERIODIC_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+
     /// Create a new default configuration hyper client for fixed interval sending.
     ///
-    /// This client does not keep connections because otherwise we would get a pipe closed
-    /// every second connection because of low keep alive in the agent.
+    /// This client pools connections with a small timeout (smaller than any potential keep-alive on
+    /// the receiver side), because otherwise we would get a pipe closed every second connection
+    /// because of the keep alive in the agent or the backend.
     ///
-    /// This is on general not a problem if we use the client once every tens of seconds.
+    /// This is in general not a problem if we use the client once every tens of seconds.
     pub fn new_client_periodic() -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-            .pool_max_idle_per_host(0)
+            .pool_timer(TokioTimer::new())
+            .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
             .build(Connector::default())
     }
 
