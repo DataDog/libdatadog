@@ -217,7 +217,7 @@ struct Tokenizer<'a> {
     dbms: DbmsKind,
     config: &'a SqlObfuscateConfig,
     // Nesting depth of dollar-quote recursion; see MAX_DOLLAR_QUOTE_DEPTH.
-    depth: usize,
+    dollar_recursion_depth: usize,
     // For alias stripping: length of result before we emitted the most recent ' AS' segment
     before_as_len: Option<usize>,
     // After SAVEPOINT keyword, next token should become ?
@@ -233,7 +233,12 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(s: &'a str, config: &'a SqlObfuscateConfig, dbms: DbmsKind, depth: usize) -> Self {
+    fn new(
+        s: &'a str,
+        config: &'a SqlObfuscateConfig,
+        dbms: DbmsKind,
+        dollar_recursion_depth: usize,
+    ) -> Self {
         Self {
             s,
             bytes: s.as_bytes(),
@@ -241,7 +246,7 @@ impl<'a> Tokenizer<'a> {
             result: String::with_capacity(s.len()),
             dbms,
             config,
-            depth,
+            dollar_recursion_depth,
             before_as_len: None,
             pending_savepoint: false,
             last_was_placeholder: false,
@@ -1066,7 +1071,7 @@ impl<'a> Tokenizer<'a> {
                                         inner,
                                         self.config,
                                         self.dbms,
-                                        self.depth + 1,
+                                        self.dollar_recursion_depth + 1,
                                     );
                                     self.space();
                                     self.result.push_str(tag_str);
@@ -1079,7 +1084,7 @@ impl<'a> Tokenizer<'a> {
                                     let tag_str = &self.s[start..inner_start];
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
-                                    if self.depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
+                                    if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
                                         self.emit_placeholder();
                                         self.pos = outer_end;
                                         continue;
@@ -1088,7 +1093,7 @@ impl<'a> Tokenizer<'a> {
                                         inner,
                                         self.config,
                                         self.dbms,
-                                        self.depth + 1,
+                                        self.dollar_recursion_depth + 1,
                                     );
                                     // If inner collapses to just '?' (trivial content), emit ?
                                     // directly
@@ -2221,15 +2226,15 @@ fn obfuscate_sql_at_depth(
     s: &str,
     config: &SqlObfuscateConfig,
     dbms: DbmsKind,
-    depth: usize,
+    dollar_recursion_depth: usize,
 ) -> String {
     if s.is_empty() {
         return String::new();
     }
-    if depth >= MAX_DOLLAR_QUOTE_DEPTH {
+    if dollar_recursion_depth >= MAX_DOLLAR_QUOTE_DEPTH {
         return s.to_string();
     }
-    let mut tokenizer = Tokenizer::new(s, config, dbms, depth);
+    let mut tokenizer = Tokenizer::new(s, config, dbms, dollar_recursion_depth);
     tokenizer.process();
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.

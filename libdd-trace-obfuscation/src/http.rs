@@ -216,7 +216,7 @@ pub fn obfuscate_url_string(
         return if remove_query_string || remove_path_digits {
             "?".to_string()
         } else {
-            strip_userinfo_best_effort(url, path_query_end)
+            strip_userinfo_best_effort(url, path_end)
         };
     }
 
@@ -401,6 +401,10 @@ mod tests {
     // Regression for APMSP-3086: a control char in the path also fell back to returning the URL
     // (with userinfo) unchanged when both flags are false.
     [regression_control_char_strips_userinfo] [false] [false] ["http://user:password@foo.com/\u{1}"] ["http://foo.com/\u{1}"];
+    // Regression: an '@' in the query (not real userinfo) must not be mistaken for userinfo
+    // when a control char forces the best-effort stripping fallback. The authority scan must
+    // stop at the query delimiter, not the fragment delimiter.
+    [regression_control_char_query_at_not_mistaken_for_userinfo] [false] [false] ["http://example.com?email=a@b\u{0}"] ["http://example.com?email=a@b\u{0}"];
     [parity_colon_both_false] [false] [false] [":"] [":"];
     [parity_pct_both_false] [false] [false] ["%"] ["%"];
     [parity_ctrl_in_scheme_both_false] [false] [false] ["C:\u{1}"] ["C:\u{1}"];
