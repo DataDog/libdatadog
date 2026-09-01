@@ -23,7 +23,7 @@ use crate::agentless::AgentlessTraceConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::otlp::{
     exporter::{OTLP_MAX_RETRIES, OTLP_RETRY_DELAY_MS},
-    send_otlp_traces_grpc, OtlpGrpcTransport,
+    send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport,
 };
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
@@ -73,6 +73,20 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
+    let initial_delay = retry_after.unwrap_or_else(|| Duration::from_millis(OTLP_RETRY_DELAY_MS));
+    let multiplier = 2u32
+        .checked_pow(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    initial_delay
+        .checked_mul(multiplier)
+        .unwrap_or(Duration::MAX)
+        .min(OTLP_GRPC_MAX_RETRY_DELAY)
+}
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -703,11 +717,11 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         transport: &OtlpGrpcTransport,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let request = map_traces_to_otlp(
+        let request = Arc::new(map_traces_to_otlp(
             traces,
             &self.otlp_resource_info,
             transport.config.otel_trace_semantics_enabled,
-        );
+        ));
         let test_token = self.endpoint.test_token.as_deref();
         let mut attempt: u32 = 1;
         loop {
@@ -720,17 +734,15 @@ impl<
             .await
             {
                 Ok(()) => return Ok(AgentResponse::Unchanged),
-                Err(TraceExporterError::Io(e)) => {
+                Err(GrpcExportError::Retryable { error, retry_after }) => {
                     if attempt > OTLP_MAX_RETRIES {
-                        return Err(TraceExporterError::Io(e));
+                        return Err(error);
                     }
-                    let delay_ms = OTLP_RETRY_DELAY_MS * 2u64.pow(attempt - 1);
-                    self.capabilities
-                        .sleep(Duration::from_millis(delay_ms))
-                        .await;
+                    let delay = grpc_retry_delay(attempt, retry_after);
+                    self.capabilities.sleep(delay).await;
                     attempt += 1;
                 }
-                Err(e) => return Err(e),
+                Err(GrpcExportError::NonRetryable(error)) => return Err(error),
             }
         }
     }
@@ -1141,6 +1153,29 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
+
+    #[test]
+    fn grpc_retry_delay_applies_backoff_and_cap() {
+        let retry_after = Duration::new(2, 250_000_000);
+
+        assert_eq!(grpc_retry_delay(1, Some(retry_after)), retry_after);
+        assert_eq!(
+            grpc_retry_delay(2, Some(retry_after)),
+            Duration::new(4, 500_000_000)
+        );
+        assert_eq!(
+            grpc_retry_delay(3, None),
+            Duration::from_millis(OTLP_RETRY_DELAY_MS * 4)
+        );
+        assert_eq!(
+            grpc_retry_delay(3, Some(Duration::from_secs(20))),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            grpc_retry_delay(u32::MAX, Some(Duration::MAX)),
+            Duration::from_secs(30)
+        );
+    }
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
