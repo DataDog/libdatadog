@@ -109,7 +109,7 @@ async fn main() {
             products: vec![ApmTracing],
             capabilities: vec![],
         },
-        NativeCapabilities::new_without_connection_pooling(),
+        NativeCapabilities::new_periodic(),
     )
     .await
     .expect("Failed to create SingleChangesFetcher");

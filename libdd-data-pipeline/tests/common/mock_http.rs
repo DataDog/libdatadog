@@ -208,7 +208,7 @@ impl HttpClientCapability for MockHttpCapabilities {
         Self { inner }
     }
 
-    fn new_without_connection_pooling() -> Self {
+    fn new_periodic() -> Self {
         Self::new_client()
     }
 
