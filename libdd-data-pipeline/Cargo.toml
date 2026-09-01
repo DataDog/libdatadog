@@ -96,6 +96,14 @@ zstd = { version = "0.13", default-features = false }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 zrip = { version = "=0.6.0", default-features = false, features = ["alloc"] }
 
+[[test]]
+name = "test_agentless_stats"
+required-features = ["stats-obfuscation"]
+
+[[example]]
+name = "send-traces-with-stats"
+required-features = ["stats-obfuscation"]
+
 [features]
 default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry", "libdd-trace-stats/telemetry"]
@@ -123,5 +131,9 @@ fips = [
 ]
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
-# Enable zstd compression for the agentless trace intake sender.
-compression = ["libdd-trace-utils/compression", "libdd-data-pipeline-core/compression"]
+# Enable zstd compression for the agentless trace and stats intake senders.
+compression = [
+    "libdd-trace-utils/compression",
+    "libdd-trace-stats/compression",
+    "libdd-data-pipeline-core/compression",
+]

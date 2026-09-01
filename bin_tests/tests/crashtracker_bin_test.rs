@@ -208,7 +208,6 @@ fn test_crash_tracking_bin_assert_fail() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -360,7 +359,6 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_multi_thread_collection() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -442,6 +440,46 @@ fn test_crash_tracking_multi_thread_collection() {
                 has_worker_frame,
                 "{expected} stack should contain a frame for '{worker_fn}' but got: {frames:?}"
             );
+        }
+
+        // The receiver unwinds the crashing thread while it is parked inside our own
+        // signal handler, so its raw stack starts inside libdatadog. Those frames are
+        // trimmed back to the frame the kernel-saved registers point at, which is where
+        // error.stack starts too.
+        //
+        // The remote unwind has to cross the signal trampoline to reach that frame, and
+        // in some cases the trampoline carries no DWARF unwind info, so it stops short. There
+        // is nothing to trim in that case and the receiver leaves the stack alone, so
+        // only assert the invariant once the crash site is actually present.
+        let crashed_frames = crashed_threads[0]["stack"]["frames"]
+            .as_array()
+            .expect("crashed thread stack.frames should be an array");
+        let crash_site_ip = payload["error"]["stack"]["frames"]
+            .as_array()
+            .and_then(|frames| frames.first())
+            .and_then(|frame| frame["ip"].as_str())
+            .expect("error.stack should start at the faulting instruction");
+
+        let reached_crash_site = crashed_frames
+            .iter()
+            .any(|frame| frame["ip"].as_str() == Some(crash_site_ip));
+
+        if reached_crash_site {
+            assert_eq!(
+                crashed_frames.first().and_then(|frame| frame["ip"].as_str()),
+                Some(crash_site_ip),
+                "crashed thread should start at the faulting instruction, like error.stack; got: {crashed_frames:?}"
+            );
+
+            for frame in crashed_frames {
+                let Some(function) = frame["function"].as_str() else {
+                    continue;
+                };
+                assert!(
+                    !function.contains("libdd_crashtracker::collector"),
+                    "crashed thread stack should not contain crashtracker collector frames, found '{function}' in: {crashed_frames:?}"
+                );
+            }
         }
 
         Ok(())
@@ -629,7 +667,6 @@ fn test_crash_tracking_sidecar_basic() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_sidecar_multi_thread_collection() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
     const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
