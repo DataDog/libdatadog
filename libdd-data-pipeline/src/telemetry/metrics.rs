@@ -34,6 +34,12 @@ pub enum MetricKind {
     ChunksDroppedSerializationError,
     /// trace_chunks_dropped metric (reason: send_failure)
     ChunksDroppedSendFailure,
+    /// spans_enqueued_for_serialization metric
+    SpansEnqueuedForSerialization,
+    /// spans_dropped metric (reason: serialization_error)
+    SpansDroppedSerializationError,
+    /// spans_dropped metric (reason: api_error)
+    SpansDroppedApiError,
 }
 
 /// Constants for metric names
@@ -44,6 +50,8 @@ const API_BYTES_STR: &str = "trace_api.bytes";
 const API_RESPONSES_STR: &str = "trace_api.responses";
 const CHUNKS_SENT_STR: &str = "trace_chunks_sent";
 const CHUNKS_DROPPED_STR: &str = "trace_chunks_dropped";
+const SPANS_ENQUEUED_FOR_SERIALIZATION_STR: &str = "spans_enqueued_for_serialization";
+const SPANS_DROPPED_STR: &str = "spans_dropped";
 
 #[derive(Debug)]
 struct Metric {
@@ -131,6 +139,24 @@ const METRICS: &[Metric] = &[
             tag!["src_library", "libdatadog"],
             tag!["reason", "send_failure"],
         ],
+    },
+    Metric {
+        name: SPANS_ENQUEUED_FOR_SERIALIZATION_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[],
+    },
+    Metric {
+        name: SPANS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["reason", "serialization_error"]],
+    },
+    Metric {
+        name: SPANS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[tag!["reason", "api_error"]],
     },
 ];
 
