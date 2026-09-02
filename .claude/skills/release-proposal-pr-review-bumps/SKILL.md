@@ -18,9 +18,20 @@ A commit marked breaking (`!` in its conventional-commit title, e.g. `feat(data-
 - For each crate, look at **only that crate's slice** of each commit and classify the highest-severity change to *its own* public API.
 
 Bump rules (per crate, based on the highest-severity change):
-- **major** — a breaking public-API change: removed/renamed/signature-changed `pub` item; changed `pub` struct field type; changed/removed enum variant; removed trait method; dropped public trait impl (e.g. a `derive` removed in default builds).
-- **minor** — only additive: new `pub` items, nothing removed/changed. (Promoting a `pub(crate)`/private item to `pub`, or renaming a non-`pub` item, counts as additive — it was never externally visible.)
+- **major** — a breaking public-API change: removed/renamed/signature-changed `pub` item; changed `pub` struct field type; changed/removed enum variant; removed trait method; dropped public trait impl (e.g. a `derive` removed in default builds); **plus any of the additive-but-breaking forms below**.
+- **minor** — additive *and* checked non-breaking: new `pub` items, nothing removed or changed, **and none of the additions is one of the additive-but-breaking forms below**. (Promoting a `pub(crate)`/private item to `pub`, or renaming a non-`pub` item, counts as additive — it was never externally visible.)
 - **patch** — internal only: private code, `#[cfg(test)]`/`mod tests`, benches, `[dev-dependencies]`, comments, bug fixes with no public-API change.
+
+### Additive-but-breaking: "new `pub` item" is NOT automatically minor
+
+A new item can break every downstream compile without removing or changing anything. Never classify a crate minor just because the diff only adds. For each new `pub` item, check which of these it is — the exemption must be **verified in the code**, not assumed:
+
+- **New variant on a public enum** → breaks downstream exhaustive `match`. Minor only if the enum is `#[non_exhaustive]` *and already was before this commit* (adding `#[non_exhaustive]` is itself breaking). Check the enum's attributes at the base ref, and that it is reachable from the crate root.
+- **New required trait method on a public trait** (no default body) → breaks every downstream `impl` of that trait. Minor only if the method has a default body, or the trait is genuinely not downstream-implementable (sealed via a private supertrait / private-type argument). A default body added to a trait everyone already implements is still an inference/ambiguity risk — see the last bullet.
+- **New `pub` field on a constructible public struct** → breaks downstream struct literals and exhaustive struct patterns. Minor only if the struct is `#[non_exhaustive]` (before this commit) or already had a private field, i.e. it could never be built or destructured by literal outside the crate.
+- **New `impl Trait for T`, new blanket impl, or a new inherent method shadowing a trait method** → breaks downstream type inference and method resolution (the same hazard as "What the automated level cannot see" #7). Strict SemVer calls these minor-with-possible-breakage, so minor is defensible — but only as an *explicit* judgment call: state the impl/method, and whether anything plausibly resolves the shadowed name or relies on inference there. Do not approve it silently as "just an addition".
+
+`cargo-semver-checks` has a lint for each of the first three — `enum_variant_added` ("an exhaustive enum has a new variant"), `trait_method_added` ("a non-sealed public trait added a new method without a default implementation"), `constructible_struct_adds_field` — all typed `major` in `cargo semver-checks --list`, so an automated level of `minor` over one of these deserves a second look at the invocation (check the exit code, and see "What the automated level cannot see" for why a `major`-typed lint can still pass). The fourth form has no lint at all, so an automated `minor` there proves nothing.
 
 ## Watch for these subtle cases
 
@@ -31,6 +42,7 @@ Bump rules (per crate, based on the highest-severity change):
 4. **Forced-major dependency bumps are often breaking** (do NOT reflexively treat as patch). When crate A goes **major**, every dependent's `Cargo.toml` requirement on A is rewritten to A's new major (`^1` → `^2`), forcing A's new major onto the dependent's consumers. Whether that obliges the dependent to *also* go major depends on whether A is **safe to duplicate** — run the two-part test in "The major-version cascade". Short version: if A is a public dependency of the dependent (exposed type, or a foreign-trait-impl on a public type) **or** A is unsafe to duplicate (singleton/global state, single-artifact link) and consumers use `^` ranges, the dependent must go **major** too. (The older guidance "dep bump = patch" is wrong for these.) Minor/patch dependency bumps of A (same major) never cascade — `^1.2` already unifies with `1.3.0`.
 5. **Initial releases** (e.g. `1.0.0`, CHANGELOG newly added, previously `publish = false`/unpublished) — nothing to semver-diff against; just confirm the version is sane and the crate was genuinely unpublished.
 6. **Test/bench-only commits** — patch is the safe, conservative choice even when arguably no bump was needed.
+7. **Additive-only diff proposed as minor** — the easiest bump to wave through and a common under-bump. An enum variant, a required trait method, or a struct field can be the whole diff and still be major; run the additive-but-breaking list above rather than eyeballing "nothing removed".
 
 ## The major-version cascade (workspace-level check)
 
@@ -88,6 +100,7 @@ Rules of thumb:
    - Inspect ONLY the crate's slice: `git show <hash> -- <crate-dir>/` (or `<crate-dir>/src/` to skip tests).
    - Verify public reachability: is the changed item reachable from the crate root (`pub mod` chain in `lib.rs`, `pub use` re-exports)? `#[cfg(test)]`/`mod tests`/`benches/` and private items don't count.
    - Classify highest severity (major/minor/patch) with **evidence**: file path, item name, before/after signature.
+   - **Before returning `minor`, walk the additive-but-breaking list.** For every added `pub` item, say which form it is and why it is exempt: new enum variant → quote the enum's `#[non_exhaustive]` at the *base* ref; new trait method → quote its default body or the sealing mechanism; new struct field → quote the pre-existing private field or `#[non_exhaustive]`; new trait impl / shadowing inherent method → state the inference risk explicitly. "Nothing was removed" is not evidence for minor.
    - Check transitive breakage via re-exports and `pub` signatures (point 2 above) and `Cargo.toml` dep changes.
    - Return a verdict: is the proposed bump correct, too low, or too high — with cited evidence.
 6. **Run the major-version cascade check** (workspace-level — do this whenever ANY crate in the proposal gets a *major* bump). For each major-bumped crate, compute its reverse-dependency closure among publishable workspace crates and confirm every crate in it is also bumped **major**. A helper to build the closure and surface under-bumped crates against the proposal head/base refs:
@@ -134,19 +147,45 @@ Rules of thumb:
 `scripts/semver-level.sh` (and the `pr-title-semver-check` job built on it) runs
 `cargo-semver-checks` plus a `cargo-public-api` diff. Treat its answer as a **floor, not a
 verdict**: a `patch` result is only trustworthy for changes that touch none of the
-categories below. Each is pinned by a test in `scripts/tests/semver-level/`
-(`detection_matrix.bats`, grep `KNOWN MISS`), verified against cargo-semver-checks 0.47.0
-and cargo-public-api 0.52.0 — so if one starts being detected, that suite is what tells you.
+categories below.
+
+The list below is a checklist, not a guarantee — a gap can close when the tooling is upgraded.
+Before citing one as a reason to override the automated level, confirm it still holds against
+the PR's base ref:
+
+- **The script's own logic and comments** — `scripts/semver-level.sh` (the two passes at
+  `# 1) cargo-semver-checks` and `# 2) cargo-public-api diff`, combined by `max_level`; the
+  header comment above `normalize_api_line` documents which signature deltas it deliberately
+  drops as non-semver-significant).
+- **The tool versions actually installed**, which decide whether a miss below is still a
+  miss. Read them off the workflows rather than trusting any version quoted here:
+  ```bash
+  grep -rn 'cargo-semver-checks@\|cargo-public-api@' .github/workflows/
+  ```
+  At the time of writing both `pr-title-semver-check.yml` and `release-proposal-dispatch.yml`
+  pin `cargo-semver-checks@0.48.0` and `cargo-public-api@0.52.0`. If the pin has moved, a
+  category below may now be caught — re-check the specific lint before citing it as a gap.
+- **Whether a lint exists at all**, for the `cargo-semver-checks` cases: `cargo semver-checks
+  --list` (`--explain <lint>` for detail). Read its `type` column carefully — it is the
+  semver update the lint *reports* (`major`/`minor`), **not** whether a violation fails the
+  run. A lint can list as `major` and still be warn-level, printing the violation while
+  exiting 0; neither `--list` nor `--explain` shows it, and 0.47.0 has no `--deny`/`--warn`
+  override flag to force the issue (re-check `--help` for the pinned version).
+  So the only local way to settle a "does the script see it?" question is a
+  minimal two-crate repro plus `echo $?` on the actual invocation the script uses
+  (`cargo semver-checks -p <crate> --color=never --all-features --baseline-rev <rev>`).
 
 Manually check these whenever the automated level is `patch` or `minor`:
 
-1. **`#[repr(C)]` field reordering.** `repr_c_plain_struct_fields_reordered` is a
-   **warning-level** lint: cargo-semver-checks prints `Summary no semver update required`
-   and exits 0, so the script never sees it. This is the one that matters most here — it is
-   a silent ABI break for every FFI consumer compiled against the old header, and it reports
-   as `patch`. The rest of the repr family (`repr_c_removed`, `repr_align_changed`,
-   `repr_packed_added`, `enum_repr_int_changed`) fails properly. **Check any diff that
-   touches field order in a `#[repr(C)]` type.**
+1. **`#[repr(C)]` field reordering.** `repr_c_plain_struct_fields_reordered` is
+   **warning-level**: cargo-semver-checks prints the violation but still reports
+   `Summary no semver update required` and exits 0, so the script never sees it and the level
+   comes out `patch`. Note `--list` shows this lint as type `major` — that is the update it
+   *would* require, and does not contradict the warn level; confirm by exit code, not by
+   `--list`. This is the one that matters most here: a silent ABI break for every FFI
+   consumer compiled against the old header. The rest of the repr family (`repr_c_removed`,
+   `repr_align_changed`, `repr_packed_added`, `enum_repr_int_changed`) fails properly.
+   **Check any diff that touches field order in a `#[repr(C)]` type.**
 2. **Public dependency major bumps behind unchanged signatures.** `pub fn f(u: hyper::Uri)`
    renders identically whether `hyper` is 0.14 or 1.0; only the resolved dependency version
    moved. Overlaps with subtle case 2 above, and is the mechanism behind the cascade check.
@@ -173,7 +212,10 @@ Manually check these whenever the automated level is `patch` or `minor`:
 Two properties of the tooling that also affect how you reproduce a level locally: the script
 needs a **clean working tree** (`cargo public-api diff` does a real `git checkout`), and it
 needs `RUSTUP_TOOLCHAIN` overridden because `rust-toolchain.toml` pins an MSRV older than
-cargo-semver-checks requires. See `scripts/tests/semver-level/README.md`.
+cargo-semver-checks requires — see the `RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}` env on the
+`Run semver checks on changed crates` step in `.github/workflows/pr-title-semver-check.yml`,
+and the job-level `RUSTUP_TOOLCHAIN` env in `release-proposal-dispatch.yml`, for the
+toolchain CI actually uses.
 
 ## Output
 
