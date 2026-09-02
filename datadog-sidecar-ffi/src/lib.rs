@@ -2224,6 +2224,43 @@ pub extern "C" fn ddog_serialize_trace_v1_into_charslice(
     unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
 }
 
+/// In-process v0.4 downgrade of a V1 builder for the `coms.c` sender: when the agent is NOT
+/// V1-capable it POSTs these bytes to `/v0.4/traces`. Identical to
+/// [`ddog_serialize_trace_v1_into_charslice`] except the encoder is
+/// `msgpack_encoder::v04::to_vec_from_v1` (the downgrade the sidecar server uses). Consumes
+/// `builder`; free the result with [`crate::span::ddog_free_charslice`].
+#[no_mangle]
+pub extern "C" fn ddog_serialize_trace_v1_as_v04_into_charslice(
+    builder: Box<TracerPayloadV1Builder>,
+    metadata: &TracerMetadataV1,
+    container_id: CharSlice,
+    language_name: CharSlice,
+    language_version: CharSlice,
+    tracer_version: CharSlice,
+) -> CharSlice<'static> {
+    let mut payload = builder.into_payload();
+    populate_payload_metadata(
+        &mut payload,
+        &container_id.to_utf8_lossy(),
+        &language_name.to_utf8_lossy(),
+        &language_version.to_utf8_lossy(),
+        &tracer_version.to_utf8_lossy(),
+        &metadata.runtime_id.to_utf8_lossy(),
+        &metadata.env.to_utf8_lossy(),
+        &metadata.hostname.to_utf8_lossy(),
+        &metadata.app_version.to_utf8_lossy(),
+        &metadata.git_commit_sha.to_utf8_lossy(),
+    );
+
+    let boxed = msgpack_encoder::v04::to_vec_from_v1(&payload).into_boxed_slice();
+    let boxed_len = boxed.len();
+    let leaked_ptr = Box::into_raw(boxed) as *const c_char;
+
+    // Safety: `leaked_ptr`/`boxed_len` describe the just-leaked owned allocation; ownership
+    // transfers to the caller, who must free it via `ddog_free_charslice`.
+    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
+}
+
 /// Transcodes an existing v0.4 trace collection (built with the v0.4 [`crate::span`] builder) into
 /// owned V1 msgpack bytes, for the in-process (non-sidecar) sender in `coms.c`. That sender builds
 /// v0.4 today; this lets it emit V1 to the agent's `/v1.0/traces` endpoint without a second builder,
