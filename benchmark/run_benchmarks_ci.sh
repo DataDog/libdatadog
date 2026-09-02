@@ -94,7 +94,9 @@ else
   # timed. Safe only because cargo does not treat a RUSTC_WRAPPER change as a fingerprint change
   # (checked on 1.87.0); if that stopped holding, the measuring run would rebuild the workspace.
   if start_compiler_cache; then
-    RUSTC_WRAPPER=sccache cargo bench "${package_args[@]}" "${feature_args[@]}" --no-run
+    if ! RUSTC_WRAPPER=sccache cargo bench "${package_args[@]}" "${feature_args[@]}" --no-run; then
+      message "sccache: compilation via the wrapper failed; retrying without a compiler cache"
+    fi
     sccache --show-stats || :
     sccache --stop-server > /dev/null 2>&1 || :
   fi
