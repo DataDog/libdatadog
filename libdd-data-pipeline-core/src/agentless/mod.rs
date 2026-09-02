@@ -7,4 +7,4 @@ mod config;
 mod exporter;
 
 pub use config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
-pub use exporter::{send_agentless_traces, AgentlessError};
+pub use exporter::{send_agentless_traces, send_agentless_traces_with_observer, AgentlessError};

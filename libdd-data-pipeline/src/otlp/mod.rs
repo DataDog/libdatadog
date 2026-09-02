@@ -36,6 +36,7 @@ pub mod metrics;
 pub mod grpc_exporter;
 
 pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
+#[allow(unused_imports)]
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
 pub use metrics::OtlpStatsExporter;
