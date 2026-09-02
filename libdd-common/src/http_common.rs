@@ -124,6 +124,9 @@ mod native {
     /// agent), so that an idle pooled connection is dropped by our side before the receiver closes
     /// it.
     pub(crate) const PERIODIC_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Max number of idle connections in a client's connection pool. This is a safety resource
+    /// bound that we don't really expect to hit in practice.
+    pub(crate) const POOL_MAX_IDLE: usize = 20;
 
     /// Create a new default configuration hyper client for fixed interval sending.
     ///
@@ -136,6 +139,7 @@ mod native {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
+            .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
 
@@ -144,6 +148,7 @@ mod native {
     /// It will keep connections open for a longer time and reuse them.
     pub fn new_default_client() -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+            .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
 
