@@ -982,38 +982,28 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
     map.end()
 }
 
-/// Serializes a v1 event attribute value in the v0.4 `{"type": <u8>, "<kind>_value": ...}`
-/// shape. `List` produces `{"type": 4, "array_value": {"values": [...]}}`, filtering nested
-/// entries out of the array (no v0.4 array-element equivalent for them).
+/// Serializes a v1 event attribute value as a plain JSON value — same shape as
+/// [`serialize_scalar`] on the v04-native path, which is what the agentless intake expects.
+/// `List` produces a plain JSON array, filtering out non-scalar entries (no equivalent for them).
 fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
     ser: S,
     v: &AttributeValueV1<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
         AttributeValueV1::List(items) => {
-            let mut map = ser.serialize_map(Some(2))?;
-            map.serialize_entry("type", &4u8)?;
-            map.serialize_entry(
-                "array_value",
-                &ser_fn!(<T: TraceData> |ser, items: &'a Vec<AttributeValueV1<T>>| {
-                    let mut m = ser.serialize_map(Some(1))?;
-                    m.serialize_entry(
-                        "values",
-                        &ser_fn!(<T: TraceData> |ser, items: &'a Vec<AttributeValueV1<T>>| {
-                            let scalars: Vec<_> = items.iter().filter(|e| is_scalar_array_elem_v1(e)).collect();
-                            let mut seq = ser.serialize_seq(Some(scalars.len()))?;
-                            for elem in scalars {
-                                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, elem: &'a AttributeValueV1<T>| {
-                                    encode_event_scalar_v1(ser, elem)
-                                }))?;
-                            }
-                            seq.end()
-                        }),
-                    )?;
-                    m.end()
-                }),
-            )?;
-            map.end()
+            let scalars: Vec<_> = items
+                .iter()
+                .filter(|e| is_scalar_array_elem_v1(e))
+                .collect();
+            let mut seq = ser.serialize_seq(Some(scalars.len()))?;
+            for elem in scalars {
+                seq.serialize_element(
+                    &ser_fn!(<T: TraceData> |ser, elem: &'a AttributeValueV1<T>| {
+                        encode_event_scalar_v1(ser, elem)
+                    }),
+                )?;
+            }
+            seq.end()
         }
         other => encode_event_scalar_v1(ser, other),
     }
@@ -1023,27 +1013,23 @@ fn encode_event_scalar_v1<T: TraceData, S: Serializer>(
     ser: S,
     v: &AttributeValueV1<T>,
 ) -> Result<S::Ok, S::Error> {
-    let mut map = ser.serialize_map(Some(2))?;
     match v {
         AttributeValueV1::String(s) => {
-            map.serialize_entry("type", &0u8)?;
-            map.serialize_entry("string_value", s.borrow() as &str)?;
+            let s: &str = s.borrow();
+            ser.serialize_str(s)
         }
-        AttributeValueV1::Bool(b) => {
-            map.serialize_entry("type", &1u8)?;
-            map.serialize_entry("bool_value", b)?;
-        }
-        AttributeValueV1::Int(i) => {
-            map.serialize_entry("type", &2u8)?;
-            map.serialize_entry("int_value", i)?;
-        }
+        AttributeValueV1::Bool(b) => ser.serialize_bool(*b),
+        AttributeValueV1::Int(i) => ser.serialize_i64(*i),
         AttributeValueV1::Float(f) => {
-            map.serialize_entry("type", &3u8)?;
-            map.serialize_entry("double_value", f)?;
+            if f.is_finite() {
+                ser.serialize_f64(*f)
+            } else {
+                // NaN/Inf become JSON null, matching `serialize_scalar` on the v04-native path.
+                ser.serialize_unit()
+            }
         }
         _ => unreachable!("filtered by is_scalar_array_elem_v1"),
     }
-    map.end()
 }
 
 /// `serde::Serialize` adapter that interprets `bytes` as a self-describing

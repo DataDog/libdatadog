@@ -597,15 +597,12 @@ fn span_events_serialised_into_meta_as_json_string() {
     let evt = &events[0];
     assert_eq!(evt["name"], "exception");
     assert_eq!(evt["time_unix_nano"], 1_700_000_000_000_000_000_u64);
-    assert_eq!(
-        evt["attributes"]["exception.message"],
-        serde_json::json!({"type": 0, "string_value": "timeout"})
-    );
+    assert_eq!(evt["attributes"]["exception.message"], "timeout");
 }
 
 #[cfg_attr(miri, ignore)]
 #[test]
-fn span_event_list_attribute_becomes_array_value_of_scalars() {
+fn span_event_list_attribute_becomes_json_array_of_scalars() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     attrs.insert(
         bs("list"),
@@ -626,14 +623,7 @@ fn span_event_list_attribute_becomes_array_value_of_scalars() {
     let raw = out["meta"]["events"].as_str().unwrap();
     let events: Value = serde_json::from_str(raw).unwrap();
     let value = &events[0]["attributes"]["list"];
-    assert_eq!(value["type"], 4);
-    assert_eq!(
-        value["array_value"]["values"],
-        serde_json::json!([
-            {"type": 0, "string_value": "a"},
-            {"type": 2, "int_value": 2}
-        ])
-    );
+    assert_eq!(value, &serde_json::json!(["a", 2]));
 }
 
 #[cfg_attr(miri, ignore)]
@@ -656,4 +646,25 @@ fn span_event_bytes_attribute_is_dropped() {
     let raw = out["meta"]["events"].as_str().unwrap();
     let events: Value = serde_json::from_str(raw).unwrap();
     assert!(events[0].get("attributes").is_none());
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn span_event_non_finite_float_attribute_becomes_null() {
+    let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+    attrs.insert(bs("nan"), AttributeValue::Float(f64::NAN));
+    attrs.insert(bs("finite"), AttributeValue::Float(1.5));
+    let span = SpanBytes {
+        span_events: thin_vec::thin_vec![SpanEventBytes {
+            time_unix_nano: 1,
+            name: bs("evt"),
+            attributes: attrs,
+        }],
+        ..minimal_span()
+    };
+    let out = encode_first_span(&[minimal_chunk([0u8; 16], span)]);
+    let raw = out["meta"]["events"].as_str().unwrap();
+    let events: Value = serde_json::from_str(raw).unwrap();
+    assert_eq!(events[0]["attributes"]["nan"], serde_json::Value::Null);
+    assert_eq!(events[0]["attributes"]["finite"], 1.5);
 }
