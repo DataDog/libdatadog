@@ -12,11 +12,18 @@ publish = false
 [features]
 default = []
 cbindgen = []
+winresource = ["dep:winresource"]
 
 [dependencies]
 cbindgen = { version = "0.29" }
 serde = "1.0"
 serde_json = "1.0"
+# Not target-gated on `cfg(windows)`: build scripts (and their dependencies) always
+# compile for the *host*, so a target-gated dependency can't be reconciled with the
+# `CARGO_CFG_TARGET_OS` runtime check `embed_windows_version_info` uses to support
+# cross-compiling to Windows from non-Windows hosts. Gating on the `winresource`
+# feature instead keeps it out of consumers that never call that function.
+winresource = { version = "0.1", default-features = false, optional = true }
 
 [lib]
 bench = false

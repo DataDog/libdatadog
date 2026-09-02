@@ -65,7 +65,7 @@ otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common = { path = "../build-common", features = ["winresource"] }
 
 [dependencies]
 allocator-api2 = { workspace = true, features = ["alloc"] }
