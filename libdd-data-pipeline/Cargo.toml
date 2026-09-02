@@ -95,14 +95,10 @@ tokio = { version = "1.23", features = [
     "test-util",
 ], default-features = false }
 duplicate = "2.0.1"
-<<<<<<< HEAD
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2 = "0.4"
-zstd = { version = "0.13", default-features = false }
-=======
 zstd.workspace = true
->>>>>>> 1e4b95586 (refactor: migrate HTTP & networking deps to workspace level (phase 5))
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 zrip = { version = "=0.6.0", default-features = false, features = ["alloc"] }
