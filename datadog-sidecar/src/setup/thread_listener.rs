@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::io::unix::AsyncFd;
@@ -28,6 +30,9 @@ pub struct MasterListener {
     shutdown_tx: Option<oneshot::Sender<()>>,
     thread_handle: Option<JoinHandle<()>>,
     pid: i32,
+    /// Used by `clear_inherited_state()` to avoid forks keeping the socket open
+    #[cfg(unix)]
+    listener_fd: RawFd,
 }
 
 impl MasterListener {
@@ -46,12 +51,24 @@ impl MasterListener {
             return Err(io::Error::other("Master listener is already running"));
         }
 
+        #[cfg(target_os = "linux")]
+        let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);
+        #[cfg(not(target_os = "linux"))]
+        let liaison = SharedDirLiaison::ipc_for_pid(pid as u32);
+
+        let listener = liaison
+            .attempt_listen()?
+            .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
+
+        #[cfg(unix)]
+        let listener_fd = listener.as_raw_fd();
+
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
-                if let Err(e) = run_listener(pid as u32, config, shutdown_rx) {
+                if let Err(e) = run_listener(listener, config, shutdown_rx) {
                     error!("Listener thread error: {}", e);
                 }
             })
@@ -61,6 +78,8 @@ impl MasterListener {
             shutdown_tx: Some(shutdown_tx),
             thread_handle: Some(thread_handle),
             pid,
+            #[cfg(unix)]
+            listener_fd,
         });
 
         Ok(())
@@ -117,9 +136,22 @@ impl MasterListener {
             .lock()
             .map_err(|e| io::Error::other(format!("Failed to acquire listener lock: {}", e)))?;
 
-        if listener_guard.is_some() {
+        if let Some(master) = listener_guard.take() {
             info!("Clearing inherited master listener state in child process");
-            *listener_guard = None;
+
+            #[cfg(unix)]
+            {
+                // SAFETY: `fork()` duplicated this fd into this process's fd table;
+                // it refers to the same listening socket the parent's listener
+                // thread (which does not exist here) still owns in the parent's own
+                // fd table. Closing it here only drops this process's reference and
+                // has no effect on the parent.
+                unsafe {
+                    libc::close(master.listener_fd);
+                }
+            }
+            #[cfg(not(unix))]
+            let _ = master;
         }
 
         Ok(())
@@ -178,19 +210,12 @@ async fn accept_socket_loop_thread(
 /// threads. A multi-thread runtime would leave worker threads visible to LSan/ASAN at
 /// process exit, causing "Running thread was not suspended" warnings. With
 /// current_thread all async work runs on this OS thread; no other threads are created.
-fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
-    info!("Listener thread running, creating IPC server");
-
-    #[cfg(target_os = "linux")]
-    let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid);
-    #[cfg(not(target_os = "linux"))]
-    let liaison = SharedDirLiaison::ipc_for_pid(pid);
-
-    let listener = liaison
-        .attempt_listen()?
-        .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
-
-    info!("IPC server listening for worker connections");
+fn run_listener(
+    listener: SeqpacketListener,
+    _config: Config,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> io::Result<()> {
+    info!("Listener thread running, entering IPC server loop");
 
     let cancel = || {};
     let loop_config = MainLoopConfig {
