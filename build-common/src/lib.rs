@@ -15,6 +15,14 @@ mod cbindgen;
 #[cfg(feature = "cbindgen")]
 pub use crate::cbindgen::*;
 
+#[cfg(not(feature = "winresource"))]
+pub fn embed_windows_version_info(_name: &str, _description: &str) {}
+
+#[cfg(feature = "winresource")]
+mod version_info;
+#[cfg(feature = "winresource")]
+pub use crate::version_info::*;
+
 /// Locate the `gcc-ld/` shim directory shipped with the Rust toolchain.
 ///
 /// This directory contains an `ld.lld` wrapper that delegates to `rust-lld`.
