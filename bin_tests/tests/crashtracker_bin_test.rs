@@ -208,7 +208,6 @@ fn test_crash_tracking_bin_assert_fail() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -360,7 +359,6 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_multi_thread_collection() {
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -669,7 +667,6 @@ fn test_crash_tracking_sidecar_basic() {
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
-#[ignore = "requires ptrace attach permission (yama ptrace_scope <= 1 or CAP_SYS_PTRACE)"]
 fn test_crash_tracking_sidecar_multi_thread_collection() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
     const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);

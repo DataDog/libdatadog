@@ -298,6 +298,32 @@ pub mod linux {
             record
         }
 
+        /// Update the record in-place. Sets `valid=0` before the update and
+        /// `valid=1` after, so a reader that fires between the two writes sees an inconsistent
+        /// record and skips it. Compiler fences prevent the compiler from reordering field writes
+        /// outside that window.
+        fn update_in_place(
+            &mut self,
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            trace_flags: u8,
+            local_root_span_id: [u8; 8],
+            attrs: &[(u8, &str)],
+        ) -> bool {
+            self.valid.store(0, Ordering::Relaxed);
+            compiler_fence(Ordering::SeqCst);
+
+            self.trace_id = trace_id;
+            self.span_id = span_id;
+            self.trace_flags = trace_flags;
+            let fully_encoded = self.set_attrs(local_root_span_id, attrs);
+
+            compiler_fence(Ordering::SeqCst);
+            self.valid.store(1, Ordering::Relaxed);
+
+            fully_encoded
+        }
+
         /// Encode `attributes` into `self.attrs_data` as packed key-value records. Existing data
         /// are overridden (and if there were more entries than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
@@ -506,6 +532,52 @@ pub mod linux {
             with_tls_slot(|slot| Self::swap(slot, self.into_ptr().as_ptr()))
         }
 
+        /// Update `target` and make it the current thread's context.
+        ///
+        /// If `target` is already current, its pointer remains unchanged and no previous
+        /// context is returned. Otherwise, the updated target is published and the
+        /// different previously attached context is returned.
+        ///
+        /// # Safety
+        ///
+        /// - `target` must originate from [`Self::into_opaque_ptr`] and remain live for the
+        ///   duration of the call.
+        /// - If `target` is attached when this function is called, it must be attached only to the
+        ///   calling native thread.
+        /// - It must not be concurrently updated or freed.
+        pub unsafe fn update_and_attach(
+            target: NonNull<ThreadContextHandle>,
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            trace_flags: u8,
+            local_root_span_id: [u8; 8],
+            attrs: &[(u8, &str)],
+        ) -> Option<ThreadContext> {
+            let mut target = target.cast::<ThreadContextRecord>();
+
+            with_tls_slot(|slot| {
+                let is_current = slot.load(Ordering::Relaxed) == target.as_ptr();
+
+                // Safety: the caller guarantees that `target` is live and exclusively
+                // writable by this thread.
+                let target_record = unsafe { target.as_mut() };
+                let _ = target_record.update_in_place(
+                    trace_id,
+                    span_id,
+                    trace_flags,
+                    local_root_span_id,
+                    attrs,
+                );
+
+                if is_current {
+                    None
+                } else {
+                    compiler_fence(Ordering::Release);
+                    Self::swap(slot, target.as_ptr())
+                }
+            })
+        }
+
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
         /// `valid = 1` after, so a reader that fires between the two writes sees an inconsistent
         /// record and skips it. Compiler fences prevent the compiler from reordering field writes
@@ -527,16 +599,13 @@ pub mod linux {
                 // and only this thread ever writes to the slot, so the pointer is valid and not
                 // accessed for the duration of this closure.
                 if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
-                    current.valid.store(0, Ordering::Relaxed);
-                    compiler_fence(Ordering::SeqCst);
-
-                    current.trace_id = trace_id;
-                    current.span_id = span_id;
-                    current.trace_flags = trace_flags;
-                    current.set_attrs(local_root_span_id, attrs);
-
-                    compiler_fence(Ordering::SeqCst);
-                    current.valid.store(1, Ordering::Relaxed);
+                    current.update_in_place(
+                        trace_id,
+                        span_id,
+                        trace_flags,
+                        local_root_span_id,
+                        attrs,
+                    );
                 } else {
                     let ctxt = ThreadContext::new(
                         trace_id,
@@ -753,6 +822,154 @@ pub mod linux {
             assert_eq!(&record.attrs_data[20..22], b"v2");
 
             let _ = ThreadContext::detach();
+            assert!(read_tls_context_ptr().is_null());
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn update_and_attach_replaces_current_context() {
+            ThreadContext::new([0u8; 16], [0u8; 8], 0x11, [0u8; 8], &[]).attach();
+            let previous_ptr = read_tls_context_ptr();
+
+            let target =
+                ThreadContext::new([1u8; 16], [1u8; 8], 0x22, [1u8; 8], &[]).into_opaque_ptr();
+            let target_ptr = target.cast::<ThreadContextRecord>().as_ptr();
+
+            let previous = unsafe {
+                ThreadContext::update_and_attach(target, [2u8; 16], [2u8; 8], 0xA5, [2u8; 8], &[])
+            }
+            .expect("the previously attached context must be returned");
+
+            assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+            assert_eq!(previous.0.as_ptr().cast_const(), previous_ptr);
+
+            let target_record = unsafe { &*target_ptr };
+            assert_eq!(target_record.trace_id, [2u8; 16]);
+            assert_eq!(target_record.span_id, [2u8; 8]);
+            assert_eq!(target_record.trace_flags, 0xA5);
+            assert_eq!(target_record.attrs_data_size, 18);
+            assert_eq!(target_record.attrs_data[0], 0);
+            assert_eq!(target_record.attrs_data[1], 16);
+            assert_eq!(&target_record.attrs_data[2..18], b"0202020202020202");
+
+            let previous_record = unsafe { previous.0.as_ref() };
+            assert_eq!(previous_record.trace_id, [0u8; 16]);
+            assert_eq!(previous_record.span_id, [0u8; 8]);
+            assert_eq!(previous_record.trace_flags, 0x11);
+            assert_eq!(previous_record.attrs_data_size, 18);
+            assert_eq!(previous_record.attrs_data[0], 0);
+            assert_eq!(previous_record.attrs_data[1], 16);
+            assert_eq!(&previous_record.attrs_data[2..18], b"0000000000000000");
+
+            let attached_target = ThreadContext::detach().expect("target must be attached");
+            assert_eq!(attached_target.0.as_ptr(), target_ptr);
+            drop(attached_target);
+            drop(previous);
+
+            assert!(read_tls_context_ptr().is_null());
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn update_and_attach_updates_current_context_in_place() {
+            let target =
+                ThreadContext::new([1u8; 16], [1u8; 8], 0x11, [1u8; 8], &[]).into_opaque_ptr();
+
+            let target_ptr = target.cast::<ThreadContextRecord>().as_ptr();
+
+            let owner = unsafe { ThreadContext::from_opaque_ptr(target) };
+            assert!(owner.attach().is_none());
+            assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+
+            let previous = unsafe {
+                ThreadContext::update_and_attach(target, [2u8; 16], [2u8; 8], 0xA5, [2u8; 8], &[])
+            };
+
+            assert!(
+                previous.is_none(),
+                "an already-current target must not be returned as a previous owner"
+            );
+            assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+
+            let target_record = unsafe { &*target_ptr };
+            assert_eq!(target_record.trace_id, [2u8; 16]);
+            assert_eq!(target_record.span_id, [2u8; 8]);
+            assert_eq!(target_record.trace_flags, 0xA5);
+            assert_eq!(target_record.attrs_data_size, 18);
+            assert_eq!(target_record.attrs_data[0], 0);
+            assert_eq!(target_record.attrs_data[1], 16);
+            assert_eq!(&target_record.attrs_data[2..18], b"0202020202020202");
+
+            let previous = unsafe {
+                ThreadContext::update_and_attach(target, [3u8; 16], [3u8; 8], 0x5A, [3u8; 8], &[])
+            };
+
+            assert!(previous.is_none());
+            assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+
+            let target_record = unsafe { &*target_ptr };
+            assert_eq!(target_record.trace_id, [3u8; 16]);
+            assert_eq!(target_record.span_id, [3u8; 8]);
+            assert_eq!(target_record.trace_flags, 0x5A);
+            assert_eq!(target_record.attrs_data_size, 18);
+            assert_eq!(target_record.attrs_data[0], 0);
+            assert_eq!(target_record.attrs_data[1], 16);
+            assert_eq!(&target_record.attrs_data[2..18], b"0303030303030303");
+            assert_eq!(target_record.valid.load(Ordering::Relaxed), 1);
+
+            let detached = ThreadContext::detach().expect("target must remain attached");
+            assert_eq!(detached.0.as_ptr(), target_ptr);
+            drop(detached);
+
+            assert!(ThreadContext::detach().is_none());
+            assert!(read_tls_context_ptr().is_null());
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn update_and_attach_attaches_to_empty_tls() {
+            assert!(read_tls_context_ptr().is_null());
+
+            let target = ThreadContext::new([1u8; 16], [1u8; 8], 0x11, [1u8; 8], &[(7, "stale")])
+                .into_opaque_ptr();
+
+            let target_ptr = target.cast::<ThreadContextRecord>().as_ptr();
+
+            assert!(read_tls_context_ptr().is_null());
+
+            let previous = unsafe {
+                ThreadContext::update_and_attach(
+                    target,
+                    [2u8; 16],
+                    [2u8; 8],
+                    0xA5,
+                    [2u8; 8],
+                    &[(8, "fresh")],
+                )
+            };
+
+            assert!(previous.is_none());
+            assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+
+            let target_record = unsafe { &*target_ptr };
+            assert_eq!(target_record.trace_id, [2u8; 16]);
+            assert_eq!(target_record.span_id, [2u8; 8]);
+            assert_eq!(target_record.trace_flags, 0xA5);
+            assert_eq!(target_record.valid.load(Ordering::Relaxed), 1);
+
+            assert_eq!(target_record.attrs_data_size, 25);
+            assert_eq!(target_record.attrs_data[0], 0);
+            assert_eq!(target_record.attrs_data[1], 16);
+            assert_eq!(&target_record.attrs_data[2..18], b"0202020202020202");
+            assert_eq!(target_record.attrs_data[18], 8);
+            assert_eq!(target_record.attrs_data[19], 5);
+            assert_eq!(&target_record.attrs_data[20..25], b"fresh");
+
+            let detached = ThreadContext::detach().expect("target must be attached");
+            assert_eq!(detached.0.as_ptr(), target_ptr);
+            drop(detached);
+
+            assert!(ThreadContext::detach().is_none());
             assert!(read_tls_context_ptr().is_null());
         }
 

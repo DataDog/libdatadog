@@ -45,12 +45,9 @@ mod native {
     }
 
     impl NativeHttpClient {
-        /// Like [`HttpClientCapability::new_client`], but disables connection pooling.
-        ///
-        /// Intended for clients that issue requests on a fixed interval (e.g. remote
-        /// config polling): the agent's low keep-alive setting can close an idle
-        /// connection between polls, which turns a pooled/reused connection into
-        /// intermittent request failures.
+        /// Like [`HttpClientCapability::new_client`], but sets a small lifetime on pooled
+        /// connections. See [`HttpClientCapability::new_without_connection_pooling`] for the
+        /// rationale.
         pub fn new_without_connection_pooling() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
