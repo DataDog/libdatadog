@@ -17,7 +17,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
-.gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
@@ -97,7 +97,7 @@ tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serv
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
-fuzz/                                @DataDog/chaos-platform
+fuzz/                                @DataDog/chaos-engineering
 
 # Nix
 *.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core

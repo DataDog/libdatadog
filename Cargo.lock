@@ -715,7 +715,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1433,6 +1433,7 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
+ "crossbeam-utils",
  "datadog-live-debugger",
  "datadog-sidecar-macros",
  "futures",
@@ -2150,6 +2151,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
+
+[[package]]
 name = "hdrhistogram"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2778,7 +2790,7 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libdd-agent-client"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2878,7 +2890,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2894,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "blazesym",
@@ -2934,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2953,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2971,6 +2983,7 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-data-pipeline-core",
  "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
@@ -3000,8 +3013,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-data-pipeline-core"
+version = "1.0.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "http 1.1.0",
+ "libdd-capabilities",
+ "libdd-common",
+ "libdd-tinybytes",
+ "libdd-trace-obfuscation",
+ "libdd-trace-utils",
+ "serde_json",
+ "thiserror 1.0.68",
+ "zstd",
+]
+
+[[package]]
 name = "libdd-data-pipeline-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3010,9 +3040,11 @@ dependencies = [
  "libdd-data-pipeline",
  "libdd-shared-runtime",
  "libdd-tinybytes",
+ "libdd-trace-obfuscation",
  "libdd-trace-utils",
  "rmp",
  "rmp-serde",
+ "serde_json",
  "tokio-util",
  "tracing",
 ]
@@ -3031,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3096,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -3108,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-gotter"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -3134,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3167,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc-macros"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3177,7 +3209,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3208,9 +3240,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "1.0.2"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "227f0e30af5fbb91d1b3768db7997fdd1ded87c44b371663783c4ff3eb686908"
+checksum = "cf4d5ce7d99aa9244d4dff12d25faf8ad96793183ed049b20f366ce88cf59e68"
 dependencies = [
  "cc",
  "libc",
@@ -3230,7 +3262,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3353,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3385,7 +3417,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3394,7 +3426,7 @@ dependencies = [
  "futures",
  "futures-util",
  "getrandom 0.2.15",
- "hashbrown 0.15.1",
+ "hashbrown 0.17.1",
  "http 1.1.0",
  "http-body-util",
  "hyper",
@@ -3415,7 +3447,7 @@ dependencies = [
  "sha2",
  "strum",
  "strum_macros",
- "thiserror 2.0.17",
+ "thiserror 1.0.68",
  "time",
  "tokio",
  "tokio-util",
@@ -3453,7 +3485,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3495,7 +3527,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3525,7 +3557,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3537,13 +3569,14 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "criterion",
  "duplicate 0.4.1",
  "fluent-uri",
  "libdd-common",
+ "libdd-tinybytes",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "log",
@@ -3554,7 +3587,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "4.0.1"
+version = "5.0.0"
 dependencies = [
  "bolero",
  "prost",
@@ -3568,7 +3601,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3599,7 +3632,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "10.1.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3647,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5824,7 +5857,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6271,7 +6304,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "41.0.0"
+version = "43.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

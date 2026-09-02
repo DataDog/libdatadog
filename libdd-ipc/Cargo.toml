@@ -1,6 +1,6 @@
 [package]
 name = "libdd-ipc"
-version = "0.1.0"
+version = "1.0.0"
 description = "IPC implementation for libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc"
@@ -25,9 +25,9 @@ libdd-tinybytes = { path = "../libdd-tinybytes", version = "1.1.2", optional = t
 
 libdd-common = { version = "5.2.0", path = "../libdd-common" }
 libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
-libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { version = "7.0.0", path = "../libdd-trace-stats" }
-libdd-ipc-macros = { version = "0.1.0", path = "../libdd-ipc-macros" }
+libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-stats = { version = "8.0.0", path = "../libdd-trace-stats" }
+libdd-ipc-macros = { version = "1.0.0", path = "../libdd-ipc-macros" }
 tracing.workspace = true
 
 [dev-dependencies]
@@ -49,7 +49,7 @@ spawn_worker = { path = "../spawn_worker" }
 [target.'cfg(not(windows))'.dependencies]
 nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket", "uio", "user"] }
 sendfd = { version = "0.4", features = ["tokio"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal"] }
+tokio = { version = "1.23", features = ["sync", "io-util"] }
 
 [target.'cfg(target_env = "gnu")'.build-dependencies]
 glibc_version = "0.1.2"
@@ -57,7 +57,7 @@ glibc_version = "0.1.2"
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "memoryapi", "winbase", "winnt", "winerror", "processthreadsapi", "fileapi", "minwinbase"] }
 windows-sys = { version = "0.48.0", features = ["Win32_System", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "signal", "net", "rt-multi-thread", "rt"] }
+tokio = { version = "1.23", features = ["sync", "io-util", "net", "rt-multi-thread", "rt"] }
 
 [lib]
 bench = false

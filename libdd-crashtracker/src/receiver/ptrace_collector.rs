@@ -12,12 +12,17 @@
 //! 1. Enumerate threads from /proc/<parent_pid>/task/
 //! 2. Attach to each thread using PTRACE_SEIZE + PTRACE_INTERRUPT (stops the thread)
 //! 3. While the thread is stopped, use libunwind remote APIs to unwind the stack:
-//!    - _UPT_create(tid)                create ptrace unwinding state
-//!    - unw_create_addr_space()         create address space with ptrace accessors
+//!    - UnwAddrSpace::new()             address space with the ptrace accessors
+//!    - UptInfo::new(tid)               ptrace unwinding state
 //!    - unw_init_remote()               initialize remote cursor
 //!    - unw_step_remote() loop          walk frames
-//!    - _UPT_destroy() + cleanup        clean up
 //! 4. Detach from the thread via PTRACE_DETACH
+//!
+//! `UnwAddrSpace` and `UptInfo` are the RAII wrappers from `libdd-libunwind-sys`; they
+//! release the underlying libunwind resources on drop. The bundled
+//! `RemoteUnwindResources` is deliberately not used here because it pairs one address
+//! space with one thread; this collector shares a single address space across
+//! every thread in the process
 //!
 //! Only instruction and stack pointers are captured here. Symbol names for these
 //! frames are resolved later by `CrashInfo::enrich_callstacks`, which runs blazesym
@@ -35,9 +40,8 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 use libdd_libunwind_sys::{
-    _UPT_accessors, _UPT_create, _UPT_destroy, unw_create_addr_space, unw_destroy_addr_space,
-    unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpaceT, UnwCursor, UnwWord,
-    UNW_REG_IP, UNW_REG_SP,
+    unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpace, UnwCursor, UnwWord,
+    UptInfo, UNW_REG_IP, UNW_REG_SP,
 };
 
 use crate::crash_info::{StackFrame, StackTrace};
@@ -265,49 +269,25 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     Ok(())
 }
 
-/// Create a libunwind remote address space backed by the `_UPT_accessors` ptrace
-/// callback table.
-///
-/// The returned address space is reusable across multiple threads: all threads in
-/// the same process share the same binary mappings, so the DWARF unwind info that
-/// libunwind caches inside the address space is valid for every thread.  The
-/// caller owns the address space and must destroy it with `unw_destroy_addr_space`
-/// when done.  Returns `None` if allocation fails.
-fn create_addr_space() -> Option<UnwAddrSpaceT> {
-    // SAFETY: _UPT_accessors is a static accessor table provided by libunwind-ptrace.
-    // unw_create_addr_space only reads (copies) the accessor struct; it does not mutate
-    // it.  The *mut _ cast is required because the C declaration is const-incorrect, but
-    // no mutation occurs, so casting &raw const to *mut is safe here.
-    // byteorder=0 requests native byte order.
-    let addr_space = unsafe { unw_create_addr_space(&raw const _UPT_accessors as *mut _, 0) };
-    if addr_space.is_null() {
-        None
-    } else {
-        Some(addr_space)
-    }
-}
-
 /// Capture the full stack trace for a stopped thread using libunwind remote unwinding.
 ///
 /// The thread must already be stopped (`attach_thread`) before calling this.
 /// The caller is responsible for detaching after this returns.
 ///
-/// `addr_space` is a pre-created address space shared across threads; this
-/// function does *not* destroy it.
-fn unwind_remote_thread(tid: libc::pid_t, addr_space: UnwAddrSpaceT) -> StackTrace {
-    // SAFETY: _UPT_create allocates a ptrace unwinding context for the given tid.
-    // The thread must already be stopped via ptrace for this to succeed.
-    let upt_info = unsafe { _UPT_create(tid) };
-    if upt_info.is_null() {
+/// `addr_space` is owned by the caller and shared across threads; this function
+/// only borrows it.
+fn unwind_remote_thread(tid: libc::pid_t, addr_space: &UnwAddrSpace) -> StackTrace {
+    // The ptrace unwinding context requires the thread to already be stopped by ptrace.
+    // It is released when `upt_info` goes out of scope.
+    let Some(upt_info) = UptInfo::new(tid) else {
         return StackTrace::new_incomplete();
-    }
+    };
 
     // SAFETY: cursor is zeroed; unw_init_remote seeds it from the thread's registers
     // using ptrace with upt_info as the accessor argument.
     let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
-    let ret = unsafe { unw_init_remote(&mut cursor, addr_space, upt_info) };
+    let ret = unsafe { unw_init_remote(&mut cursor, addr_space.as_ptr(), upt_info.as_ptr()) };
     if ret != 0 {
-        unsafe { _UPT_destroy(upt_info) };
         return StackTrace::new_incomplete();
     }
 
@@ -340,9 +320,6 @@ fn unwind_remote_thread(tid: libc::pid_t, addr_space: UnwAddrSpaceT) -> StackTra
         }
     }
 
-    // SAFETY: upt_info was created above; addr_space is owned by the caller
-    unsafe { _UPT_destroy(upt_info) };
-
     StackTrace::from_frames(frames, false)
 }
 
@@ -355,7 +332,7 @@ fn unwind_remote_thread(tid: libc::pid_t, addr_space: UnwAddrSpaceT) -> StackTra
 /// `stop_deadline` bounds how long we poll for the thread to enter ptrace-stop.
 pub fn capture_thread_context(
     tid: libc::pid_t,
-    addr_space: UnwAddrSpaceT,
+    addr_space: &UnwAddrSpace,
     stop_deadline: Instant,
 ) -> Result<CapturedThreadContext, PtraceError> {
     attach_thread(tid, stop_deadline)?;
@@ -401,7 +378,7 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 /// transient issue.
 fn capture_with_retry(
     tid: libc::pid_t,
-    addr_space: UnwAddrSpaceT,
+    addr_space: &UnwAddrSpace,
     overall_deadline: Instant,
 ) -> Option<CapturedThreadContext> {
     for attempt in 0..=MAX_RETRIES {
@@ -466,13 +443,13 @@ where
     // same process share the same binary mappings, so the DWARF unwind info that
     // libunwind caches inside the address space is valid for every thread and is
     // reused rather than re-parsed on each iteration.
-    let Some(addr_space) = create_addr_space() else {
+    let Some(addr_space) = UnwAddrSpace::new() else {
         return Ok(true); // treat as incomplete; nothing was collected
     };
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let context = capture_with_retry(crashing_tid, addr_space, overall_deadline);
+        let context = capture_with_retry(crashing_tid, &addr_space, overall_deadline);
         callback(crashing_tid, context.as_ref());
         processed += 1;
     }
@@ -485,13 +462,10 @@ where
             break;
         }
 
-        let context = capture_with_retry(tid, addr_space, overall_deadline);
+        let context = capture_with_retry(tid, &addr_space, overall_deadline);
         callback(tid, context.as_ref());
         processed += 1;
     }
-
-    // SAFETY: addr_space was created above and is no longer referenced
-    unsafe { unw_destroy_addr_space(addr_space) };
 
     let incomplete = processed < total_eligible;
     Ok(incomplete)
@@ -561,21 +535,19 @@ mod tests {
 
         let tid = rx.recv().unwrap();
 
-        let Some(addr_space) = create_addr_space() else {
-            eprintln!("skipping ptrace test (unw_create_addr_space failed)");
+        let Some(addr_space) = UnwAddrSpace::new() else {
+            eprintln!("skipping ptrace test (UnwAddrSpace::new failed)");
             barrier.wait();
             handle.join().unwrap();
             return;
         };
-        match capture_thread_context(tid, addr_space, Instant::now() + Duration::from_secs(5)) {
+        match capture_thread_context(tid, &addr_space, Instant::now() + Duration::from_secs(5)) {
             Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
             Ok(ctx) => assert!(
                 !ctx.stack_trace.frames.is_empty(),
                 "expected at least one frame from a running thread"
             ),
         }
-        // SAFETY: addr_space was created above and is no longer referenced
-        unsafe { unw_destroy_addr_space(addr_space) };
 
         barrier.wait();
         handle.join().unwrap();

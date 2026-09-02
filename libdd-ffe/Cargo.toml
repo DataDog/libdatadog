@@ -13,7 +13,7 @@ description = "Feature Flagging and Experimentation"
 bench = false
 
 [dependencies]
-libdd-remote-config = { version = "3.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
+libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
@@ -31,7 +31,7 @@ serde_with = { version = "3.11.0", default-features = false, features = ["base64
 thiserror = { version = "2.0.3", default-features = false }
 url = { version = "2.5.0", default-features = false, features = ["std"] }
 lru = { version = "0.16.3", optional = true }
-libdd-trace-protobuf = { version = "4.0.1", path = "../libdd-trace-protobuf", optional = true }
+libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf", optional = true }
 prost = { version = "0.14.1", optional = true }
 pyo3 = { version = "0.28", optional = true, default-features = false, features = ["macros"] }
 
