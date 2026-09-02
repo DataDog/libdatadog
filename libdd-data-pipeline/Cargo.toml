@@ -41,7 +41,7 @@ libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-normalization = { version = "4.0.0", path = "../libdd-trace-normalization" }
 libdd-trace-stats = { version = "8.0.0", path = "../libdd-trace-stats", default-features = false, features = ["dogstatsd"] }
 libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-trace-obfuscation = { version = "7.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
+libdd-trace-obfuscation = { version = "7.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 libdd-ddsketch = { version = "1.1.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "5.0.0", path = "../libdd-dogstatsd-client", default-features = false, features = ["shared-runtime"] }
 libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes", features = [
@@ -51,8 +51,14 @@ libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes", features = [
 web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
+tokio = { version = "1.23", features = ["time", "test-util", "net"], default-features = false }
 libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
+# OTLP gRPC transport: a custom GrpcService over hyper h2c. tonic's transport
+# (hyper/tokio/socket2) does not build for wasm32, so the whole gRPC path is gated off.
+tonic = { version = "0.14", default-features = false }
+prost = "0.14.1"
+hyper = { workspace = true, features = ["client", "http2"] }
+hyper-util = { workspace = true, features = ["tokio"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -60,6 +66,9 @@ uuid = { workspace = true, features = ["js", "std"] }
 
 [lib]
 bench = false
+
+[[example]]
+name = "send-traces-agentless"
 
 [[bench]]
 name = "trace_buffer"
@@ -88,10 +97,19 @@ tokio = { version = "1.23", features = [
 duplicate = "2.0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+h2 = "0.4"
 zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 zrip = { version = "=0.6.0", default-features = false, features = ["alloc"] }
+
+[[test]]
+name = "test_agentless_stats"
+required-features = ["stats-obfuscation"]
+
+[[example]]
+name = "send-traces-with-stats"
+required-features = ["stats-obfuscation"]
 
 [features]
 default = ["https", "telemetry"]
@@ -106,9 +124,9 @@ https = [
     "libdd-dogstatsd-client/https",
 ]
 stats-obfuscation = [
-    "libdd-trace-obfuscation",
     "libdd-trace-stats/stats-obfuscation"
 ]
+
 fips = [
     "libdd-common/fips",
     "libdd-capabilities-impl/fips",
@@ -120,5 +138,9 @@ fips = [
 ]
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
-# Enable zstd compression for the agentless trace intake sender.
-compression = ["libdd-trace-utils/compression", "libdd-data-pipeline-core/compression"]
+# Enable zstd compression for the agentless trace and stats intake senders.
+compression = [
+    "libdd-trace-utils/compression",
+    "libdd-trace-stats/compression",
+    "libdd-data-pipeline-core/compression",
+]

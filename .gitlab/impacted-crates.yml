@@ -10,9 +10,6 @@
 #
 # Only the benchmarks job consumes this today; other test jobs can depend on it later.
 
-variables:
-  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
-
 compute_impacted_crates:
   stage: test
   tags: ["arch:amd64"]
@@ -20,6 +17,7 @@ compute_impacted_crates:
     name: $BASE_CI_IMAGE
   needs: []
   rules:
+    - !reference [.untrusted_ref_guard, rules]
     # Nothing to compute where benchmarks won't consume it: main runs the full suite, and
     # release/hotfix/merge-queue/scheduled pipelines don't run benchmarks at all.
     - if: '$CI_COMMIT_BRANCH == "main"'

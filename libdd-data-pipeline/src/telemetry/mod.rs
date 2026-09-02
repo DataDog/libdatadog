@@ -212,6 +212,9 @@ pub struct SendPayloadTelemetry {
     chunks_sent: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
+    spans_enqueued_for_serialization: u64,
+    spans_dropped_serialization_error: u64,
+    spans_dropped_api_error: u64,
     responses_count_per_code: HashMap<u16, u64>,
 }
 
@@ -281,6 +284,24 @@ impl SendPayloadTelemetry {
         };
         telemetry
     }
+
+    pub(crate) fn from_retry_result_with_spans(
+        value: &SendWithRetryResult,
+        bytes_sent: u64,
+        chunks: u64,
+        spans: u64,
+    ) -> Self {
+        let mut telemetry = Self::from_retry_result(value, bytes_sent, chunks);
+        telemetry.spans_enqueued_for_serialization = spans;
+        match value {
+            Err(SendWithRetryError::Build(_)) => {
+                telemetry.spans_dropped_serialization_error = spans;
+            }
+            Err(_) => telemetry.spans_dropped_api_error = spans,
+            Ok(_) => {}
+        }
+        telemetry
+    }
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
@@ -332,6 +353,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 .get(metrics::MetricKind::ChunksDroppedSendFailure);
             self.worker
                 .add_point(data.chunks_dropped_send_failure as f64, key, vec![])?;
+        }
+        if data.spans_enqueued_for_serialization > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansEnqueuedForSerialization);
+            self.worker
+                .add_point(data.spans_enqueued_for_serialization as f64, key, vec![])?;
+        }
+        if data.spans_dropped_serialization_error > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::SpansDroppedSerializationError);
+            self.worker
+                .add_point(data.spans_dropped_serialization_error as f64, key, vec![])?;
+        }
+        if data.spans_dropped_api_error > 0 {
+            let key = self.metrics.get(metrics::MetricKind::SpansDroppedApiError);
+            self.worker
+                .add_point(data.spans_dropped_api_error as f64, key, vec![])?;
         }
         if !data.responses_count_per_code.is_empty() {
             let key = self.metrics.get(metrics::MetricKind::ApiResponses);
@@ -789,11 +829,13 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
+        let telemetry = SendPayloadTelemetry::from_retry_result_with_spans(&result, 1, 2, 7);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 chunks_dropped_send_failure: 2,
+                spans_enqueued_for_serialization: 7,
+                spans_dropped_api_error: 7,
                 requests_count: 5,
                 errors_status_code: 1,
                 responses_count_per_code: HashMap::from([(400, 1)]),
