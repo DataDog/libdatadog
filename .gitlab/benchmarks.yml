@@ -1,13 +1,5 @@
-variables:
-  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
-  # The Dockerfile to this image is located at:
-  # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
-
-# Shared rules for the benchmark jobs: skip merge-queue and release/hotfix branches (whether they
-# arrive as a branch pipeline or an external PR), and run the full suite on main. Release/hotfix are
-# version bumps + merge-backs of code already benchmarked on its originating PR and on main, so
-# re-running here would add nothing.
 .benchmark_run_rules: &benchmark_run_rules
+  - !reference [.untrusted_ref_guard, rules]
   - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
     when: never
   - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)[-\/]/'
@@ -17,6 +9,22 @@ variables:
   - if: '$CI_COMMIT_BRANCH == "main"'
     interruptible: false
   - interruptible: true
+
+.clone_benchmarking_platform:
+  script:
+    # Wrapped in a subshell so `set -euo pipefail` stays local.
+    - |
+      (
+        set -euo pipefail
+        git clone --branch libdatadog/benchmarks \
+          "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform" /platform
+        git -C /platform checkout --detach "${BENCHMARKING_PLATFORM_SHA}"
+        # Drop the credential-bearing remote. Neither job pushes, and code from the tested commit
+        # runs later in this same container -- leaving $CI_JOB_TOKEN in /platform/.git/config would
+        # hand it to that code for free.
+        git -C /platform remote set-url origin "https://gitlab.ddbuild.io/DataDog/benchmarking-platform"
+      )
+    - unset CI_JOB_TOKEN
 
 # The benchmark suite is sharded across parallel jobs to reduce wall-clock time. Each shard runs
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
@@ -58,7 +66,8 @@ benchmarks:
           ;;
       esac
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
-    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
+    - !reference [.clone_benchmarking_platform, script]
+    - cd /platform
     - ./steps/capture-hardware-software-info.sh
     - |
       SCRIPT_DIR="$(pwd)/steps"
@@ -145,7 +154,7 @@ benchmarks_combine:
         echo "No shard reports produced -> nothing to combine."
         exit 0
       fi
-    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform
+    - !reference [.clone_benchmarking_platform, script]
     - |
       # Assemble the files post-pr-comment.sh reads by concatenating each shard's markdown.
       export ARTIFACTS_DIR="${CI_PROJECT_DIR}/reports"

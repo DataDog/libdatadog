@@ -11,6 +11,7 @@ pub(crate) mod compression;
 pub use compression::CompressionStrategy;
 
 use bytes::Bytes;
+use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
@@ -106,6 +107,28 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
     retry_strategy: &RetryStrategy,
     compression_strategy: CompressionStrategy,
 ) -> SendWithRetryResult {
+    send_with_retry_and_size(
+        capabilities,
+        target,
+        payload,
+        headers,
+        retry_strategy,
+        compression_strategy,
+    )
+    .await
+    .0
+}
+
+/// Send a payload with retries and return its post-compression size.
+#[allow(clippy::result_large_err)]
+pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    target: &Endpoint,
+    payload: Vec<u8>,
+    headers: &HeaderMap,
+    retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
+) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
 
@@ -118,8 +141,9 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
 
     let (compressed, compression_strategy) = compression::compress(payload, compression_strategy);
     let payload = Bytes::from(compressed);
+    let payload_size = payload.len();
 
-    loop {
+    let result = loop {
         request_attempt += 1;
 
         debug!(
@@ -137,21 +161,22 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         for (key, value) in headers {
             builder = builder.header(key, value);
         }
-        // headers_mut is only None if the builder is in an error state
-        if let Some(h) = builder.headers_mut() {
-            compression::add_headers(h, compression_strategy);
+        if let Some(headers) = builder.headers_mut() {
+            compression::add_headers(headers, compression_strategy);
         }
         let req = match builder.body(payload.clone()) {
             Ok(r) => r,
             Err(_) => {
-                return Err(SendWithRetryError::Build(request_attempt));
+                break Err(SendWithRetryError::Build(request_attempt));
             }
         };
 
-        let result = tokio::select! {
-            biased;
-            r = capabilities.request(req) => Ok(r),
-            _ = capabilities.sleep(timeout) => Err(()),
+        let request = capabilities.request(req);
+        let timeout = capabilities.sleep(timeout);
+        futures::pin_mut!(request, timeout);
+        let result = match select(request, timeout).await {
+            Either::Left((response, _)) => Ok(response),
+            Either::Right(((), _)) => Err(()),
         };
 
         match result {
@@ -186,7 +211,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                             attempts = request_attempt,
                             "Max retries exceeded, returning HTTP error"
                         );
-                        return Err(SendWithRetryError::Http(response, request_attempt));
+                        break Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
                     debug!(
@@ -194,7 +219,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Request succeeded"
                     );
-                    return Ok((response, request_attempt));
+                    break Ok((response, request_attempt));
                 }
             }
             Ok(Err(e)) => {
@@ -228,7 +253,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
-                    return Err(classified_error);
+                    break Err(classified_error);
                 }
             }
             Err(_) => {
@@ -252,11 +277,12 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning timeout error"
                     );
-                    return Err(SendWithRetryError::Timeout(request_attempt));
+                    break Err(SendWithRetryError::Timeout(request_attempt));
                 }
             }
         }
-    }
+    };
+    (result, payload_size)
 }
 
 #[cfg(test)]

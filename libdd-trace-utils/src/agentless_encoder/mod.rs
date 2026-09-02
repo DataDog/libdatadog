@@ -87,10 +87,16 @@ macro_rules! ser_fn {
 
 /// Encode the given `traces` to the agentless JSON payload (`/v1/input` body).
 ///
+/// When `client_side_stats` is `true`, the encoder will **not** inject
+/// `meta["_dd.compute_stats"]="1"` on the first span of each chunk.  Set this
+/// when the caller is already computing and exporting stats locally so that the intake does not
+/// double- count the same traces.
+///
 /// Returns the serialized JSON bytes on success.
 pub fn encode_payload<T: TraceData>(
     traces: &[Vec<Span<T>>],
     metadata: &TracerMetadata,
+    client_side_stats: bool,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let mut bytes = Vec::new();
     let mut serializer = serde_json::Serializer::new(&mut bytes);
@@ -98,11 +104,11 @@ pub fn encode_payload<T: TraceData>(
     let mut map_ser = serializer.serialize_map(Some(1))?;
     map_ser.serialize_entry(
         "traces",
-        &ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata| {
+        &ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata, client_side_stats: bool| {
             let mut traces_serializer = ser.serialize_seq(Some(traces.len()))?;
             for chunk in traces {
-                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a Vec<Span<T>>, metadata: &'a TracerMetadata| {
-                    encode_trace(ser, chunk, metadata)
+                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a Vec<Span<T>>, metadata: &'a TracerMetadata, client_side_stats: bool| {
+                    encode_trace(ser, chunk, metadata, client_side_stats)
                 }))?;
             }
             traces_serializer.end()
@@ -116,6 +122,7 @@ fn encode_trace<T: TraceData, S: Serializer>(
     ser: S,
     chunk: &[Span<T>],
     metadata: &TracerMetadata,
+    client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
 
@@ -142,12 +149,12 @@ fn encode_trace<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "spans",
-        &ser_fn!(<T: TraceData> |ser, chunk: &'a [Span<T>]| {
+        &ser_fn!(<T: TraceData> |ser, chunk: &'a [Span<T>], client_side_stats: bool| {
             let mut seq = ser.serialize_seq(Some(chunk.len()))?;
             for (i, span) in chunk.iter().enumerate() {
                 let is_first = i == 0;
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first: bool| {
-                    encode_span(ser, span, is_first)
+                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first: bool, client_side_stats: bool| {
+                    encode_span(ser, span, is_first, client_side_stats)
                 }))?;
             }
             seq.end()
@@ -161,6 +168,7 @@ fn encode_span<T: TraceData, S: Serializer>(
     ser: S,
     span: &Span<T>,
     is_first_in_trace: bool,
+    client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
 
@@ -209,7 +217,7 @@ fn encode_span<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "meta",
-        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first_in_trace: bool| {
+        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first_in_trace: bool, client_side_stats: bool| {
             let upper_bits = (span.trace_id >> 64) as u64;
             let mut p_tid_seen = false;
             let mut span_links_seen = false;
@@ -217,7 +225,7 @@ fn encode_span<T: TraceData, S: Serializer>(
             let mut compute_stats_seen = false;
 
             let mut meta = ser.serialize_map(None)?;
-            for (k, v) in span.meta.iter() {
+            for (k, v) in span.meta.defensive_dedup().iter() {
                 let key: &str = k.borrow();
                 match key {
                     "_dd.p.tid" => p_tid_seen = true,
@@ -247,7 +255,7 @@ fn encode_span<T: TraceData, S: Serializer>(
                     meta.serialize_entry("events", &s)?;
                 }
             }
-            if !compute_stats_seen && is_first_in_trace {
+            if !compute_stats_seen && is_first_in_trace && !client_side_stats {
                 meta.serialize_entry("_dd.compute_stats", "1")?;
             }
             meta.end()
@@ -259,7 +267,7 @@ fn encode_span<T: TraceData, S: Serializer>(
         &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
             let mut metrics = ser.serialize_map(None)?;
             let mut trace_root_seen = false;
-            for (k, v) in span.metrics.iter() {
+            for (k, v) in span.metrics.defensive_dedup().iter() {
                 let key: &str = k.borrow();
                 // serde_json refuses to serialize NaN/Inf; drop them silently.
                 if v.is_finite() {

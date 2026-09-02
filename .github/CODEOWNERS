@@ -17,7 +17,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
-.gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
@@ -77,17 +77,17 @@ README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
 rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
-scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
-scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
-scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/check_cargo_metadata.sh      @DataDog/apm-common-components-core
+scripts/check_crypto_providers.sh    @DataDog/apm-common-components-core
+scripts/commits-since-release.sh     @DataDog/apm-common-components-core
 scripts/create-release.sh            @DataDog/apm-common-components-core
-scripts/crates-to-package.sh         @DataDog/libdatadog-core
-scripts/exclude-from-green-ci.sh     @DataDog/libdatadog-core
-scripts/major-bumps-level.sh         @DataDog/libdatadog-core
-scripts/publication-order.sh         @DataDog/libdatadog-core
-scripts/reformat_copyright.sh        @DataDog/libdatadog-core
-scripts/semver-level.sh              @DataDog/libdatadog-core
-scripts/update_license_3rdparty.sh   @DataDog/libdatadog-core
+scripts/crates-to-package.sh         @DataDog/apm-common-components-core
+scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
+scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
+scripts/publication-order.sh         @DataDog/apm-common-components-core
+scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
+scripts/semver-level.sh              @DataDog/apm-common-components-core
+scripts/update_license_3rdparty.sh   @DataDog/apm-common-components-core
 scripts/Dockerfile.license           @DataDog/libdatadog-core
 spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog-apm
 symbolizer-ffi                       @DataDog/libdatadog-profiling
@@ -97,7 +97,7 @@ tests/wasm/                          @DataDog/libdatadog-profiling @DataDog/serv
 tests/windows_package/               @DataDog/apm-common-components-core
 tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
-fuzz/                                @DataDog/chaos-platform
+fuzz/                                @DataDog/chaos-engineering
 
 # Nix
 *.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core
