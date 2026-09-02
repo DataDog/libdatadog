@@ -197,25 +197,28 @@ fn get_http_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
 /// The HTTP status code, under either naming convention, or 0 when the span carries neither.
 ///
 /// `metrics` is checked before `meta` for each name because a numeric attribute is routed there
-/// by the tracer's own setter, and OTel types `http.response.status_code` as an int. A name whose
-/// value does not parse falls through to the next name rather than terminating the search at 0,
-/// so a stray `http.status_code: ""` cannot hide a valid `http.response.status_code`.
+/// by the tracer's own setter, and OTel types `http.response.status_code` as an int. The Datadog
+/// key retains its existing conversion and precedence behavior. Invalid OTel values are ignored.
 fn get_http_status_code<'a>(span: &'a impl StatSpan<'a>) -> u32 {
     for key in [TAG_STATUS_CODE, TAG_STATUS_CODE_OTEL] {
-        if let Some(code) = span
-            .get_metrics(key)
-            .and_then(float_to_u32)
-            .filter(is_valid_http_status_code)
-        {
-            return code;
+        if let Some(value) = span.get_metrics(key) {
+            if key == TAG_STATUS_CODE {
+                // Preserve the existing Datadog-key conversion behavior.
+                return value as u32;
+            }
+            if let Some(code) = float_to_u32(value).filter(is_valid_http_status_code) {
+                return code;
+            }
         }
 
-        if let Some(code) = span
-            .get_meta(key)
-            .and_then(|value| value.parse().ok())
-            .filter(is_valid_http_status_code)
-        {
-            return code;
+        if let Some(value) = span.get_meta(key) {
+            if key == TAG_STATUS_CODE {
+                // Preserve the existing Datadog-key parse-or-zero behavior.
+                return value.parse().unwrap_or_default();
+            }
+            if let Some(code) = value.parse().ok().filter(is_valid_http_status_code) {
+                return code;
+            }
         }
     }
 
@@ -342,8 +345,12 @@ impl<'a> BorrowedAggregationKey<'a> {
         let http_method = get_http_method(span);
 
         let http_endpoint = span
-            .get_meta("http.endpoint")
-            .or_else(|| span.get_meta("http.route"))
+            .get_meta("http.route")
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                span.get_meta("http.endpoint")
+                    .filter(|value| !value.is_empty())
+            })
             .unwrap_or_default();
 
         let status_code = get_http_status_code(span);
@@ -885,7 +892,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // A malformed numeric status must not shadow a valid fallback under the OTel name.
+            // Datadog-key numeric conversion retains its existing cast behavior.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -903,12 +910,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 418,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // An out-of-range numeric status must not shadow a valid fallback under the OTel name.
+            // The Datadog key keeps its existing u32 behavior and wins over the OTel key.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -926,12 +933,35 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 418,
+                    http_status_code: 600,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // Out-of-range metadata must also fall through to a valid numeric OTel status.
+            // Datadog-key numeric conversion keeps the existing Rust cast behavior.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![("http.response.status_code".into(), "418".into())].into(),
+                    metrics: vec![("http.status_code".into(), 1.5)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 1,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // The Datadog key also keeps its existing u32 behavior when stored as metadata.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -949,7 +979,29 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 418,
+                    http_status_code: 99,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // An out-of-range OTel status is not a valid HTTP response status.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    metrics: vec![("http.response.status_code".into(), 600.0)].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "res".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
@@ -1211,8 +1263,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // An unparseable Datadog status falls through to the OTel name instead of ending the
-            // search at 0, which would reproduce the span/stats disagreement this is fixing
+            // An unparseable Datadog status retains its existing parse-or-zero behavior.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1233,12 +1284,12 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 418,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
             ),
-            // A malformed numeric value must not shadow valid metadata under the same key.
+            // Datadog metrics retain their existing precedence and cast behavior.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1256,7 +1307,7 @@ mod tests {
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
-                    http_status_code: 500,
+                    http_status_code: 0,
                     ..Default::default()
                 }
                 .into_key(),
@@ -1371,7 +1422,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Span with http.method and http.endpoint (http.endpoint takes precedence)
+            // The canonical OTel route takes precedence over the Datadog-only endpoint.
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1382,6 +1433,34 @@ mod tests {
                     meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
+                        ("http.endpoint".into(), "/users/create2".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "POST /users/create".into(),
+                    http_method: "POST".into(),
+                    http_endpoint: "/users/create".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // An empty route falls back to the retained Datadog endpoint.
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "POST /users/create".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.method".into(), "POST".into()),
+                        ("http.route".into(), "".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
                     ]
                     .into(),

@@ -82,35 +82,23 @@ mod otlp_export_tests {
                         else {
                             return false;
                         };
-                        let has_attribute =
-                            |span: &serde_json::Value, key: &str, string_value: Option<&str>| {
-                                span["attributes"].as_array().is_some_and(|attributes| {
-                                    attributes.iter().any(|attribute| {
-                                        attribute["key"] == key
-                                            && string_value.is_none_or(|value| {
-                                                attribute["value"]["stringValue"] == value
-                                            })
-                                    })
-                                })
-                            };
+                        let has_attribute = |span: &serde_json::Value, key: &str| {
+                            span["attributes"].as_array().is_some_and(|attributes| {
+                                attributes
+                                    .iter()
+                                    .any(|attribute| attribute["key"] == key)
+                            })
+                        };
                         let valid = body["resourceSpans"][0]["scopeSpans"][0]["spans"]
                             .as_array()
                             .is_some_and(|spans| {
                                 spans.len() == 2
                                     && spans.iter().all(|span| span["flags"] == 1)
                                     && spans.iter().any(|span| {
-                                        has_attribute(
-                                            span,
-                                            "operation.name",
-                                            Some("test_otlp_export_01"),
-                                        ) && has_attribute(span, "_sampling_priority_v1", None)
+                                        has_attribute(span, "_sampling_priority_v1")
                                     })
                                     && spans.iter().any(|span| {
-                                        has_attribute(
-                                            span,
-                                            "operation.name",
-                                            Some("test_otlp_export_02"),
-                                        ) && !has_attribute(span, "_sampling_priority_v1", None)
+                                        !has_attribute(span, "_sampling_priority_v1")
                                     })
                             });
                         if valid {
@@ -136,6 +124,7 @@ mod otlp_export_tests {
                 .set_env("test_env")
                 .set_service("test")
                 .set_runtime_id("test-runtime-id")
+                .enable_otel_trace_semantics()
                 .set_client_computed_stats();
 
             let trace_exporter = builder
