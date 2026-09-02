@@ -95,9 +95,8 @@ pub(crate) mod prost_codec {
         // Shared with the `Encoder` impl below. tonic's `EncodeBuf`/`DecodeBuf` constructors are
         // private to the crate, so tests exercise this generic-over-`BufMut`/`Buf` core directly
         // instead of going through the `Encoder`/`Decoder` traits (see `codec_tests`).
-        fn encode_into(item: Arc<T>, dst: &mut impl bytes::BufMut) -> Result<(), Status> {
-            item.as_ref()
-                .encode(dst)
+        fn encode_into(item: &T, dst: &mut impl bytes::BufMut) -> Result<(), Status> {
+            item.encode(dst)
                 .map_err(|e| Status::internal(format!("Failed to encode protobuf message: {e}")))
         }
     }
@@ -105,7 +104,7 @@ pub(crate) mod prost_codec {
         type Item = Arc<T>;
         type Error = Status;
         fn encode(&mut self, item: Arc<T>, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
-            Self::encode_into(item, dst)
+            Self::encode_into(item.as_ref(), dst)
         }
     }
 
@@ -155,8 +154,6 @@ pub(crate) mod prost_codec {
             ExportTraceServiceRequest, ExportTraceServiceResponse,
         };
         use libdd_trace_protobuf::opentelemetry::proto::trace::v1::ResourceSpans;
-        use std::sync::Arc;
-
         // Round-trips through the `BufMut`/`Buf`-generic core (`encode_into`/`decode_from`) that
         // the `Encoder`/`Decoder` impls delegate to, over a plain `BytesMut`; see
         // `ProstEncoder::encode_into` for why the `Codec` traits can't be driven directly.
@@ -170,9 +167,7 @@ pub(crate) mod prost_codec {
                 }],
             };
             let mut buf = BytesMut::new();
-            let shared_msg = Arc::new(msg.clone());
-            ProstEncoder::encode_into(shared_msg.clone(), &mut buf).unwrap();
-            assert_eq!(Arc::strong_count(&shared_msg), 1);
+            ProstEncoder::encode_into(&msg, &mut buf).unwrap();
             assert!(!buf.is_empty());
 
             let out = ProstDecoder::decode_from(&mut buf).unwrap();
@@ -230,17 +225,10 @@ impl GrpcService<TonicBody> for H2Service {
                 biased;
                 response = &mut request => response?,
                 connection = &mut conn => {
-                    connection?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "gRPC connection closed before the response completed",
-                    ).into());
+                    let _ = connection;
+                    request.await?
                 }
             };
-
-            // The completed request has dropped its sender. Polling the connection to completion
-            // lets hyper shut it down gracefully; the exporter's outer timeout bounds this wait.
-            conn.await?;
             Ok(response)
         })
     }
@@ -250,7 +238,8 @@ impl GrpcService<TonicBody> for H2Service {
 /// service. Holds no live connection and thus no background task (nothing to rebuild across fork).
 #[derive(Clone, Debug)]
 pub(crate) struct OtlpGrpcTransport {
-    pub(crate) config: OtlpGrpcTraceConfig,
+    pub(crate) timeout: Duration,
+    pub(crate) otel_trace_semantics_enabled: bool,
     origin: http::Uri,
     service: H2Service,
     /// Custom headers parsed to gRPC metadata once at build time.
@@ -262,6 +251,11 @@ pub(crate) fn build_grpc_transport(
     endpoint_url: &str,
     config: OtlpGrpcTraceConfig,
 ) -> Result<OtlpGrpcTransport, TraceExporterError> {
+    let OtlpGrpcTraceConfig {
+        headers,
+        timeout,
+        otel_trace_semantics_enabled,
+    } = config;
     let uri = endpoint_url.parse::<http::Uri>()?;
 
     let scheme = uri.scheme().ok_or_else(|| {
@@ -290,6 +284,11 @@ pub(crate) fn build_grpc_transport(
             "gRPC endpoint must include an authority".to_string(),
         ))
     })?;
+    if authority.host().is_empty() {
+        return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
+            "gRPC endpoint authority must include a host".to_string(),
+        )));
+    }
     let authority_text = authority.as_str();
     if authority_text.contains('@') {
         return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
@@ -322,9 +321,8 @@ pub(crate) fn build_grpc_transport(
 
     // Parse custom headers to gRPC metadata once here rather than on every send. Invalid entries
     // are skipped with a single warning (logging only the key: a value may carry a secret).
-    let metadata_headers = config
-        .headers
-        .iter()
+    let metadata_headers = headers
+        .into_iter()
         .filter_map(|(k, v)| {
             match (
                 k.parse::<AsciiMetadataKey>(),
@@ -340,7 +338,8 @@ pub(crate) fn build_grpc_transport(
         .collect();
 
     Ok(OtlpGrpcTransport {
-        config,
+        timeout,
+        otel_trace_semantics_enabled,
         origin,
         service,
         metadata_headers,
@@ -371,7 +370,7 @@ pub(crate) async fn send_otlp_traces_grpc(
     let path = http::uri::PathAndQuery::from_static(GRPC_EXPORT_PATH);
     let codec = ExportCodec::default();
 
-    tokio::time::timeout(transport.config.timeout, async {
+    tokio::time::timeout(transport.timeout, async {
         let mut client = Grpc::with_origin(transport.service.clone(), transport.origin.clone());
         client
             .ready()
@@ -454,6 +453,24 @@ fn grpc_status_to_error(status: Status) -> GrpcExportError {
                     error: TraceExporterError::Io(std::io::Error::new(
                         io_err.kind(),
                         io_err.to_string(),
+                    )),
+                    retry_after,
+                };
+            }
+            let hyper_retryable = err
+                .downcast_ref::<hyper::Error>()
+                .is_some_and(|error| error.is_canceled() || error.is_closed());
+            let h2_retryable = err.downcast_ref::<h2::Error>().is_some_and(|error| {
+                matches!(
+                    error.reason(),
+                    Some(h2::Reason::REFUSED_STREAM | h2::Reason::CANCEL)
+                )
+            });
+            if hyper_retryable || h2_retryable {
+                return GrpcExportError::Retryable {
+                    error: TraceExporterError::Io(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        err.to_string(),
                     )),
                     retry_after,
                 };
@@ -592,6 +609,7 @@ mod build_tests {
             "http://collector:not-a-port",
             "http://collector:99999",
             "http://collector:",
+            "http://:4317",
             "http://user@collector",
             "http://user@collector:4317",
         ] {
@@ -775,6 +793,90 @@ mod integration_tests {
 
         let decoded = server.await.unwrap();
         assert_eq!(decoded.resource_spans.len(), 1);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn successful_response_wins_over_connection_teardown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut conn = server::handshake(socket).await.unwrap();
+            let (req, mut respond) = conn.accept().await.unwrap().unwrap();
+            let mut body = req.into_body();
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                body.flow_control().release_capacity(chunk.len()).unwrap();
+            }
+
+            let response = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let mut send = respond.send_response(response, false).unwrap();
+            send.send_data(Bytes::from_static(&[0, 0, 0, 0, 0]), false)
+                .unwrap();
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", "0".parse().unwrap());
+            send.send_trailers(trailers).unwrap();
+            let flush_deadline = tokio::time::sleep(Duration::from_millis(25));
+            tokio::pin!(flush_deadline);
+            tokio::select! {
+                _ = &mut flush_deadline => {}
+                _ = conn.accept() => {}
+            }
+            conn.abrupt_shutdown(h2::Reason::INTERNAL_ERROR);
+            while conn.accept().await.is_some() {}
+        });
+
+        let transport = build_grpc_transport(&format!("http://{addr}"), cfg()).unwrap();
+        send_otlp_traces_grpc(
+            &transport,
+            None,
+            false,
+            Arc::new(ExportTraceServiceRequest::default()),
+        )
+        .await
+        .expect("completed response should remain successful");
+        server.await.unwrap();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn refused_stream_is_retryable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut conn = server::handshake(socket).await.unwrap();
+            let (_req, mut respond) = conn.accept().await.unwrap().unwrap();
+            respond.send_reset(h2::Reason::REFUSED_STREAM);
+            while conn.accept().await.is_some() {}
+        });
+
+        let transport = build_grpc_transport(&format!("http://{addr}"), cfg()).unwrap();
+        let error = send_otlp_traces_grpc(
+            &transport,
+            None,
+            false,
+            Arc::new(ExportTraceServiceRequest::default()),
+        )
+        .await
+        .unwrap_err();
+        server.await.unwrap();
+
+        assert!(
+            matches!(
+                error,
+                GrpcExportError::Retryable {
+                    error: TraceExporterError::Io(_),
+                    retry_after: None
+                }
+            ),
+            "expected retryable transport error, got: {error:?}"
+        );
     }
 
     #[cfg_attr(miri, ignore)]

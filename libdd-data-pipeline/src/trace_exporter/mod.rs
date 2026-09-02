@@ -77,15 +77,18 @@ const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
 const OTLP_GRPC_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 #[cfg(not(target_arch = "wasm32"))]
-fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Duration {
-    let initial_delay = retry_after.unwrap_or_else(|| Duration::from_millis(OTLP_RETRY_DELAY_MS));
-    let multiplier = 2u32
-        .checked_pow(attempt.saturating_sub(1))
-        .unwrap_or(u32::MAX);
-    initial_delay
-        .checked_mul(multiplier)
-        .unwrap_or(Duration::MAX)
-        .min(OTLP_GRPC_MAX_RETRY_DELAY)
+fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Option<Duration> {
+    let initial_delay = match retry_after {
+        Some(delay) if delay > OTLP_GRPC_MAX_RETRY_DELAY => return None,
+        Some(delay) if !delay.is_zero() => delay,
+        _ => Duration::from_millis(OTLP_RETRY_DELAY_MS),
+    };
+    let multiplier = 2u32.saturating_pow(attempt.saturating_sub(1));
+    Some(
+        initial_delay
+            .saturating_mul(multiplier)
+            .min(OTLP_GRPC_MAX_RETRY_DELAY),
+    )
 }
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
@@ -164,7 +167,6 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
-/// The transport used for OTLP trace export.
 #[derive(Debug)]
 pub(crate) enum OtlpExportMode {
     Http(OtlpTraceConfig),
@@ -710,7 +712,6 @@ impl<
         Ok(AgentResponse::Unchanged)
     }
 
-    /// Sends trace chunks via OTLP gRPC.
     #[cfg(not(target_arch = "wasm32"))]
     async fn send_otlp_grpc_inner<T: TraceData>(
         &self,
@@ -720,7 +721,7 @@ impl<
         let request = Arc::new(map_traces_to_otlp(
             traces,
             &self.otlp_resource_info,
-            transport.config.otel_trace_semantics_enabled,
+            transport.otel_trace_semantics_enabled,
         ));
         let test_token = self.endpoint.test_token.as_deref();
         let mut attempt: u32 = 1;
@@ -738,7 +739,9 @@ impl<
                     if attempt > OTLP_MAX_RETRIES {
                         return Err(error);
                     }
-                    let delay = grpc_retry_delay(attempt, retry_after);
+                    let Some(delay) = grpc_retry_delay(attempt, retry_after) else {
+                        return Err(error);
+                    };
                     self.capabilities.sleep(delay).await;
                     attempt += 1;
                 }
@@ -1158,23 +1161,24 @@ mod tests {
     fn grpc_retry_delay_applies_backoff_and_cap() {
         let retry_after = Duration::new(2, 250_000_000);
 
-        assert_eq!(grpc_retry_delay(1, Some(retry_after)), retry_after);
+        assert_eq!(grpc_retry_delay(1, Some(retry_after)), Some(retry_after));
         assert_eq!(
             grpc_retry_delay(2, Some(retry_after)),
-            Duration::new(4, 500_000_000)
+            Some(Duration::new(4, 500_000_000))
         );
         assert_eq!(
             grpc_retry_delay(3, None),
-            Duration::from_millis(OTLP_RETRY_DELAY_MS * 4)
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS * 4))
         );
         assert_eq!(
             grpc_retry_delay(3, Some(Duration::from_secs(20))),
-            Duration::from_secs(30)
+            Some(Duration::from_secs(30))
         );
         assert_eq!(
-            grpc_retry_delay(u32::MAX, Some(Duration::MAX)),
-            Duration::from_secs(30)
+            grpc_retry_delay(1, Some(Duration::ZERO)),
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS))
         );
+        assert_eq!(grpc_retry_delay(1, Some(Duration::from_secs(31))), None);
     }
 
     #[test]

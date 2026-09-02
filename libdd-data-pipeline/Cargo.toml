@@ -57,6 +57,7 @@ libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-imp
 # (hyper/tokio/socket2) does not build for wasm32, so the whole gRPC path is gated off.
 tonic = { version = "0.14", default-features = false }
 prost = "0.14.1"
+h2 = "0.4"
 hyper = { workspace = true, features = ["client", "http2"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 
@@ -97,7 +98,6 @@ tokio = { version = "1.23", features = [
 duplicate = "2.0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-h2 = "0.4"
 zstd = { version = "0.13", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
