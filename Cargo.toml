@@ -162,6 +162,15 @@ debug = "line-tables-only"
 lto = true
 opt-level = "s"            # optimize for size
 
+# CI-only verification profile. Same shape as `release`, but ThinLTO and 16
+# codegen units so builds that exist purely to prove the tree compiles are not
+# paying for fat LTO's single-threaded codegen. Anything actually shipped stays
+# on [profile.release].
+[profile.release-ci]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [profile.bench]
 codegen-units = 1
 debug = false
