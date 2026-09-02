@@ -18,14 +18,14 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::send_agentless_traces;
+use crate::agentless::exporter::send_agentless_traces_with_observer;
 use crate::agentless::AgentlessTraceConfig;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::otlp::{
-    exporter::{OTLP_MAX_RETRIES, OTLP_RETRY_DELAY_MS},
-    send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport,
-};
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
+use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
+use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -61,11 +61,14 @@ use libdd_trace_utils::send_with_retry::{
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+#[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+use prost::Message;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -89,6 +92,23 @@ fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Option<Durat
             .saturating_mul(multiplier)
             .min(OTLP_GRPC_MAX_RETRY_DELAY),
     )
+}
+
+#[derive(Clone, Copy)]
+struct PayloadCounts {
+    chunks: usize,
+    #[cfg(feature = "telemetry")]
+    spans: usize,
+}
+
+impl PayloadCounts {
+    fn from_traces<T: TraceData>(traces: &[Vec<Span<T>>]) -> Self {
+        Self {
+            chunks: traces.len(),
+            #[cfg(feature = "telemetry")]
+            spans: traces.iter().map(Vec::len).sum(),
+        }
+    }
 }
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
@@ -295,6 +315,57 @@ impl<
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
         self.telemetry
             .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_serialization_drop(&self, counts: PayloadCounts) {
+        self.emit_retry_result(&Err(SendWithRetryError::Build(0)), 0, counts);
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_retry_result(&self, result: &SendWithRetryResult, bytes: usize, counts: PayloadCounts) {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            let payload = SendPayloadTelemetry::from_retry_result_with_spans(
+                result,
+                bytes as u64,
+                counts.chunks as u64,
+                counts.spans as u64,
+            );
+            if let Err(e) = telemetry.send(&payload) {
+                error!(?e, "Error sending telemetry");
+            }
+        }
+    }
+
+    #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+    fn emit_grpc_result(
+        &self,
+        result: &Result<(), TraceExporterError>,
+        attempts: u32,
+        bytes: usize,
+        counts: PayloadCounts,
+    ) {
+        let retry_result = match result {
+            Ok(()) => Ok((http::Response::new(Bytes::new()), attempts)),
+            Err(TraceExporterError::Request(error)) => {
+                let mut response = http::Response::new(Bytes::new());
+                *response.status_mut() = error.status();
+                Err(SendWithRetryError::Http(response, attempts))
+            }
+            Err(TraceExporterError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(TraceExporterError::Network(error))
+                if matches!(
+                    error.kind(),
+                    crate::trace_exporter::error::NetworkErrorKind::TimedOut
+                ) =>
+            {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(_) => Err(SendWithRetryError::ResponseBody(attempts)),
+        };
+        self.emit_retry_result(&retry_result, bytes, counts);
     }
 
     /// Stop the background workers owned by this exporter.
@@ -648,15 +719,22 @@ impl<
         config: &AgentlessTraceConfig,
         client_side_stats: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // When local stats computation is active (agentless stats path), the
-        // intake must not also compute stats for these traces.  Suppressing
-        // `_dd.compute_stats=1` prevents double-counting.
-        send_agentless_traces(
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(&traces);
+        send_agentless_traces_with_observer(
             &self.capabilities,
             traces,
             &self.metadata,
             config,
             client_side_stats,
+            |_result, _payload_len| {
+                #[cfg(feature = "telemetry")]
+                self.emit_retry_result(_result, _payload_len, counts);
+            },
+            || {
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
+            },
         )
         .await?;
         Ok(AgentResponse::Unchanged)
@@ -668,6 +746,8 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(&traces);
         let request = map_traces_to_otlp(
             traces,
             &self.otlp_resource_info,
@@ -683,6 +763,8 @@ impl<
             })?
             .map_err(|e| {
                 error!("OTLP serialization error: {e}");
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
                 TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
                     "failed to encode OTLP request: {e}"
                 )))
@@ -702,13 +784,28 @@ impl<
         } else {
             config
         };
-        send_otlp_traces_http(
+        #[cfg(feature = "telemetry")]
+        let payload_len = body.len();
+        let result = send_otlp_http_with_observer(
             &self.capabilities,
-            config_to_use,
+            &config_to_use.endpoint_url,
+            &config_to_use.headers,
+            config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
+            config_to_use.protocol.content_type().ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
+                ))
+            })?,
             body,
+            OTLP_MAX_RETRIES,
+            |_result| {
+                #[cfg(feature = "telemetry")]
+                self.emit_retry_result(_result, payload_len, counts);
+            },
         )
-        .await?;
+        .await;
+        result?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -718,14 +815,18 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         transport: &OtlpGrpcTransport,
     ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(&traces);
         let request = Arc::new(map_traces_to_otlp(
             traces,
             &self.otlp_resource_info,
             transport.otel_trace_semantics_enabled,
         ));
+        #[cfg(feature = "telemetry")]
+        let payload_len = request.encoded_len() + 5;
         let test_token = self.endpoint.test_token.as_deref();
         let mut attempt: u32 = 1;
-        loop {
+        let result = loop {
             match send_otlp_traces_grpc(
                 transport,
                 test_token,
@@ -734,20 +835,24 @@ impl<
             )
             .await
             {
-                Ok(()) => return Ok(AgentResponse::Unchanged),
+                Ok(()) => break Ok(()),
                 Err(GrpcExportError::Retryable { error, retry_after }) => {
                     if attempt > OTLP_MAX_RETRIES {
-                        return Err(error);
+                        break Err(error);
                     }
                     let Some(delay) = grpc_retry_delay(attempt, retry_after) else {
-                        return Err(error);
+                        break Err(error);
                     };
                     self.capabilities.sleep(delay).await;
                     attempt += 1;
                 }
-                Err(GrpcExportError::NonRetryable(error)) => return Err(error),
+                Err(GrpcExportError::NonRetryable(error)) => break Err(error),
             }
-        }
+        };
+        #[cfg(feature = "telemetry")]
+        self.emit_grpc_result(&result, attempt, payload_len, counts);
+        result?;
+        Ok(AgentResponse::Unchanged)
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -756,11 +861,10 @@ impl<
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
         headers: HeaderMap,
-        chunks: usize,
+        counts: PayloadCounts,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
-
         // Send traces to the agent
         let result = send_with_retry(
             &self.capabilities,
@@ -773,17 +877,10 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
-                &result,
-                payload_len as u64,
-                chunks as u64,
-            )) {
-                error!(?e, "Error sending telemetry");
-            }
-        }
+        self.emit_retry_result(&result, payload_len, counts);
 
-        self.handle_send_result(result, chunks, payload_len).await
+        self.handle_send_result(result, counts.chunks, payload_len)
+            .await
     }
 
     /// Synchronous log-export path: encode every span to newline-delimited
@@ -823,6 +920,8 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
+        // Process stats computation and drop non-sampled (p0) chunks.
+        // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
@@ -868,6 +967,7 @@ impl<
         // Snapshot the effective format once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let effective_format = self.effective_output_format();
+        let counts = PayloadCounts::from_traces(&traces);
 
         let prepared = match self.serializer.prepare_traces_payload(
             traces,
@@ -883,8 +983,14 @@ impl<
                     HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
                     None,
                 );
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
                 return Err(e);
             }
+        };
+        let counts = PayloadCounts {
+            chunks: prepared.chunk_count,
+            ..counts
         };
 
         let endpoint = Endpoint {
@@ -893,12 +999,7 @@ impl<
         };
 
         let result = self
-            .send_traces_with_telemetry(
-                &endpoint,
-                prepared.data,
-                prepared.headers,
-                prepared.chunk_count,
-            )
+            .send_traces_with_telemetry(&endpoint, prepared.data, prepared.headers, counts)
             .await;
 
         // State-hash trap mitigation: the agent does not return a `Datadog-Agent-State`
@@ -2491,7 +2592,8 @@ mod telemetry_metrics_tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v05;
+    use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::{v04::SpanBytes, v05};
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -2516,6 +2618,7 @@ mod telemetry_metrics_tests {
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
                 .body_includes("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -2537,7 +2640,7 @@ mod telemetry_metrics_tests {
             });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let traces = vec![0x90];
+        let traces = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");

@@ -861,6 +861,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
+        #[cfg(feature = "stats-obfuscation")]
+        let stats_obfuscation_config =
+            Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
+                enabled: otlp_metrics_config.is_some()
+                    && self.stats_bucket_size.is_some()
+                    && self.client_side_stats_obfuscation_enabled,
+                ..Default::default()
+            }));
+
         let runtime_id = self
             .runtime_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -897,7 +906,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 self.stats_cardinality_limits,
                 self.additional_metric_tag_keys.clone(),
                 #[cfg(feature = "stats-obfuscation")]
-                None,
+                Some(stats_obfuscation_config.clone()),
             )));
             let mut resource = base_otlp_resource(&runtime_id);
             resource.hostname = self.hostname.clone();
@@ -1111,9 +1120,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 stats_cardinality_limits: self.stats_cardinality_limits,
                 additional_metric_tag_keys: self.additional_metric_tag_keys,
                 #[cfg(feature = "stats-obfuscation")]
-                obfuscation_config: Arc::new(ArcSwap::from_pointee(
-                    StatsComputationObfuscationConfig::default(),
-                )),
+                obfuscation_config: stats_obfuscation_config,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
             },
@@ -1584,6 +1591,60 @@ mod tests {
             .set_url("http://localhost:8126")
             .set_otlp_endpoint("http://localhost:4318/v1/traces");
         assert!(builder.build::<NativeCapabilities>().is_ok());
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_otlp_stats_receive_obfuscation_flag() {
+        use libdd_trace_utils::span::v04::SpanBytes;
+
+        fn aggregated_resource(opt_in: bool) -> String {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .enable_stats(Duration::from_secs(3600))
+                .set_otlp_metrics_endpoint("http://localhost:4318/v1/metrics");
+            if opt_in {
+                builder.enable_client_side_stats_obfuscation();
+            }
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            let status = exporter.client_side_stats.status.load_full();
+            let StatsComputationStatus::Enabled {
+                stats_concentrator, ..
+            } = &*status
+            else {
+                panic!("OTLP stats concentrator was not enabled");
+            };
+            let stats_concentrator = stats_concentrator.clone();
+            drop(status);
+
+            let span = SpanBytes {
+                service: "test-service".into(),
+                name: "postgres.query".into(),
+                resource: "SELECT * FROM users WHERE id = 42".into(),
+                r#type: "sql".into(),
+                duration: 1,
+                metrics: vec![("_top_level".into(), 1.0)].into(),
+                ..Default::default()
+            };
+            let resource = {
+                let mut concentrator = stats_concentrator.lock().unwrap();
+                concentrator.add_span(&span);
+                let buckets = concentrator.flush_with_otlp_exact(web_time::SystemTime::now(), true);
+                buckets[0].bucket.stats[0].resource.clone()
+            };
+            exporter.shutdown(None).unwrap();
+            resource
+        }
+
+        assert_eq!(
+            aggregated_resource(false),
+            "SELECT * FROM users WHERE id = 42"
+        );
+        assert_eq!(
+            aggregated_resource(true),
+            "SELECT * FROM users WHERE id = ?"
+        );
     }
 
     #[cfg_attr(miri, ignore)]

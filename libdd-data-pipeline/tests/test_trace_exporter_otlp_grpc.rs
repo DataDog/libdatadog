@@ -5,6 +5,8 @@ mod grpc_export_tests {
     use bytes::Bytes;
     use h2::server;
     use libdd_capabilities_impl::NativeCapabilities;
+    #[cfg(feature = "telemetry")]
+    use libdd_data_pipeline::trace_exporter::TelemetryConfig;
     use libdd_data_pipeline::{trace_exporter::TraceExporterBuilder, OtlpProtocol};
     use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_trace_protobuf::opentelemetry::proto::{
@@ -243,6 +245,82 @@ mod grpc_export_tests {
     fn grpc_export_end_to_end_and_survives_shared_runtime_restart() {
         std::thread::scope(|scope| {
             run_grpc_export_end_to_end_and_survives_shared_runtime_restart(scope)
+        });
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn grpc_export_emits_native_trace_telemetry() {
+        let telemetry_server = httpmock::MockServer::start();
+        let metrics_endpoint = telemetry_server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/telemetry/proxy/api/v2/apmtelemetry")
+                .body_includes("\"metric\":\"trace_api.requests\"")
+                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
+                .body_includes("\"metric\":\"trace_chunks_sent\"");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        std::thread::scope(|scope| {
+            let (port_tx, port_rx) = mpsc::channel::<u16>();
+            let (req_tx, req_rx) = mpsc::channel::<ReceivedExport>();
+            let (shutdown_tx, shutdown_rx) = oneshot::channel();
+            let server = scope.spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt.block_on(async move {
+                    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    port_tx.send(listener.local_addr().unwrap().port()).unwrap();
+                    run_grpc_test_server(listener, req_tx, shutdown_rx).await;
+                });
+            });
+
+            let port = port_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("server did not bind within 10s");
+            let shared_runtime = Arc::new(ForkSafeRuntime::new().expect("build shared runtime"));
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .set_shared_runtime(shared_runtime)
+                .set_url(&telemetry_server.url("/"))
+                .set_otlp_endpoint(&format!("http://127.0.0.1:{port}"))
+                .set_otlp_protocol(OtlpProtocol::Grpc)
+                .set_language("test-lang")
+                .set_language_version("1.0")
+                .set_language_interpreter("test")
+                .set_tracer_version("1.0")
+                .set_service("grpc-test-svc")
+                .enable_telemetry(TelemetryConfig {
+                    heartbeat: 100,
+                    ..Default::default()
+                });
+            let exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("build exporter");
+
+            let span = create_test_json_span(1234, 12342, 12341, 1, false);
+            let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+            exporter.send(data.as_ref()).expect("send traces");
+            req_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("server did not receive request");
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while metrics_endpoint.calls() == 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            metrics_endpoint.assert_calls(1);
+
+            exporter
+                .shutdown(Some(Duration::from_secs(5)))
+                .expect("shutdown exporter");
+            shutdown_tx.send(()).expect("server stopped early");
+            server.join().expect("server thread failed");
         });
     }
 }
