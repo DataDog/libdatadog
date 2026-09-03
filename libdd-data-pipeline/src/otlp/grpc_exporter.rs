@@ -16,6 +16,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::{
     ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
+use libdd_trace_utils::send_with_retry::TRACE_EXPORTER_USER_AGENT;
 use prost::Message as _;
 use std::error::Error as StdError;
 use std::future::Future;
@@ -407,6 +408,18 @@ fn attach_metadata<T>(
     test_token: Option<&str>,
     client_computed_stats: bool,
 ) {
+    req.metadata_mut().insert(
+        AsciiMetadataKey::from_static("user-agent"),
+        AsciiMetadataValue::from_static(TRACE_EXPORTER_USER_AGENT),
+    );
+    for (key, value) in libdd_common::entity_id::get_entity_headers() {
+        if let (Ok(key), Ok(value)) = (
+            key.parse::<AsciiMetadataKey>(),
+            value.parse::<AsciiMetadataValue>(),
+        ) {
+            req.metadata_mut().insert(key, value);
+        }
+    }
     for (key, val) in headers {
         req.metadata_mut().insert(key.clone(), val.clone());
     }
@@ -478,52 +491,32 @@ fn grpc_status_to_error(status: Status) -> GrpcExportError {
             cause = err.source();
         }
     }
-    match status.code() {
-        Code::Unavailable => GrpcExportError::Retryable {
-            error: TraceExporterError::Io(std::io::Error::new(
-                std::io::ErrorKind::ConnectionRefused,
-                status.message(),
-            )),
-            retry_after,
-        },
-        Code::DeadlineExceeded => GrpcExportError::Retryable {
-            error: TraceExporterError::Io(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                status.message(),
-            )),
-            retry_after,
-        },
-        Code::Cancelled | Code::Aborted | Code::OutOfRange | Code::DataLoss => {
-            GrpcExportError::Retryable {
-                error: TraceExporterError::Io(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    status.message(),
-                )),
-                retry_after,
-            }
-        }
-        code => {
-            let http_status = match code {
-                Code::InvalidArgument => http::StatusCode::BAD_REQUEST,
-                Code::Unauthenticated => http::StatusCode::UNAUTHORIZED,
-                Code::PermissionDenied => http::StatusCode::FORBIDDEN,
-                Code::NotFound => http::StatusCode::NOT_FOUND,
-                Code::AlreadyExists => http::StatusCode::CONFLICT,
-                Code::ResourceExhausted => http::StatusCode::TOO_MANY_REQUESTS,
-                Code::FailedPrecondition => http::StatusCode::PRECONDITION_FAILED,
-                Code::Unimplemented => http::StatusCode::NOT_IMPLEMENTED,
-                _ => http::StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            let error = TraceExporterError::Request(RequestError::new(
-                http_status,
-                &format!("gRPC {code:?}: {}", status.message()),
-            ));
-            if code == Code::ResourceExhausted && retry_after.is_some() {
-                GrpcExportError::Retryable { error, retry_after }
-            } else {
-                GrpcExportError::NonRetryable(error)
-            }
-        }
+    let code = status.code();
+    let (http_status, retryable) = match code {
+        Code::Cancelled => (http::StatusCode::REQUEST_TIMEOUT, true),
+        Code::InvalidArgument => (http::StatusCode::BAD_REQUEST, false),
+        Code::OutOfRange => (http::StatusCode::BAD_REQUEST, true),
+        Code::DeadlineExceeded => (http::StatusCode::GATEWAY_TIMEOUT, true),
+        Code::NotFound => (http::StatusCode::NOT_FOUND, false),
+        Code::AlreadyExists => (http::StatusCode::CONFLICT, false),
+        Code::Aborted => (http::StatusCode::CONFLICT, true),
+        Code::PermissionDenied => (http::StatusCode::FORBIDDEN, false),
+        Code::ResourceExhausted => (http::StatusCode::TOO_MANY_REQUESTS, retry_after.is_some()),
+        Code::FailedPrecondition => (http::StatusCode::PRECONDITION_FAILED, false),
+        Code::Unauthenticated => (http::StatusCode::UNAUTHORIZED, false),
+        Code::Unavailable => (http::StatusCode::SERVICE_UNAVAILABLE, true),
+        Code::Unimplemented => (http::StatusCode::NOT_IMPLEMENTED, false),
+        Code::DataLoss => (http::StatusCode::INTERNAL_SERVER_ERROR, true),
+        _ => (http::StatusCode::INTERNAL_SERVER_ERROR, false),
+    };
+    let error = TraceExporterError::Request(RequestError::new(
+        http_status,
+        &format!("gRPC {code:?}: {}", status.message()),
+    ));
+    if retryable {
+        GrpcExportError::Retryable { error, retry_after }
+    } else {
+        GrpcExportError::NonRetryable(error)
     }
 }
 
@@ -1035,10 +1028,11 @@ mod send_tests {
 
         match grpc_status_to_error(status_with_retry_info(Code::Unavailable, retry_after)) {
             GrpcExportError::Retryable {
-                error: TraceExporterError::Io(error),
+                error: TraceExporterError::Request(error),
                 retry_after: actual_retry_after,
             } => {
-                assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+                assert_eq!(error.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+                assert_eq!(error.msg(), "gRPC Unavailable: retry later");
                 assert_eq!(actual_retry_after, Some(retry_after));
             }
             other => panic!("expected throttled unavailable error, got {other:?}"),
@@ -1046,39 +1040,24 @@ mod send_tests {
     }
 
     #[test]
-    fn status_transient_maps_to_io_kind() {
-        for (s, want) in [
-            (
-                Status::unavailable("down"),
-                std::io::ErrorKind::ConnectionRefused,
-            ),
-            (
-                Status::deadline_exceeded("slow"),
-                std::io::ErrorKind::TimedOut,
-            ),
-            (
-                Status::new(Code::Cancelled, "canceled"),
-                std::io::ErrorKind::ConnectionAborted,
-            ),
-            (
-                Status::new(Code::Aborted, "aborted"),
-                std::io::ErrorKind::ConnectionAborted,
-            ),
-            (
-                Status::new(Code::OutOfRange, "out of range"),
-                std::io::ErrorKind::ConnectionAborted,
-            ),
-            (
-                Status::new(Code::DataLoss, "data loss"),
-                std::io::ErrorKind::ConnectionAborted,
-            ),
+    fn status_transient_remains_retryable_request_error() {
+        for (code, http_status) in [
+            (Code::Unavailable, http::StatusCode::SERVICE_UNAVAILABLE),
+            (Code::DeadlineExceeded, http::StatusCode::GATEWAY_TIMEOUT),
+            (Code::Cancelled, http::StatusCode::REQUEST_TIMEOUT),
+            (Code::Aborted, http::StatusCode::CONFLICT),
+            (Code::OutOfRange, http::StatusCode::BAD_REQUEST),
+            (Code::DataLoss, http::StatusCode::INTERNAL_SERVER_ERROR),
         ] {
-            match grpc_status_to_error(s) {
+            match grpc_status_to_error(Status::new(code, "transient")) {
                 GrpcExportError::Retryable {
-                    error: TraceExporterError::Io(e),
+                    error: TraceExporterError::Request(error),
                     retry_after: None,
-                } => assert_eq!(e.kind(), want),
-                other => panic!("expected retryable Io, got {other:?}"),
+                } => {
+                    assert_eq!(error.status(), http_status);
+                    assert_eq!(error.msg(), format!("gRPC {code:?}: transient"));
+                }
+                other => panic!("expected retryable Request, got {other:?}"),
             }
         }
     }

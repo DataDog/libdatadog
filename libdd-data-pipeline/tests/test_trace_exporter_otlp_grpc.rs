@@ -15,8 +15,13 @@ mod grpc_export_tests {
     };
     use libdd_trace_utils::test_utils::create_test_json_span;
     use prost::Message;
+    #[cfg(feature = "telemetry")]
+    use regex::Regex;
     use serde_json::json;
-    use std::sync::{mpsc, Arc};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    };
     use std::time::Duration;
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
@@ -24,6 +29,7 @@ mod grpc_export_tests {
 
     struct ReceivedExport {
         path: String,
+        user_agent: Option<String>,
         client_computed_stats: Option<String>,
         request: ExportTraceServiceRequest,
     }
@@ -31,6 +37,7 @@ mod grpc_export_tests {
     async fn run_grpc_test_server(
         listener: TcpListener,
         req_tx: mpsc::Sender<ReceivedExport>,
+        failures_remaining: Arc<AtomicUsize>,
         mut shutdown: oneshot::Receiver<()>,
     ) {
         let mut connections = JoinSet::new();
@@ -40,6 +47,7 @@ mod grpc_export_tests {
                 accepted = listener.accept() => {
                     let Ok((socket, _)) = accepted else { return };
                     let connection_req_tx = req_tx.clone();
+                    let connection_failures_remaining = failures_remaining.clone();
                     connections.spawn(async move {
                         let Ok(mut connection) = server::handshake(socket).await else {
                             return;
@@ -51,6 +59,7 @@ mod grpc_export_tests {
                                     request,
                                     respond,
                                     connection_req_tx.clone(),
+                                    connection_failures_remaining.clone(),
                                 ));
                             }
                         }
@@ -73,8 +82,14 @@ mod grpc_export_tests {
         request: http::Request<h2::RecvStream>,
         mut respond: h2::server::SendResponse<Bytes>,
         req_tx: mpsc::Sender<ReceivedExport>,
+        failures_remaining: Arc<AtomicUsize>,
     ) {
         let path = request.uri().path().to_string();
+        let user_agent = request
+            .headers()
+            .get("user-agent")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
         let client_computed_stats = request
             .headers()
             .get("datadog-client-computed-stats")
@@ -97,21 +112,17 @@ mod grpc_export_tests {
         if let Some(req) = decoded {
             let _ = req_tx.send(ReceivedExport {
                 path,
+                user_agent,
                 client_computed_stats,
                 request: req,
             });
         }
 
-        let response_proto = ExportTraceServiceResponse::default();
-        let proto_bytes = response_proto.encode_to_vec();
-        let mut frame = Vec::with_capacity(5 + proto_bytes.len());
-        frame.push(0u8);
-        frame.extend_from_slice(
-            &u32::try_from(proto_bytes.len())
-                .expect("protobuf response exceeds the gRPC frame length")
-                .to_be_bytes(),
-        );
-        frame.extend_from_slice(&proto_bytes);
+        let should_fail = failures_remaining
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok();
 
         let response = http::Response::builder()
             .status(200)
@@ -121,10 +132,25 @@ mod grpc_export_tests {
         let Ok(mut send_stream) = respond.send_response(response, false) else {
             return;
         };
-        let _ = send_stream.send_data(Bytes::from(frame), false);
+        if !should_fail {
+            let response_proto = ExportTraceServiceResponse::default();
+            let proto_bytes = response_proto.encode_to_vec();
+            let mut frame = Vec::with_capacity(5 + proto_bytes.len());
+            frame.push(0u8);
+            frame.extend_from_slice(
+                &u32::try_from(proto_bytes.len())
+                    .expect("protobuf response exceeds the gRPC frame length")
+                    .to_be_bytes(),
+            );
+            frame.extend_from_slice(&proto_bytes);
+            let _ = send_stream.send_data(Bytes::from(frame), false);
+        }
 
         let mut trailers = http::HeaderMap::new();
-        trailers.insert("grpc-status", "0".parse().unwrap());
+        trailers.insert(
+            "grpc-status",
+            if should_fail { "14" } else { "0" }.parse().unwrap(),
+        );
         let _ = send_stream.send_trailers(trailers);
     }
 
@@ -168,7 +194,8 @@ mod grpc_export_tests {
             rt.block_on(async move {
                 let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                 port_tx.send(listener.local_addr().unwrap().port()).unwrap();
-                run_grpc_test_server(listener, req_tx, shutdown_rx).await;
+                run_grpc_test_server(listener, req_tx, Arc::new(AtomicUsize::new(0)), shutdown_rx)
+                    .await;
             });
         });
 
@@ -206,6 +233,10 @@ mod grpc_export_tests {
             .recv_timeout(Duration::from_secs(10))
             .expect("server did not receive the initial request");
         assert_eq!(initial.path, expected_path);
+        assert_eq!(
+            initial.user_agent.as_deref(),
+            Some(libdd_trace_utils::send_with_retry::TRACE_EXPORTER_USER_AGENT)
+        );
         assert!(
             !initial.request.resource_spans.is_empty(),
             "expected at least one ResourceSpans"
@@ -251,12 +282,17 @@ mod grpc_export_tests {
     #[cfg(feature = "telemetry")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn grpc_export_emits_native_trace_telemetry() {
+    fn grpc_retry_emits_native_trace_telemetry() {
         let telemetry_server = httpmock::MockServer::start();
+        let requests_metric =
+            Regex::new(r#""metric":"trace_api.requests","points":\[\[\d+,2\.0\]\]"#).unwrap();
         let metrics_endpoint = telemetry_server.mock(|when, then| {
             when.method(httpmock::Method::POST)
                 .path("/telemetry/proxy/api/v2/apmtelemetry")
-                .body_includes("\"metric\":\"trace_api.requests\"")
+                .is_true(move |request| {
+                    String::from_utf8(request.body_vec())
+                        .is_ok_and(|body| requests_metric.is_match(&body))
+                })
                 .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
                 .body_includes("\"metric\":\"trace_chunks_sent\"");
             then.status(200)
@@ -276,7 +312,13 @@ mod grpc_export_tests {
                 rt.block_on(async move {
                     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
                     port_tx.send(listener.local_addr().unwrap().port()).unwrap();
-                    run_grpc_test_server(listener, req_tx, shutdown_rx).await;
+                    run_grpc_test_server(
+                        listener,
+                        req_tx,
+                        Arc::new(AtomicUsize::new(1)),
+                        shutdown_rx,
+                    )
+                    .await;
                 });
             });
 
@@ -306,9 +348,11 @@ mod grpc_export_tests {
             let span = create_test_json_span(1234, 12342, 12341, 1, false);
             let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
             exporter.send(data.as_ref()).expect("send traces");
-            req_rx
-                .recv_timeout(Duration::from_secs(10))
-                .expect("server did not receive request");
+            for _ in 0..2 {
+                req_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("server did not receive request");
+            }
 
             let deadline = std::time::Instant::now() + Duration::from_secs(10);
             while metrics_endpoint.calls() == 0 && std::time::Instant::now() < deadline {

@@ -31,7 +31,6 @@ impl std::str::FromStr for OtlpProtocol {
 }
 
 impl OtlpProtocol {
-    /// The HTTP `Content-Type` for this protocol's body encoding, or `None` for [`Self::Grpc`].
     pub(crate) fn content_type(&self) -> Option<http::HeaderValue> {
         match self {
             OtlpProtocol::HttpJson => Some(libdd_common::header::APPLICATION_JSON),
@@ -40,8 +39,6 @@ impl OtlpProtocol {
         }
     }
 
-    /// Encode the prost OTLP request to this protocol's wire format, or `None` for
-    /// [`Self::Grpc`].
     pub(crate) fn encode(
         &self,
         req: &libdd_trace_utils::otlp_encoder::ProtoExportTraceServiceRequest,

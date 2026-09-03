@@ -78,9 +78,15 @@ const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
 #[cfg(not(target_arch = "wasm32"))]
 const OTLP_GRPC_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_JITTER: Duration = Duration::from_millis(100);
 
 #[cfg(not(target_arch = "wasm32"))]
-fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Option<Duration> {
+fn grpc_retry_delay(
+    attempt: u32,
+    retry_after: Option<Duration>,
+    jitter: Duration,
+) -> Option<Duration> {
     let initial_delay = match retry_after {
         Some(delay) if delay > OTLP_GRPC_MAX_RETRY_DELAY => return None,
         Some(delay) if !delay.is_zero() => delay,
@@ -90,8 +96,15 @@ fn grpc_retry_delay(attempt: u32, retry_after: Option<Duration>) -> Option<Durat
     Some(
         initial_delay
             .saturating_mul(multiplier)
+            .saturating_add(jitter)
             .min(OTLP_GRPC_MAX_RETRY_DELAY),
     )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_jitter() -> Duration {
+    let max_millis = u64::try_from(OTLP_GRPC_MAX_JITTER.as_millis()).unwrap_or(u64::MAX);
+    Duration::from_millis(rand::random::<u64>() % max_millis + 1)
 }
 
 #[derive(Clone, Copy)]
@@ -840,7 +853,8 @@ impl<
                     if attempt > OTLP_MAX_RETRIES {
                         break Err(error);
                     }
-                    let Some(delay) = grpc_retry_delay(attempt, retry_after) else {
+                    let Some(delay) = grpc_retry_delay(attempt, retry_after, grpc_retry_jitter())
+                    else {
                         break Err(error);
                     };
                     self.capabilities.sleep(delay).await;
@@ -1262,24 +1276,36 @@ mod tests {
     fn grpc_retry_delay_applies_backoff_and_cap() {
         let retry_after = Duration::new(2, 250_000_000);
 
-        assert_eq!(grpc_retry_delay(1, Some(retry_after)), Some(retry_after));
         assert_eq!(
-            grpc_retry_delay(2, Some(retry_after)),
+            grpc_retry_delay(1, Some(retry_after), Duration::ZERO),
+            Some(retry_after)
+        );
+        assert_eq!(
+            grpc_retry_delay(2, Some(retry_after), Duration::ZERO),
             Some(Duration::new(4, 500_000_000))
         );
         assert_eq!(
-            grpc_retry_delay(3, None),
+            grpc_retry_delay(3, None, Duration::ZERO),
             Some(Duration::from_millis(OTLP_RETRY_DELAY_MS * 4))
         );
         assert_eq!(
-            grpc_retry_delay(3, Some(Duration::from_secs(20))),
+            grpc_retry_delay(3, Some(Duration::from_secs(20)), Duration::ZERO),
             Some(Duration::from_secs(30))
         );
         assert_eq!(
-            grpc_retry_delay(1, Some(Duration::ZERO)),
+            grpc_retry_delay(1, Some(Duration::ZERO), Duration::ZERO),
             Some(Duration::from_millis(OTLP_RETRY_DELAY_MS))
         );
-        assert_eq!(grpc_retry_delay(1, Some(Duration::from_secs(31))), None);
+        assert_eq!(
+            grpc_retry_delay(1, Some(Duration::from_secs(31)), Duration::ZERO),
+            None
+        );
+    }
+
+    #[test]
+    fn grpc_retry_delay_adds_bounded_jitter() {
+        let delay = grpc_retry_delay(1, None, Duration::from_millis(50));
+        assert_eq!(delay, Some(Duration::from_millis(150)));
     }
 
     #[test]
