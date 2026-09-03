@@ -371,6 +371,38 @@ fn handle_posix_signal_impl(
     Ok(())
 }
 
+/// Clone the current metadata out of global storage without consuming it.
+/// Returns `None` if metadata has not yet been set.
+///
+/// Not async-signal-safe
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub(crate) fn peek_metadata() -> Option<Metadata> {
+    let ptr = METADATA.load(Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: non-null means it was created with Box::into_raw in update_metadata
+        // and has not been freed (free only happens on the next update_metadata call,
+        // which swaps the pointer first). We clone to avoid taking ownership.
+        Some(unsafe { &*ptr }.0.clone())
+    }
+}
+
+/// Clone the endpoint out of global config without consuming it.
+/// Returns `None` if the config has not yet been set or has no endpoint.
+///
+/// Not async-signal-safe
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub(crate) fn peek_endpoint() -> Option<libdd_common::Endpoint> {
+    let ptr = CONFIG.load(Acquire);
+    if ptr.is_null() {
+        None
+    } else {
+        // SAFETY: same reasoning as peek_metadata.
+        unsafe { &*ptr }.0.endpoint().clone()
+    }
+}
+
 /// Atomically swaps the metadata pointer to null and returns the old raw pointer.
 /// Async-signal-safe (only performs an atomic swap).
 ///
