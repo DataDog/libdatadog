@@ -47,8 +47,8 @@ mod native {
     }
 
     impl NativeHttpClient {
-        /// Like [`HttpClientCapability::new_client`], but disables connection pooling. See
-        /// [`HttpClientCapability::new_periodic`].
+        /// Like [`HttpClientCapability::new_client`], but sets a small lifetime on pooled
+        /// connections. See [`HttpClientCapability::new_periodic`] for rationale.
         pub fn new_periodic() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
