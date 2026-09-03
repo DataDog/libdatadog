@@ -86,16 +86,17 @@ where
             compute_top_level_span(chunk);
         }
     }
-    for chunk in traces.iter_mut() {
-        for span in chunk.iter_mut() {
-            // Obfuscate every span we are about to send to the intake
-            libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
-                span,
-                &config.obfuscation_config,
-            );
+    {
+        let mut obfuscator =
+            libdd_trace_obfuscation::obfuscate::V04Obfuscator::<T>::new(&config.obfuscation_config);
+        for chunk in traces.iter_mut() {
+            for span in chunk.iter_mut() {
+                // Obfuscate every span we are about to send to the intake
+                obfuscator.obfuscate_span(span);
 
-            // Remove duplicate attributes before serialization
-            span.dedup();
+                // Remove duplicate attributes before serialization
+                span.dedup();
+            }
         }
     }
 
@@ -260,6 +261,30 @@ mod tests {
         }]]
     }
 
+    fn sql_span(resource: &str, span_id: u64, parent_id: u64) -> SpanBytes {
+        SpanBytes {
+            name: BytesString::from_static("postgres.query"),
+            service: BytesString::from_static("service-1"),
+            resource: BytesString::from_string(resource.to_owned()),
+            r#type: BytesString::from_static("sql"),
+            trace_id: 1,
+            span_id,
+            parent_id,
+            start: 1,
+            duration: 1,
+            ..Default::default()
+        }
+    }
+
+    fn repeated_sql_traces() -> Vec<Vec<SpanBytes>> {
+        let resource = "SELECT * FROM users WHERE id = 42";
+        vec![vec![
+            sql_span(resource, 2, 0),
+            sql_span(resource, 3, 2),
+            sql_span(resource, 4, 2),
+        ]]
+    }
+
     fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {
         #[cfg(feature = "compression")]
         let body = zstd::decode_all(request.body().as_ref()).unwrap();
@@ -288,6 +313,38 @@ mod tests {
         assert!(String::from_utf8(request_body(request))
             .unwrap()
             .contains("\"_top_level\":1"));
+    }
+
+    #[test]
+    fn sends_repeated_sql_resources_after_obfuscation() {
+        let capabilities = TestCapabilities::default();
+        let result = futures::executor::block_on(send_agentless_traces(
+            &capabilities,
+            repeated_sql_traces(),
+            &metadata(),
+            &config(),
+            false,
+        ));
+        assert!(result.is_ok());
+
+        let requests = capabilities.requests.lock().unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&request_body(&requests[0])).unwrap();
+        let spans = body["traces"][0]["spans"].as_array().unwrap();
+        assert_eq!(spans[0]["resource"], "SELECT * FROM users WHERE id = ?");
+        assert_eq!(spans[1]["resource"], "SELECT * FROM users WHERE id = ?");
+        assert_eq!(spans[2]["resource"], "SELECT * FROM users WHERE id = ?");
+        assert_eq!(
+            spans[0]["meta"]["sql.query"],
+            "SELECT * FROM users WHERE id = ?"
+        );
+        assert_eq!(
+            spans[1]["meta"]["sql.query"],
+            "SELECT * FROM users WHERE id = ?"
+        );
+        assert_eq!(
+            spans[2]["meta"]["sql.query"],
+            "SELECT * FROM users WHERE id = ?"
+        );
     }
 
     #[test]

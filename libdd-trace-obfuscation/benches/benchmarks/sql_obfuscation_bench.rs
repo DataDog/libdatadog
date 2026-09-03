@@ -1,8 +1,13 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, Criterion};
+use alloc::borrow::Cow;
+
+use criterion::{black_box, criterion_group, BatchSize, Criterion};
+use libdd_trace_obfuscation::obfuscate::{obfuscate_v04_span, V04Obfuscator};
+use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_obfuscation::sql::obfuscate_sql_string;
+use libdd_trace_utils::span::v04::SpanSlice;
 
 fn sql_obfuscation(c: &mut Criterion) {
     let mut group = c.benchmark_group("sql");
@@ -20,7 +25,83 @@ fn sql_obfuscation(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, sql_obfuscation);
+fn sql_span(resource: &str) -> SpanSlice<'_> {
+    SpanSlice {
+        resource: Cow::Borrowed(resource),
+        r#type: Cow::Borrowed("sql"),
+        ..Default::default()
+    }
+}
+
+fn v04_sql_obfuscation(c: &mut Criterion) {
+    const SPAN_COUNT: usize = 100;
+    const QUERY: &str =
+        "SELECT users.id, users.email FROM users WHERE users.account_id = 42 AND users.active = true";
+
+    let repeated = vec![sql_span(QUERY); SPAN_COUNT];
+    let unique_resources = (0..SPAN_COUNT)
+        .map(|index| format!("{QUERY} AND users.id = {index}"))
+        .collect::<Vec<_>>();
+    let unique = unique_resources
+        .iter()
+        .map(|resource| sql_span(resource))
+        .collect::<Vec<_>>();
+    let config = ObfuscationConfig::default();
+    let mut group = c.benchmark_group("v04_sql");
+
+    group.bench_function("uncached_repeated", |b| {
+        b.iter_batched(
+            || repeated.clone(),
+            |mut spans| {
+                let config = black_box(&config);
+                for span in &mut spans {
+                    obfuscate_v04_span(black_box(span), config);
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("cached_repeated", |b| {
+        b.iter_batched(
+            || repeated.clone(),
+            |mut spans| {
+                let config = black_box(&config);
+                let mut obfuscator = V04Obfuscator::new(config);
+                for span in &mut spans {
+                    obfuscator.obfuscate_span(black_box(span));
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("uncached_unique", |b| {
+        b.iter_batched(
+            || unique.clone(),
+            |mut spans| {
+                let config = black_box(&config);
+                for span in &mut spans {
+                    obfuscate_v04_span(black_box(span), config);
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+    group.bench_function("cached_unique", |b| {
+        b.iter_batched(
+            || unique.clone(),
+            |mut spans| {
+                let config = black_box(&config);
+                let mut obfuscator = V04Obfuscator::new(config);
+                for span in &mut spans {
+                    obfuscator.obfuscate_span(black_box(span));
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
+criterion_group!(benches, sql_obfuscation, v04_sql_obfuscation);
 
 const CASES: &[(&str, &str)] = &[
     ("" , ""),
