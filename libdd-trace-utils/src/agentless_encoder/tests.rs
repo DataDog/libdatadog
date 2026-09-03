@@ -30,6 +30,204 @@ fn json_from_bytes(b: &[u8]) -> Value {
     serde_json::from_slice(b).expect("payload must be valid JSON")
 }
 
+fn expected_container_field() -> String {
+    libdd_common::entity_id::get_container_id()
+        .map(|container_id| format!(",\"containerID\":\"{container_id}\""))
+        .unwrap_or_default()
+}
+
+fn expected_payload_with_span(span: &str) -> String {
+    let container = expected_container_field();
+    format!(r#"{{"traces":[{{"hostname":""{container},"spans":[{span}]}}]}}"#)
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn fixed_json_structure_preserves_minimal_and_optional_metadata_bytes() {
+    let payload = encode_payload::<BytesData>(&[], &TracerMetadata::default(), true).unwrap();
+    assert_eq!(payload, br#"{"traces":[]}"#);
+
+    let metadata = TracerMetadata {
+        hostname: "host".to_string(),
+        env: "prod".to_string(),
+        language: "nodejs".to_string(),
+        language_version: "24".to_string(),
+        tracer_version: "1.2.3".to_string(),
+        runtime_id: "runtime".to_string(),
+        ..Default::default()
+    };
+    let trace = encode_payload::<BytesData>(&[Vec::new()], &metadata, true).unwrap();
+    let container = expected_container_field();
+    let expected = format!(
+        r#"{{"traces":[{{"hostname":"host","env":"prod","languageName":"nodejs","languageVersion":"24","tracerVersion":"1.2.3","runtimeID":"runtime"{container},"spans":[]}}]}}"#
+    );
+    assert_eq!(trace, expected.as_bytes());
+
+    let traces = encode_payload::<BytesData>(&[Vec::new(), Vec::new()], &metadata, true).unwrap();
+    let expected = format!(
+        r#"{{"traces":[{{"hostname":"host","env":"prod","languageName":"nodejs","languageVersion":"24","tracerVersion":"1.2.3","runtimeID":"runtime"{container},"spans":[]}},{{"hostname":"host","env":"prod","languageName":"nodejs","languageVersion":"24","tracerVersion":"1.2.3","runtimeID":"runtime"{container},"spans":[]}}]}}"#
+    );
+    assert_eq!(traces, expected.as_bytes());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn span_preserves_escaped_dynamic_values_ids_and_metrics_bytes() {
+    let mut span: Span<BytesData> = Span {
+        service: bs("svc\\"),
+        name: bs("op\"\n"),
+        r#type: bs("web\t"),
+        trace_id: 0x1122_3344_5566_7788_aabb_ccdd_eeff_0011,
+        span_id: 1,
+        parent_id: 0,
+        start: -1,
+        duration: 2,
+        error: 1,
+        meta: VecMap::from_iter([(bs("tag\""), bs("line\n\\"))]),
+        metrics: VecMap::from_iter([
+            (bs("fraction"), 1.5),
+            (bs("_top_level"), 2.9),
+            (bs("nan"), f64::NAN),
+            (bs("infinity"), f64::INFINITY),
+        ]),
+        ..Default::default()
+    };
+    span.metrics.dedup();
+
+    let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap();
+    let expected = expected_payload_with_span(
+        r#"{"trace_id":"aabbccddeeff0011","span_id":"0000000000000001","parent_id":"0000000000000000","name":"op\"\n","resource":"op\"\n","service":"svc\\","error":1,"start":0,"duration":2,"type":"web\t","meta":{"tag\"":"line\n\\","_dd.p.tid":"1122334455667788"},"metrics":{"_top_level":2,"fraction":1.5,"_trace_root":1}}"#,
+    );
+    assert_eq!(encoded, expected.as_bytes());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn defensive_dedup_preserves_last_meta_and_metric_values() {
+    let span: Span<BytesData> = Span {
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 2,
+        parent_id: 9,
+        start: 3,
+        duration: 4,
+        meta: VecMap::from_iter([
+            (bs("duplicate"), bs("first")),
+            (bs("duplicate"), bs("last")),
+        ]),
+        metrics: VecMap::from_iter([(bs("duplicate"), 1.5), (bs("duplicate"), 2.5)]),
+        ..Default::default()
+    };
+
+    let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap();
+    let expected = expected_payload_with_span(
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"duplicate":"last"},"metrics":{"duplicate":2.5}}"#,
+    );
+    assert_eq!(encoded, expected.as_bytes());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn existing_synthetic_meta_and_root_metric_values_win() {
+    let mut span: Span<BytesData> = Span {
+        name: bs("op"),
+        trace_id: 0x0000_0000_0000_0002_0000_0000_0000_0001,
+        span_id: 2,
+        parent_id: 0,
+        start: 3,
+        duration: 4,
+        meta: VecMap::from_iter([
+            (bs("_dd.p.tid"), bs("kept-tid")),
+            (bs("_dd.compute_stats"), bs("kept-stats")),
+            (bs("events"), bs("kept-events")),
+            (bs("_dd.span_links"), bs("kept-links")),
+        ]),
+        metrics: VecMap::from_iter([(bs("_trace_root"), 7.5)]),
+        span_links: vec![SpanLink::default()],
+        span_events: vec![SpanEvent::default()],
+        ..Default::default()
+    };
+    span.meta.dedup();
+
+    let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), false).unwrap();
+    let expected = expected_payload_with_span(
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000000","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.span_links":"kept-links","events":"kept-events","_dd.compute_stats":"kept-stats","_dd.p.tid":"kept-tid"},"metrics":{"_trace_root":7.5}}"#,
+    );
+    assert_eq!(encoded, expected.as_bytes());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn span_links_and_events_preserve_nested_serde_json_bytes() {
+    let link = SpanLink::<BytesData> {
+        trace_id: 1,
+        trace_id_high: 2,
+        span_id: 3,
+        attributes: HashMap::from([(bs("role"), bs("queue"))]),
+        flags: 1,
+        tracestate: bs("dd=s:1"),
+    };
+    let event = SpanEvent::<BytesData> {
+        time_unix_nano: 7,
+        name: bs("exception"),
+        attributes: HashMap::from([(
+            bs("message"),
+            AttributeAnyValue::SingleValue(AttributeArrayValue::String(bs("bad"))),
+        )]),
+    };
+    let span: Span<BytesData> = Span {
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 2,
+        parent_id: 9,
+        start: 3,
+        duration: 4,
+        span_links: vec![link],
+        span_events: vec![event],
+        ..Default::default()
+    };
+
+    let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap();
+    let expected = expected_payload_with_span(
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.span_links":"[{\"trace_id\":\"00000000000000020000000000000001\",\"span_id\":\"0000000000000003\",\"attributes\":{\"role\":\"queue\"},\"flags\":1,\"tracestate\":\"dd=s:1\"}]","events":"[{\"name\":\"exception\",\"time_unix_nano\":7,\"attributes\":{\"message\":\"bad\"}}]"},"metrics":{}}"#,
+    );
+    assert_eq!(encoded, expected.as_bytes());
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn meta_struct_preserves_exact_bytes_and_propagates_malformed_values() {
+    #[derive(serde::Serialize)]
+    struct Value {
+        answer: u8,
+    }
+
+    let mut span: Span<BytesData> = Span {
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 2,
+        parent_id: 9,
+        start: 3,
+        duration: 4,
+        ..Default::default()
+    };
+    span.meta_struct.insert(
+        bs("app\"key"),
+        Bytes::from(rmp_serde::to_vec_named(&Value { answer: 42 }).unwrap()),
+    );
+
+    let encoded = encode_payload(&[vec![span.clone()]], &TracerMetadata::default(), true).unwrap();
+    let expected = expected_payload_with_span(
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000009","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{},"metrics":{},"meta_struct":{"app\"key":{"answer":42}}}"#,
+    );
+    assert_eq!(encoded, expected.as_bytes());
+
+    span.meta_struct
+        .insert(bs("malformed"), Bytes::from(vec![0xc1]));
+    let error = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap_err();
+    assert!(error.is_data(), "unexpected error category: {error}");
+}
+
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn top_level_payload_shape_and_metadata() {
