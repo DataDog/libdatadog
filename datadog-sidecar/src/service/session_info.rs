@@ -12,7 +12,7 @@ use futures::future;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
-use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
+use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_common::{tag::Tag, Endpoint, MutexExt};
 use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
@@ -28,7 +28,7 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
-    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+    debugger_config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::DogStatsDClient>>>,
     remote_config_options: Arc<Mutex<Option<ConfigOptions>>>,
@@ -207,13 +207,13 @@ impl SessionInfo {
         f(&mut self.get_dogstatsd());
     }
 
-    pub fn get_debugger_config(&self) -> MutexGuard<'_, datadog_live_debugger::sender::Config> {
+    pub fn get_debugger_config(&self) -> MutexGuard<'_, libdd_live_debugger::sender::Config> {
         self.debugger_config.lock_or_panic()
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
     where
-        F: FnMut(&mut datadog_live_debugger::sender::Config),
+        F: FnMut(&mut libdd_live_debugger::sender::Config),
     {
         f(&mut self.get_debugger_config());
     }
@@ -234,7 +234,7 @@ impl SessionInfo {
         payload: R,
     ) {
         async fn do_send(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,
@@ -280,7 +280,7 @@ impl SessionInfo {
         }
 
         async fn send<R: AsRef<[u8]> + Sync + Send>(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,

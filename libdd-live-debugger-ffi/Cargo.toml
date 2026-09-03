@@ -1,18 +1,17 @@
-# Unless explicitly stated otherwise all files in this repository are licensed under the Apache License Version 2.0.
-# This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
-
 [package]
-name = "datadog-live-debugger-ffi"
+name = "libdd-live-debugger-ffi"
 version = "0.0.1"
-edition = "2021"
 publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib", "staticlib", "cdylib"]
 bench = false
 
 [dependencies]
-datadog-live-debugger = { path = "../datadog-live-debugger" }
+libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 percent-encoding = "2.1"
@@ -25,7 +24,7 @@ log = "0.4.21"
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
-regex-lite = ["datadog-live-debugger/regex-lite"]
+regex-lite = ["libdd-live-debugger/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

@@ -55,7 +55,7 @@ use crate::service::stats_flusher::{
 use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
-use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
+use libdd_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
@@ -937,7 +937,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         });
         session.modify_debugger_config(|cfg| {
             let diagnostics_endpoint = get_product_endpoint(
-                datadog_live_debugger::sender::PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN,
+                libdd_live_debugger::sender::PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
             cfg.set_endpoint(diagnostics_endpoint).ok();

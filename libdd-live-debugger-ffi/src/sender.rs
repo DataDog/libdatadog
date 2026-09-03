@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::send_data::serialize_debugger_payload;
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_live_debugger::sender;
-use datadog_live_debugger::sender::{
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::sender;
+use libdd_live_debugger::sender::{
     debugger_intake_endpoint, generate_tags, Config, DebuggerType,
 };
 use libdd_common::tag::Tag;

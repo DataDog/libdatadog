@@ -10,7 +10,7 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
