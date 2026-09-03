@@ -72,8 +72,6 @@ start_compiler_cache() {
     message "sccache not present in this image; building without a compiler cache"
     return 1
   fi
-  # Keep --start-server's stderr: it names the reason (bad basedir, unresolvable credentials, an
-  # unreachable bucket) and discarding it is why an earlier failure was undiagnosable.
   local startup_output
   if ! startup_output="$(sccache --start-server 2>&1)"; then
     message "sccache: server startup failed; building without a compiler cache"
@@ -84,9 +82,8 @@ start_compiler_cache() {
   return 0
 }
 
-# $SCCACHE_ERROR_LOG lives on the job's ephemeral filesystem and is not in artifacts:paths, so a
-# startup failure is otherwise unreproducible after the fact. Echo it into the job log instead.
-# Only variable *names* for AWS_*: the value of AWS_SECRET_ACCESS_KEY must not reach a CI log.
+# $SCCACHE_ERROR_LOG is not in artifacts:paths; echo it into the job log.
+# AWS_* names only -- one of them is a secret.
 dump_compiler_cache_diagnostics() {
   message "sccache: AWS_* variables present: $(env | sed -n 's/^\(AWS_[A-Z_]*\)=.*/\1/p' | sort | tr '\n' ' ')"
   message "sccache: SCCACHE_* config: $(env | grep '^SCCACHE_' | sort | tr '\n' ' ')"
