@@ -170,11 +170,8 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
         http::HeaderValue::from(trace_count),
     );
     for (name, value) in libdd_common::entity_id::get_entity_headers() {
-        if let (Ok(name), Ok(value)) = (
-            http::HeaderName::from_bytes(name.as_bytes()),
-            http::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, value);
+        if let Ok(value) = http::HeaderValue::from_str(value) {
+            headers.insert(http::HeaderName::from_static(name), value);
         }
     }
     headers
