@@ -133,7 +133,6 @@ benchmarks:
     SCCACHE_REGION: us-east-1
     SCCACHE_S3_KEY_PREFIX: libdatadog/benchmarks/sccache
     SCCACHE_ERROR_LOG: /tmp/sccache.log
-    SCCACHE_LOG: debug
     # Required: candidate and baseline compile at different absolute paths, and
     # without a basedir sccache keys on the path, so they would share nothing.
     # Both leaf dirs, not the parent: sccache keys on the unmatched remainder.
