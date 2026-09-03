@@ -309,6 +309,34 @@ mod tests {
         assert!(payload_size > 0);
     }
 
+    #[cfg(feature = "regex-unicode")]
+    #[test]
+    fn applies_unicode_replacement_rules() {
+        let capabilities = TestCapabilities::default();
+        let mut traces = v04_traces();
+        traces[0][0].resource = BytesString::from_static("αβ endpoint");
+        let obfuscation_config = serde_json::from_str(
+            r#"{"tag_replace_rules":[{"name":"resource.name","pattern":"\\p{Greek}+","repl":"?"}]}"#,
+        )
+        .unwrap();
+        let mut config = config();
+        config.obfuscation_config = obfuscation_config;
+
+        let result = futures::executor::block_on(send_agentless_traces(
+            &capabilities,
+            traces,
+            &metadata(),
+            &config,
+            false,
+        ));
+
+        assert!(result.is_ok());
+        let requests = capabilities.requests.lock().unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_slice(&request_body(&requests[0])).unwrap();
+        assert_eq!(payload["traces"][0]["spans"][0]["resource"], "? endpoint");
+    }
+
     #[test]
     fn json_request_uses_configured_api_key() {
         let capabilities = TestCapabilities::default();

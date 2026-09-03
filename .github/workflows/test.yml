@@ -186,6 +186,28 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo test (ASCII full regex)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -q "libdd-common"; then
+            cargo test \
+              --manifest-path libdd-common/tests/regex-ascii/Cargo.toml \
+              --verbose
+          fi
+        env:
+          RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run (default Unicode regex)"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -q "libdd-data-pipeline-core"; then
+            cargo nextest run -p libdd-data-pipeline-core \
+              applies_unicode_replacement_rules \
+              --no-tests=fail
+          fi
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"
         shell: bash
         run: |
