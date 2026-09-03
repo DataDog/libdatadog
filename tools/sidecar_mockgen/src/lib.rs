@@ -175,6 +175,20 @@ fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Re
             .file_range()
             .ok_or_else(|| format!("{}: .symtab has no file range", obj_path.display()))?;
 
+        // A slim LTO object (`-flto` without `-ffat-lto-objects`) has no real object code at all:
+        // We don't have anything we can do here. Just fail.
+        if elf
+            .symbols()
+            .any(|sym| sym.name().is_ok_and(|n| n == "__gnu_lto_slim"))
+        {
+            return Err(format!(
+                "{}: compiled as a slim LTO object (missing -ffat-lto-objects); \
+                 weaken-dynsym cannot patch symbol bindings inside GCC's LTO-only bytecode. \
+                 Recompile with -ffat-lto-objects (or without -flto).",
+                obj_path.display()
+            ));
+        }
+
         let symtab_patches: Vec<usize> = elf
             .symbols()
             .filter(|sym| {
