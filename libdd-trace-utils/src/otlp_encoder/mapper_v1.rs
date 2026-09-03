@@ -72,13 +72,13 @@ fn merged_attrs_v1<'a, T: TraceData>(
         Vec::with_capacity(chunk.attributes.len() + span.attributes.len());
     let mut merged: std::collections::HashMap<&'a str, &'a AttributeValue<T>> =
         std::collections::HashMap::with_capacity(order.capacity());
-    for (k, v) in chunk.attributes.defensive_dedup().iter() {
+    for (k, v) in chunk.attributes.iter() {
         let key = (*k).borrow();
         if merged.insert(key, v).is_none() {
             order.push(key);
         }
     }
-    for (k, v) in span.attributes.defensive_dedup().iter() {
+    for (k, v) in span.attributes.iter() {
         let key = (*k).borrow();
         if merged.insert(key, v).is_none() {
             order.push(key);
@@ -276,7 +276,7 @@ fn map_span_v1<T: TraceData>(
         kind: span.span_kind as i32,
         // OTLP timestamps are unsigned; clamp negatives to 0 so the `as u64` cast can't wrap.
         start_time_unix_nano: span.start.max(0) as u64,
-        end_time_unix_nano: (span.start + span.duration).max(0) as u64,
+        end_time_unix_nano: span.start.saturating_add(span.duration).max(0) as u64,
         attributes,
         dropped_attributes_count: dropped_attributes_count as u32,
         events,
@@ -348,7 +348,7 @@ mod tests_v1 {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
 
     fn bs(s: &str) -> BytesString {
-        BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
+        BytesString::from_string(s.to_string())
     }
 
     fn minimal_span() -> Span<BytesData> {
