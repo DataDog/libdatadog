@@ -24,14 +24,13 @@
 //! `TracerMetadataV1` + the sender's `tracer_headers_tags` (see
 //! [`crate::populate_payload_metadata`]).
 
-use libdd_common_ffi::slice::{AsBytes, CharSlice};
-use libdd_tinybytes::{Bytes, BytesString};
+use libdd_common_ffi::slice::CharSlice;
+use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v1::{
     AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes, TraceChunkBytes,
     TracerPayloadBytes,
 };
 use libdd_trace_utils::span::vec_map::VecMap;
-use std::borrow::Cow;
 use std::ffi::CString;
 use std::fmt::Write as _;
 
@@ -55,41 +54,91 @@ pub struct TracerPayloadV1Builder {
 }
 
 impl TracerPayloadV1Builder {
-    fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
+    // Index-addressed accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`) can
+    // fill the model without any `#[no_mangle]` mutator C-ABI and without a live `&mut` ever escaping
+    // to C: every mutation routes through a single `&mut TracerPayloadV1Builder` per call.
+    pub fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
         self.payload.chunks.get(chunk)
     }
 
-    fn chunk_mut(&mut self, chunk: usize) -> Option<&mut TraceChunkBytes> {
+    pub fn chunk_mut(&mut self, chunk: usize) -> Option<&mut TraceChunkBytes> {
         self.payload.chunks.get_mut(chunk)
     }
 
-    fn span(&self, chunk: usize, span: usize) -> Option<&SpanBytes> {
+    pub fn span(&self, chunk: usize, span: usize) -> Option<&SpanBytes> {
         self.payload.chunks.get(chunk)?.spans.get(span)
     }
 
-    fn span_mut(&mut self, chunk: usize, span: usize) -> Option<&mut SpanBytes> {
+    pub fn span_mut(&mut self, chunk: usize, span: usize) -> Option<&mut SpanBytes> {
         self.payload.chunks.get_mut(chunk)?.spans.get_mut(span)
     }
 
-    fn link(&self, chunk: usize, span: usize, link: usize) -> Option<&SpanLinkBytes> {
+    pub fn link(&self, chunk: usize, span: usize, link: usize) -> Option<&SpanLinkBytes> {
         self.span(chunk, span)?.span_links.get(link)
     }
 
-    fn link_mut(&mut self, chunk: usize, span: usize, link: usize) -> Option<&mut SpanLinkBytes> {
+    pub fn link_mut(
+        &mut self,
+        chunk: usize,
+        span: usize,
+        link: usize,
+    ) -> Option<&mut SpanLinkBytes> {
         self.span_mut(chunk, span)?.span_links.get_mut(link)
     }
 
-    fn event(&self, chunk: usize, span: usize, event: usize) -> Option<&SpanEventBytes> {
+    pub fn event(&self, chunk: usize, span: usize, event: usize) -> Option<&SpanEventBytes> {
         self.span(chunk, span)?.span_events.get(event)
     }
 
-    fn event_mut(
+    pub fn event_mut(
         &mut self,
         chunk: usize,
         span: usize,
         event: usize,
     ) -> Option<&mut SpanEventBytes> {
         self.span_mut(chunk, span)?.span_events.get_mut(event)
+    }
+
+    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning its index.
+    pub fn push_chunk(&mut self, trace_id_high: u64, trace_id_low: u64) -> usize {
+        self.payload.chunks.push(TraceChunkBytes {
+            trace_id: trace_id_bytes(trace_id_high, trace_id_low),
+            ..Default::default()
+        });
+        self.payload.chunks.len() - 1
+    }
+
+    /// Appends an empty span to `chunk`, returning its index (0 if the chunk is out of range).
+    pub fn push_span(&mut self, chunk: usize) -> usize {
+        match self.chunk_mut(chunk) {
+            Some(c) => {
+                c.spans.push(SpanBytes::default());
+                c.spans.len() - 1
+            }
+            None => 0,
+        }
+    }
+
+    /// Appends an empty link to a span, returning its index (0 if the span is out of range).
+    pub fn push_link(&mut self, chunk: usize, span: usize) -> usize {
+        match self.span_mut(chunk, span) {
+            Some(s) => {
+                s.span_links.push(SpanLinkBytes::default());
+                s.span_links.len() - 1
+            }
+            None => 0,
+        }
+    }
+
+    /// Appends an empty event to a span, returning its index (0 if the span is out of range).
+    pub fn push_event(&mut self, chunk: usize, span: usize) -> usize {
+        match self.span_mut(chunk, span) {
+            Some(s) => {
+                s.span_events.push(SpanEventBytes::default());
+                s.span_events.len() - 1
+            }
+            None => 0,
+        }
     }
 
     /// Consumes the builder, returning the assembled payload (chunks/spans only). Attribute maps
@@ -123,28 +172,6 @@ fn trace_id_low(bytes: &[u8; 16]) -> u64 {
     u64::from_be_bytes(half)
 }
 
-/// Converts a `CharSlice` into an owned `BytesString`, replacing invalid UTF-8 with the
-/// replacement character (mirrors the v0.4 builder's `convert_char_slice_to_bytes_string`).
-fn to_bytes_string(slice: CharSlice) -> BytesString {
-    match String::from_utf8_lossy(slice.as_bytes()) {
-        Cow::Owned(s) => s.into(),
-        Cow::Borrowed(_) => unsafe {
-            // Safety: a borrowed `str` from `from_utf8_lossy` is the original slice, which is thus
-            // valid UTF-8.
-            BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
-        },
-    }
-}
-
-/// Sets a string field from a `CharSlice`, leaving it unchanged (default/empty) for an empty slice.
-#[inline]
-fn set_string_field(field: &mut BytesString, slice: CharSlice) {
-    if slice.is_empty() {
-        return;
-    }
-    *field = to_bytes_string(slice);
-}
-
 /// Borrows a stored `BytesString` as a short-lived `CharSlice`.
 #[inline]
 fn char_slice_of(field: &BytesString) -> CharSlice<'_> {
@@ -152,41 +179,6 @@ fn char_slice_of(field: &BytesString) -> CharSlice<'_> {
     // Safety: `BytesString` guarantees valid UTF-8; the returned slice borrows from `field`, so the
     // backing allocation stays live and immutable for the slice's lifetime.
     unsafe { CharSlice::from_raw_parts(s.as_ptr().cast(), s.len()) }
-}
-
-fn insert_attr(
-    map: &mut VecMap<BytesString, AttributeValueBytes>,
-    key: CharSlice,
-    value: AttributeValueBytes,
-) {
-    if key.is_empty() {
-        return;
-    }
-    map.insert(to_bytes_string(key), value);
-}
-
-/// Deep-clones an attribute value. `AttributeValue` can't derive `Clone` (its `T` marker isn't
-/// `Clone`, same reason its `PartialEq` is hand-written), so a small recursive clone is used to copy
-/// a value between spans in [`ddog_v1_transfer_span_attr`]. All leaf payloads (`BytesString`,
-/// `Bytes`, `VecMap`) are themselves `Clone`.
-fn clone_attr(value: &AttributeValueBytes) -> AttributeValueBytes {
-    match value {
-        AttributeValueBytes::String(s) => AttributeValueBytes::String(s.clone()),
-        AttributeValueBytes::Float(f) => AttributeValueBytes::Float(*f),
-        AttributeValueBytes::Int(i) => AttributeValueBytes::Int(*i),
-        AttributeValueBytes::Bool(b) => AttributeValueBytes::Bool(*b),
-        AttributeValueBytes::Bytes(b) => AttributeValueBytes::Bytes(b.clone()),
-        AttributeValueBytes::KeyValue(m) => {
-            let mut cloned = VecMap::with_capacity(m.len());
-            for (k, v) in m.iter() {
-                cloned.insert(k.clone(), clone_attr(v));
-            }
-            AttributeValueBytes::KeyValue(cloned)
-        }
-        AttributeValueBytes::List(list) => {
-            AttributeValueBytes::List(list.iter().map(clone_attr).collect())
-        }
-    }
 }
 
 /// Maps an attribute value to its exported [`DDOG_V1_ATTR_*`] type tag.
@@ -270,618 +262,6 @@ pub extern "C" fn ddog_v1_new_builder() -> Box<TracerPayloadV1Builder> {
 /// Frees a V1 payload builder.
 #[no_mangle]
 pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadV1Builder>) {}
-
-// ------------------- Chunk construction -------------------
-
-/// Appends a new (empty) chunk with the given 128-bit trace id, returning its index.
-#[no_mangle]
-pub extern "C" fn ddog_v1_builder_new_chunk(
-    builder: &mut TracerPayloadV1Builder,
-    trace_id_high: u64,
-    trace_id_low: u64,
-) -> usize {
-    builder.payload.chunks.push(TraceChunkBytes {
-        trace_id: trace_id_bytes(trace_id_high, trace_id_low),
-        ..Default::default()
-    });
-    builder.payload.chunks.len() - 1
-}
-
-/// Sets the chunk sampling priority (v0.4 `_sampling_priority_v1`).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_chunk_sampling_priority(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    priority: i32,
-) {
-    if let Some(c) = builder.chunk_mut(chunk) {
-        c.priority = Some(priority);
-    }
-}
-
-/// Sets the chunk origin (v0.4 `_dd.origin`).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_chunk_origin(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    origin: CharSlice,
-) {
-    if let Some(c) = builder.chunk_mut(chunk) {
-        set_string_field(&mut c.origin, origin);
-    }
-}
-
-/// Sets the chunk sampling mechanism (v0.4 `_dd.p.dm`).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_chunk_sampling_mechanism(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    mechanism: u32,
-) {
-    if let Some(c) = builder.chunk_mut(chunk) {
-        c.sampling_mechanism = Some(mechanism);
-    }
-}
-
-/// Marks the chunk as a dropped (p0) trace.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_chunk_dropped_trace(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    dropped: bool,
-) {
-    if let Some(c) = builder.chunk_mut(chunk) {
-        c.dropped_trace = dropped;
-    }
-}
-
-/// Adds a string-valued chunk-level attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_chunk_attr_str(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    key: CharSlice,
-    value: CharSlice,
-) {
-    let value = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(c) = builder.chunk_mut(chunk) {
-        insert_attr(&mut c.attributes, key, value);
-    }
-}
-
-// ------------------- Span construction -------------------
-
-/// Appends a new (empty) span to `chunk`, returning its index within that chunk.
-#[no_mangle]
-pub extern "C" fn ddog_v1_chunk_new_span(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-) -> usize {
-    match builder.chunk_mut(chunk) {
-        Some(c) => {
-            c.spans.push(SpanBytes::default());
-            c.spans.len() - 1
-        }
-        None => 0,
-    }
-}
-
-/// Sets the span service.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_service(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.service, value);
-    }
-}
-
-/// Sets the span name.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_name(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.name, value);
-    }
-}
-
-/// Sets the span resource.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_resource(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.resource, value);
-    }
-}
-
-/// Sets the span type.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_type(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.r#type, value);
-    }
-}
-
-/// Sets the span env.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_env(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.env, value);
-    }
-}
-
-/// Sets the span version.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_version(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.version, value);
-    }
-}
-
-/// Sets the span component.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_component(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: CharSlice,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        set_string_field(&mut s.component, value);
-    }
-}
-
-/// Sets the span id.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_id(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: u64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.span_id = value;
-    }
-}
-
-/// Sets the span parent id.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_parent_id(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: u64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.parent_id = value;
-    }
-}
-
-/// Sets the span start time (unix nanos; negative values are normalized at encode time).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_start(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: i64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.start = value;
-    }
-}
-
-/// Sets the span duration (nanos).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_duration(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    value: i64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.duration = value;
-    }
-}
-
-/// Sets the span error flag.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_error(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    error: bool,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.error = error;
-    }
-}
-
-/// Sets the span kind (OTEL wire value; unset/unknown → Internal).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_span_kind(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    kind: u32,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        s.span_kind = SpanKind::from(kind);
-    }
-}
-
-/// Adds a string span attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_span_attr_str(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-    value: CharSlice,
-) {
-    let attr = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, attr);
-    }
-}
-
-/// Adds an integer span attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_span_attr_int(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-    value: i64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, AttributeValueBytes::Int(value));
-    }
-}
-
-/// Adds a double span attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_span_attr_double(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-    value: f64,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, AttributeValueBytes::Float(value));
-    }
-}
-
-/// Adds a boolean span attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_span_attr_bool(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-    value: bool,
-) {
-    if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, AttributeValueBytes::Bool(value));
-    }
-}
-
-/// Adds a bytes-valued span attribute. The value bytes are copied verbatim and encoded as msgpack
-/// `bin`.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_span_attr_bytes(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-    value: CharSlice,
-) {
-    let bytes = Bytes::copy_from_slice(value.as_bytes());
-    if let Some(s) = builder.span_mut(chunk, span) {
-        insert_attr(&mut s.attributes, key, AttributeValueBytes::Bytes(bytes));
-    }
-}
-
-/// Returns whether the span carries an attribute under `key`. Mirrors the v0.4
-/// `ddog_has_span_meta`/`ddog_has_span_metrics` existence checks used to avoid overwriting a value
-/// business logic already set (the span-array flatteners only add a key when it is absent).
-#[no_mangle]
-pub extern "C" fn ddog_v1_has_span_attr(
-    builder: &TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-) -> bool {
-    let key = to_bytes_string(key);
-    builder
-        .span(chunk, span)
-        .is_some_and(|s| s.attributes.contains_key(&key))
-}
-
-/// Removes the attribute under `key` from the span, returning whether it was present. Mirrors the
-/// v0.4 `ddog_del_span_meta_str`/`ddog_del_span_metrics_str` deletes (e.g. dropping `error.ignored`
-/// after finalization).
-#[no_mangle]
-pub extern "C" fn ddog_v1_del_span_attr(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    key: CharSlice,
-) -> bool {
-    let key = to_bytes_string(key);
-    match builder.span_mut(chunk, span) {
-        Some(s) => {
-            let existed = s.attributes.contains_key(&key);
-            s.attributes.remove_slow(&key);
-            existed
-        }
-        None => false,
-    }
-}
-
-/// Copies the attribute under `key` from `from_span` onto `to_span` (both within `chunk`), returning
-/// whether the source carried it. When `delete_source` is set, the attribute is also removed from
-/// `from_span`. Replicates the v0.4 `transfer_meta_data`/`transfer_metrics_data` helpers used in the
-/// inferred-span merge (data moves from the root span into the inferred/proxy span); the unified V1
-/// attribute map subsumes both the string `meta` and numeric `metrics` cases with a single,
-/// type-preserving copy.
-///
-/// The read (clone of the source value) completes before any mutable borrow, so the whole operation
-/// is routed through the single `&mut TracerPayloadV1Builder` without aliasing. A missing source key
-/// or a missing destination span is a no-op returning `false` (nothing is deleted from the source in
-/// that case).
-#[no_mangle]
-pub extern "C" fn ddog_v1_transfer_span_attr(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    from_span: usize,
-    to_span: usize,
-    key: CharSlice,
-    delete_source: bool,
-) -> bool {
-    let key = to_bytes_string(key);
-    let value = match builder
-        .span(chunk, from_span)
-        .and_then(|s| s.attributes.get(&key))
-    {
-        Some(v) => clone_attr(v),
-        None => return false,
-    };
-    match builder.span_mut(chunk, to_span) {
-        Some(dst) => dst.attributes.insert(key.clone(), value),
-        None => return false,
-    }
-    if delete_source {
-        if let Some(src) = builder.span_mut(chunk, from_span) {
-            src.attributes.remove_slow(&key);
-        }
-    }
-    true
-}
-
-// ------------------- Span link construction -------------------
-
-/// Appends a new (empty) link to a span, returning its index within that span.
-#[no_mangle]
-pub extern "C" fn ddog_v1_span_new_link(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-) -> usize {
-    match builder.span_mut(chunk, span) {
-        Some(s) => {
-            s.span_links.push(SpanLinkBytes::default());
-            s.span_links.len() - 1
-        }
-        None => 0,
-    }
-}
-
-/// Sets the link's 128-bit trace id (high/low halves).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_link_trace_id(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    link: usize,
-    trace_id_high: u64,
-    trace_id_low: u64,
-) {
-    if let Some(l) = builder.link_mut(chunk, span, link) {
-        l.trace_id = trace_id_bytes(trace_id_high, trace_id_low);
-    }
-}
-
-/// Sets the link span id.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_link_span_id(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    link: usize,
-    value: u64,
-) {
-    if let Some(l) = builder.link_mut(chunk, span, link) {
-        l.span_id = value;
-    }
-}
-
-/// Sets the link flags (W3C trace-flags plus the "set" sentinel bit).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_link_flags(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    link: usize,
-    value: u32,
-) {
-    if let Some(l) = builder.link_mut(chunk, span, link) {
-        l.flags = value;
-    }
-}
-
-/// Sets the link tracestate.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_link_tracestate(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    link: usize,
-    value: CharSlice,
-) {
-    if let Some(l) = builder.link_mut(chunk, span, link) {
-        set_string_field(&mut l.tracestate, value);
-    }
-}
-
-/// Adds a string-valued link attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_link_attr_str(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    link: usize,
-    key: CharSlice,
-    value: CharSlice,
-) {
-    let attr = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(l) = builder.link_mut(chunk, span, link) {
-        insert_attr(&mut l.attributes, key, attr);
-    }
-}
-
-// ------------------- Span event construction -------------------
-
-/// Appends a new (empty) event to a span, returning its index within that span.
-#[no_mangle]
-pub extern "C" fn ddog_v1_span_new_event(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-) -> usize {
-    match builder.span_mut(chunk, span) {
-        Some(s) => {
-            s.span_events.push(SpanEventBytes::default());
-            s.span_events.len() - 1
-        }
-        None => 0,
-    }
-}
-
-/// Sets the event time (unix nanos).
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_event_time(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    time_unix_nano: u64,
-) {
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        e.time_unix_nano = time_unix_nano;
-    }
-}
-
-/// Sets the event name.
-#[no_mangle]
-pub extern "C" fn ddog_v1_set_event_name(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    value: CharSlice,
-) {
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        set_string_field(&mut e.name, value);
-    }
-}
-
-/// Adds a string event attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_event_attr_str(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    key: CharSlice,
-    value: CharSlice,
-) {
-    let attr = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, attr);
-    }
-}
-
-/// Adds an integer event attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_event_attr_int(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    key: CharSlice,
-    value: i64,
-) {
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, AttributeValueBytes::Int(value));
-    }
-}
-
-/// Adds a double event attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_event_attr_double(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    key: CharSlice,
-    value: f64,
-) {
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, AttributeValueBytes::Float(value));
-    }
-}
-
-/// Adds a boolean event attribute.
-#[no_mangle]
-pub extern "C" fn ddog_v1_add_event_attr_bool(
-    builder: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
-    event: usize,
-    key: CharSlice,
-    value: bool,
-) {
-    if let Some(e) = builder.event_mut(chunk, span, event) {
-        insert_attr(&mut e.attributes, key, AttributeValueBytes::Bool(value));
-    }
-}
 
 // ------------------- Introspection getters -------------------
 //
@@ -1650,11 +1030,10 @@ fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> Strin
     out
 }
 
-/// Renders the span at index `chunk`/`span` as a human-readable diagnostic string, mirroring the
-/// v0.4 [`crate::span::ddog_span_debug_log`] used by dd-trace-php to emit the `DD_TRACE_DEBUG`
-/// "[span] Encoding span: …" line on the V1 path. Unlike the v0.4 variant it is index-addressed (the
-/// V1 builder never hands out `&mut`/`&` span handles to C); an out-of-range index yields an empty
-/// slice.
+/// Renders the span at index `chunk`/`span` as a human-readable diagnostic string, used by
+/// dd-trace-php to emit the `DD_TRACE_DEBUG` "[span] Encoding span: …" line on the V1 path. It is
+/// index-addressed (the V1 builder never hands out `&mut`/`&` span handles to C); an out-of-range
+/// index yields an empty slice.
 ///
 /// The returned slice is an owned allocation that must be freed with the very same free function as
 /// the v0.4 variant, [`crate::span::ddog_free_charslice`].
@@ -1672,17 +1051,399 @@ pub extern "C" fn ddog_v1_span_debug_log(
     let cstring = CString::new(debug_str).unwrap_or_default();
 
     // Safety: `CString` is an owned, valid UTF-8 string; the pointer is freed by
-    // `ddog_free_charslice`, exactly as for the v0.4 `ddog_span_debug_log`.
+    // `ddog_free_charslice`.
     unsafe { CharSlice::from_raw_parts(cstring.into_raw().cast(), len) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_common_ffi::slice::AsBytes;
+    use libdd_tinybytes::Bytes;
     use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
+    use std::borrow::Cow;
 
     fn cs(s: &str) -> CharSlice<'_> {
         CharSlice::from(s)
+    }
+
+    // Test-only builder helpers. The production `ddog_v1_*` mutator C-ABI was removed in the
+    // bytes.rs V1 pivot (the PHP-side FFI fills the model through the pub `TracerPayloadV1Builder`
+    // methods instead). These thin fns reproduce that removed surface so the getter/encoder/
+    // debug-log coverage below keeps exercising a fully populated payload.
+
+    fn to_bytes_string(slice: CharSlice) -> BytesString {
+        match String::from_utf8_lossy(slice.as_bytes()) {
+            Cow::Owned(s) => s.into(),
+            Cow::Borrowed(_) => unsafe {
+                BytesString::from_bytes_unchecked(Bytes::from_underlying(slice.as_bytes().to_vec()))
+            },
+        }
+    }
+
+    fn set_string_field(field: &mut BytesString, slice: CharSlice) {
+        if slice.is_empty() {
+            return;
+        }
+        *field = to_bytes_string(slice);
+    }
+
+    fn insert_attr(
+        map: &mut VecMap<BytesString, AttributeValueBytes>,
+        key: CharSlice,
+        value: AttributeValueBytes,
+    ) {
+        if key.is_empty() {
+            return;
+        }
+        map.insert(to_bytes_string(key), value);
+    }
+
+    fn clone_attr(value: &AttributeValueBytes) -> AttributeValueBytes {
+        match value {
+            AttributeValueBytes::String(s) => AttributeValueBytes::String(s.clone()),
+            AttributeValueBytes::Float(f) => AttributeValueBytes::Float(*f),
+            AttributeValueBytes::Int(i) => AttributeValueBytes::Int(*i),
+            AttributeValueBytes::Bool(b) => AttributeValueBytes::Bool(*b),
+            AttributeValueBytes::Bytes(b) => AttributeValueBytes::Bytes(b.clone()),
+            AttributeValueBytes::KeyValue(m) => {
+                let mut cloned = VecMap::with_capacity(m.len());
+                for (k, v) in m.iter() {
+                    cloned.insert(k.clone(), clone_attr(v));
+                }
+                AttributeValueBytes::KeyValue(cloned)
+            }
+            AttributeValueBytes::List(list) => {
+                AttributeValueBytes::List(list.iter().map(clone_attr).collect())
+            }
+        }
+    }
+
+    fn ddog_v1_builder_new_chunk(b: &mut TracerPayloadV1Builder, high: u64, low: u64) -> usize {
+        b.push_chunk(high, low)
+    }
+
+    fn ddog_v1_set_chunk_sampling_priority(
+        b: &mut TracerPayloadV1Builder,
+        chunk: usize,
+        priority: i32,
+    ) {
+        if let Some(c) = b.chunk_mut(chunk) {
+            c.priority = Some(priority);
+        }
+    }
+
+    fn ddog_v1_set_chunk_origin(b: &mut TracerPayloadV1Builder, chunk: usize, origin: CharSlice) {
+        if let Some(c) = b.chunk_mut(chunk) {
+            set_string_field(&mut c.origin, origin);
+        }
+    }
+
+    fn ddog_v1_set_chunk_sampling_mechanism(
+        b: &mut TracerPayloadV1Builder,
+        chunk: usize,
+        mechanism: u32,
+    ) {
+        if let Some(c) = b.chunk_mut(chunk) {
+            c.sampling_mechanism = Some(mechanism);
+        }
+    }
+
+    fn ddog_v1_set_chunk_dropped_trace(b: &mut TracerPayloadV1Builder, chunk: usize, dropped: bool) {
+        if let Some(c) = b.chunk_mut(chunk) {
+            c.dropped_trace = dropped;
+        }
+    }
+
+    fn ddog_v1_add_chunk_attr_str(
+        b: &mut TracerPayloadV1Builder,
+        chunk: usize,
+        key: CharSlice,
+        value: CharSlice,
+    ) {
+        let value = AttributeValueBytes::String(to_bytes_string(value));
+        if let Some(c) = b.chunk_mut(chunk) {
+            insert_attr(&mut c.attributes, key, value);
+        }
+    }
+
+    fn ddog_v1_chunk_new_span(b: &mut TracerPayloadV1Builder, chunk: usize) -> usize {
+        b.push_span(chunk)
+    }
+
+    fn set_span_string(
+        b: &mut TracerPayloadV1Builder,
+        chunk: usize,
+        span: usize,
+        value: CharSlice,
+        pick: impl FnOnce(&mut SpanBytes) -> &mut BytesString,
+    ) {
+        if let Some(s) = b.span_mut(chunk, span) {
+            set_string_field(pick(s), value);
+        }
+    }
+
+    fn ddog_v1_set_span_service(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.service);
+    }
+    fn ddog_v1_set_span_name(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.name);
+    }
+    fn ddog_v1_set_span_resource(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.resource);
+    }
+    fn ddog_v1_set_span_type(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.r#type);
+    }
+    fn ddog_v1_set_span_env(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.env);
+    }
+    fn ddog_v1_set_span_version(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.version);
+    }
+    fn ddog_v1_set_span_component(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+        set_span_string(b, c, s, v, |sp| &mut sp.component);
+    }
+
+    fn ddog_v1_set_span_id(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: u64) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.span_id = v;
+        }
+    }
+    fn ddog_v1_set_span_parent_id(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: u64) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.parent_id = v;
+        }
+    }
+    fn ddog_v1_set_span_start(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: i64) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.start = v;
+        }
+    }
+    fn ddog_v1_set_span_duration(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: i64) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.duration = v;
+        }
+    }
+    fn ddog_v1_set_span_error(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: bool) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.error = v;
+        }
+    }
+    fn ddog_v1_set_span_kind(b: &mut TracerPayloadV1Builder, c: usize, s: usize, kind: u32) {
+        if let Some(sp) = b.span_mut(c, s) {
+            sp.span_kind = SpanKind::from(kind);
+        }
+    }
+
+    fn add_span_attr(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: AttributeValueBytes,
+    ) {
+        if let Some(sp) = b.span_mut(c, s) {
+            insert_attr(&mut sp.attributes, key, value);
+        }
+    }
+    fn ddog_v1_add_span_attr_str(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: CharSlice,
+    ) {
+        add_span_attr(b, c, s, key, AttributeValueBytes::String(to_bytes_string(value)));
+    }
+    fn ddog_v1_add_span_attr_int(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: i64,
+    ) {
+        add_span_attr(b, c, s, key, AttributeValueBytes::Int(value));
+    }
+    fn ddog_v1_add_span_attr_double(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: f64,
+    ) {
+        add_span_attr(b, c, s, key, AttributeValueBytes::Float(value));
+    }
+    fn ddog_v1_add_span_attr_bool(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: bool,
+    ) {
+        add_span_attr(b, c, s, key, AttributeValueBytes::Bool(value));
+    }
+    fn ddog_v1_add_span_attr_bytes(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+        value: CharSlice,
+    ) {
+        let bytes = Bytes::copy_from_slice(value.as_bytes());
+        add_span_attr(b, c, s, key, AttributeValueBytes::Bytes(bytes));
+    }
+
+    fn ddog_v1_has_span_attr(
+        b: &TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+    ) -> bool {
+        let key = to_bytes_string(key);
+        b.span(c, s).is_some_and(|sp| sp.attributes.contains_key(&key))
+    }
+
+    fn ddog_v1_del_span_attr(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        key: CharSlice,
+    ) -> bool {
+        let key = to_bytes_string(key);
+        match b.span_mut(c, s) {
+            Some(sp) => {
+                let existed = sp.attributes.contains_key(&key);
+                sp.attributes.remove_slow(&key);
+                existed
+            }
+            None => false,
+        }
+    }
+
+    fn ddog_v1_transfer_span_attr(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        from_span: usize,
+        to_span: usize,
+        key: CharSlice,
+        delete_source: bool,
+    ) -> bool {
+        let key = to_bytes_string(key);
+        let value = match b.span(c, from_span).and_then(|sp| sp.attributes.get(&key)) {
+            Some(v) => clone_attr(v),
+            None => return false,
+        };
+        match b.span_mut(c, to_span) {
+            Some(dst) => dst.attributes.insert(key.clone(), value),
+            None => return false,
+        }
+        if delete_source {
+            if let Some(src) = b.span_mut(c, from_span) {
+                src.attributes.remove_slow(&key);
+            }
+        }
+        true
+    }
+
+    fn ddog_v1_span_new_link(b: &mut TracerPayloadV1Builder, c: usize, s: usize) -> usize {
+        b.push_link(c, s)
+    }
+    fn ddog_v1_set_link_trace_id(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        link: usize,
+        high: u64,
+        low: u64,
+    ) {
+        if let Some(l) = b.link_mut(c, s, link) {
+            l.trace_id = trace_id_bytes(high, low);
+        }
+    }
+    fn ddog_v1_set_link_span_id(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        link: usize,
+        v: u64,
+    ) {
+        if let Some(l) = b.link_mut(c, s, link) {
+            l.span_id = v;
+        }
+    }
+    fn ddog_v1_set_link_flags(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        link: usize,
+        v: u32,
+    ) {
+        if let Some(l) = b.link_mut(c, s, link) {
+            l.flags = v;
+        }
+    }
+    fn ddog_v1_set_link_tracestate(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        link: usize,
+        v: CharSlice,
+    ) {
+        if let Some(l) = b.link_mut(c, s, link) {
+            set_string_field(&mut l.tracestate, v);
+        }
+    }
+    fn ddog_v1_add_link_attr_str(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        link: usize,
+        key: CharSlice,
+        value: CharSlice,
+    ) {
+        let attr = AttributeValueBytes::String(to_bytes_string(value));
+        if let Some(l) = b.link_mut(c, s, link) {
+            insert_attr(&mut l.attributes, key, attr);
+        }
+    }
+
+    fn ddog_v1_span_new_event(b: &mut TracerPayloadV1Builder, c: usize, s: usize) -> usize {
+        b.push_event(c, s)
+    }
+    fn ddog_v1_set_event_time(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        event: usize,
+        time_unix_nano: u64,
+    ) {
+        if let Some(e) = b.event_mut(c, s, event) {
+            e.time_unix_nano = time_unix_nano;
+        }
+    }
+    fn ddog_v1_set_event_name(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        event: usize,
+        v: CharSlice,
+    ) {
+        if let Some(e) = b.event_mut(c, s, event) {
+            set_string_field(&mut e.name, v);
+        }
+    }
+    fn ddog_v1_add_event_attr_int(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        event: usize,
+        key: CharSlice,
+        value: i64,
+    ) {
+        if let Some(e) = b.event_mut(c, s, event) {
+            insert_attr(&mut e.attributes, key, AttributeValueBytes::Int(value));
+        }
     }
 
     #[test]

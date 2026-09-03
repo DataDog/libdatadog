@@ -2180,138 +2180,34 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
     tracing::event!(target: "info", tracing::Level::INFO, "Flushing v1 trace of size {} to send-queue for {}", size, parameters.url);
 }
 
-/// Serializes the native V1 `TracerPayload` built via the [`crate::span_v1`] builder into owned
-/// msgpack bytes for the in-process (non-sidecar) sender in `coms.c`, which POSTs them directly to
-/// the agent's `/v1.0/traces` endpoint (the PHP <= 8.2 path that never goes through the sidecar).
-/// Consumes `builder`. The V1 counterpart of [`crate::span::ddog_serialize_trace_into_charslice`].
+/// Downgrades a native V1 builder to the in-memory v0.4 trace collection (`ddog_TracesBytes`) for
+/// the in-process `coms.c` sender (PHP <= 8.2), which always downgrades to `/v0.4/traces`. Consumes
+/// `builder`, encodes it to v0.4 msgpack (`msgpack_encoder::v04::to_vec_from_v1`, the same downgrade
+/// the sidecar server performs), then decodes those bytes back into the owned `Vec<Vec<SpanBytes>>`
+/// collection.
 ///
-/// Payload-level metadata is applied here exactly as the sidecar path does (via
-/// `populate_payload_metadata`): `container_id`/`language_name`/`language_version`/`tracer_version`
-/// come from the caller's tracer header tags and the rest from `metadata`, so the promoted V1
-/// fields are identical to the sidecar-encoded payload.
+/// Returning the decoded collection (rather than a single whole-payload CharSlice) lets `auto_flush`
+/// frame each trace individually for the background sender — one `ddtrace_send_traces_via_thread(1,
+/// …)` per trace, matching master's coms framing. A whole-payload CharSlice would be
+/// single-trace-only through that framing and would silently drop the extra traces of a multi-trace
+/// payload.
 ///
-/// The returned slice is an owned allocation that must be freed with
-/// [`crate::span::ddog_free_charslice`].
+/// Payload-level metadata is NOT applied here: v0.4 carries it as HTTP headers, not on the wire.
+/// Returns an empty collection on an encode/decode error. Free the result with
+/// [`crate::span::ddog_free_traces`].
 #[no_mangle]
-pub extern "C" fn ddog_serialize_trace_v1_into_charslice(
+pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
     builder: Box<TracerPayloadV1Builder>,
-    metadata: &TracerMetadataV1,
-    container_id: CharSlice,
-    language_name: CharSlice,
-    language_version: CharSlice,
-    tracer_version: CharSlice,
-) -> CharSlice<'static> {
-    let mut payload = builder.into_payload();
-    populate_payload_metadata(
-        &mut payload,
-        &container_id.to_utf8_lossy(),
-        &language_name.to_utf8_lossy(),
-        &language_version.to_utf8_lossy(),
-        &tracer_version.to_utf8_lossy(),
-        &metadata.runtime_id.to_utf8_lossy(),
-        &metadata.env.to_utf8_lossy(),
-        &metadata.hostname.to_utf8_lossy(),
-        &metadata.app_version.to_utf8_lossy(),
-        &metadata.git_commit_sha.to_utf8_lossy(),
-    );
-
-    let boxed = msgpack_encoder::v1::to_vec_from_v1(&payload).into_boxed_slice();
-    let boxed_len = boxed.len();
-    let leaked_ptr = Box::into_raw(boxed) as *const c_char;
-
-    // Safety: `leaked_ptr`/`boxed_len` describe the just-leaked owned allocation; ownership
-    // transfers to the caller, who must free it via `ddog_free_charslice`.
-    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
-}
-
-/// In-process v0.4 downgrade of a V1 builder for the `coms.c` sender: when the agent is NOT
-/// V1-capable it POSTs these bytes to `/v0.4/traces`. Identical to
-/// [`ddog_serialize_trace_v1_into_charslice`] except the encoder is
-/// `msgpack_encoder::v04::to_vec_from_v1` (the downgrade the sidecar server uses). Consumes
-/// `builder`; free the result with [`crate::span::ddog_free_charslice`].
-#[no_mangle]
-pub extern "C" fn ddog_serialize_trace_v1_as_v04_into_charslice(
-    builder: Box<TracerPayloadV1Builder>,
-    metadata: &TracerMetadataV1,
-    container_id: CharSlice,
-    language_name: CharSlice,
-    language_version: CharSlice,
-    tracer_version: CharSlice,
-) -> CharSlice<'static> {
-    let mut payload = builder.into_payload();
-    populate_payload_metadata(
-        &mut payload,
-        &container_id.to_utf8_lossy(),
-        &language_name.to_utf8_lossy(),
-        &language_version.to_utf8_lossy(),
-        &tracer_version.to_utf8_lossy(),
-        &metadata.runtime_id.to_utf8_lossy(),
-        &metadata.env.to_utf8_lossy(),
-        &metadata.hostname.to_utf8_lossy(),
-        &metadata.app_version.to_utf8_lossy(),
-        &metadata.git_commit_sha.to_utf8_lossy(),
-    );
-
-    let boxed = msgpack_encoder::v04::to_vec_from_v1(&payload).into_boxed_slice();
-    let boxed_len = boxed.len();
-    let leaked_ptr = Box::into_raw(boxed) as *const c_char;
-
-    // Safety: `leaked_ptr`/`boxed_len` describe the just-leaked owned allocation; ownership
-    // transfers to the caller, who must free it via `ddog_free_charslice`.
-    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
-}
-
-/// Transcodes an existing v0.4 trace collection (built with the v0.4 [`crate::span`] builder) into
-/// owned V1 msgpack bytes, for the in-process (non-sidecar) sender in `coms.c`. That sender builds
-/// v0.4 today; this lets it emit V1 to the agent's `/v1.0/traces` endpoint without a second builder,
-/// by upgrading the already-built v0.4 payload via [`msgpack_encoder::v1::to_vec_from_v04`]. When the
-/// agent isn't V1-capable, the caller sends its v0.4 bytes directly instead of calling this — so the
-/// V1 upgrade is an isolated, removable bolt-on gated by that endpoint check.
-///
-/// The V1 wire payload carries tracer metadata inline (v0.4 sends it as HTTP headers), so the
-/// promoted fields are supplied here exactly as the V1 sidecar path applies them:
-/// `container_id`/`language_name`/`language_version`/`tracer_version` from the caller's tracer header
-/// tags and `hostname`/`env`/`app_version`/`runtime_id`/`git_commit_sha` from `metadata`.
-///
-/// Consumes nothing; `traces` is deduped in place (as the v0.4 shm sender does) before encoding. The
-/// returned slice is an owned allocation that must be freed with [`crate::span::ddog_free_charslice`].
-#[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub extern "C" fn ddog_serialize_trace_v04_as_v1_into_charslice(
-    traces: &mut TracesBytes,
-    metadata: &TracerMetadataV1,
-    container_id: CharSlice,
-    language_name: CharSlice,
-    language_version: CharSlice,
-    tracer_version: CharSlice,
-) -> CharSlice<'static> {
-    for chunk in traces.iter_mut() {
-        for span in chunk.iter_mut() {
-            span.dedup();
-        }
+) -> Box<TracesBytes> {
+    let payload = builder.into_payload();
+    let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(&payload);
+    match libdd_trace_utils::tracer_payload::decode_to_trace_chunks(
+        libdd_tinybytes::Bytes::from(v04_bytes),
+        libdd_trace_utils::tracer_payload::TraceEncoding::V04,
+    ) {
+        Ok((libdd_trace_utils::tracer_payload::TraceChunks::V04(traces), _)) => Box::new(traces),
+        _ => Box::default(),
     }
-
-    let tracer_metadata = libdd_trace_utils::tracer_metadata::TracerMetadata {
-        hostname: metadata.hostname.to_utf8_lossy().into_owned(),
-        env: metadata.env.to_utf8_lossy().into_owned(),
-        app_version: metadata.app_version.to_utf8_lossy().into_owned(),
-        runtime_id: metadata.runtime_id.to_utf8_lossy().into_owned(),
-        tracer_version: tracer_version.to_utf8_lossy().into_owned(),
-        language: language_name.to_utf8_lossy().into_owned(),
-        language_version: language_version.to_utf8_lossy().into_owned(),
-        container_id: container_id.to_utf8_lossy().into_owned(),
-        git_commit_sha: metadata.git_commit_sha.to_utf8_lossy().into_owned(),
-        ..Default::default()
-    };
-
-    let boxed =
-        msgpack_encoder::v1::to_vec_from_v04(traces.as_slice(), &tracer_metadata).into_boxed_slice();
-    let boxed_len = boxed.len();
-    let leaked_ptr = Box::into_raw(boxed) as *const c_char;
-
-    // Safety: `leaked_ptr`/`boxed_len` describe the just-leaked owned allocation; ownership
-    // transfers to the caller, who must free it via `ddog_free_charslice`.
-    unsafe { CharSlice::from_raw_parts(leaked_ptr, boxed_len) }
 }
 
 /// Drops the agent info reader.
@@ -2349,145 +2245,48 @@ mod tests {
     }
 
     #[test]
-    fn serialize_trace_v1_into_charslice_yields_valid_v1_with_promoted_fields() {
-        use crate::span_v1::{
-            ddog_v1_builder_new_chunk, ddog_v1_chunk_new_span, ddog_v1_new_builder,
-            ddog_v1_set_span_id, ddog_v1_set_span_name, ddog_v1_set_span_service,
-        };
+    fn downgrade_v1_builder_to_v04_traces_preserves_all_traces() {
+        use crate::span::{ddog_free_traces, ddog_serialize_trace_into_charslice};
+        use crate::span_v1::ddog_v1_new_builder;
+        use libdd_tinybytes::BytesString;
 
+        // Two chunks (traces) with a shared service; the whole-payload CharSlice form drops the
+        // second under the coms framing, the TracesBytes form must keep both.
         let mut builder = ddog_v1_new_builder();
-
-        // A service string reused across two spans proves the encoder's streaming string table
-        // (it must land on the wire exactly once).
-        let c0 = ddog_v1_builder_new_chunk(&mut builder, 0, 1);
-        let s0 = ddog_v1_chunk_new_span(&mut builder, c0);
-        ddog_v1_set_span_service(&mut builder, c0, s0, CharSlice::from("svc-shared"));
-        ddog_v1_set_span_name(&mut builder, c0, s0, CharSlice::from("op-one"));
-        ddog_v1_set_span_id(&mut builder, c0, s0, 1);
-
-        let c1 = ddog_v1_builder_new_chunk(&mut builder, 0, 2);
-        let s1 = ddog_v1_chunk_new_span(&mut builder, c1);
-        ddog_v1_set_span_service(&mut builder, c1, s1, CharSlice::from("svc-shared"));
-        ddog_v1_set_span_name(&mut builder, c1, s1, CharSlice::from("op-two"));
-        ddog_v1_set_span_id(&mut builder, c1, s1, 2);
-
-        let metadata = TracerMetadataV1 {
-            hostname: CharSlice::from("host-1"),
-            env: CharSlice::from("staging"),
-            app_version: CharSlice::from("1.2.3"),
-            runtime_id: CharSlice::from("runtime-abc"),
-            git_commit_sha: CharSlice::from("deadbeefcafe"),
-        };
-
-        let slice = ddog_serialize_trace_v1_into_charslice(
-            builder,
-            &metadata,
-            CharSlice::from("container-xyz"),
-            CharSlice::from("php"),
-            CharSlice::from("8.2.0"),
-            CharSlice::from("9.8.7"),
-        );
-
-        assert!(!slice.is_empty(), "must produce non-empty msgpack");
-        let bytes = slice.as_bytes();
-
-        // Valid v1 msgpack: it round-trips through the v1 decoder, consuming the whole buffer.
-        let (payload, consumed) = libdd_trace_utils::msgpack_decoder::v1::from_slice(bytes)
-            .expect("output must be valid v1 msgpack");
-        assert_eq!(consumed, bytes.len(), "decoder must consume the whole buffer");
-
-        // Promoted payload-level metadata fields survive the round-trip. (`from_slice` decodes
-        // text fields as borrowed `&str`.)
-        assert_eq!(payload.container_id, "container-xyz");
-        assert_eq!(payload.language_name, "php");
-        assert_eq!(payload.language_version, "8.2.0");
-        assert_eq!(payload.tracer_version, "9.8.7");
-        assert_eq!(payload.runtime_id, "runtime-abc");
-        assert_eq!(payload.env, "staging");
-        assert_eq!(payload.hostname, "host-1");
-        assert_eq!(payload.app_version, "1.2.3");
-        assert_eq!(payload.chunks.len(), 2);
-
-        // git_commit_sha is promoted to the `_dd.git.commit.sha` payload attribute.
-        assert!(
-            bytes
-                .windows(b"_dd.git.commit.sha".len())
-                .any(|w| w == b"_dd.git.commit.sha"),
-            "git commit sha must be promoted as the _dd.git.commit.sha attribute"
-        );
-
-        // Streaming string table: the shared service string appears once on the wire.
-        let occurrences = bytes
-            .windows(b"svc-shared".len())
-            .filter(|w| *w == b"svc-shared")
-            .count();
-        assert_eq!(occurrences, 1, "repeated string must be interned on the wire");
-
-        // Safety: `slice` is the owned allocation just returned above.
-        unsafe { crate::span::ddog_free_charslice(slice) };
-    }
-
-    #[test]
-    fn serialize_trace_v04_as_v1_yields_valid_v1_with_promoted_fields() {
-        use crate::span::{
-            ddog_add_span_meta, ddog_get_traces, ddog_set_span_id, ddog_set_span_name,
-            ddog_set_span_service, ddog_trace_new_span, ddog_traces_new_trace,
-        };
-
-        // Build a v0.4 trace collection with the existing v0.4 builder.
-        let mut traces = ddog_get_traces();
-        let trace = ddog_traces_new_trace(&mut traces);
-        let span = ddog_trace_new_span(trace);
-        ddog_set_span_service(span, CharSlice::from("svc-04"));
-        ddog_set_span_name(span, CharSlice::from("op-04"));
-        ddog_set_span_id(span, 7);
-        ddog_add_span_meta(span, CharSlice::from("http.method"), CharSlice::from("GET"));
-
-        let metadata = TracerMetadataV1 {
-            hostname: CharSlice::from("host-1"),
-            env: CharSlice::from("staging"),
-            app_version: CharSlice::from("1.2.3"),
-            runtime_id: CharSlice::from("runtime-abc"),
-            git_commit_sha: CharSlice::from("deadbeefcafe"),
-        };
-
-        let slice = ddog_serialize_trace_v04_as_v1_into_charslice(
-            &mut traces,
-            &metadata,
-            CharSlice::from("container-xyz"),
-            CharSlice::from("php"),
-            CharSlice::from("8.2.0"),
-            CharSlice::from("9.8.7"),
-        );
-
-        assert!(!slice.is_empty(), "must produce non-empty msgpack");
-        let bytes = slice.as_bytes();
-
-        // Valid v1 msgpack: round-trips through the v1 decoder, consuming the whole buffer.
-        let (payload, consumed) = libdd_trace_utils::msgpack_decoder::v1::from_slice(bytes)
-            .expect("output must be valid v1 msgpack");
-        assert_eq!(consumed, bytes.len(), "decoder must consume the whole buffer");
-
-        // Promoted payload-level metadata fields survive the upgrade.
-        assert_eq!(payload.container_id, "container-xyz");
-        assert_eq!(payload.language_name, "php");
-        assert_eq!(payload.language_version, "8.2.0");
-        assert_eq!(payload.tracer_version, "9.8.7");
-        assert_eq!(payload.runtime_id, "runtime-abc");
-        assert_eq!(payload.chunks.len(), 1);
-        assert_eq!(payload.chunks[0].spans.len(), 1);
-
-        // The v0.4 span data is carried through the upgrade.
-        for s in &[b"svc-04" as &[u8], b"op-04", b"http.method", b"GET"] {
-            assert!(
-                bytes.windows(s.len()).any(|w| w == *s),
-                "{} should appear",
-                std::str::from_utf8(s).unwrap()
-            );
+        let c0 = builder.push_chunk(0, 1);
+        let s0 = builder.push_span(c0);
+        {
+            let sp = builder.span_mut(c0, s0).unwrap();
+            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
+            sp.name = BytesString::from_slice(b"op-one").unwrap();
+            sp.span_id = 1;
+        }
+        let c1 = builder.push_chunk(0, 2);
+        let s1 = builder.push_span(c1);
+        {
+            let sp = builder.span_mut(c1, s1).unwrap();
+            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
+            sp.name = BytesString::from_slice(b"op-two").unwrap();
+            sp.span_id = 2;
         }
 
-        // Safety: `slice` is the owned allocation just returned above.
-        unsafe { crate::span::ddog_free_charslice(slice) };
+        let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder);
+        assert_eq!(traces.len(), 2, "both traces must survive the downgrade");
+        assert_eq!(traces[0].len(), 1);
+        assert_eq!(traces[1].len(), 1);
+        assert_eq!(traces[0][0].service.as_str(), "svc-shared");
+        assert_eq!(traces[0][0].name.as_str(), "op-one");
+        assert_eq!(traces[1][0].name.as_str(), "op-two");
+
+        // Each trace serializes to a valid, non-empty msgpack array-of-1 for the background sender.
+        for i in 0..traces.len() {
+            let slice = ddog_serialize_trace_into_charslice(&mut traces[i]);
+            assert!(!slice.is_empty());
+            // Safety: `slice` is the owned allocation just returned above.
+            unsafe { crate::span::ddog_free_charslice(slice) };
+        }
+
+        ddog_free_traces(traces);
     }
 
     #[test]
