@@ -6,14 +6,17 @@
 //!
 //! During crashtracker initialization, [`install_sigaction_hook`] patches
 //! the GOT entries for `sigaction` across all loaded libraries so that
-//! calls are routed through our hook
+//! calls are routed through our hook. When the application installs a
+//! real handler for a monitored signal, a telemetry warning is emitted.
 //!
 //! This module is gated on 64-bit Linux (`mod.rs`).
 
+use crate::crash_info::UnknownValue as _;
 use core::sync::atomic::{
     AtomicU64, AtomicUsize,
     Ordering::{Acquire, Relaxed, Release},
 };
+use libdd_telemetry::data::LogLevel;
 
 /// Bit N is set if signal number N is monitored. Supports signals 0–63.
 static MONITORED_SIGNALS: AtomicU64 = AtomicU64::new(0);
@@ -41,26 +44,64 @@ fn signal_name(signum: libc::c_int) -> &'static str {
     }
 }
 
-/// Our replacement for `sigaction`, installed using GOT patching.
+/// Fire and forget telemetry warning when an application installs a real
+/// handler for a signal monitored by the crashtracker.
 ///
-/// For signals monitored by the crashtracker, logs a warning. In all
-/// cases, forwards the call to the real `sigaction`.
+/// Uses the existing tokio runtime if one is active; otherwise spawns a
+/// dedicated thread that creates its own runtime. Either way, the call
+/// returns immediately so the application's `sigaction` call is not stalled.
+///
+/// Must not be called from a signal handler context
+fn emit_sigaction_telemetry(signum: libc::c_int) {
+    let name = signal_name(signum);
+    let message = format!(
+        "Application called sigaction for monitored signal {signum} ({name}), \
+         crashtracker signal protection may be compromised"
+    );
+    let tags = format!("collector_issue:sigaction_intercepted,signal:{name},is_crash_debug:true");
+
+    let metadata = super::crash_handler::peek_metadata()
+        .unwrap_or_else(crate::crash_info::Metadata::unknown_value);
+    let endpoint = super::crash_handler::peek_endpoint();
+
+    let task = async move {
+        if let Ok(uploader) = crate::crash_info::TelemetryCrashUploader::new(&metadata, &endpoint) {
+            let _ = uploader
+                .upload_general_log(message, tags, LogLevel::Warn)
+                .await;
+        }
+    };
+
+    // Check if we are in a runtime so we don't block the sigaction call
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn(task);
+    } else {
+        std::thread::spawn(move || {
+            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                rt.block_on(task);
+            }
+        });
+    }
+}
+
+/// Our replacement for `sigaction`, installed using GOT patching.
 unsafe extern "C" fn hook_sigaction(
     signum: libc::c_int,
     act: *const libc::sigaction,
     oldact: *mut libc::sigaction,
 ) -> libc::c_int {
-    // Check if this signal is one we monitor.
     if (0..64).contains(&signum)
         && !act.is_null()
         && MONITORED_SIGNALS.load(Relaxed) & (1u64 << signum) != 0
     {
-        eprintln!(
-            "[datadog-crashtracker] sigaction called for monitored signal {} ({}), \
-             the crashtracker's handler may be overwritten",
-            signum,
-            signal_name(signum),
-        );
+        // Only emit for real handlers (sa_sigaction > 1).
+        let handler_addr = unsafe { (*act).sa_sigaction } as *const () as usize;
+        if handler_addr > 1 {
+            emit_sigaction_telemetry(signum);
+        }
     }
 
     // Forward to the real sigaction.
@@ -69,11 +110,10 @@ unsafe extern "C" fn hook_sigaction(
         // SAFETY: `orig` was stored by `install_sigaction_hook` from a
         // successful `hook_symbol` call which resolved the real `sigaction`.
         let func: SigactionFn = unsafe { core::mem::transmute::<usize, SigactionFn>(orig) };
-        // SAFETY: forwarding the exact arguments from the caller.
         unsafe { func(signum, act, oldact) }
     } else {
-        // Fallback: should not happen, but dont crash
-        *libc::__errno_location() = libc::ENOSYS;
+        // Fallback: should not happen, but don't crash.
+        unsafe { *libc::__errno_location() = libc::ENOSYS };
         -1
     }
 }
@@ -121,7 +161,6 @@ mod tests {
 
     #[test]
     fn test_monitored_mask_building() {
-        // Reset state for test isolation.
         MONITORED_SIGNALS.store(0, Release);
 
         let signals = [libc::SIGSEGV, libc::SIGBUS, libc::SIGABRT];
@@ -144,7 +183,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_install_sigaction_hook() {
-        // Reset state so the hook can be installed in this test.
         ORIG_SIGACTION_FN.store(0, Relaxed);
 
         install_sigaction_hook(&[libc::SIGSEGV, libc::SIGBUS]);
@@ -156,7 +194,6 @@ mod tests {
                  (static libc?), GOT hook not installed"
             );
         } else {
-            // Verify the monitored mask was set correctly.
             let mask = MONITORED_SIGNALS.load(Acquire);
             assert!(mask & (1u64 << libc::SIGSEGV) != 0);
             assert!(mask & (1u64 << libc::SIGBUS) != 0);

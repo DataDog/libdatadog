@@ -22,3 +22,4 @@ pub mod test_018_thread_limit;
 pub mod test_019_sidecar_donothing;
 pub mod test_020_sidecar_multi_thread_collection;
 pub mod test_021_unhandled_exception_multi_thread;
+pub mod test_022_sigaction_interception;
