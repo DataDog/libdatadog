@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::env;
+use std::ffi::OsStr;
+use std::path::Path;
 
 use winresource::VersionInfo;
 
@@ -58,8 +60,12 @@ const RELEASE_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// # Arguments
 ///
-/// * `name` - the artifact's file stem, without extension, e.g. `datadog_profiling_ffi`. Used for
-///   `OriginalFilename`/`InternalName`.
+/// * `name` - the artifact's file name, with extension, e.g. `datadog_profiling_ffi.dll` for a
+///   `cdylib` or `crashtracker_receiver.exe` for a binary. Cargo exposes neither `[lib] name` nor
+///   the final artifact file name to build scripts, so callers spell this out literally; the
+///   Windows extension is the right one to use unconditionally because this function no-ops on
+///   non-Windows targets. Used verbatim for `OriginalFilename`, and with the extension removed for
+///   `InternalName`.
 /// * `description` - human-readable `FileDescription`, e.g. `"Datadog libdatadog FFI"`.
 pub fn embed_windows_version_info(name: &str, description: &str) {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
@@ -71,8 +77,8 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
         .set("ProductVersion", RELEASE_VERSION)
         .set("CompanyName", "Datadog")
         .set("ProductName", "libdatadog")
-        .set("OriginalFilename", &format!("{name}.dll"))
-        .set("InternalName", name)
+        .set("OriginalFilename", name)
+        .set("InternalName", internal_name(name))
         .set("FileDescription", description)
         .set(
             "LegalCopyright",
@@ -93,16 +99,34 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
         }
     }
 
-   if let Err(err) = res.compile() {                                                                                                                                                                                                                                                           
-       if cfg!(windows) {                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
-           panic!("{name}: failed to embed the Windows VERSIONINFO resource on a native \                                                                                                                                                                                                      
-                   Windows build ({err}); refusing to ship a DLL without it.");                                                                                                                                                                                                                
-       }                                                                                                                                                                                                                                                                                       
-       println!(                                                                                                                                                                                                                                                                               
-           "cargo:warning={name}: failed to embed the Windows VERSIONINFO resource, \                                                                                                                                                                                                          
-            continuing without it ({err}). This is expected when cross-compiling ..."                                                                                                                                                                                                          
-       );                                                                                                                                                                                                                                                                                      
-   }   
+    if let Err(err) = res.compile() {
+        if cfg!(windows) {
+            panic!(
+                "{name}: failed to embed the Windows VERSIONINFO resource on a native Windows \
+                 build ({err}); refusing to ship the artifact without it."
+            );
+        }
+        println!(
+            "cargo:warning={name}: failed to embed the Windows VERSIONINFO resource, continuing \
+             without it ({err}). This is expected when cross-compiling to Windows without a \
+             resource compiler (llvm-rc for the msvc ABI, *-windres for the gnu ABI) on PATH."
+        );
+    }
+}
+
+/// Derives the `InternalName` string-table field from an artifact file name:
+/// Windows convention keeps the extension in `OriginalFilename` but leaves it out
+/// of `InternalName`. Strips whatever the extension happens to be (`.dll` for a
+/// `cdylib`, `.exe` for a binary, `.pyd`/`.node` for a runtime-specific extension
+/// module) rather than assuming one, and returns the name unchanged when there is
+/// no extension at all.
+fn internal_name(file_name: &str) -> &str {
+    // `file_stem` yields an `OsStr`, and the `to_str` can only fail for non-UTF-8
+    // input, which a `&str` argument rules out; both fallbacks are unreachable.
+    Path::new(file_name)
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or(file_name)
 }
 
 /// Packs a `major.minor.patch[-prerelease][+build]` semver string into the `u64`
@@ -128,7 +152,23 @@ fn pack_version(version: &str) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::pack_version;
+    use super::{internal_name, pack_version};
+
+    #[test]
+    fn internal_name_strips_whatever_extension_is_present() {
+        assert_eq!(
+            internal_name("datadog_profiling_ffi.dll"),
+            "datadog_profiling_ffi"
+        );
+        assert_eq!(
+            internal_name("crashtracker_receiver.exe"),
+            "crashtracker_receiver"
+        );
+        assert_eq!(internal_name("ddup.pyd"), "ddup");
+        // Only the last extension goes, and a name without one is left alone.
+        assert_eq!(internal_name("datadog.profiling.dll"), "datadog.profiling");
+        assert_eq!(internal_name("no_extension"), "no_extension");
+    }
 
     #[test]
     fn packs_plain_semver() {
