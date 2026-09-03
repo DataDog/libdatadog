@@ -23,10 +23,12 @@ libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils", default
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 https = ["libdd-common/https", "libdd-trace-utils/https"]
 fips = ["libdd-common/fips", "libdd-trace-utils/fips"]
+regex-ascii = ["libdd-common/regex-ascii"]
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]
 
 [dev-dependencies]
 duplicate = "0.4.1"

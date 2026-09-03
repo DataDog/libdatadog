@@ -24,6 +24,8 @@ libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes", features = [
 zstd = { version = "0.13", default-features = false }
 
 [features]
-default = []
+default = ["regex-unicode"]
 compression = ["libdd-trace-utils/compression"]
+regex-ascii = ["libdd-common/regex-ascii"]
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]

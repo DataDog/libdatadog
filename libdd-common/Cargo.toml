@@ -28,7 +28,7 @@ multer = { version = "3.1", optional = true }
 bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
-regex = "1.5"
+regex = { version = "1.5", default-features = false, features = ["perf", "std"] }
 regex-lite = { version = "0.1", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
@@ -93,7 +93,7 @@ tempfile.workspace = true
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 http-client = [
     "dep:hyper",
     "dep:hyper-util",
@@ -112,9 +112,14 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 cgroup_testing = []
 # Use regex-lite instead of regex for smaller binary size
 regex-lite = ["dep:regex-lite"]
+# Force the full regex engine without Unicode tables. Cargo features are
+# additive, so builds must also omit `regex-unicode`.
+regex-ascii = []
+# Enable Unicode tables for the full regex engine.
+regex-unicode = ["regex/unicode"]
 # Consumers that handle user-provided regexes can enable this feature to force
 # the full `regex` crate, overriding `regex-lite` when both are active.
-require-regex-full = []
+require-regex-full = ["regex-unicode"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,

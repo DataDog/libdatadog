@@ -89,8 +89,10 @@ libdd-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 https = ["libdd-common/https", "dep:libdd-capabilities-impl", "libdd-capabilities-impl/https"]
+regex-ascii = ["libdd-common/regex-ascii"]
+regex-unicode = ["libdd-common/regex-unicode"]
 mini_agent = [
     "compression",
     "libdd-common/http-client",
