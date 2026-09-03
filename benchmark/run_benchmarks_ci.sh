@@ -65,8 +65,8 @@ for crate in ${BENCH_PACKAGES}; do
   done
 done
 
-# Start the shared compiler cache if this image has one. Best-effort: nodes can still be serving
-# a pre-sccache image, and a cache problem must never fail a benchmark job.
+# Start the shared compiler cache. Still best-effort either way: a compiler
+# cache is an optimisation, and no cache problem may ever fail a benchmark job.
 start_compiler_cache() {
   if ! command -v sccache > /dev/null 2>&1; then
     message "sccache not present in this image; building without a compiler cache"
