@@ -2182,15 +2182,15 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
 
 /// Downgrades a native V1 builder to the in-memory v0.4 trace collection (`ddog_TracesBytes`) for
 /// the in-process `coms.c` sender (PHP <= 8.2), which always downgrades to `/v0.4/traces`. Consumes
-/// `builder`, encodes it to v0.4 msgpack (`msgpack_encoder::v04::to_vec_from_v1`, the same downgrade
-/// the sidecar server performs), then decodes those bytes back into the owned `Vec<Vec<SpanBytes>>`
-/// collection.
+/// `builder`, encodes it to v0.4 msgpack (`msgpack_encoder::v04::to_vec_from_v1`, the same
+/// downgrade the sidecar server performs), then decodes those bytes back into the owned
+/// `Vec<Vec<SpanBytes>>` collection.
 ///
-/// Returning the decoded collection (rather than a single whole-payload CharSlice) lets `auto_flush`
-/// frame each trace individually for the background sender — one `ddtrace_send_traces_via_thread(1,
-/// …)` per trace, matching master's coms framing. A whole-payload CharSlice would be
-/// single-trace-only through that framing and would silently drop the extra traces of a multi-trace
-/// payload.
+/// Returning the decoded collection (rather than a single whole-payload CharSlice) lets
+/// `auto_flush` frame each trace individually for the background sender — one
+/// `ddtrace_send_traces_via_thread(1, …)` per trace, matching master's coms framing. A
+/// whole-payload CharSlice would be single-trace-only through that framing and would silently drop
+/// the extra traces of a multi-trace payload.
 ///
 /// Payload-level metadata is NOT applied here: v0.4 carries it as HTTP headers, not on the wire.
 /// Returns an empty collection on an encode/decode error. Free the result with

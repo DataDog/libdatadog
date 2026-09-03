@@ -34,8 +34,6 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
-use futures::FutureExt;
-use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
@@ -51,8 +49,10 @@ use crate::service::stats_flusher::{
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
+use futures::FutureExt;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
+use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
@@ -366,7 +366,8 @@ impl SidecarServer {
                 // v0.4 bytes back into a v0.4 chunk collection so the existing v0.4 send path
                 // handles serialization/retries unchanged.
                 let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(tracer_payload);
-                match decode_to_trace_chunks(tinybytes::Bytes::from(v04_bytes), TraceEncoding::V04) {
+                match decode_to_trace_chunks(tinybytes::Bytes::from(v04_bytes), TraceEncoding::V04)
+                {
                     Ok((v04_payload, v04_size)) => {
                         debug!(
                             "Agent does not advertise /v1.0/traces; downgrading to v0.4 ({} bytes) for {:?} with headers {:?}",
@@ -1134,9 +1135,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
-        if let (Some(v1_endpoint), Some(v04_endpoint)) =
-            (trace_config.endpoint_v1.clone(), trace_config.endpoint.clone())
-        {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) = (
+            trace_config.endpoint_v1.clone(),
+            trace_config.endpoint.clone(),
+        ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
@@ -1176,9 +1178,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
 
-        if let (Some(v1_endpoint), Some(v04_endpoint)) =
-            (trace_config.endpoint_v1.clone(), trace_config.endpoint.clone())
-        {
+        if let (Some(v1_endpoint), Some(v04_endpoint)) = (
+            trace_config.endpoint_v1.clone(),
+            trace_config.endpoint.clone(),
+        ) {
             let server = self.server.clone();
             let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {

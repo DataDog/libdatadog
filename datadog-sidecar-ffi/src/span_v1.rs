@@ -7,10 +7,10 @@
 //! This builder stores **real, readable strings** ([`BytesString`]) directly on each
 //! [`SpanBytes`]/[`TraceChunkBytes`]/[`TracerPayloadBytes`] field, mirroring the v0.4 builder in
 //! [`crate::span`]. Setters take a [`CharSlice`] and store its content verbatim; getters hand back
-//! short-lived [`CharSlice`] borrows over the stored strings. There is no build-time string interning
-//! table: wire-level string deduplication is performed independently by the V1 encoder's own
-//! streaming table at encode time, so an in-memory intern table would only add cost while blocking
-//! introspection of the built payload.
+//! short-lived [`CharSlice`] borrows over the stored strings. There is no build-time string
+//! interning table: wire-level string deduplication is performed independently by the V1 encoder's
+//! own streaming table at encode time, so an in-memory intern table would only add cost while
+//! blocking introspection of the built payload.
 //!
 //! The builder is index-based rather than pointer-based (chunks/spans/links/events are addressed by
 //! their `usize` position, not by a returned `&mut` handle). This is deliberate: every mutating
@@ -55,8 +55,9 @@ pub struct TracerPayloadV1Builder {
 
 impl TracerPayloadV1Builder {
     // Index-addressed accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`) can
-    // fill the model without any `#[no_mangle]` mutator C-ABI and without a live `&mut` ever escaping
-    // to C: every mutation routes through a single `&mut TracerPayloadV1Builder` per call.
+    // fill the model without any `#[no_mangle]` mutator C-ABI and without a live `&mut` ever
+    // escaping to C: every mutation routes through a single `&mut TracerPayloadV1Builder` per
+    // call.
     pub fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
         self.payload.chunks.get(chunk)
     }
@@ -99,7 +100,8 @@ impl TracerPayloadV1Builder {
         self.span_mut(chunk, span)?.span_events.get_mut(event)
     }
 
-    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning its index.
+    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning its
+    /// index.
     pub fn push_chunk(&mut self, trace_id_high: u64, trace_id_low: u64) -> usize {
         self.payload.chunks.push(TraceChunkBytes {
             trace_id: trace_id_bytes(trace_id_high, trace_id_low),
@@ -247,7 +249,10 @@ fn attr_double_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) ->
 }
 
 fn attr_bool_at(map: &VecMap<BytesString, AttributeValueBytes>, idx: usize) -> bool {
-    matches!(map.iter().nth(idx), Some((_, AttributeValueBytes::Bool(true))))
+    matches!(
+        map.iter().nth(idx),
+        Some((_, AttributeValueBytes::Bool(true)))
+    )
 }
 
 // ------------------- Builder lifecycle -------------------
@@ -309,7 +314,9 @@ pub extern "C" fn ddog_v1_get_chunk_trace_id_high(
     builder: &TracerPayloadV1Builder,
     chunk: usize,
 ) -> u64 {
-    builder.chunk(chunk).map_or(0, |c| trace_id_high(&c.trace_id))
+    builder
+        .chunk(chunk)
+        .map_or(0, |c| trace_id_high(&c.trace_id))
 }
 
 /// Low 64 bits of the chunk's 128-bit trace id.
@@ -318,7 +325,9 @@ pub extern "C" fn ddog_v1_get_chunk_trace_id_low(
     builder: &TracerPayloadV1Builder,
     chunk: usize,
 ) -> u64 {
-    builder.chunk(chunk).map_or(0, |c| trace_id_low(&c.trace_id))
+    builder
+        .chunk(chunk)
+        .map_or(0, |c| trace_id_low(&c.trace_id))
 }
 
 /// Reads the chunk sampling priority; returns `false` (and leaves `out` untouched) when unset.
@@ -380,7 +389,9 @@ pub extern "C" fn ddog_v1_get_chunk_attr_count(
     builder: &TracerPayloadV1Builder,
     chunk: usize,
 ) -> usize {
-    builder.chunk(chunk).map_or(0, |c| attr_count(&c.attributes))
+    builder
+        .chunk(chunk)
+        .map_or(0, |c| attr_count(&c.attributes))
 }
 
 /// Key of the chunk attribute at `idx`.
@@ -1149,7 +1160,11 @@ mod tests {
         }
     }
 
-    fn ddog_v1_set_chunk_dropped_trace(b: &mut TracerPayloadV1Builder, chunk: usize, dropped: bool) {
+    fn ddog_v1_set_chunk_dropped_trace(
+        b: &mut TracerPayloadV1Builder,
+        chunk: usize,
+        dropped: bool,
+    ) {
         if let Some(c) = b.chunk_mut(chunk) {
             c.dropped_trace = dropped;
         }
@@ -1201,7 +1216,12 @@ mod tests {
     fn ddog_v1_set_span_version(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
         set_span_string(b, c, s, v, |sp| &mut sp.version);
     }
-    fn ddog_v1_set_span_component(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
+    fn ddog_v1_set_span_component(
+        b: &mut TracerPayloadV1Builder,
+        c: usize,
+        s: usize,
+        v: CharSlice,
+    ) {
         set_span_string(b, c, s, v, |sp| &mut sp.component);
     }
 
@@ -1254,7 +1274,13 @@ mod tests {
         key: CharSlice,
         value: CharSlice,
     ) {
-        add_span_attr(b, c, s, key, AttributeValueBytes::String(to_bytes_string(value)));
+        add_span_attr(
+            b,
+            c,
+            s,
+            key,
+            AttributeValueBytes::String(to_bytes_string(value)),
+        );
     }
     fn ddog_v1_add_span_attr_int(
         b: &mut TracerPayloadV1Builder,
@@ -1301,7 +1327,8 @@ mod tests {
         key: CharSlice,
     ) -> bool {
         let key = to_bytes_string(key);
-        b.span(c, s).is_some_and(|sp| sp.attributes.contains_key(&key))
+        b.span(c, s)
+            .is_some_and(|sp| sp.attributes.contains_key(&key))
     }
 
     fn ddog_v1_del_span_attr(
@@ -1539,9 +1566,15 @@ mod tests {
         assert_eq!(ddog_v1_get_chunk_origin(&b, ci).to_utf8_lossy(), "lambda");
         assert!(ddog_v1_get_chunk_dropped_trace(&b, ci));
         assert_eq!(ddog_v1_get_chunk_attr_count(&b, ci), 1);
-        assert_eq!(ddog_v1_get_chunk_attr_key(&b, ci, 0).to_utf8_lossy(), "c_key");
+        assert_eq!(
+            ddog_v1_get_chunk_attr_key(&b, ci, 0).to_utf8_lossy(),
+            "c_key"
+        );
         assert_eq!(ddog_v1_get_chunk_attr_type(&b, ci, 0), DDOG_V1_ATTR_STRING);
-        assert_eq!(ddog_v1_get_chunk_attr_str(&b, ci, 0).to_utf8_lossy(), "c_val");
+        assert_eq!(
+            ddog_v1_get_chunk_attr_str(&b, ci, 0).to_utf8_lossy(),
+            "c_val"
+        );
 
         // Span getters.
         assert_eq!(ddog_v1_get_span_count(&b, ci), 1);
@@ -1550,8 +1583,14 @@ mod tests {
         assert_eq!(ddog_v1_get_span_resource(&b, ci, si).to_utf8_lossy(), "res");
         assert_eq!(ddog_v1_get_span_type(&b, ci, si).to_utf8_lossy(), "web");
         assert_eq!(ddog_v1_get_span_env(&b, ci, si).to_utf8_lossy(), "prod");
-        assert_eq!(ddog_v1_get_span_version(&b, ci, si).to_utf8_lossy(), "1.2.3");
-        assert_eq!(ddog_v1_get_span_component(&b, ci, si).to_utf8_lossy(), "pdo");
+        assert_eq!(
+            ddog_v1_get_span_version(&b, ci, si).to_utf8_lossy(),
+            "1.2.3"
+        );
+        assert_eq!(
+            ddog_v1_get_span_component(&b, ci, si).to_utf8_lossy(),
+            "pdo"
+        );
         assert_eq!(ddog_v1_get_span_id(&b, ci, si), 42);
         assert_eq!(ddog_v1_get_span_parent_id(&b, ci, si), 7);
         assert_eq!(ddog_v1_get_span_start(&b, ci, si), 1_000);
@@ -1561,17 +1600,35 @@ mod tests {
 
         // Span attributes: 5 typed values in insertion order.
         assert_eq!(ddog_v1_get_span_attr_count(&b, ci, si), 5);
-        assert_eq!(ddog_v1_get_span_attr_key(&b, ci, si, 0).to_utf8_lossy(), "a_str");
-        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 0), DDOG_V1_ATTR_STRING);
-        assert_eq!(ddog_v1_get_span_attr_str(&b, ci, si, 0).to_utf8_lossy(), "v");
+        assert_eq!(
+            ddog_v1_get_span_attr_key(&b, ci, si, 0).to_utf8_lossy(),
+            "a_str"
+        );
+        assert_eq!(
+            ddog_v1_get_span_attr_type(&b, ci, si, 0),
+            DDOG_V1_ATTR_STRING
+        );
+        assert_eq!(
+            ddog_v1_get_span_attr_str(&b, ci, si, 0).to_utf8_lossy(),
+            "v"
+        );
         assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 1), DDOG_V1_ATTR_INT);
         assert_eq!(ddog_v1_get_span_attr_int(&b, ci, si, 1), 11);
-        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 2), DDOG_V1_ATTR_DOUBLE);
+        assert_eq!(
+            ddog_v1_get_span_attr_type(&b, ci, si, 2),
+            DDOG_V1_ATTR_DOUBLE
+        );
         assert_eq!(ddog_v1_get_span_attr_double(&b, ci, si, 2), 1.5);
         assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 3), DDOG_V1_ATTR_BOOL);
         assert!(ddog_v1_get_span_attr_bool(&b, ci, si, 3));
-        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, si, 4), DDOG_V1_ATTR_BYTES);
-        assert_eq!(ddog_v1_get_span_attr_bytes(&b, ci, si, 4).to_utf8_lossy(), "raw");
+        assert_eq!(
+            ddog_v1_get_span_attr_type(&b, ci, si, 4),
+            DDOG_V1_ATTR_BYTES
+        );
+        assert_eq!(
+            ddog_v1_get_span_attr_bytes(&b, ci, si, 4).to_utf8_lossy(),
+            "raw"
+        );
 
         // Link getters.
         assert_eq!(ddog_v1_get_link_count(&b, ci, si), 1);
@@ -1579,18 +1636,36 @@ mod tests {
         assert_eq!(ddog_v1_get_link_trace_id_low(&b, ci, si, li), 0x22);
         assert_eq!(ddog_v1_get_link_span_id(&b, ci, si, li), 9);
         assert_eq!(ddog_v1_get_link_flags(&b, ci, si, li), 1);
-        assert_eq!(ddog_v1_get_link_tracestate(&b, ci, si, li).to_utf8_lossy(), "dd=s:1");
+        assert_eq!(
+            ddog_v1_get_link_tracestate(&b, ci, si, li).to_utf8_lossy(),
+            "dd=s:1"
+        );
         assert_eq!(ddog_v1_get_link_attr_count(&b, ci, si, li), 1);
-        assert_eq!(ddog_v1_get_link_attr_key(&b, ci, si, li, 0).to_utf8_lossy(), "l_key");
-        assert_eq!(ddog_v1_get_link_attr_str(&b, ci, si, li, 0).to_utf8_lossy(), "l_val");
+        assert_eq!(
+            ddog_v1_get_link_attr_key(&b, ci, si, li, 0).to_utf8_lossy(),
+            "l_key"
+        );
+        assert_eq!(
+            ddog_v1_get_link_attr_str(&b, ci, si, li, 0).to_utf8_lossy(),
+            "l_val"
+        );
 
         // Event getters.
         assert_eq!(ddog_v1_get_event_count(&b, ci, si), 1);
         assert_eq!(ddog_v1_get_event_time(&b, ci, si, evi), 123);
-        assert_eq!(ddog_v1_get_event_name(&b, ci, si, evi).to_utf8_lossy(), "exception");
+        assert_eq!(
+            ddog_v1_get_event_name(&b, ci, si, evi).to_utf8_lossy(),
+            "exception"
+        );
         assert_eq!(ddog_v1_get_event_attr_count(&b, ci, si, evi), 1);
-        assert_eq!(ddog_v1_get_event_attr_key(&b, ci, si, evi, 0).to_utf8_lossy(), "e_int");
-        assert_eq!(ddog_v1_get_event_attr_type(&b, ci, si, evi, 0), DDOG_V1_ATTR_INT);
+        assert_eq!(
+            ddog_v1_get_event_attr_key(&b, ci, si, evi, 0).to_utf8_lossy(),
+            "e_int"
+        );
+        assert_eq!(
+            ddog_v1_get_event_attr_type(&b, ci, si, evi, 0),
+            DDOG_V1_ATTR_INT
+        );
         assert_eq!(ddog_v1_get_event_attr_int(&b, ci, si, evi, 0), 5);
 
         // Out-of-range access is safe and returns defaults.
@@ -1781,9 +1856,18 @@ mod tests {
         assert!(ddog_v1_has_span_attr(&b, ci, inferred, cs("error.message")));
         // value is preserved (String, "boom") on the destination.
         assert_eq!(ddog_v1_get_span_attr_count(&b, ci, inferred), 1);
-        assert_eq!(ddog_v1_get_span_attr_key(&b, ci, inferred, 0).to_utf8_lossy(), "error.message");
-        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, inferred, 0), DDOG_V1_ATTR_STRING);
-        assert_eq!(ddog_v1_get_span_attr_str(&b, ci, inferred, 0).to_utf8_lossy(), "boom");
+        assert_eq!(
+            ddog_v1_get_span_attr_key(&b, ci, inferred, 0).to_utf8_lossy(),
+            "error.message"
+        );
+        assert_eq!(
+            ddog_v1_get_span_attr_type(&b, ci, inferred, 0),
+            DDOG_V1_ATTR_STRING
+        );
+        assert_eq!(
+            ddog_v1_get_span_attr_str(&b, ci, inferred, 0).to_utf8_lossy(),
+            "boom"
+        );
 
         // metric move with deletion of the source (mirrors delete_source=true).
         assert!(ddog_v1_transfer_span_attr(
@@ -1796,11 +1880,21 @@ mod tests {
         ));
         assert!(!ddog_v1_has_span_attr(&b, ci, root, cs("_dd.agent_psr")));
         assert!(ddog_v1_has_span_attr(&b, ci, inferred, cs("_dd.agent_psr")));
-        assert_eq!(ddog_v1_get_span_attr_type(&b, ci, inferred, 1), DDOG_V1_ATTR_DOUBLE);
+        assert_eq!(
+            ddog_v1_get_span_attr_type(&b, ci, inferred, 1),
+            DDOG_V1_ATTR_DOUBLE
+        );
         assert_eq!(ddog_v1_get_span_attr_double(&b, ci, inferred, 1), 0.5);
 
         // absent source key is a no-op (destination untouched, nothing deleted).
-        assert!(!ddog_v1_transfer_span_attr(&mut b, ci, root, inferred, cs("missing"), true));
+        assert!(!ddog_v1_transfer_span_attr(
+            &mut b,
+            ci,
+            root,
+            inferred,
+            cs("missing"),
+            true
+        ));
         assert_eq!(ddog_v1_get_span_attr_count(&b, ci, inferred), 2);
 
         // encode still yields a valid, non-empty V1 payload with the transferred keys present.
@@ -1839,9 +1933,18 @@ mod tests {
         let slice = ddog_v1_span_debug_log(&b, ci, si);
         let rendered = slice.to_utf8_lossy().to_string();
         assert!(!rendered.is_empty());
-        assert!(rendered.contains("my-service"), "service should appear: {rendered}");
-        assert!(rendered.contains("my-operation"), "name should appear: {rendered}");
-        assert!(rendered.contains("resource=\"GET /x\""), "resource should appear: {rendered}");
+        assert!(
+            rendered.contains("my-service"),
+            "service should appear: {rendered}"
+        );
+        assert!(
+            rendered.contains("my-operation"),
+            "name should appear: {rendered}"
+        );
+        assert!(
+            rendered.contains("resource=\"GET /x\""),
+            "resource should appear: {rendered}"
+        );
         assert!(rendered.contains("span_id=42"));
         assert!(rendered.contains("parent_id=7"));
         assert!(rendered.contains("error=true"));

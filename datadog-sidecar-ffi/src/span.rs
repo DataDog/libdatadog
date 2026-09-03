@@ -5,10 +5,10 @@
 //! V1 builder for the in-process (`coms.c`) sender.
 //!
 //! The tracer builds the native V1 payload directly (see [`crate::span_v1`] and
-//! `components-rs/bytes.rs`); the standalone v0.4 span/meta/metrics builder that used to live here is
-//! gone. What remains is the minimal surface the in-process sender needs after a V1→v0.4 downgrade
-//! ([`crate::ddog_downgrade_v1_builder_to_v04_traces`]): iterate the decoded collection and serialize
-//! each trace individually for the background sender.
+//! `components-rs/bytes.rs`); the standalone v0.4 span/meta/metrics builder that used to live here
+//! is gone. What remains is the minimal surface the in-process sender needs after a V1→v0.4
+//! downgrade ([`crate::ddog_downgrade_v1_builder_to_v04_traces`]): iterate the decoded collection
+//! and serialize each trace individually for the background sender.
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_trace_utils::span::v04::SpanBytes;
