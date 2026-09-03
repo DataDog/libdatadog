@@ -308,19 +308,27 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
         state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "agentless")]
-        let mode: FetcherMode<C> = match &state.invariants.agentless {
-            Some(agentless_cfg) => FetcherMode::Agentless(
-                agentless::AgentlessFetcher::new(
-                    agentless_cfg.clone(),
-                    state.endpoint.clone(),
-                    state.http_client.clone(),
-                )
-                .await?,
-            ),
-            None => FetcherMode::Agent(PhantomData),
-        };
-        #[cfg(not(feature = "agentless"))]
-        let mode: FetcherMode<C> = FetcherMode::Agent(PhantomData);
+        if let Some(agentless_config) = state.invariants.agentless.clone() {
+            return Self::new_agentless(file_storage, state, agentless_config).await;
+        }
+
+        Ok(Self::new_no_agentless(file_storage, state))
+    }
+
+    #[cfg(feature = "agentless")]
+    pub(in crate::fetch) async fn new_agentless(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
+        agentless_config: agentless::AgentlessConfig,
+    ) -> anyhow::Result<Self> {
+        let mode = FetcherMode::Agentless(
+            agentless::AgentlessFetcher::new(
+                agentless_config,
+                state.endpoint.clone(),
+                state.http_client.clone(),
+            )
+            .await?,
+        );
 
         Ok(ConfigFetcher {
             file_storage,

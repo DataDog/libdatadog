@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "agentless")]
+use crate::fetch::AgentlessConfig;
 use crate::fetch::{
     random_uuid_string, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
     ConfigInvariants, ConfigProductCapabilities, FileStorage,
@@ -38,24 +40,48 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         options: ConfigOptions,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        Ok(SingleFetcher {
-            fetcher: ConfigFetcher::new(
-                sink,
-                Arc::new(ConfigFetcherState::with_client(
-                    options.invariants,
-                    http_client,
-                )),
-            )
-            .await?,
-            target: Arc::new(target),
-            product_capabilities: ConfigProductCapabilities::new(
-                options.products,
-                options.capabilities,
-            ),
+        let ConfigOptions {
+            invariants,
+            products,
+            capabilities,
+        } = options;
+        let state = Arc::new(ConfigFetcherState::with_client(invariants, http_client));
+        let fetcher = ConfigFetcher::new(sink, state).await?;
+
+        Ok(Self::from_fetcher(
+            fetcher,
+            target,
             runtime_id,
-            client_id: random_uuid_string(),
-            client_state: ConfigClientState::default(),
-        })
+            products,
+            capabilities,
+        ))
+    }
+
+    #[cfg(feature = "agentless")]
+    async fn new_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+        agentless_config: AgentlessConfig,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
+        let ConfigOptions {
+            mut invariants,
+            products,
+            capabilities,
+        } = options;
+        invariants.agentless = Some(agentless_config.clone());
+        let state = Arc::new(ConfigFetcherState::with_client(invariants, http_client));
+        let fetcher = ConfigFetcher::new_agentless(sink, state, agentless_config).await?;
+
+        Ok(Self::from_fetcher(
+            fetcher,
+            target,
+            runtime_id,
+            products,
+            capabilities,
+        ))
     }
 
     pub fn new_no_agentless(
@@ -65,19 +91,28 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         options: ConfigOptions,
         http_client: C,
     ) -> Self {
+        let ConfigOptions {
+            invariants,
+            products,
+            capabilities,
+        } = options;
+        let state = Arc::new(ConfigFetcherState::with_client(invariants, http_client));
+        let fetcher = ConfigFetcher::new_no_agentless(sink, state);
+
+        Self::from_fetcher(fetcher, target, runtime_id, products, capabilities)
+    }
+
+    fn from_fetcher(
+        fetcher: ConfigFetcher<S, C>,
+        target: Target,
+        runtime_id: String,
+        products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) -> Self {
         SingleFetcher {
-            fetcher: ConfigFetcher::new_no_agentless(
-                sink,
-                Arc::new(ConfigFetcherState::with_client(
-                    options.invariants,
-                    http_client,
-                )),
-            ),
+            fetcher,
             target: Arc::new(target),
-            product_capabilities: ConfigProductCapabilities::new(
-                options.products,
-                options.capabilities,
-            ),
+            product_capabilities: ConfigProductCapabilities::new(products, capabilities),
             runtime_id,
             client_id: random_uuid_string(),
             client_state: ConfigClientState::default(),
@@ -164,10 +199,33 @@ where
         options: ConfigOptions,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        Ok(SingleChangesFetcher {
-            changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client).await?,
-        })
+        let fetcher = SingleFetcher::new(sink, target, runtime_id, options, http_client).await?;
+        Ok(Self::from_fetcher(fetcher))
+    }
+
+    /// Creates a fetcher that only uses the agentless transport.
+    ///
+    /// # Errors
+    /// Returns an error when TUF initialization fails.
+    #[cfg(feature = "agentless")]
+    pub async fn new_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+        agentless_config: AgentlessConfig,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
+        let fetcher = SingleFetcher::new_agentless(
+            sink,
+            target,
+            runtime_id,
+            options,
+            agentless_config,
+            http_client,
+        )
+        .await?;
+        Ok(Self::from_fetcher(fetcher))
     }
 
     pub fn new_no_agentless(
@@ -177,15 +235,15 @@ where
         options: ConfigOptions,
         http_client: C,
     ) -> Self {
+        let fetcher =
+            SingleFetcher::new_no_agentless(sink, target, runtime_id, options, http_client);
+        Self::from_fetcher(fetcher)
+    }
+
+    fn from_fetcher(fetcher: SingleFetcher<S, C>) -> Self {
         SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new_no_agentless(
-                sink,
-                target,
-                runtime_id,
-                options,
-                http_client,
-            ),
+            fetcher,
         }
     }
 
@@ -235,5 +293,147 @@ where
     ) {
         self.fetcher
             .set_product_capabilities(products, capabilities);
+    }
+}
+
+#[cfg(all(test, feature = "agentless", not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use crate::file_storage::SimpleFileStorage;
+    use bytes::Bytes;
+    use libdd_capabilities::{HttpError, MaybeSend};
+    use libdd_common::Endpoint;
+    use std::future::Future;
+    use std::sync::Mutex;
+
+    #[derive(Clone, Debug, Default)]
+    struct RecordingHttp {
+        requests: Arc<Mutex<Vec<http::Uri>>>,
+    }
+
+    impl SleepCapability for RecordingHttp {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn sleep(&self, _duration: Duration) -> impl Future<Output = ()> + MaybeSend {
+            std::future::pending()
+        }
+    }
+
+    impl HttpClientCapability for RecordingHttp {
+        fn new_client() -> Self {
+            Self::default()
+        }
+
+        fn new_without_connection_pooling() -> Self {
+            Self::default()
+        }
+
+        #[allow(clippy::manual_async_fn)]
+        fn request(
+            &self,
+            request: http::Request<Bytes>,
+        ) -> impl Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend {
+            let requests = self.requests.clone();
+            async move {
+                requests.lock().unwrap().push(request.uri().clone());
+                Err(HttpError::Other(anyhow::anyhow!("request recorded")))
+            }
+        }
+    }
+
+    fn options(endpoint: Endpoint, agentless: Option<AgentlessConfig>) -> ConfigOptions {
+        ConfigOptions {
+            invariants: ConfigInvariants {
+                language: "test".to_string(),
+                tracer_version: "1.0.0".to_string(),
+                endpoint,
+                agentless,
+            },
+            products: vec![],
+            capabilities: vec![],
+        }
+    }
+
+    fn target() -> Target {
+        Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.0.0".to_string(),
+            vec![],
+            vec![],
+        )
+    }
+
+    async fn create(
+        options: ConfigOptions,
+        agentless_config: AgentlessConfig,
+        http_client: RecordingHttp,
+    ) -> anyhow::Result<SingleChangesFetcher<SimpleFileStorage, RecordingHttp>> {
+        SingleChangesFetcher::new_agentless(
+            SimpleFileStorage::default(),
+            target(),
+            "runtime-id".to_string(),
+            options,
+            agentless_config,
+            http_client,
+        )
+        .await
+    }
+
+    async fn assert_uses_endpoint(
+        fetcher: &mut SingleChangesFetcher<SimpleFileStorage, RecordingHttp>,
+        http_client: &RecordingHttp,
+        endpoint: &Endpoint,
+    ) {
+        assert!(fetcher.fetch_changes::<Vec<u8>>().await.is_err());
+
+        let requests = http_client.requests.lock().unwrap();
+        assert!(!requests.is_empty());
+        for request in requests.iter() {
+            assert_eq!(request.scheme(), endpoint.url.scheme());
+            assert_eq!(request.authority(), endpoint.url.authority());
+        }
+    }
+
+    #[tokio::test]
+    async fn new_agentless_uses_explicit_agentless_endpoint() {
+        let endpoint = Endpoint::agentless("datadoghq.eu", "api-key".to_string())
+            .expect("test endpoint is valid");
+        let agentless = AgentlessConfig::new("host".to_string(), &endpoint)
+            .expect("test agentless configuration is valid");
+        let expected_endpoint = agentless.agentless_endpoint().clone();
+        let http_client = RecordingHttp::default();
+        let mut fetcher = create(
+            options(Endpoint::default(), None),
+            agentless,
+            http_client.clone(),
+        )
+        .await
+        .expect("agentless fetcher should initialize");
+
+        assert_uses_endpoint(&mut fetcher, &http_client, &expected_endpoint).await;
+    }
+
+    #[tokio::test]
+    async fn new_uses_configured_agentless_endpoint() {
+        let endpoint = Endpoint::agentless("us5.datadoghq.com", "api-key".to_string())
+            .expect("test endpoint is valid");
+        let agentless = AgentlessConfig::new("host".to_string(), &endpoint)
+            .expect("test agentless configuration is valid");
+        let expected_endpoint = agentless.agentless_endpoint().clone();
+        let http_client = RecordingHttp::default();
+        let mut fetcher = SingleChangesFetcher::new(
+            SimpleFileStorage::default(),
+            target(),
+            "runtime-id".to_string(),
+            options(Endpoint::default(), Some(agentless)),
+            http_client.clone(),
+        )
+        .await
+        .expect("agentless fetcher should initialize");
+
+        assert_uses_endpoint(&mut fetcher, &http_client, &expected_endpoint).await;
     }
 }
