@@ -454,42 +454,37 @@ fn partial_success_details(
 fn grpc_status_to_error(status: Status) -> GrpcExportError {
     let retry_after = retry_info_delay(&status);
 
-    // Transport/IO failures from our bare `H2Service` fall through to `Code::Unknown` with the
-    // original `std::io::Error` somewhere in the source chain (directly for a connect failure, or
-    // wrapped in a `hyper::Error` for a post-connect handshake/read/write failure). Walk the chain
-    // and recover it so these map to `Io` rather than an application-level `Request` error.
-    if status.code() == Code::Unknown {
-        let mut cause: Option<&(dyn std::error::Error + 'static)> = status.source();
-        while let Some(err) = cause {
-            if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-                return GrpcExportError::Retryable {
-                    error: TraceExporterError::Io(std::io::Error::new(
-                        io_err.kind(),
-                        io_err.to_string(),
-                    )),
-                    retry_after,
-                };
-            }
-            let hyper_retryable = err
-                .downcast_ref::<hyper::Error>()
-                .is_some_and(|error| error.is_canceled() || error.is_closed());
-            let h2_retryable = err.downcast_ref::<h2::Error>().is_some_and(|error| {
-                matches!(
-                    error.reason(),
-                    Some(h2::Reason::REFUSED_STREAM | h2::Reason::CANCEL)
-                )
-            });
-            if hyper_retryable || h2_retryable {
-                return GrpcExportError::Retryable {
-                    error: TraceExporterError::Io(std::io::Error::new(
-                        std::io::ErrorKind::ConnectionReset,
-                        err.to_string(),
-                    )),
-                    retry_after,
-                };
-            }
-            cause = err.source();
+    // Recover local transport failures before classifying source-less remote gRPC statuses.
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = status.source();
+    while let Some(err) = cause {
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return GrpcExportError::Retryable {
+                error: TraceExporterError::Io(std::io::Error::new(
+                    io_err.kind(),
+                    io_err.to_string(),
+                )),
+                retry_after,
+            };
         }
+        let hyper_retryable = err
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|error| error.is_canceled() || error.is_closed());
+        let h2_retryable = err.downcast_ref::<h2::Error>().is_some_and(|error| {
+            matches!(
+                error.reason(),
+                Some(h2::Reason::REFUSED_STREAM | h2::Reason::CANCEL)
+            )
+        });
+        if hyper_retryable || h2_retryable {
+            return GrpcExportError::Retryable {
+                error: TraceExporterError::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    err.to_string(),
+                )),
+                retry_after,
+            };
+        }
+        cause = err.source();
     }
     let code = status.code();
     let (http_status, retryable) = match code {
@@ -1073,6 +1068,23 @@ mod send_tests {
                 retry_after: None,
             } => {
                 assert_eq!(e.kind(), std::io::ErrorKind::ConnectionRefused)
+            }
+            other => panic!("expected retryable Io, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_unavailable_with_io_source_maps_to_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
+        let mut status = Status::unavailable("transport failure");
+        status.set_source(Arc::new(io_err));
+        assert_eq!(status.code(), Code::Unavailable);
+        match grpc_status_to_error(status) {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Io(e),
+                retry_after: None,
+            } => {
+                assert_eq!(e.kind(), std::io::ErrorKind::ConnectionReset)
             }
             other => panic!("expected retryable Io, got {other:?}"),
         }
