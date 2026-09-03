@@ -15,6 +15,36 @@ fn bs(s: &str) -> BytesString {
     BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
 }
 
+// Demonstrates that serde_json ignores the `len` hint passed to `serialize_map` (other than the
+// `Some(0)` special case): the bytes produced are identical whether the hint is `None` or the
+// exact entry count, so precomputing it buys nothing for this serializer.
+#[test]
+fn serde_json_serialize_map_len_hint_does_not_affect_output() {
+    use serde::ser::{SerializeMap, Serializer};
+
+    let entries = [("a", 1), ("b", 2), ("c", 3)];
+
+    let mut buf_none = Vec::new();
+    let mut ser = serde_json::Serializer::new(&mut buf_none);
+    let mut map = ser.serialize_map(None).expect("serialize_map(None)");
+    for (k, v) in &entries {
+        map.serialize_entry(k, v).expect("serialize_entry");
+    }
+    map.end().expect("end");
+
+    let mut buf_some = Vec::new();
+    let mut ser = serde_json::Serializer::new(&mut buf_some);
+    let mut map = ser
+        .serialize_map(Some(entries.len()))
+        .expect("serialize_map(Some(n))");
+    for (k, v) in &entries {
+        map.serialize_entry(k, v).expect("serialize_entry");
+    }
+    map.end().expect("end");
+
+    assert_eq!(buf_none, buf_some);
+}
+
 fn base_metadata() -> TracerMetadata {
     TracerMetadata {
         hostname: "host-1".to_string(),
@@ -435,6 +465,28 @@ fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     };
     let out = encode_first_span(&[minimal_chunk([0u8; 16], span)]);
     assert_eq!(out["meta"]["a.b"], "v");
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn nested_attribute_flattening_to_a_promoted_key_does_not_override_dedicated_field() {
+    let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+    inner.insert(
+        bs("origin"),
+        AttributeValue::String(bs("attacker-controlled")),
+    );
+    let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+    attrs.insert(bs("_dd"), AttributeValue::KeyValue(inner));
+    let chunk = TraceChunkBytes {
+        origin: bs("rum"),
+        attributes: attrs,
+        ..minimal_chunk([0u8; 16], minimal_span())
+    };
+    let out = encode_first_span(&[chunk]);
+    // The dedicated `chunk.origin` field must win; the flattened `_dd.origin` leaf (which
+    // collides only after flattening, not on its unflattened top-level key `_dd`) must be
+    // dropped rather than emitted as a second `_dd.origin` entry.
+    assert_eq!(out["meta"]["_dd.origin"], "rum");
 }
 
 #[cfg_attr(miri, ignore)]

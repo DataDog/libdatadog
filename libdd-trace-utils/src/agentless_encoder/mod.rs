@@ -27,10 +27,7 @@
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-use crate::span::v1::{
-    AttributeValue as AttributeValueV1, Span as SpanV1, SpanEvent as SpanEventV1, SpanKind,
-    SpanLink as SpanLinkV1, TraceChunk,
-};
+use crate::span::v1;
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
@@ -65,7 +62,7 @@ const TRUNCATION_SUFFIX: &str = "...";
 /// Contrary to a closure, the names of the types have to be named in full
 /// ```ignore
 ///        Optional generic| serializer|
-///            parameter   |.  |               Captured variables from env       
+///            parameter   |.  |               Captured variables from env
 ///         --------------  --- ---------------------------------------------------------
 /// ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata| {
 ///     // Body of the closure
@@ -455,19 +452,19 @@ const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
 
 /// Maps a `SpanKind` to its v0.4 `span.kind` meta string. Returns `None` for `Internal` so
 /// callers can skip emitting the default value.
-fn span_kind_to_meta_v1(kind: SpanKind) -> Option<&'static str> {
+fn span_kind_to_meta_v1(kind: v1::SpanKind) -> Option<&'static str> {
     match kind {
-        SpanKind::Internal => None,
-        SpanKind::Server => Some("server"),
-        SpanKind::Client => Some("client"),
-        SpanKind::Producer => Some("producer"),
-        SpanKind::Consumer => Some("consumer"),
+        v1::SpanKind::Internal => None,
+        v1::SpanKind::Server => Some("server"),
+        v1::SpanKind::Client => Some("client"),
+        v1::SpanKind::Producer => Some("producer"),
+        v1::SpanKind::Consumer => Some("consumer"),
     }
 }
 
 /// Drops entries whose key was already seen, keeping the first occurrence: two distinct
 /// attributes can flatten to the same dotted key.
-fn dedup_first_wins_v1<'a, V>(mut leaves: Vec<(Cow<'a, str>, V)>) -> Vec<(Cow<'a, str>, V)> {
+fn dedup_first_wins_v1<'a, V>(leaves: &mut Vec<(Cow<'a, str>, V)>) {
     let keep: Vec<bool> = {
         let mut seen: HashSet<&str> = HashSet::with_capacity(leaves.len());
         leaves
@@ -477,33 +474,43 @@ fn dedup_first_wins_v1<'a, V>(mut leaves: Vec<(Cow<'a, str>, V)>) -> Vec<(Cow<'a
     };
     let mut keep = keep.into_iter();
     leaves.retain(|_| keep.next().unwrap_or(false));
-    leaves
 }
 
-/// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for the
-/// `meta` (string-valued), `metrics` (numeric), and `meta_struct` (`Bytes`) buckets. Only called
-/// once an attribute is known to be nested: the resulting key is always a freshly built dotted
-/// string, so it's always owned — unlike the top-level scalar fast path in [`collect_attrs_v1`],
-/// which can borrow the key/value directly from the source attribute.
+/// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for `meta`,
+/// `metrics`, and `meta_struct`.
+///
+/// Only called for nested attributes, so the key is always freshly built and owned — unlike the
+/// top-level scalar fast path in [`collect_attrs_v1`], which borrows straight from the source.
+///
+/// `key` is a reused buffer: pushed to on the way down, truncated back on the way up, so it's
+/// unchanged once the call returns.
+///
+/// ## Examples
+/// ```text
+/// key="a",    v=KeyValue{b: "v"}           =>  meta_out    += ("a.b", "v")
+///
+/// key="list", v=List[String("x"), Int(2)]  =>  meta_out    += ("list.0", "x")
+///                                              metrics_out += ("list.1", 2.0)
+/// ```
 fn flatten_attr_into_v1<'a, T: TraceData>(
     key: &mut String,
-    v: &'a AttributeValueV1<T>,
+    v: &'a v1::AttributeValue<T>,
     meta_out: &mut Vec<(Cow<'a, str>, Cow<'a, str>)>,
     metrics_out: &mut Vec<(Cow<'a, str>, f64)>,
     bytes_out: &mut Vec<(Cow<'a, str>, T::Bytes)>,
 ) {
     match v {
-        AttributeValueV1::String(s) => {
+        v1::AttributeValue::String(s) => {
             meta_out.push((Cow::Owned(key.clone()), Cow::Borrowed(s.borrow())))
         }
-        AttributeValueV1::Bool(b) => meta_out.push((
+        v1::AttributeValue::Bool(b) => meta_out.push((
             Cow::Owned(key.clone()),
             Cow::Borrowed(if *b { "true" } else { "false" }),
         )),
-        AttributeValueV1::Int(i) => metrics_out.push((Cow::Owned(key.clone()), *i as f64)),
-        AttributeValueV1::Float(f) => metrics_out.push((Cow::Owned(key.clone()), *f)),
-        AttributeValueV1::Bytes(b) => bytes_out.push((Cow::Owned(key.clone()), b.clone())),
-        AttributeValueV1::List(items) => {
+        v1::AttributeValue::Int(i) => metrics_out.push((Cow::Owned(key.clone()), *i as f64)),
+        v1::AttributeValue::Float(f) => metrics_out.push((Cow::Owned(key.clone()), *f)),
+        v1::AttributeValue::Bytes(b) => bytes_out.push((Cow::Owned(key.clone()), b.clone())),
+        v1::AttributeValue::List(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
@@ -512,7 +519,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        AttributeValueV1::KeyValue(map) => {
+        v1::AttributeValue::KeyValue(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -538,8 +545,8 @@ struct CollectedAttrsV1<'a, T: TraceData> {
 /// drops attributes colliding with a [`PROMOTED_ATTR_KEYS_V1`] name, and splits the rest into
 /// `meta` leaves, `metrics` leaves, and `meta_struct` (`Bytes`) leaves.
 fn collect_attrs_v1<'a, T: TraceData>(
-    span: &'a SpanV1<T>,
-    chunk: &'a TraceChunk<T>,
+    span: &'a v1::Span<T>,
+    chunk: &'a v1::TraceChunk<T>,
 ) -> CollectedAttrsV1<'a, T> {
     let span_attrs_dd = span.attributes.defensive_dedup();
     let chunk_attrs_dd = chunk.attributes.defensive_dedup();
@@ -559,19 +566,23 @@ fn collect_attrs_v1<'a, T: TraceData>(
         match v {
             // Common case: a top-level scalar attribute maps 1:1 onto a leaf, so its key/value
             // can be borrowed straight from the source attribute — no allocation.
-            AttributeValueV1::String(s) => {
+            v1::AttributeValue::String(s) => {
                 meta_leaves.push((Cow::Borrowed(k.borrow()), Cow::Borrowed(s.borrow())))
             }
-            AttributeValueV1::Bool(b) => meta_leaves.push((
+            v1::AttributeValue::Bool(b) => meta_leaves.push((
                 Cow::Borrowed(k.borrow()),
                 Cow::Borrowed(if *b { "true" } else { "false" }),
             )),
-            AttributeValueV1::Int(i) => metrics_leaves.push((Cow::Borrowed(k.borrow()), *i as f64)),
-            AttributeValueV1::Float(f) => metrics_leaves.push((Cow::Borrowed(k.borrow()), *f)),
-            AttributeValueV1::Bytes(b) => bytes_leaves.push((Cow::Borrowed(k.borrow()), b.clone())),
+            v1::AttributeValue::Int(i) => {
+                metrics_leaves.push((Cow::Borrowed(k.borrow()), *i as f64))
+            }
+            v1::AttributeValue::Float(f) => metrics_leaves.push((Cow::Borrowed(k.borrow()), *f)),
+            v1::AttributeValue::Bytes(b) => {
+                bytes_leaves.push((Cow::Borrowed(k.borrow()), b.clone()))
+            }
             // Nested case: the leaf key has to be built (`key.0`, `key.a.b`, ...), so it can no
             // longer borrow the original attribute name alone.
-            AttributeValueV1::List(_) | AttributeValueV1::KeyValue(_) => {
+            v1::AttributeValue::List(_) | v1::AttributeValue::KeyValue(_) => {
                 key_buf.clear();
                 key_buf.push_str(k.borrow());
                 flatten_attr_into_v1(
@@ -584,10 +595,20 @@ fn collect_attrs_v1<'a, T: TraceData>(
             }
         }
     }
+    // A nested attribute can flatten into a promoted name (e.g. `span = {kind: "client"}` ->
+    // `span.kind`) even though its unflattened top-level key wasn't caught by the filter above
+    // — drop those too, so the dedicated field always wins as documented.
+    meta_leaves.retain(|(k, _)| !PROMOTED_ATTR_KEYS_V1.contains(&k.as_ref()));
+    metrics_leaves.retain(|(k, _)| !PROMOTED_ATTR_KEYS_V1.contains(&k.as_ref()));
+
+    dedup_first_wins_v1(&mut meta_leaves);
+    dedup_first_wins_v1(&mut metrics_leaves);
+    dedup_first_wins_v1(&mut bytes_leaves);
+
     CollectedAttrsV1 {
-        meta: dedup_first_wins_v1(meta_leaves),
-        metrics: dedup_first_wins_v1(metrics_leaves),
-        meta_struct: dedup_first_wins_v1(bytes_leaves),
+        meta: meta_leaves,
+        metrics: metrics_leaves,
+        meta_struct: bytes_leaves,
     }
 }
 
@@ -596,10 +617,10 @@ fn collect_attrs_v1<'a, T: TraceData>(
 /// equivalent to what a v0.4 tracer would produce for the same trace — see
 /// [`crate::msgpack_encoder::v04::span_v1`] for the mapping table this mirrors. Chunk-level
 /// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
-/// attributes) is propagated into every span, matching the [`TraceChunk`]-level granularity v1
+/// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
 pub fn encode_payload_from_v1<T: TraceData>(
-    chunks: &[TraceChunk<T>],
+    chunks: &[v1::TraceChunk<T>],
     metadata: &TracerMetadata,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let mut bytes = Vec::new();
@@ -608,10 +629,10 @@ pub fn encode_payload_from_v1<T: TraceData>(
     let mut map_ser = serializer.serialize_map(Some(1))?;
     map_ser.serialize_entry(
         "traces",
-        &ser_fn!(<T: TraceData> |ser, chunks: &'a [TraceChunk<T>], metadata: &'a TracerMetadata| {
+        &ser_fn!(<T: TraceData> |ser, chunks: &'a [v1::TraceChunk<T>], metadata: &'a TracerMetadata| {
             let mut traces_serializer = ser.serialize_seq(Some(chunks.len()))?;
             for chunk in chunks {
-                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a TraceChunk<T>, metadata: &'a TracerMetadata| {
+                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, metadata: &'a TracerMetadata| {
                     encode_trace_v1(ser, chunk, metadata)
                 }))?;
             }
@@ -624,7 +645,7 @@ pub fn encode_payload_from_v1<T: TraceData>(
 
 fn encode_trace_v1<T: TraceData, S: Serializer>(
     ser: S,
-    chunk: &TraceChunk<T>,
+    chunk: &v1::TraceChunk<T>,
     metadata: &TracerMetadata,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
@@ -651,11 +672,11 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "spans",
-        &ser_fn!(<T: TraceData> |ser, chunk: &'a TraceChunk<T>| {
+        &ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>| {
             let mut seq = ser.serialize_seq(Some(chunk.spans.len()))?;
             for (i, span) in chunk.spans.iter().enumerate() {
                 let is_first = i == 0;
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a TraceChunk<T>, span: &'a SpanV1<T>, is_first: bool| {
+                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, span: &'a v1::Span<T>, is_first: bool| {
                     encode_span_v1(ser, chunk, span, is_first)
                 }))?;
             }
@@ -668,8 +689,8 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
 
 fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     ser: S,
-    chunk: &'a TraceChunk<T>,
-    span: &'a SpanV1<T>,
+    chunk: &'a v1::TraceChunk<T>,
+    span: &'a v1::Span<T>,
     is_first_in_trace: bool,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
@@ -736,7 +757,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "meta",
-        &ser_fn!(<T: TraceData> |ser, span: &'a SpanV1<T>, chunk: &'a TraceChunk<T>, meta_leaves: &'a Vec<(Cow<'a, str>, Cow<'a, str>)>, is_first_in_trace: bool, trace_id_high: u64| {
+        &ser_fn!(<T: TraceData> |ser, span: &'a v1::Span<T>, chunk: &'a v1::TraceChunk<T>, meta_leaves: &'a Vec<(Cow<'a, str>, Cow<'a, str>)>, is_first_in_trace: bool, trace_id_high: u64| {
             let mut meta = ser.serialize_map(None)?;
 
             let env: &str = span.env.borrow();
@@ -804,7 +825,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "metrics",
-        &ser_fn!(<T: TraceData> |ser, span: &'a SpanV1<T>, metrics_leaves: &'a Vec<(Cow<'a, str>, f64)>, priority: Option<i32>| {
+        &ser_fn!(<T: TraceData> |ser, span: &'a v1::Span<T>, metrics_leaves: &'a Vec<(Cow<'a, str>, f64)>, priority: Option<i32>| {
             let mut metrics = ser.serialize_map(None)?;
             let mut trace_root_seen = false;
             for (key, val) in metrics_leaves.iter() {
@@ -835,7 +856,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     if !bytes_attrs.is_empty() {
         map.serialize_entry(
             "meta_struct",
-            &ser_fn!(<T: TraceData> |ser, span: &'a SpanV1<T>, bytes_attrs: &'a Vec<(Cow<'a, str>, T::Bytes)>| {
+            &ser_fn!(<T: TraceData> |ser, span: &'a v1::Span<T>, bytes_attrs: &'a Vec<(Cow<'a, str>, T::Bytes)>| {
                 let _ = span;
                 let mut ms = ser.serialize_map(None)?;
                 for (k, v) in bytes_attrs.iter() {
@@ -851,23 +872,25 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
 
 /// Serialize v1 span links to a JSON string suitable for `meta['_dd.span_links']`. Same
 /// truncation convention as [`serialize_span_links`].
-fn serialize_span_links_v1<T: TraceData>(links: &[SpanLinkV1<T>]) -> Option<String> {
-    let s = serde_json::to_string(&ser_fn!(<T: TraceData> |ser, links: &'a [SpanLinkV1<T>]| {
-        let mut seq = ser.serialize_seq(Some(links.len()))?;
-        for link in links {
-            seq.serialize_element(&ser_fn!(<T: TraceData> |ser, link: &'a SpanLinkV1<T>| {
-                encode_span_link_v1(ser, link)
-            }))?;
-        }
-        seq.end()
-    }))
+fn serialize_span_links_v1<T: TraceData>(links: &[v1::SpanLink<T>]) -> Option<String> {
+    let s = serde_json::to_string(
+        &ser_fn!(<T: TraceData> |ser, links: &'a [v1::SpanLink<T>]| {
+            let mut seq = ser.serialize_seq(Some(links.len()))?;
+            for link in links {
+                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, link: &'a v1::SpanLink<T>| {
+                    encode_span_link_v1(ser, link)
+                }))?;
+            }
+            seq.end()
+        }),
+    )
     .ok()?;
     Some(truncate_with_ellipsis(s, MAX_META_VALUE_LEN))
 }
 
 fn encode_span_link_v1<T: TraceData, S: Serializer>(
     ser: S,
-    link: &SpanLinkV1<T>,
+    link: &v1::SpanLink<T>,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
     let trace_id_128 = u128::from_be_bytes(link.trace_id);
@@ -875,19 +898,22 @@ fn encode_span_link_v1<T: TraceData, S: Serializer>(
     map.serialize_entry("span_id", &format!("{:016x}", link.span_id))?;
     let attrs_dd = link.attributes.defensive_dedup();
     let attrs_dd = &attrs_dd;
-    let has_attributes = attrs_dd
-        .iter()
-        .any(|(_, v)| matches!(v, AttributeValueV1::String(_) | AttributeValueV1::Bool(_)));
+    let has_attributes = attrs_dd.iter().any(|(_, v)| {
+        matches!(
+            v,
+            v1::AttributeValue::String(_) | v1::AttributeValue::Bool(_)
+        )
+    });
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, AttributeValueV1<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter() {
                     let key: &str = k.borrow();
                     match v {
-                        AttributeValueV1::String(s) => attrs.serialize_entry(key, s.borrow() as &str)?,
-                        AttributeValueV1::Bool(b) => {
+                        v1::AttributeValue::String(s) => attrs.serialize_entry(key, s.borrow() as &str)?,
+                        v1::AttributeValue::Bool(b) => {
                             attrs.serialize_entry(key, if *b { "true" } else { "false" })?
                         }
                         _ => {}
@@ -914,12 +940,12 @@ fn encode_span_link_v1<T: TraceData, S: Serializer>(
 
 /// Serialize v1 span events to a JSON string suitable for `meta['events']`. Same truncation
 /// convention as [`serialize_span_events`].
-fn serialize_span_events_v1<T: TraceData>(events: &[SpanEventV1<T>]) -> Option<String> {
+fn serialize_span_events_v1<T: TraceData>(events: &[v1::SpanEvent<T>]) -> Option<String> {
     let s = serde_json::to_string(
-        &ser_fn!(<T: TraceData> |ser, events: &'a [SpanEventV1<T>]| {
+        &ser_fn!(<T: TraceData> |ser, events: &'a [v1::SpanEvent<T>]| {
             let mut seq = ser.serialize_seq(Some(events.len()))?;
             for event in events {
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, event: &'a SpanEventV1<T>| {
+                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, event: &'a v1::SpanEvent<T>| {
                     encode_span_event_v1(ser, event)
                 }))?;
             }
@@ -931,31 +957,31 @@ fn serialize_span_events_v1<T: TraceData>(events: &[SpanEventV1<T>]) -> Option<S
 }
 
 /// Returns `true` when `v` can be downgraded to a v0.4 event-attribute (scalar or scalar list).
-fn is_supported_event_attr_v1<T: TraceData>(v: &AttributeValueV1<T>) -> bool {
+fn is_supported_event_attr_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
     matches!(
         v,
-        AttributeValueV1::String(_)
-            | AttributeValueV1::Bool(_)
-            | AttributeValueV1::Int(_)
-            | AttributeValueV1::Float(_)
-            | AttributeValueV1::List(_)
+        v1::AttributeValue::String(_)
+            | v1::AttributeValue::Bool(_)
+            | v1::AttributeValue::Int(_)
+            | v1::AttributeValue::Float(_)
+            | v1::AttributeValue::List(_)
     )
 }
 
 /// Returns `true` when `v` is a scalar that fits in a v0.4 array element (no nesting).
-fn is_scalar_array_elem_v1<T: TraceData>(v: &AttributeValueV1<T>) -> bool {
+fn is_scalar_array_elem_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
     matches!(
         v,
-        AttributeValueV1::String(_)
-            | AttributeValueV1::Bool(_)
-            | AttributeValueV1::Int(_)
-            | AttributeValueV1::Float(_)
+        v1::AttributeValue::String(_)
+            | v1::AttributeValue::Bool(_)
+            | v1::AttributeValue::Int(_)
+            | v1::AttributeValue::Float(_)
     )
 }
 
 fn encode_span_event_v1<T: TraceData, S: Serializer>(
     ser: S,
-    event: &SpanEventV1<T>,
+    event: &v1::SpanEvent<T>,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
     let name: &str = event.name.borrow();
@@ -967,11 +993,11 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, AttributeValueV1<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter().filter(|(_, v)| is_supported_event_attr_v1(v)) {
                     let key: &str = k.borrow();
-                    attrs.serialize_entry(key, &ser_fn!(<T: TraceData> |ser, v: &'a AttributeValueV1<T>| {
+                    attrs.serialize_entry(key, &ser_fn!(<T: TraceData> |ser, v: &'a v1::AttributeValue<T>| {
                         encode_event_attr_value_v1(ser, v)
                     }))?;
                 }
@@ -987,10 +1013,10 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
 /// `List` produces a plain JSON array, filtering out non-scalar entries (no equivalent for them).
 fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
     ser: S,
-    v: &AttributeValueV1<T>,
+    v: &v1::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        AttributeValueV1::List(items) => {
+        v1::AttributeValue::List(items) => {
             let scalars: Vec<_> = items
                 .iter()
                 .filter(|e| is_scalar_array_elem_v1(e))
@@ -998,7 +1024,7 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
             let mut seq = ser.serialize_seq(Some(scalars.len()))?;
             for elem in scalars {
                 seq.serialize_element(
-                    &ser_fn!(<T: TraceData> |ser, elem: &'a AttributeValueV1<T>| {
+                    &ser_fn!(<T: TraceData> |ser, elem: &'a v1::AttributeValue<T>| {
                         encode_event_scalar_v1(ser, elem)
                     }),
                 )?;
@@ -1011,16 +1037,16 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
 
 fn encode_event_scalar_v1<T: TraceData, S: Serializer>(
     ser: S,
-    v: &AttributeValueV1<T>,
+    v: &v1::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        AttributeValueV1::String(s) => {
+        v1::AttributeValue::String(s) => {
             let s: &str = s.borrow();
             ser.serialize_str(s)
         }
-        AttributeValueV1::Bool(b) => ser.serialize_bool(*b),
-        AttributeValueV1::Int(i) => ser.serialize_i64(*i),
-        AttributeValueV1::Float(f) => {
+        v1::AttributeValue::Bool(b) => ser.serialize_bool(*b),
+        v1::AttributeValue::Int(i) => ser.serialize_i64(*i),
+        v1::AttributeValue::Float(f) => {
             if f.is_finite() {
                 ser.serialize_f64(*f)
             } else {
