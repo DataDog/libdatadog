@@ -150,6 +150,9 @@ impl super::Backend for HyperBackend {
     ) -> Result<Self, HttpClientError> {
         let mut builder = http_common::client_builder();
 
+        // Limit the number of idle connections kept in the pool, as a safety resource bound.
+        builder.pool_max_idle_per_host(crate::config::POOL_MAX_IDLE);
+
         if client_config.periodic() {
             // Pool connections with a small idle timeout instead of disabling pooling entirely,
             // so consecutive requests within a flush interval can still reuse a connection

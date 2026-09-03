@@ -31,6 +31,10 @@ pub(crate) enum TransportConfig {
 /// agent), so that an idle pooled connection is dropped by our side before the receiver closes it.
 pub(crate) const PERIODIC_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Max number of idle connections kept in a client's connection pool. This is a safety resource
+/// bound that we don't really expect to hit in practice.
+pub(crate) const POOL_MAX_IDLE: usize = 20;
+
 /// Configuration for an [`crate::HttpClient`] instance.
 ///
 /// Constructed via [`crate::HttpClient::new`] or [`HttpClientBuilder::build`].
