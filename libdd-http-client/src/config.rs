@@ -175,7 +175,7 @@ impl HttpClientBuilder {
     ///
     /// The rationale for having short-lived connection pooling is that we've experienced races when
     /// the connection pooling timeout is higher than the keep-alive timeout of the receiving end.
-    /// It's then possible to pick an idle connection and start a request while the connection get
+    /// It's then possible to pick an idle connection and start a request while the connection gets
     /// closed at the same time by the receiver, causing an error.
     ///
     /// Connection pooling was initially entirely disabled by this setting, but it happens that we
