@@ -6,8 +6,8 @@ use crate::service::session_info::SessionInfo;
 use crate::service::{
     remote_configs::RemoteConfigsGuard, DynamicInstrumentationConfigState, InstanceId, QueueId,
 };
-use libdd_live_debugger::sender::{generate_tags, PayloadSender};
 use libdd_common::{tag::Tag, MutexExt};
+use libdd_live_debugger::sender::{generate_tags, PayloadSender};
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;

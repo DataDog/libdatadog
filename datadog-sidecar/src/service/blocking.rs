@@ -7,13 +7,13 @@ use super::{
 };
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
-use libdd_live_debugger::debugger_defs::DebuggerPayload;
-use libdd_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;

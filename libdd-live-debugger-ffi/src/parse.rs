@@ -23,9 +23,7 @@ pub unsafe extern "C" fn ddog_parse_live_debugger_json(
             // we have the box. Rust doesn't allow us to specify a self-referential struct, so
             // pretend it's 'static
             data: unsafe {
-                std::mem::transmute::<&_, &'static libdd_live_debugger::LiveDebuggingData>(
-                    &*parsed,
-                )
+                std::mem::transmute::<&_, &'static libdd_live_debugger::LiveDebuggingData>(&*parsed)
             }
             .into(),
             opaque_data: Some(parsed),

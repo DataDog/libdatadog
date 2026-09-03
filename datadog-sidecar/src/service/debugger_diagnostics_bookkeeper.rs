@@ -1,9 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use libdd_live_debugger::debugger_defs::{
-    DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus,
-};
 use libdd_common::MutexExt;
+use libdd_live_debugger::debugger_defs::{DebuggerData, DebuggerPayload, Diagnostics, ProbeStatus};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
