@@ -180,10 +180,10 @@ impl AgentClientBuilder {
     /// Set whether this client is used for periodic one-shot communication (typically regularly
     /// flushing to the agent). Defaults to `true`.
     ///
-    /// Depending on the capabilities of the HTTP backend of [libdd_http_client], this setting
-    /// either sets the lifetime of pooled connections to a timeout much smaller than 60s (e.g.
-    /// 5s), disables connection pooling entirely, or does nothing if the backend has no
-    /// connection pooling to begin with. See [libdd_http_client::HttpClientBuilder::periodic].
+    /// Depending on the capabilities of the HTTP backend of [libdd_http_client], this setting sets
+    /// the lifetime of pooled connections to a timeout much smaller than 60s (e.g. 5s), or does
+    /// nothing if the backend has no connection pooling support. See
+    /// [libdd_http_client::HttpClientBuilder::periodic].
     ///
     /// The Datadog agent has a low keep-alive timeout, and reusing an idle pooled connection that
     /// the agent has closed on its side causes "pipe closed" errors on every second connection.
