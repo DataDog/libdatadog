@@ -31,7 +31,7 @@ use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
     ser::{Error as _, SerializeMap, SerializeSeq},
-    Serializer,
+    Serialize, Serializer,
 };
 use std::borrow::Borrow;
 
@@ -123,192 +123,247 @@ pub fn encode_payload<T: TraceData>(
     client_side_stats: bool,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let mut bytes = Vec::new();
-    let mut serializer = serde_json::Serializer::new(&mut bytes);
-
-    let mut map_ser = serializer.serialize_map(Some(1))?;
-    map_ser.serialize_entry(
-        "traces",
-        &ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata, client_side_stats: bool| {
-            let mut traces_serializer = ser.serialize_seq(Some(traces.len()))?;
-            for chunk in traces {
-                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a Vec<Span<T>>, metadata: &'a TracerMetadata, client_side_stats: bool| {
-                    encode_trace(ser, chunk, metadata, client_side_stats)
-                }))?;
-            }
-            traces_serializer.end()
-        }),
-    )?;
-    SerializeMap::end(map_ser)?;
+    bytes.extend_from_slice(br#"{"traces":["#);
+    for (index, chunk) in traces.iter().enumerate() {
+        if index != 0 {
+            bytes.push(b',');
+        }
+        encode_trace(&mut bytes, chunk, metadata, client_side_stats)?;
+    }
+    bytes.extend_from_slice(b"]}");
     Ok(bytes)
 }
 
-fn encode_trace<T: TraceData, S: Serializer>(
-    ser: S,
+#[inline]
+fn serialize_json<T: ?Sized + Serialize>(
+    bytes: &mut Vec<u8>,
+    value: &T,
+) -> Result<(), serde_json::Error> {
+    value.serialize(&mut serde_json::Serializer::new(bytes))
+}
+
+#[inline]
+fn write_entry_separator(bytes: &mut Vec<u8>, first: &mut bool) {
+    if *first {
+        *first = false;
+    } else {
+        bytes.push(b',');
+    }
+}
+
+#[inline]
+fn serialize_fixed_entry<T: ?Sized + Serialize>(
+    bytes: &mut Vec<u8>,
+    first: &mut bool,
+    key: &[u8],
+    value: &T,
+) -> Result<(), serde_json::Error> {
+    write_entry_separator(bytes, first);
+    bytes.extend_from_slice(key);
+    serialize_json(bytes, value)
+}
+
+#[inline]
+fn serialize_dynamic_entry<T: ?Sized + Serialize>(
+    bytes: &mut Vec<u8>,
+    first: &mut bool,
+    key: &str,
+    value: &T,
+) -> Result<(), serde_json::Error> {
+    write_entry_separator(bytes, first);
+    serialize_json(bytes, key)?;
+    bytes.push(b':');
+    serialize_json(bytes, value)
+}
+
+fn encode_trace<T: TraceData>(
+    bytes: &mut Vec<u8>,
     chunk: &[Span<T>],
     metadata: &TracerMetadata,
     client_side_stats: bool,
-) -> Result<S::Ok, S::Error> {
-    let mut map = ser.serialize_map(None)?;
+) -> Result<(), serde_json::Error> {
+    bytes.push(b'{');
+    let mut first = true;
 
     // Per-trace metadata. Always include hostname; other fields when set.
-    map.serialize_entry("hostname", &metadata.hostname)?;
+    serialize_fixed_entry(bytes, &mut first, br#""hostname":"#, &metadata.hostname)?;
     if !metadata.env.is_empty() {
-        map.serialize_entry("env", &metadata.env)?;
+        serialize_fixed_entry(bytes, &mut first, br#""env":"#, &metadata.env)?;
     }
     if !metadata.language.is_empty() {
-        map.serialize_entry("languageName", &metadata.language)?;
+        serialize_fixed_entry(bytes, &mut first, br#""languageName":"#, &metadata.language)?;
     }
     if !metadata.language_version.is_empty() {
-        map.serialize_entry("languageVersion", &metadata.language_version)?;
+        serialize_fixed_entry(
+            bytes,
+            &mut first,
+            br#""languageVersion":"#,
+            &metadata.language_version,
+        )?;
     }
     if !metadata.tracer_version.is_empty() {
-        map.serialize_entry("tracerVersion", &metadata.tracer_version)?;
+        serialize_fixed_entry(
+            bytes,
+            &mut first,
+            br#""tracerVersion":"#,
+            &metadata.tracer_version,
+        )?;
     }
     if !metadata.runtime_id.is_empty() {
-        map.serialize_entry("runtimeID", &metadata.runtime_id)?;
+        serialize_fixed_entry(bytes, &mut first, br#""runtimeID":"#, &metadata.runtime_id)?;
     }
     if let Some(container_id) = libdd_common::entity_id::get_container_id() {
-        map.serialize_entry("containerID", container_id)?;
+        serialize_fixed_entry(bytes, &mut first, br#""containerID":"#, container_id)?;
     }
 
-    map.serialize_entry(
-        "spans",
-        &ser_fn!(<T: TraceData> |ser, chunk: &'a [Span<T>], client_side_stats: bool| {
-            let mut seq = ser.serialize_seq(Some(chunk.len()))?;
-            for (i, span) in chunk.iter().enumerate() {
-                let is_first = i == 0;
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first: bool, client_side_stats: bool| {
-                    encode_span(ser, span, is_first, client_side_stats)
-                }))?;
-            }
-            seq.end()
-        }),
-    )?;
-
-    map.end()
+    write_entry_separator(bytes, &mut first);
+    bytes.extend_from_slice(br#""spans":["#);
+    for (index, span) in chunk.iter().enumerate() {
+        if index != 0 {
+            bytes.push(b',');
+        }
+        encode_span(bytes, span, index == 0, client_side_stats)?;
+    }
+    bytes.extend_from_slice(b"]}");
+    Ok(())
 }
 
-fn encode_span<T: TraceData, S: Serializer>(
-    ser: S,
+fn encode_span<T: TraceData>(
+    bytes: &mut Vec<u8>,
     span: &Span<T>,
     is_first_in_trace: bool,
     client_side_stats: bool,
-) -> Result<S::Ok, S::Error> {
-    let mut map = ser.serialize_map(None)?;
+) -> Result<(), serde_json::Error> {
+    bytes.push(b'{');
+    let mut first = true;
 
-    map.serialize_entry("trace_id", &fixed_hex::<16>(span.trace_id))?;
-    map.serialize_entry("span_id", &fixed_hex::<16>(u128::from(span.span_id)))?;
-    map.serialize_entry("parent_id", &fixed_hex::<16>(u128::from(span.parent_id)))?;
+    serialize_fixed_entry(
+        bytes,
+        &mut first,
+        br#""trace_id":"#,
+        &fixed_hex::<16>(span.trace_id),
+    )?;
+    serialize_fixed_entry(
+        bytes,
+        &mut first,
+        br#""span_id":"#,
+        &fixed_hex::<16>(u128::from(span.span_id)),
+    )?;
+    serialize_fixed_entry(
+        bytes,
+        &mut first,
+        br#""parent_id":"#,
+        &fixed_hex::<16>(u128::from(span.parent_id)),
+    )?;
 
     // Resource defaults to name when empty.
     let name_str: &str = span.name.borrow();
     let resource_str: &str = span.resource.borrow();
     let service_str: &str = span.service.borrow();
-    map.serialize_entry("name", name_str)?;
-    map.serialize_entry(
-        "resource",
+    serialize_fixed_entry(bytes, &mut first, br#""name":"#, name_str)?;
+    serialize_fixed_entry(
+        bytes,
+        &mut first,
+        br#""resource":"#,
         if resource_str.is_empty() {
             name_str
         } else {
             resource_str
         },
     )?;
-    map.serialize_entry("service", service_str)?;
-    map.serialize_entry("error", &span.error)?;
-    map.serialize_entry("start", &span.start.max(0))?;
-    map.serialize_entry("duration", &span.duration)?;
+    serialize_fixed_entry(bytes, &mut first, br#""service":"#, service_str)?;
+    serialize_fixed_entry(bytes, &mut first, br#""error":"#, &span.error)?;
+    serialize_fixed_entry(bytes, &mut first, br#""start":"#, &span.start.max(0))?;
+    serialize_fixed_entry(bytes, &mut first, br#""duration":"#, &span.duration)?;
 
     let type_str: &str = span.r#type.borrow();
     if !type_str.is_empty() {
-        map.serialize_entry("type", type_str)?;
+        serialize_fixed_entry(bytes, &mut first, br#""type":"#, type_str)?;
     }
 
-    map.serialize_entry(
-        "meta",
-        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first_in_trace: bool, client_side_stats: bool| {
-            let upper_bits = (span.trace_id >> 64) as u64;
-            let mut p_tid_seen = false;
-            let mut span_links_seen = false;
-            let mut events_seen = false;
-            let mut compute_stats_seen = false;
+    write_entry_separator(bytes, &mut first);
+    bytes.extend_from_slice(br#""meta":{"#);
+    let mut first_meta = true;
+    let upper_bits = (span.trace_id >> 64) as u64;
+    let mut p_tid_seen = false;
+    let mut span_links_seen = false;
+    let mut events_seen = false;
+    let mut compute_stats_seen = false;
 
-            let mut meta = ser.serialize_map(None)?;
-            for (k, v) in span.meta.defensive_dedup().iter() {
-                let key: &str = k.borrow();
-                match key {
-                    "_dd.p.tid" => p_tid_seen = true,
-                    "_dd.span_links" => span_links_seen = true,
-                    "events" => events_seen = true,
-                    "_dd.compute_stats"=> compute_stats_seen = true,
-                    _ => {}
-                };
-                let val: &str = v.borrow();
-                meta.serialize_entry(key, val)?;
-            }
-            if !p_tid_seen && upper_bits != 0 {
-                meta.serialize_entry("_dd.p.tid", &fixed_hex::<16>(u128::from(upper_bits)))?;
-            }
-            if !span_links_seen && !span.span_links.is_empty() {
-                if let Some(s) = serialize_span_links(&span.span_links) {
-                    meta.serialize_entry("_dd.span_links", &s)?;
-                }
-            }
-            if !events_seen && !span.span_events.is_empty() {
-                if let Some(s) = serialize_span_events(&span.span_events) {
-                    meta.serialize_entry("events", &s)?;
-                }
-            }
-            if !compute_stats_seen && is_first_in_trace && !client_side_stats {
-                meta.serialize_entry("_dd.compute_stats", "1")?;
-            }
-            meta.end()
-        }),
-    )?;
-
-    map.serialize_entry(
-        "metrics",
-        &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
-            let mut metrics = ser.serialize_map(None)?;
-            let mut trace_root_seen = false;
-            for (k, v) in span.metrics.defensive_dedup().iter() {
-                let key: &str = k.borrow();
-                // serde_json refuses to serialize NaN/Inf; drop them silently.
-                if v.is_finite() {
-                    match key {
-                        "_trace_root" => trace_root_seen = true,
-                        "_top_level" => {
-                            metrics.serialize_entry(key, &(*v as u32))?;
-                            continue
-                        },
-                        _ => {},
-                    }
-                    metrics.serialize_entry(key, v)?
-                }
-            }
-            if !trace_root_seen && span.parent_id == 0 {
-                metrics.serialize_entry("_trace_root", &1u32)?;
-            }
-            metrics.end()
-        }),
-    )?;
-
-    if !span.meta_struct.is_empty() {
-        map.serialize_entry(
-            "meta_struct",
-            &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
-                let mut ms = ser.serialize_map(None)?;
-                for (k, v) in span.meta_struct.iter() {
-                    let key: &str = k.borrow();
-                    let bytes: &[u8] = v.borrow();
-
-                    // abort whole payload on malformed entry
-                    ms.serialize_entry(key, &MsgpackAsJson(bytes))?;
-                }
-                ms.end()
-            }),
+    for (key, value) in span.meta.defensive_dedup().iter() {
+        let key: &str = key.borrow();
+        match key {
+            "_dd.p.tid" => p_tid_seen = true,
+            "_dd.span_links" => span_links_seen = true,
+            "events" => events_seen = true,
+            "_dd.compute_stats" => compute_stats_seen = true,
+            _ => {}
+        };
+        let value: &str = value.borrow();
+        serialize_dynamic_entry(bytes, &mut first_meta, key, value)?;
+    }
+    if !p_tid_seen && upper_bits != 0 {
+        serialize_fixed_entry(
+            bytes,
+            &mut first_meta,
+            br#""_dd.p.tid":"#,
+            &fixed_hex::<16>(u128::from(upper_bits)),
         )?;
     }
-    map.end()
+    if !span_links_seen && !span.span_links.is_empty() {
+        if let Some(value) = serialize_span_links(&span.span_links) {
+            serialize_fixed_entry(bytes, &mut first_meta, br#""_dd.span_links":"#, &value)?;
+        }
+    }
+    if !events_seen && !span.span_events.is_empty() {
+        if let Some(value) = serialize_span_events(&span.span_events) {
+            serialize_fixed_entry(bytes, &mut first_meta, br#""events":"#, &value)?;
+        }
+    }
+    if !compute_stats_seen && is_first_in_trace && !client_side_stats {
+        serialize_fixed_entry(bytes, &mut first_meta, br#""_dd.compute_stats":"#, "1")?;
+    }
+    bytes.push(b'}');
+
+    write_entry_separator(bytes, &mut first);
+    bytes.extend_from_slice(br#""metrics":{"#);
+    let mut first_metric = true;
+    let mut trace_root_seen = false;
+    for (key, value) in span.metrics.defensive_dedup().iter() {
+        let key: &str = key.borrow();
+        // serde_json refuses to serialize NaN/Inf; drop them silently.
+        if value.is_finite() {
+            match key {
+                "_trace_root" => trace_root_seen = true,
+                "_top_level" => {
+                    serialize_dynamic_entry(bytes, &mut first_metric, key, &(*value as u32))?;
+                    continue;
+                }
+                _ => {}
+            }
+            serialize_dynamic_entry(bytes, &mut first_metric, key, value)?;
+        }
+    }
+    if !trace_root_seen && span.parent_id == 0 {
+        serialize_fixed_entry(bytes, &mut first_metric, br#""_trace_root":"#, &1u32)?;
+    }
+    bytes.push(b'}');
+
+    if !span.meta_struct.is_empty() {
+        write_entry_separator(bytes, &mut first);
+        bytes.extend_from_slice(br#""meta_struct":{"#);
+        let mut first_meta_struct = true;
+        for (key, value) in span.meta_struct.iter() {
+            let key: &str = key.borrow();
+            let value: &[u8] = value.borrow();
+
+            // Abort the whole payload on a malformed entry.
+            serialize_dynamic_entry(bytes, &mut first_meta_struct, key, &MsgpackAsJson(value))?;
+        }
+        bytes.push(b'}');
+    }
+    bytes.push(b'}');
+    Ok(())
 }
 
 /// Serialize span links to a JSON string suitable for `meta['_dd.span_links']`.
