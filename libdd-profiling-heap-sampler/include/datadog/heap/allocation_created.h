@@ -5,7 +5,7 @@
  *
  * Call dd_allocation_created() immediately after the underlying allocator
  * returns. On the common (unsampled) fast path this is a single branch on
- * req.weight and an immediate return of the raw pointer. On the sampled slow
+ * req.weighted_bytes and an immediate return of the raw pointer. On the sampled slow
  * path it applies the architecture-specific sample flag to the raw pointer,
  * emits the ddheap:alloc USDT, and closes the reentry guard that was opened
  * by the paired dd_allocation_requested() call.

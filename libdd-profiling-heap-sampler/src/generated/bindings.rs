@@ -51,7 +51,7 @@ unsafe extern "C" {
     pub fn dd_tl_state_get_or_init() -> *mut dd_tl_state_t;
 }
 unsafe extern "C" {
-    pub fn dd_probe_alloc(user: *mut ::std::os::raw::c_void, size: u64, weight: u64);
+    pub fn dd_probe_alloc(user: *mut ::std::os::raw::c_void, size: u64, weighted_bytes: u64);
 }
 unsafe extern "C" {
     pub fn dd_probe_free(ptr: *mut ::std::os::raw::c_void);
@@ -68,7 +68,7 @@ pub struct dd_alloc_req_t {
     pub size: usize,
     pub user_size: usize,
     pub alignment: usize,
-    pub weight: u64,
+    pub weighted_bytes: u64,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
@@ -80,8 +80,8 @@ const _: () = {
         [::std::mem::offset_of!(dd_alloc_req_t, user_size) - 8usize];
     ["Offset of field: dd_alloc_req_t::alignment"]
         [::std::mem::offset_of!(dd_alloc_req_t, alignment) - 16usize];
-    ["Offset of field: dd_alloc_req_t::weight"]
-        [::std::mem::offset_of!(dd_alloc_req_t, weight) - 24usize];
+    ["Offset of field: dd_alloc_req_t::weighted_bytes"]
+        [::std::mem::offset_of!(dd_alloc_req_t, weighted_bytes) - 24usize];
 };
 unsafe extern "C" {
     #[link_name = "dd_alloc_req_is_sampled__extern"]
@@ -97,6 +97,9 @@ unsafe extern "C" {
 unsafe extern "C" {
     #[link_name = "dd_allocation_requested__extern"]
     pub fn dd_allocation_requested(size: usize, alignment: usize) -> dd_alloc_req_t;
+}
+unsafe extern "C" {
+    pub fn dd_test_allocation_weight(size: u64, interval: u64) -> u64;
 }
 unsafe extern "C" {
     pub fn dd_allocation_created_slow(

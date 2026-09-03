@@ -19,9 +19,12 @@
  *                the profiler via the ddheap:alloc USDT.
  *   - alignment: passed through so dd_allocation_created can place the
  *                user pointer correctly relative to the raw pointer.
- *   - weight:    0 if not sampled; otherwise the unbiased size
- *                estimator (nsamples * interval) to attribute to this
- *                allocation.
+ *   - weighted_bytes: 0 if not sampled; otherwise the estimated allocated
+ *                bytes represented by this sampled allocation, computed
+ *                from the allocation size and its probability of being
+ *                sampled under Poisson sampling:
+ *                  p = 1 - exp(-size / interval)
+ *                  weighted_bytes = size / p
  *
  * Always pair with dd_allocation_created(), even if the allocator fails.
  */
@@ -53,9 +56,11 @@
  *               dd_allocation_requested; carried through so
  *               dd_allocation_created can place the user pointer
  *               correctly relative to the raw pointer.
- *   weight    - 0 if this allocation was not sampled; otherwise the
- *               unbiased size estimator (nsamples * interval) for
- *               aggregated reporting.
+ *   weighted_bytes
+ *             - 0 if this allocation was not sampled; otherwise the
+ *               estimated allocated bytes represented by this sampled
+ *               allocation, computed as size / (1 - exp(-size/interval))
+ *               where interval is the mean sampling distance in bytes.
  *
  * 32 bytes on 64-bit targets, cache-line-friendly.
  */
@@ -63,19 +68,19 @@ typedef struct {
     size_t   size;
     size_t   user_size;
     size_t   alignment;
-    uint64_t weight;
+    uint64_t weighted_bytes;
 } dd_alloc_req_t;
 
 /*
- * True if this request was sampled (weight > 0). Both the C fast path
- * (allocation_created.h) and callers that branch on sampled-ness (e.g.
- * gotter's calloc hook) should use this instead of comparing `weight == 0`
- * directly, so there is one named predicate rather than the same
- * comparison repeated in C and Rust.
+ * True if this request was sampled (weighted_bytes > 0). Both the C fast
+ * path (allocation_created.h) and callers that branch on sampled-ness
+ * (e.g. gotter's calloc hook) should use this instead of comparing
+ * `weighted_bytes == 0` directly, so there is one named predicate rather
+ * than the same comparison repeated in C and Rust.
  */
 static inline __attribute__((always_inline))
 bool dd_alloc_req_is_sampled(dd_alloc_req_t req) {
-    return req.weight != 0;
+    return req.weighted_bytes != 0;
 }
 
 /* Slow path for an allocation request. This is only taken when we think we
@@ -130,5 +135,16 @@ dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     // concerned about the cost of the function call.
     return dd_allocation_requested_slow(tl, size, alignment);
 }
+
+/*
+ * Test-only: expose the per-allocation weighted-bytes calculation so unit
+ * tests can exercise it deterministically. Computes:
+ *
+ *     p = 1 - exp(-size / interval)
+ *     weighted_bytes = size / p
+ *
+ * Returns 0 when size == 0 or interval == 0.
+ */
+uint64_t dd_test_allocation_weight(uint64_t size, uint64_t interval);
 
 #endif

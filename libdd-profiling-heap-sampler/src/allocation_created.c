@@ -10,7 +10,7 @@
 
 /*
  * Slow path for dd_allocation_created. We only arrive here when the paired
- * dd_allocation_requested_slow decided to sample (req.weight > 0).
+ * dd_allocation_requested_slow decided to sample (req.weighted_bytes > 0).
  *
  * Applies the architecture-specific sample flag to raw (tagging the pointer
  * on arm64, writing a header magic word on x86-64) to produce the
@@ -45,7 +45,7 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req) {
         /* Report the application-requested size, not the sampler-bumped
          * size (`req.size`), so heap-size distributions in the profiler
          * aren't skewed by per-sample overhead. */
-        dd_probe_alloc(user, (uint64_t)req.user_size, req.weight);
+        dd_probe_alloc(user, (uint64_t)req.user_size, req.weighted_bytes);
     }
 
     /* Always close the reentry guard, even on allocation failure (raw == NULL),
