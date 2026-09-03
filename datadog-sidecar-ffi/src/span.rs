@@ -1,14 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! In-memory v0.4 trace collection (`TracesBytes`) used only as the downgrade target of the native
-//! V1 builder for the in-process (`coms.c`) sender.
-//!
-//! The tracer builds the native V1 payload directly (see [`crate::span_v1`] and
-//! `components-rs/bytes.rs`); the standalone v0.4 span/meta/metrics builder that used to live here
-//! is gone. What remains is the minimal surface the in-process sender needs after a V1→v0.4
-//! downgrade ([`crate::ddog_downgrade_v1_builder_to_v04_traces`]): iterate the decoded collection
-//! and serialize each trace individually for the background sender.
+//! In-memory v0.4 trace collection (`TracesBytes`), kept only as the downgrade target of the native
+//! V1 builder for the in-process (`coms.c`) sender. The standalone v0.4 builder that used to live
+//! here is gone (the tracer builds V1 directly, see [`crate::span_v1`]); this is just the surface
+//! [`crate::ddog_downgrade_v1_builder_to_v04_traces`] needs to serialize each downgraded trace.
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_trace_utils::span::v04::SpanBytes;
@@ -76,10 +72,9 @@ pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
     }
 }
 
-/// Serializes a single v0.4 trace as a msgpack array of one trace, matching the framing the
-/// background sender (`ddtrace_send_traces_via_thread`) expects (it strips the outer array-of-1
-/// prefix and buffers the inner span array). The returned slice is an owned allocation that must be
-/// freed using [`ddog_free_charslice`].
+/// Serializes one v0.4 trace as a msgpack array-of-1, the framing the background sender
+/// (`ddtrace_send_traces_via_thread`) expects. Returns an owned slice; free with
+/// [`ddog_free_charslice`].
 #[no_mangle]
 pub extern "C" fn ddog_serialize_trace_into_charslice(
     trace: &mut TraceBytes,

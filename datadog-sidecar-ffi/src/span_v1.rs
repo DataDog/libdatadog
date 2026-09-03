@@ -2,27 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Index-based FFI builder for the native V1 trace payload
-//! ([`libdd_trace_utils::span::v1::TracerPayload`]).
+//! ([`libdd_trace_utils::span::v1::TracerPayload`]), storing readable [`BytesString`]s directly.
 //!
-//! This builder stores **real, readable strings** ([`BytesString`]) directly on each
-//! [`SpanBytes`]/[`TraceChunkBytes`]/[`TracerPayloadBytes`] field, mirroring the v0.4 builder in
-//! [`crate::span`]. Setters take a [`CharSlice`] and store its content verbatim; getters hand back
-//! short-lived [`CharSlice`] borrows over the stored strings. There is no build-time string
-//! interning table: wire-level string deduplication is performed independently by the V1 encoder's
-//! own streaming table at encode time, so an in-memory intern table would only add cost while
-//! blocking introspection of the built payload.
-//!
-//! The builder is index-based rather than pointer-based (chunks/spans/links/events are addressed by
-//! their `usize` position, not by a returned `&mut` handle). This is deliberate: every mutating
-//! operation is routed through a single `&mut TracerPayloadV1Builder`, so we never hand a `&mut`
-//! into the payload out to C while the builder is still live (which would alias under Stacked
-//! Borrows). Read-only getters take a shared `&TracerPayloadV1Builder` and return borrows tied to
-//! it, which is likewise sound.
-//!
-//! Payload-level metadata (container id, language, tracer version, runtime id, env, hostname,
-//! app version, git commit sha) is NOT set through this builder: it is applied at send time from
-//! `TracerMetadataV1` + the sender's `tracer_headers_tags` (see
-//! [`crate::populate_payload_metadata`]).
+//! Index-based (not pointer-based) so every mutation routes through a single
+//! `&mut TracerPayloadV1Builder`: a `&mut` into the payload is never handed to C, which would alias
+//! under Stacked Borrows. No intern table — the V1 encoder dedups strings at encode time, so one
+//! here would only cost and block introspection. Payload-level metadata is applied at send time,
+//! not through this builder (see [`crate::populate_payload_metadata`]).
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_tinybytes::BytesString;
@@ -34,9 +20,8 @@ use libdd_trace_utils::span::vec_map::VecMap;
 use std::ffi::CString;
 use std::fmt::Write as _;
 
-/// Attribute value type tags returned by the `ddog_v1_get_*_attr_type` getters. They let a C caller
-/// pick the matching typed value getter (`_attr_str`/`_attr_int`/`_attr_double`/`_attr_bool`/
-/// `_attr_bytes`) for a given attribute index.
+/// Attribute value type tags from `ddog_v1_get_*_attr_type`, so a C caller picks the matching typed
+/// value getter (`_attr_str`/`_attr_int`/`_attr_double`/`_attr_bool`/`_attr_bytes`).
 pub const DDOG_V1_ATTR_STRING: u32 = 0;
 pub const DDOG_V1_ATTR_INT: u32 = 1;
 pub const DDOG_V1_ATTR_DOUBLE: u32 = 2;
@@ -54,10 +39,8 @@ pub struct TracerPayloadV1Builder {
 }
 
 impl TracerPayloadV1Builder {
-    // Index-addressed accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`) can
-    // fill the model without any `#[no_mangle]` mutator C-ABI and without a live `&mut` ever
-    // escaping to C: every mutation routes through a single `&mut TracerPayloadV1Builder` per
-    // call.
+    // Index-addressed accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`) fills
+    // the model through one `&mut TracerPayloadV1Builder` per call, never escaping a `&mut` to C.
     pub fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
         self.payload.chunks.get(chunk)
     }
@@ -143,9 +126,8 @@ impl TracerPayloadV1Builder {
         }
     }
 
-    /// Consumes the builder, returning the assembled payload (chunks/spans only). Attribute maps
-    /// are deduped here — the single finalize point before encoding — so the encoder finds the
-    /// deduped invariant already satisfied (no per-encode on-the-fly dedup or warning).
+    /// Consumes the builder, returning the assembled payload. Dedups attribute maps here — the one
+    /// finalize point before encoding — so the encoder can assume the invariant already holds.
     pub fn into_payload(mut self) -> TracerPayloadBytes {
         self.payload.dedup();
         self.payload
@@ -270,9 +252,8 @@ pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadV1Builder>) {}
 
 // ------------------- Introspection getters -------------------
 //
-// All getters take a shared `&TracerPayloadV1Builder` and return either scalars or `CharSlice`
-// borrows tied to the builder, so the built payload can be read back (e.g. to reconstruct the
-// classic v0.4 span array in userland) without ever handing a `&mut` into the payload to C.
+// Shared `&TracerPayloadV1Builder`, returning scalars or builder-tied `CharSlice` borrows, so the
+// payload can be read back (e.g. to rebuild the v0.4 span array in userland) without a `&mut` to C.
 
 /// Number of chunks in the builder.
 #[no_mangle]
@@ -930,10 +911,9 @@ pub extern "C" fn ddog_v1_get_event_attr_bool(
 
 // ------------------- Payload-level metadata -------------------
 
-/// Populates the payload-level metadata fields consumed by the V1 encoder from values sourced at
-/// send time (`TracerMetadataV1` + the sender's `tracer_headers_tags`). Empty strings are left as
-/// the default and omitted by the encoder. `git_commit_sha`, when present, is emitted as the
-/// payload attribute `_dd.git.commit.sha`.
+/// Populates payload-level metadata from send-time values (`TracerMetadataV1` +
+/// `tracer_headers_tags`). Empty strings are omitted; `git_commit_sha` becomes the payload
+/// attribute `_dd.git.commit.sha`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn populate_payload_metadata(
     payload: &mut TracerPayloadBytes,
@@ -1000,9 +980,7 @@ fn render_attr_value(value: &AttributeValueBytes) -> String {
     }
 }
 
-/// Renders a V1 span (plus its owning chunk's trace id) as the readable diagnostic string, covering
-/// service/name/resource/type, ids, timestamps, error/kind, the promoted fields (env/version/
-/// component), typed attributes, and link/event counts.
+/// Renders a V1 span (plus its chunk's trace id) as a readable diagnostic string.
 fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> String {
     let mut out = String::new();
     if let Some(c) = chunk {
@@ -1041,13 +1019,9 @@ fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> Strin
     out
 }
 
-/// Renders the span at index `chunk`/`span` as a human-readable diagnostic string, used by
-/// dd-trace-php to emit the `DD_TRACE_DEBUG` "[span] Encoding span: …" line on the V1 path. It is
-/// index-addressed (the V1 builder never hands out `&mut`/`&` span handles to C); an out-of-range
-/// index yields an empty slice.
-///
-/// The returned slice is an owned allocation that must be freed with the very same free function as
-/// the v0.4 variant, [`crate::span::ddog_free_charslice`].
+/// Renders the span at `chunk`/`span` for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line
+/// (out-of-range index yields an empty slice). The returned owned slice must be freed with
+/// [`crate::span::ddog_free_charslice`], as for the v0.4 variant.
 #[no_mangle]
 pub extern "C" fn ddog_v1_span_debug_log(
     builder: &TracerPayloadV1Builder,
@@ -1078,10 +1052,9 @@ mod tests {
         CharSlice::from(s)
     }
 
-    // Test-only builder helpers. The production `ddog_v1_*` mutator C-ABI was removed in the
-    // bytes.rs V1 pivot (the PHP-side FFI fills the model through the pub `TracerPayloadV1Builder`
-    // methods instead). These thin fns reproduce that removed surface so the getter/encoder/
-    // debug-log coverage below keeps exercising a fully populated payload.
+    // Test-only builder helpers reproducing the mutator C-ABI dropped in the bytes.rs V1 pivot (the
+    // PHP-side FFI now fills the model via `TracerPayloadV1Builder` methods), so the tests below
+    // still exercise a fully populated payload.
 
     fn to_bytes_string(slice: CharSlice) -> BytesString {
         match String::from_utf8_lossy(slice.as_bytes()) {

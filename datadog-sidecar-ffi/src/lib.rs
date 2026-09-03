@@ -1965,10 +1965,8 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
-/// Payload-level tracer metadata for the V1 send path that is NOT already carried by the sender's
-/// `tracer_headers_tags`. The lang/lang_version/lang_interpreter/lang_vendor/tracer_version and
-/// container_id fields live in `SenderParameters::tracer_headers_tags` and are routed from there,
-/// so they are not duplicated here.
+/// Payload-level tracer metadata for the V1 send path not already carried by the sender's
+/// `tracer_headers_tags` (lang, tracer_version, container_id live there and are routed from there).
 #[repr(C)]
 pub struct TracerMetadataV1 {
     pub hostname: CharSlice<'static>,
@@ -2064,14 +2062,12 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // );
 }
 
-/// V1 counterpart of `ddog_send_traces_to_sidecar`: encodes the native V1 `TracerPayload` built via
-/// the [`crate::span_v1`] builder (natively, without the v0.4→v1 upgrade converter), then sends it
-/// to the sidecar for the agent's `/v1.0/traces` endpoint. Consumes `builder`.
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: sends the native V1 payload from the
+/// [`crate::span_v1`] builder to the agent's `/v1.0/traces`. Consumes `builder`.
 ///
-/// Payload-level metadata is sourced at send time: the lang/lang_version/tracer_version and
-/// container_id come from `parameters.tracer_headers_tags`, while hostname/env/app_version/
-/// runtime_id/git_commit_sha come from `metadata`. lang_interpreter/lang_vendor are forwarded to
-/// the sidecar as HTTP header tags (they are not part of the V1 wire payload).
+/// Payload-level metadata is sourced at send time from `parameters.tracer_headers_tags` (lang etc.,
+/// container_id) and `metadata`; lang_interpreter/lang_vendor go as HTTP header tags, not on the
+/// wire.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
@@ -2180,21 +2176,13 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
     tracing::event!(target: "info", tracing::Level::INFO, "Flushing v1 trace of size {} to send-queue for {}", size, parameters.url);
 }
 
-/// Downgrades a native V1 builder to the in-memory v0.4 trace collection (`ddog_TracesBytes`) for
-/// the in-process `coms.c` sender (PHP <= 8.2), which always downgrades to `/v0.4/traces`. Consumes
-/// `builder`, encodes it to v0.4 msgpack (`msgpack_encoder::v04::to_vec_from_v1`, the same
-/// downgrade the sidecar server performs), then decodes those bytes back into the owned
-/// `Vec<Vec<SpanBytes>>` collection.
+/// Downgrades a native V1 builder to the in-memory v0.4 collection for the in-process `coms.c`
+/// sender (PHP <= 8.2). Consumes `builder`, encodes to v0.4 msgpack, decodes back to the
+/// collection.
 ///
-/// Returning the decoded collection (rather than a single whole-payload CharSlice) lets
-/// `auto_flush` frame each trace individually for the background sender — one
-/// `ddtrace_send_traces_via_thread(1, …)` per trace, matching master's coms framing. A
-/// whole-payload CharSlice would be single-trace-only through that framing and would silently drop
-/// the extra traces of a multi-trace payload.
-///
-/// Payload-level metadata is NOT applied here: v0.4 carries it as HTTP headers, not on the wire.
-/// Returns an empty collection on an encode/decode error. Free the result with
-/// [`crate::span::ddog_free_traces`].
+/// Returns the collection (not one whole-payload CharSlice) so `auto_flush` can frame each trace
+/// individually for the background sender; a single CharSlice would silently drop extra traces of a
+/// multi-trace payload. Empty collection on error; free with [`crate::span::ddog_free_traces`].
 #[no_mangle]
 pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
     builder: Box<TracerPayloadV1Builder>,
