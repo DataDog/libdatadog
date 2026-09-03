@@ -396,8 +396,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }
         if let Some(mechanism) = chunk.sampling_mechanism {
             write_const_msgpack_str!(writer, "_dd.p.dm")?;
-            let mut buf = itoa::Buffer::new();
-            write_str(writer, buf.format(-(mechanism as i64)))?;
+            // Always emit a leading '-' so mechanism 0 serializes as "-0", not "0".
+            write_str(writer, &format!("-{mechanism}"))?;
         }
         for (k, v) in &meta_leaves {
             write_str(writer, k)?;
@@ -1119,6 +1119,26 @@ mod tests {
         assert_eq!(
             map_get(metrics, "_sampling_priority_v1").unwrap().as_f64(),
             Some(1.0)
+        );
+    }
+
+    #[test]
+    fn sampling_mechanism_zero_encodes_as_negative_zero() {
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                sampling_mechanism: Some(0),
+                spans: vec![minimal_span()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta carries sampling_mechanism");
+        assert_eq!(
+            map_get(meta, "_dd.p.dm").unwrap().as_str(),
+            Some("-0"),
+            "mechanism 0 must serialize as `-0`, not `0`, per the agent's convention"
         );
     }
 

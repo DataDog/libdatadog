@@ -8,8 +8,10 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod span;
+pub mod span_v1;
 
 use crate::span::TracesBytes;
+use crate::span_v1::{populate_payload_metadata, TracerPayloadV1Builder};
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
@@ -1966,6 +1968,17 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
+/// Payload-level tracer metadata for the V1 send path not already carried by the sender's
+/// `tracer_headers_tags` (lang, tracer_version, container_id live there and are routed from there).
+#[repr(C)]
+pub struct TracerMetadataV1 {
+    pub hostname: CharSlice<'static>,
+    pub env: CharSlice<'static>,
+    pub app_version: CharSlice<'static>,
+    pub runtime_id: CharSlice<'static>,
+    pub git_commit_sha: CharSlice<'static>,
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
@@ -2050,6 +2063,142 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     //     size,
     //     parameters.url
     // );
+}
+
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: sends the native V1 payload from the
+/// [`crate::span_v1`] builder to the agent's `/v1.0/traces`. Consumes `builder`.
+///
+/// Payload-level metadata is sourced at send time from `parameters.tracer_headers_tags` (lang etc.,
+/// container_id) and `metadata`; lang_interpreter/lang_vendor go as HTTP header tags, not on the
+/// wire.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
+    builder: Box<TracerPayloadV1Builder>,
+    parameters: &mut SenderParameters,
+    metadata: &TracerMetadataV1,
+) {
+    let mut payload = builder.into_payload();
+    let size: usize = payload.chunks.iter().map(|c| c.spans.len()).sum();
+
+    // Check connection to the sidecar
+    if parameters.transport.is_closed() {
+        tracing::info!(
+            "Skipping flushing traces of size {} as connection to sidecar failed",
+            size
+        );
+        return;
+    }
+
+    let tags = &parameters.tracer_headers_tags;
+    populate_payload_metadata(
+        &mut payload,
+        &tags.container_id.to_utf8_lossy(),
+        &tags.lang.to_utf8_lossy(),
+        &tags.lang_version.to_utf8_lossy(),
+        &tags.tracer_version.to_utf8_lossy(),
+        &metadata.runtime_id.to_utf8_lossy(),
+        &metadata.env.to_utf8_lossy(),
+        &metadata.hostname.to_utf8_lossy(),
+        &metadata.app_version.to_utf8_lossy(),
+        &metadata.git_commit_sha.to_utf8_lossy(),
+    );
+
+    let lang_interpreter = parameters
+        .tracer_headers_tags
+        .lang_interpreter
+        .to_utf8_lossy()
+        .into_owned();
+    let lang_vendor = parameters
+        .tracer_headers_tags
+        .lang_vendor
+        .to_utf8_lossy()
+        .into_owned();
+
+    // Create and map shared memory
+    let shm = check!(
+        ShmHandle::new(parameters.limit),
+        "Failed to create shared memory"
+    );
+
+    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    // Write traces to the shared memory as a native V1 payload
+    let mut shm_slice = mapped_shm.as_slice_mut();
+    let shm_slice_len = shm_slice.len();
+    let written = match msgpack_encoder::v1::write_to_slice_from_v1(&mut shm_slice, &payload) {
+        Ok(()) => shm_slice_len - shm_slice.len(),
+        Err(_) => {
+            tracing::error!("Failed serializing the traces");
+            return;
+        }
+    };
+
+    // Send traces to the sidecar via the shared memory handler
+    let mut size_hint = written;
+    if parameters.n_requests > 0 {
+        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+    }
+
+    let send_error = blocking::send_trace_v1_shm(
+        &mut parameters.transport,
+        &parameters.instance_id,
+        shm,
+        size_hint,
+        TracerGenericTags {
+            client_computed_top_level: parameters.tracer_headers_tags.client_computed_top_level,
+            client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
+            ..Default::default()
+        },
+        lang_interpreter.clone(),
+        lang_vendor.clone(),
+    );
+
+    // Retry sending traces via bytes if there was an error
+    if send_error.is_err() {
+        match blocking::send_trace_v1_bytes(
+            &mut parameters.transport,
+            &parameters.instance_id,
+            msgpack_encoder::v1::to_vec_with_capacity_from_v1(&payload, written as u32),
+            TracerGenericTags {
+                client_computed_top_level: parameters.tracer_headers_tags.client_computed_top_level,
+                client_computed_stats: parameters.tracer_headers_tags.client_computed_stats,
+                ..Default::default()
+            },
+            lang_interpreter,
+            lang_vendor,
+        ) {
+            Ok(_) => {}
+            Err(_) => tracing::debug!(
+                "Failed sending traces via shm to sidecar: {}",
+                send_error.err().unwrap_unchecked().to_string()
+            ),
+        };
+    }
+
+    tracing::event!(target: "info", tracing::Level::INFO, "Flushing v1 trace of size {} to send-queue for {}", size, parameters.url);
+}
+
+/// Downgrades a native V1 builder to the in-memory v0.4 collection for the in-process `coms.c`
+/// sender (PHP <= 8.2). Consumes `builder`, encodes to v0.4 msgpack, decodes back to the
+/// collection.
+///
+/// Returns the collection (not one whole-payload CharSlice) so `auto_flush` can frame each trace
+/// individually for the background sender; a single CharSlice would silently drop extra traces of a
+/// multi-trace payload. Empty collection on error; free with [`crate::span::ddog_free_traces`].
+#[no_mangle]
+pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
+    builder: Box<TracerPayloadV1Builder>,
+) -> Box<TracesBytes> {
+    let payload = builder.into_payload();
+    let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(&payload);
+    match libdd_trace_utils::tracer_payload::decode_to_trace_chunks(
+        libdd_tinybytes::Bytes::from(v04_bytes),
+        libdd_trace_utils::tracer_payload::TraceEncoding::V04,
+    ) {
+        Ok((libdd_trace_utils::tracer_payload::TraceChunks::V04(traces), _)) => Box::new(traces),
+        _ => Box::default(),
+    }
 }
 
 /// Drops the agent info reader.
@@ -2144,6 +2293,51 @@ mod tests {
             error_message: CharSlice::empty(),
             runtime_default_used: false,
         }
+    }
+
+    #[test]
+    fn downgrade_v1_builder_to_v04_traces_preserves_all_traces() {
+        use crate::span::{ddog_free_traces, ddog_serialize_trace_into_charslice};
+        use crate::span_v1::ddog_v1_new_builder;
+        use libdd_tinybytes::BytesString;
+
+        // Two chunks (traces) with a shared service; the whole-payload CharSlice form drops the
+        // second under the coms framing, the TracesBytes form must keep both.
+        let mut builder = ddog_v1_new_builder();
+        let c0 = builder.push_chunk(0, 1);
+        let s0 = builder.push_span(c0);
+        {
+            let sp = builder.span_mut(c0, s0).unwrap();
+            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
+            sp.name = BytesString::from_slice(b"op-one").unwrap();
+            sp.span_id = 1;
+        }
+        let c1 = builder.push_chunk(0, 2);
+        let s1 = builder.push_span(c1);
+        {
+            let sp = builder.span_mut(c1, s1).unwrap();
+            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
+            sp.name = BytesString::from_slice(b"op-two").unwrap();
+            sp.span_id = 2;
+        }
+
+        let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder);
+        assert_eq!(traces.len(), 2, "both traces must survive the downgrade");
+        assert_eq!(traces[0].len(), 1);
+        assert_eq!(traces[1].len(), 1);
+        assert_eq!(traces[0][0].service.as_str(), "svc-shared");
+        assert_eq!(traces[0][0].name.as_str(), "op-one");
+        assert_eq!(traces[1][0].name.as_str(), "op-two");
+
+        // Each trace serializes to a valid, non-empty msgpack array-of-1 for the background sender.
+        for i in 0..traces.len() {
+            let slice = ddog_serialize_trace_into_charslice(&mut traces[i]);
+            assert!(!slice.is_empty());
+            // Safety: `slice` is the owned allocation just returned above.
+            unsafe { crate::span::ddog_free_charslice(slice) };
+        }
+
+        ddog_free_traces(traces);
     }
 
     #[test]
