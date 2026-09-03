@@ -1,0 +1,10 @@
+[package]
+name = "libdd-common-regex-ascii-test"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+libdd-common = { path = "../..", default-features = false, features = ["regex-ascii", "regex-lite"] }
+
+[workspace]
