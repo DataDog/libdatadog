@@ -25,6 +25,7 @@ pub enum TestMode {
     SidecarDoNothing,
     SidecarMultiThreadCollection,
     UnhandledExceptionMultiThread,
+    SigactionInterception,
 }
 
 impl TestMode {
@@ -51,6 +52,7 @@ impl TestMode {
             Self::SidecarDoNothing => "sidecar_donothing",
             Self::SidecarMultiThreadCollection => "sidecar_multi_thread_collection",
             Self::UnhandledExceptionMultiThread => "unhandled_exception_multi_thread",
+            Self::SigactionInterception => "sigaction_interception",
         }
     }
 
@@ -77,6 +79,7 @@ impl TestMode {
             Self::SidecarDoNothing,
             Self::SidecarMultiThreadCollection,
             Self::UnhandledExceptionMultiThread,
+            Self::SigactionInterception,
         ]
     }
 }
@@ -112,6 +115,7 @@ impl std::str::FromStr for TestMode {
             "sidecar_donothing" => Ok(Self::SidecarDoNothing),
             "sidecar_multi_thread_collection" => Ok(Self::SidecarMultiThreadCollection),
             "unhandled_exception_multi_thread" => Ok(Self::UnhandledExceptionMultiThread),
+            "sigaction_interception" => Ok(Self::SigactionInterception),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

@@ -196,6 +196,54 @@ fn test_crash_tracking_bin_assert_fail() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that the sigaction GOT hook fires when the test binary calls sigaction
+/// for a monitored signal after crashtracker init, emitting a telemetry warning.
+/// The crash report is still generated because the test's handler chains back
+/// to the crashtracker handler.
+#[test]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigaction_interception() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::SigactionInterception,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+
+        validate_sigaction_interception_telemetry(&fixtures.crash_telemetry_path)?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// Checks that the telemetry file contains at least one entry with the
+/// `sigaction_intercepted` tag emitted by the GOT hook.
+fn validate_sigaction_interception_telemetry(telemetry_path: &Path) -> anyhow::Result<()> {
+    let content = fs::read(telemetry_path)
+        .with_context(|| format!("reading crashtracker telemetry at {:?}", telemetry_path))?;
+
+    let found = content
+        .split(|&b| b == b'\n')
+        .any(|line| String::from_utf8_lossy(line).contains("sigaction_intercepted"));
+
+    anyhow::ensure!(
+        found,
+        "expected a telemetry entry with 'sigaction_intercepted' tag in {:?}",
+        telemetry_path
+    );
+
+    Ok(())
+}
+
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via
 /// `report_unhandled_exception`, the crash report contains entries in `error.threads`
 /// for background threads with valid stack traces.
