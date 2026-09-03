@@ -93,13 +93,16 @@ pub fn embed_windows_version_info(name: &str, description: &str) {
         }
     }
 
-    if let Err(err) = res.compile() {
-        println!(
-            "cargo:warning={name}: failed to embed the Windows VERSIONINFO resource, \
-             continuing without it ({err}). This is expected when cross-compiling to a \
-             Windows target without a resource compiler (llvm-rc / *-windres) on PATH."
-        );
-    }
+   if let Err(err) = res.compile() {                                                                                                                                                                                                                                                           
+       if cfg!(windows) {                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+           panic!("{name}: failed to embed the Windows VERSIONINFO resource on a native \                                                                                                                                                                                                      
+                   Windows build ({err}); refusing to ship a DLL without it.");                                                                                                                                                                                                                
+       }                                                                                                                                                                                                                                                                                       
+       println!(                                                                                                                                                                                                                                                                               
+           "cargo:warning={name}: failed to embed the Windows VERSIONINFO resource, \                                                                                                                                                                                                          
+            continuing without it ({err}). This is expected when cross-compiling ..."                                                                                                                                                                                                          
+       );                                                                                                                                                                                                                                                                                      
+   }   
 }
 
 /// Packs a `major.minor.patch[-prerelease][+build]` semver string into the `u64`
