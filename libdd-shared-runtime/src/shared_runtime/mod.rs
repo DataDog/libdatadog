@@ -126,6 +126,26 @@ impl From<PausableWorkerError> for WorkerHandleError {
 }
 
 impl WorkerHandle {
+    /// Configure whether this worker restarts in a fork child.
+    ///
+    /// When disabled, the next [`ForkSafeRuntime::after_fork_child`] call drops the worker without
+    /// running its shutdown logic. Language runtimes can disable restart in a managed before-fork
+    /// hook, restore it in the parent hook, and replace the inherited worker in the child.
+    ///
+    /// # Errors
+    /// Returns an error if the worker has already been stopped or dropped.
+    pub fn set_fork_restart(&self, restart_on_fork: bool) -> Result<(), WorkerHandleError> {
+        let mut workers_lock = self.workers.lock_or_panic();
+        let Some(entry) = workers_lock
+            .iter_mut()
+            .find(|entry| entry.id == self.worker_id)
+        else {
+            return Err(WorkerHandleError::AlreadyStopped);
+        };
+        entry.restart_on_fork = restart_on_fork;
+        Ok(())
+    }
+
     /// Stop the worker and execute the shutdown logic.
     ///
     /// # Errors
