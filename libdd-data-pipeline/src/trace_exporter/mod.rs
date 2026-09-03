@@ -1399,9 +1399,9 @@ mod tests {
             Self(NativeCapabilities::new_client())
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
-            Self(NativeCapabilities::new_without_connection_pooling())
+            Self(NativeCapabilities::new_periodic())
         }
 
         fn request(

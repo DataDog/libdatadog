@@ -149,7 +149,7 @@ async fn run_one_iteration(
         target,
         RUNTIME_ID.to_string(),
         options,
-        libdd_capabilities_impl::NativeCapabilities::new_without_connection_pooling(),
+        libdd_capabilities_impl::NativeCapabilities::new_periodic(),
     ));
     let mut fetcher = Instrumented::new(fetcher_fut, &mut init_poll).await?;
     let init = Sample {
