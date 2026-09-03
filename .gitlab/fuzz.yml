@@ -9,11 +9,16 @@ fuzz:
     name: $BASE_CI_IMAGE
   rules:
     - !reference [.untrusted_ref_guard, rules]
-    # runs on gitlab schedule and on merge to main.
-    # Also allow manual run in branches for ease of debug / testing
-    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "schedule"'
+    # runs on gitlab schedule and on merge to main (both protected refs).
+    # Manual runs are only allowed on protected refs as well: the job
+    # operates with an elevated service account and talks to the internal
+    # fuzzing platform, so it must not be reachable from arbitrary branch
+    # or merge request pipelines.
+    - if: '$CI_COMMIT_REF_PROTECTED != "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
       allow_failure: true
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH
       allow_failure: true
     - when: manual
       allow_failure: true
