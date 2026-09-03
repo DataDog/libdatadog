@@ -118,11 +118,21 @@ mod grpc_export_tests {
             });
         }
 
-        let should_fail = failures_remaining
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .is_ok();
+        let mut remaining = failures_remaining.load(Ordering::Relaxed);
+        let should_fail = loop {
+            let Some(next) = remaining.checked_sub(1) else {
+                break false;
+            };
+            match failures_remaining.compare_exchange_weak(
+                remaining,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break true,
+                Err(current) => remaining = current,
+            }
+        };
 
         let response = http::Response::builder()
             .status(200)
