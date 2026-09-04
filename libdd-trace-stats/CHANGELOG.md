@@ -2,6 +2,23 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v8.0.0..libdd-trace-stats-v9.0.0) - 2026-09-04
+
+### Added
+
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Read OTel HTTP names for the status and method dimensions ([#2323](https://github.com/datadog/libdatadog/issues/2323)) - ([c172290](https://github.com/datadog/libdatadog/commit/c1722904796778e193703397dcd516c2bbf6f577))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v7.0.0..libdd-trace-stats-v8.0.0) - 2026-08-25
 
 ### Changed
