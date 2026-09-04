@@ -56,7 +56,7 @@ fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> i
         io::Error::new(io::ErrorKind::InvalidInput, "socket path has no filename")
     })?;
     // Save the calling thread's CWD as an fd so we can restore it unconditionally.
-    let saved = unsafe { libc::open(b".\0".as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+    let saved = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY) };
     if saved < 0 {
         return Err(io::Error::last_os_error());
     }
