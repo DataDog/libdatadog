@@ -52,9 +52,9 @@ fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> i
         fn pthread_fchdir_np(fd: libc::c_int) -> libc::c_int;
     }
     let dir = path.parent().unwrap_or(Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket path has no filename"))?;
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "socket path has no filename")
+    })?;
     // Save the calling thread's CWD as an fd so we can restore it unconditionally.
     let saved = unsafe { libc::open(b".\0".as_ptr() as *const libc::c_char, libc::O_RDONLY) };
     if saved < 0 {
