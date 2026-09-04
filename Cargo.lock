@@ -720,6 +720,7 @@ dependencies = [
  "cbindgen",
  "serde",
  "serde_json",
+ "winresource",
 ]
 
 [[package]]
@@ -7306,6 +7307,15 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "winresource"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0986a8b1d586b7d3e4fe3d9ea39fb451ae22869dcea4aa109d287a374d866087"
+dependencies = [
+ "version_check",
 ]
 
 [[package]]
