@@ -52,7 +52,7 @@ web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util", "net"], default-features = false }
-libdd-capabilities-impl = { version = "4.0.1", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false }
 # OTLP gRPC transport: a custom GrpcService over hyper h2c. tonic's transport
 # (hyper/tokio/socket2) does not build for wasm32, so the whole gRPC path is gated off.
 tonic = { version = "0.14", default-features = false }
@@ -76,7 +76,7 @@ harness = false
 path = "benches/trace_buffer.rs"
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "4.0.1", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 libdd-shared-runtime = { version = "3.1.0", path = "../libdd-shared-runtime" }
 regex = { workspace = true, features = ["std", "unicode", "perf"] }
