@@ -308,18 +308,42 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
-    let err = match liaison.attempt_listen() {
+    let (we_created_listener, err) = match liaison.attempt_listen() {
         Ok(Some(listener)) => {
             daemonize_with_entrypoint(listener, cfg, daemon_entrypoint)?;
-            None
+            (true, None)
         }
-        Ok(None) => None,
-        err => err.context("Error starting sidecar").err(),
+        Ok(None) => (false, None),
+        err => (false, err.context("Error starting sidecar").err()),
+    };
+
+    // If another process just won the race to create the listener (or is already
+    // listening), its daemon may not have started accepting connections yet: the
+    // listener socket exists once bound, but on platforms without a kernel-level
+    // accept backlog (see the SCM_RIGHTS/DGRAM rendezvous connect on macOS) nothing
+    // is actually reading from it until the newly spawned daemon's accept loop is
+    // running, which lags bind() by the time it takes to fork/exec/init. Connecting
+    // immediately after losing the race can therefore hit a transient EAGAIN even
+    // though the daemon is starting up correctly. Retry with a short backoff before
+    // giving up; skip this when we ourselves just created the listener, since then
+    // there is no such lag to wait out.
+    let connect_result = if we_created_listener {
+        liaison.connect_to_server()
+    } else {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            match liaison.connect_to_server() {
+                Ok(conn) => break Ok(conn),
+                Err(_e) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(e) => break Err(e),
+            }
+        }
     };
 
     Ok(SidecarTransport::from(
-        liaison
-            .connect_to_server()
-            .map_err(|e| err.unwrap_or(e.into()))?,
+        connect_result.map_err(|e| err.unwrap_or(e.into()))?,
     ))
 }
