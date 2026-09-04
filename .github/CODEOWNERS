@@ -20,7 +20,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
-bin_tests/                           @DataDog/libdatadog-profiling
+bin_tests/                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 build-common/                        @DataDog/apm-common-components-core
 builder                              @DataDog/apm-common-components-core
 Cargo.*                              @DataDog/libdatadog
@@ -46,7 +46,7 @@ libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
-libdd-crashtracker*/                 @DataDog/libdatadog-profiling
+libdd-crashtracker*/                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 libdd-data-pipeline*/                @DataDog/apm-common-components-core
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
