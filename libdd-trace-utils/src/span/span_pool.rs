@@ -353,11 +353,16 @@ mod tests {
         let pool = SpanPool::<crate::span::BytesData>::with_capacity(100);
         {
             // No drop-policy control here, but a single span is very likely retained.
-            let chunks = pool.wrap_chunks(vec![vec![span("a")]]);
+            // If we drop 10% of spans, the likelyhood all spans are dropped is 1/10**100
+            // which is basically never happening if we ran this test until the heat death of
+            // this universe
+            let chunks = pool.wrap_chunks(vec![vec![span("a"); 100]]);
             drop(chunks);
         }
-        let s = pool.get_span();
-        assert_eq!(s.name, BytesString::default());
+        for _ in 0..100 {
+            let s = pool.get_span();
+            assert_eq!(s.name, BytesString::default());
+        }
     }
 
     #[test]
