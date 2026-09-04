@@ -10,7 +10,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false }
+libdd-remote-config = { version = "4.0.1", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "6.0.0", path = "../libdd-common" }
 libdd-data-pipeline = { version = "9.0.0", path = "../libdd-data-pipeline" }
 libdd-capabilities = { version = "3.0.1", path = "../libdd-capabilities" }
