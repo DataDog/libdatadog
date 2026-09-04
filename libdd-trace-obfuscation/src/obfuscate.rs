@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::borrow::Borrow;
+use core::{borrow::Borrow, mem};
 
 use libdd_trace_protobuf::pb::{
     self, attribute_any_value::AttributeAnyValueType,
@@ -22,7 +22,7 @@ use crate::{
         quantize_redis_string, remove_all_redis_args,
     },
     replacer::{replace_span_tags, replace_span_tags_v04},
-    sql::{obfuscate_sql_opt, DbmsKind, SqlObfuscationMode},
+    sql::{obfuscate_sql, DbmsKind, SqlObfuscationMode},
 };
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
@@ -234,6 +234,38 @@ fn apply<S: SpanText>(field: &mut S, f: impl FnOnce(&str) -> Option<String>) {
     }
 }
 
+struct CachedSql<S> {
+    dbms: DbmsKind,
+    resource: S,
+    // Retain the output only after the key repeats; unique-query batches otherwise need an extra
+    // copy.
+    obfuscated: Option<String>,
+}
+
+/// Obfuscates v0.4 spans and reuses the most recent SQL result.
+///
+/// Keep one instance for a batch of spans. A new instance starts with an empty cache.
+pub struct V04Obfuscator<'a, T: TraceData> {
+    config: &'a ObfuscationConfig,
+    last_sql: Option<CachedSql<T::Text>>,
+}
+
+impl<'a, T: TraceData> V04Obfuscator<'a, T> {
+    /// Creates an obfuscator for one span batch.
+    #[must_use]
+    pub const fn new(config: &'a ObfuscationConfig) -> Self {
+        Self {
+            config,
+            last_sql: None,
+        }
+    }
+
+    /// Obfuscates the fields of one [`v04::Span`].
+    pub fn obfuscate_span(&mut self, span: &mut v04::Span<T>) {
+        obfuscate_v04_span_inner(span, self.config, Some(&mut self.last_sql));
+    }
+}
+
 /// Obfuscates the fields of a [`v04::Span`].
 ///
 /// Mirrors [`obfuscate_pb_span`] but targets the generic [`v04::Span`] whose string fields are the
@@ -241,6 +273,14 @@ fn apply<S: SpanText>(field: &mut S, f: impl FnOnce(&str) -> Option<String>) {
 /// allocate.
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?
 pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &ObfuscationConfig) {
+    obfuscate_v04_span_inner(span, config, None);
+}
+
+fn obfuscate_v04_span_inner<T: TraceData>(
+    span: &mut v04::Span<T>,
+    config: &ObfuscationConfig,
+    last_sql: Option<&mut Option<CachedSql<T::Text>>>,
+) {
     for span_event in &mut span.span_events {
         obfuscate_v04_span_event(span_event, config);
     }
@@ -297,19 +337,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
             }
         }
         "sql" | "cassandra" if !span.resource.borrow().is_empty() => {
-            let dbms: DbmsKind = span
-                .meta
-                .get(TAG_DBMS)
-                .map(as_str)
-                .and_then(|dbms| TryInto::try_into(dbms).ok())
-                .unwrap_or_default();
-            if let Some(query) = obfuscate_sql_opt(as_str(&span.resource), &config.sql, dbms) {
-                span.resource = T::Text::from_owned(query.clone());
-                span.meta.insert(
-                    T::Text::from_static_str(TAG_SQLQUERY),
-                    T::Text::from_owned(query),
-                );
-            }
+            obfuscate_v04_sql_resource(span, config, last_sql);
         }
         "elasticsearch" if config.elasticsearch.config().enabled => {
             if let Some(elastic_query) = span.meta.get_mut(TAG_ELASTIC_BODY) {
@@ -331,6 +359,69 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
 
     if let Some(tag_replace_rules) = &config.tag_replace_rules {
         replace_span_tags_v04(span, tag_replace_rules);
+    }
+}
+
+fn obfuscate_v04_sql_resource<T: TraceData>(
+    span: &mut v04::Span<T>,
+    config: &ObfuscationConfig,
+    last_sql: Option<&mut Option<CachedSql<T::Text>>>,
+) {
+    let dbms: DbmsKind = span
+        .meta
+        .get(TAG_DBMS)
+        .map(as_str)
+        .and_then(|dbms| TryInto::try_into(dbms).ok())
+        .unwrap_or_default();
+    if let Some(last_sql) = last_sql {
+        let resource = as_str(&span.resource);
+        let cached = last_sql.as_ref().filter(|cached| {
+            mem::discriminant(&cached.dbms) == mem::discriminant(&dbms)
+                && as_str(&cached.resource) == resource
+        });
+        if let Some(obfuscated) = cached.and_then(|cached| cached.obfuscated.as_ref()) {
+            span.resource = T::Text::from_owned(obfuscated.clone());
+            span.meta.insert(
+                T::Text::from_static_str(TAG_SQLQUERY),
+                T::Text::from_owned(obfuscated.clone()),
+            );
+            return;
+        }
+
+        let cache_hit = cached.is_some();
+        let obfuscated = obfuscate_sql(resource, &config.sql, dbms);
+        let resource = mem::take(&mut span.resource);
+        if cache_hit {
+            span.resource = T::Text::from_owned(obfuscated.clone());
+            span.meta.insert(
+                T::Text::from_static_str(TAG_SQLQUERY),
+                T::Text::from_owned(obfuscated.clone()),
+            );
+            *last_sql = Some(CachedSql {
+                dbms,
+                resource,
+                obfuscated: Some(obfuscated),
+            });
+            return;
+        }
+
+        span.resource = T::Text::from_owned(obfuscated.clone());
+        span.meta.insert(
+            T::Text::from_static_str(TAG_SQLQUERY),
+            T::Text::from_owned(obfuscated),
+        );
+        *last_sql = Some(CachedSql {
+            dbms,
+            resource,
+            obfuscated: None,
+        });
+    } else {
+        let query = obfuscate_sql(as_str(&span.resource), &config.sql, dbms);
+        span.resource = T::Text::from_owned(query.clone());
+        span.meta.insert(
+            T::Text::from_static_str(TAG_SQLQUERY),
+            T::Text::from_owned(query),
+        );
     }
 }
 
@@ -569,7 +660,7 @@ mod tests {
 
 #[cfg(test)]
 mod v04_tests {
-    use super::obfuscate_v04_span;
+    use super::{obfuscate_v04_span, V04Obfuscator};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
     };
@@ -693,6 +784,73 @@ mod v04_tests {
             span.meta.get("sql.query").unwrap().as_str(),
             "SELECT * FROM users WHERE id = ?"
         );
+    }
+
+    #[test]
+    fn v04_obfuscator_preserves_sql_results_across_cache_key_changes() {
+        let config = ObfuscationConfig::default();
+        let mut obfuscator = V04Obfuscator::new(&config);
+        let cases = [
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                None,
+                "SELECT a FROM foo WHERE value < @name",
+            ),
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                None,
+                "SELECT a FROM foo WHERE value < @name",
+            ),
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                None,
+                "SELECT a FROM foo WHERE value < @name",
+            ),
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                Some("postgresql"),
+                "SELECT a FROM foo WHERE value <@ name",
+            ),
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                Some("postgresql"),
+                "SELECT a FROM foo WHERE value <@ name",
+            ),
+            (
+                "SELECT a FROM foo WHERE value<@name",
+                Some("postgresql"),
+                "SELECT a FROM foo WHERE value <@ name",
+            ),
+            (
+                "SELECT * FROM users WHERE id = 42",
+                Some("postgresql"),
+                "SELECT * FROM users WHERE id = ?",
+            ),
+            (
+                "SELECT * FROM users WHERE id = 42",
+                Some("postgresql"),
+                "SELECT * FROM users WHERE id = ?",
+            ),
+            (
+                "SELECT * FROM users WHERE id = 42",
+                Some("postgresql"),
+                "SELECT * FROM users WHERE id = ?",
+            ),
+        ];
+
+        for (resource, dbms_tag, expected) in cases {
+            let mut span = test_span();
+            span.r#type = bs("sql");
+            span.resource = bs(resource);
+            if let Some(dbms_tag) = dbms_tag {
+                span.meta.insert(bs("db.type"), bs(dbms_tag));
+            }
+
+            obfuscator.obfuscate_span(&mut span);
+
+            assert_eq!(span.resource.as_str(), expected);
+            assert_eq!(span.meta.get("sql.query").unwrap().as_str(), expected);
+        }
     }
 
     #[test]
