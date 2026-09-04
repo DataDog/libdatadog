@@ -132,20 +132,11 @@ impl AgentInfoFetcher {
                             // `SameState` and other-process shm readers would never observe the
                             // update. Leaving `state` unchanged makes us fetch and retry the write
                             // on the next iteration.
-                            let published = match writer {
-                                Some(ref writer) => {
-                                    match writer.write(&serde_json::to_vec(&status.info).unwrap()) {
-                                        Ok(()) => true,
-                                        Err(e) => {
-                                            error!("Failed to write agent info shm segment: {e}");
-                                            false
-                                        }
-                                    }
+                            if let Some(writer) = &writer {
+                                match writer.write(&serde_json::to_vec(&status.info).unwrap()) {
+                                    Ok(()) => state = Some(status.state_hash),
+                                    Err(e) => error!("Failed to write agent info shm segment: {e}"),
                                 }
-                                None => false,
-                            };
-                            if published {
-                                state = Some(status.state_hash);
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));

@@ -480,12 +480,9 @@ impl TelemetryCachedClient {
     }
 
     pub fn write_shm_file(&mut self) {
-        let buf = match bincode::serialize(&self.shared) {
-            Ok(buf) => buf,
-            Err(_) => {
-                warn!("Failed to serialize telemetry data for shared memory");
-                return;
-            }
+        let Ok(buf) = bincode::serialize(&self.shared) else {
+            warn!("Failed to serialize telemetry data for shared memory");
+            return;
         };
 
         if self.shm_writer.is_none() {
