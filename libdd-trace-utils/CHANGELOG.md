@@ -2,6 +2,27 @@
 
 
 
+## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v11.0.0..libdd-trace-utils-v12.0.0) - 2026-09-04
+
+### Added
+
+- Emit native trace export telemetry ([#2338](https://github.com/datadog/libdatadog/issues/2338)) - ([1887a57](https://github.com/datadog/libdatadog/commit/1887a57ca4564b1aacc9270622a896f14c3250de))
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add runtime-independent agentless sending ([#2389](https://github.com/datadog/libdatadog/issues/2389)) - ([4cfd390](https://github.com/datadog/libdatadog/commit/4cfd390c26275689456a8bd7db26d37601d232d7))
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Align zstd behavior across targets ([#2400](https://github.com/datadog/libdatadog/issues/2400)) - ([a25619e](https://github.com/datadog/libdatadog/commit/a25619e4a6c6ad6f458faca3f29e5548a70bce41))
+- Read OTel HTTP names for the status and method dimensions ([#2323](https://github.com/datadog/libdatadog/issues/2323)) - ([c172290](https://github.com/datadog/libdatadog/commit/c1722904796778e193703397dcd516c2bbf6f577))
+- Use vec map dedup when serializing ([#2422](https://github.com/datadog/libdatadog/issues/2422)) - ([7327f30](https://github.com/datadog/libdatadog/commit/7327f3049c281090f7cce7830b9430206fba11cf))
+
+
+
 ## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.1.0..libdd-trace-utils-v11.0.0) - 2026-08-25
 
 ### Added
