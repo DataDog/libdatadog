@@ -6,13 +6,13 @@ use crate::platform::{
 };
 use io_lifetimes::OwnedFd;
 use libc::{chmod, off_t};
-use nix::errno::Errno;
+use nix::errno::{errno, Errno};
 #[cfg(target_os = "linux")]
 use nix::fcntl::{fallocate, FallocateFlags};
 use nix::fcntl::{open, OFlag};
 use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
-use nix::sys::stat::Mode;
-use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
+use nix::sys::stat::{stat, Mode, SFlag};
+use nix::unistd::{fchown, ftruncate, getuid, mkdir, unlink, Uid};
 use nix::NixPath;
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -28,10 +28,54 @@ const NO_OWNER_UID: u32 = u32::MAX;
 
 fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
     name.with_nix_path(|cstr| {
-        let mut path = "/tmp/libdatadog".to_string().into_bytes();
+        let mut path = format!("/tmp/libdatadog-{}", getuid().as_raw()).into_bytes();
         path.extend_from_slice(cstr.to_bytes_with_nul());
         unsafe { CString::from_vec_with_nul_unchecked(path) }
     })
+}
+
+// Make sure a /tmp/libdatadog-<uid> directory exists (create it if needed) with the proper
+// permissions set. In particular, we don't want less privilegied users to be able to tamper with
+// the data here or to install symbolic links.
+fn ensure_fallback_dir() -> nix::Result<()> {
+    fn set_perms(dir: &CStr) -> nix::Result<()> {
+        let result = unsafe { chmod(dir.as_ptr(), 0o700) };
+
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(Errno::last())
+        }
+    }
+
+    let dir = CString::new(format!("/tmp/libdatadog-{}", getuid().as_raw()))
+        .map_err(|_| nix::Error::EINVAL)?;
+
+    match mkdir(dir.as_c_str(), Mode::from_bits_truncate(0o700)) {
+        Ok(_) => {
+            // work around umask(2)
+            set_perms(&dir)?;
+            Ok(())
+        }
+        Err(Errno::EEXIST) => {
+            let st = stat(dir.as_c_str())?;
+
+            if SFlag::from_bits_truncate(st.st_mode) != SFlag::S_IFDIR {
+                return Err(Errno::ENOTDIR);
+            }
+
+            if st.st_uid != getuid().as_raw() {
+                return Err(Errno::EACCES);
+            }
+
+            if (st.st_mode & 0o777) != 0o700 {
+                set_perms(&dir)?;
+            }
+
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn shm_open<P: ?Sized + NixPath>(
@@ -44,14 +88,11 @@ fn shm_open<P: ?Sized + NixPath>(
         if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT || e == Errno::EACCES {
             // The path has a leading slash
             let path = fallback_path(name)?;
-            open(path.as_c_str(), flag, mode)
+            open(path.as_c_str(), flag | OFlag::O_NOFOLLOW, mode)
                 .or_else(|e| {
                     if (flag & OFlag::O_CREAT) == OFlag::O_CREAT && e == Errno::ENOENT {
-                        #[allow(clippy::unwrap_used)]
-                        mkdir(c"/tmp/libdatadog", Mode::from_bits(0o1777).unwrap())?;
-                        // work around umask(2).
-                        unsafe { chmod(c"/tmp/libdatadog".as_ptr(), 0o1777) };
-                        open(path.as_c_str(), flag, mode)
+                        ensure_fallback_dir()?;
+                        open(path.as_c_str(), flag | OFlag::O_NOFOLLOW, mode)
                     } else {
                         Err(e)
                     }
