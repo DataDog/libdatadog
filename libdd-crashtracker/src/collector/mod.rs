@@ -13,6 +13,8 @@ mod emitters;
 mod process_handle;
 mod receiver_manager;
 mod saguard;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod sigaction_interceptor;
 mod signal_handler_manager;
 mod spans;
 

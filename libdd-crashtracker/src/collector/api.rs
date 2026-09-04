@@ -88,6 +88,8 @@ pub fn init(
     register_panic_hook()?;
     #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     super::assert_interceptor::install_assert_hook();
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    super::sigaction_interceptor::install_sigaction_hook(config.signals());
     enable();
     Ok(())
 }
