@@ -2,6 +2,21 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.2.0..libdd-common-v6.0.0) - 2026-09-04
+
+### Added
+
+- Add HTTPS_PROXY support for hyper_backend ([#2421](https://github.com/datadog/libdatadog/issues/2421)) - ([a0f2872](https://github.com/datadog/libdatadog/commit/a0f2872d0802a509927a758ea3fa6f8fd64f6b52))
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add runtime-independent agentless sending ([#2389](https://github.com/datadog/libdatadog/issues/2389)) - ([4cfd390](https://github.com/datadog/libdatadog/commit/4cfd390c26275689456a8bd7db26d37601d232d7))
+- Do not entirely disable connection pooling for periodic connections ([#2440](https://github.com/datadog/libdatadog/issues/2440)) - ([a4df07e](https://github.com/datadog/libdatadog/commit/a4df07ed442e88e70d9e6248c79a1ab1319d2182))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [5.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.1..libdd-common-v5.2.0) - 2026-08-17
 
 ### Added
