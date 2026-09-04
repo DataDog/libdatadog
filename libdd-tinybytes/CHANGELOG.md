@@ -2,6 +2,14 @@
 
 
 
+## [1.1.3](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.2..libdd-tinybytes-v1.1.3) - 2026-09-04
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [1.1.2](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.1..libdd-tinybytes-v1.1.2) - 2026-08-07
 
 ### Changed
