@@ -33,7 +33,7 @@ libdd-ffe                            @DataDog/feature-flagging-and-experimentati
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ipc*/                          @DataDog/libdatadog-php
-datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
+libdd-live-debugger*/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
 libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
