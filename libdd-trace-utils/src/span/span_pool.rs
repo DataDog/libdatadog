@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use thread_local::ThreadLocal;
 
-/// When this function returns true, do not add the returned span to the queue.
+/// When this function returns true, do not add the returned chunk to the queue.
 ///
 /// Why are we doing this?
 ///
@@ -20,8 +20,9 @@ use thread_local::ThreadLocal;
 /// * As spans get reused and atributes data structure are pushed and popped, they will tend to grow
 ///   to have the maximum size of attributes
 ///
-/// Dropping a fixed pct of spans returned ensures that we eventually free memory
-/// if span usage spikes, and then goes down.
+/// The policy operates at chunk granularity: `add_chunks` draws once per chunk and either
+/// recycles the whole chunk or drops it. Dropping a fixed pct of chunks returned ensures that
+/// we eventually free memory if span usage spikes, and then goes down.
 fn drop_policy() -> bool {
     const PCT_OF_SPANS_RETURNED_DROPPED: f64 = 0.1;
     thread_local! {
@@ -100,14 +101,16 @@ fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Sp
 /// pre-allocated `meta`/`metrics`/... buffers alive across flushes, skipping alloc churn.
 ///
 /// Backed by an unbounded crossbeam channel of chunks (one send per chunk, not per span). The
-/// capacity (in spans) bounds the channel only
-/// Thread-local caches are not counted, so idle threads holding cached spans don't reduce the
-/// pool's headroom.
+/// capacity (in spans) bounds the channel only. Thread-local caches are not counted, so idle
+/// threads holding cached spans don't reduce the pool's headroom.
 ///
-/// Returning a piece reserves span-count atomically before sending, so the channel never exceeds
-/// capacity across threads. `get_span` first hits a per-thread chunk cache ([`ThreadLocal`]) and
-/// only when empty does it dequeue a fresh chunk. This keeps the single-producer path lock-free and
-/// gives each thread a local chunk under contention.
+/// The capacity bound is best-effort: `add_chunks` checks-and-increments `len` with relaxed
+/// atomics, so concurrent producers can briefly exceed `capacity` (the channel itself is
+/// unbounded).
+/// Since there is a single task returning chunks to the queue (the exporter task) the bound is exact.
+/// `get_span` first hits a per-thread
+/// chunk cache ([`ThreadLocal`]) and only when empty does it dequeue a fresh chunk. This keeps
+/// the single-producer path lock-free and gives each thread a local chunk under contention.
 #[derive(Debug, Clone)]
 pub struct SpanPool<T: TraceData> {
     inner: Arc<SpanPoolInner<T>>,

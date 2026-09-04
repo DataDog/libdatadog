@@ -801,8 +801,6 @@ impl<
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            // The OTLP mapper transforms spans into a different representation and consumes
-            // them, so these spans cannot be recycled.
             return self.send_otlp_traces_inner(&traces, config).await;
         }
 

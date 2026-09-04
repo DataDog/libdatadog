@@ -88,10 +88,6 @@ impl TraceSerializer {
     }
 
     /// Serialize the borrowed traces to the msgpack payload for `output_format`.
-    ///
-    /// v0.4 and v1 only read the spans. v0.5 interns strings into a shared dictionary, which
-    /// consumes the spans, so this path clones them first (v0.5 is a legacy, rarely-used
-    /// format) and leaves the caller's originals untouched so they can still be recycled.
     //
     // APMSP-2812 - TODO: when the data-pipeline gains a V1-native input model (its own
     // `v1::Span`-shaped builder), serialize `OutputFormat::V1` from a native

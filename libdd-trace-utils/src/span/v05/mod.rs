@@ -223,8 +223,8 @@ pub fn from_v04_span<T: TraceData>(
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
 
-    // Serialize span links / span events before `span` is consumed below. v0.5 has no
-    // dedicated slots for them, so they are flattened into `meta` as JSON strings.
+    // Serialize span links / span events
+    // v0.5 has no dedicated slots for them, so they are flattened into `meta` as JSON strings.
     let serialized_span_links = if span.span_links.is_empty() {
         None
     } else {
