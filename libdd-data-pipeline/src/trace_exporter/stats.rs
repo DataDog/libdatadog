@@ -8,6 +8,7 @@
 //! and processing traces for stats collection.
 
 pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+use libdd_trace_utils::span::span_pool::PooledChunks;
 
 use super::add_path;
 use super::TracerMetadata;
@@ -331,7 +332,7 @@ pub(crate) fn process_traces_for_stats<
         + Sync
         + 'static,
 >(
-    traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: &mut PooledChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,

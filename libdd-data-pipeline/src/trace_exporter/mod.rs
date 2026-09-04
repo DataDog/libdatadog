@@ -55,6 +55,7 @@ use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
@@ -421,7 +422,9 @@ impl<
             None,
         );
 
-        let res = self.send_trace_chunks_inner(traces).await?;
+        let res = self
+            .send_trace_chunks_inner(PooledChunks::unpooled(traces))
+            .await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -607,7 +610,7 @@ impl<
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
-        trace_chunks: Vec<Vec<Span<T>>>,
+        trace_chunks: PooledChunks<'_, T>,
         cancellation_token: Option<&CancellationToken>,
     ) -> Result<AgentResponse, TraceExporterError>
     where
@@ -639,7 +642,7 @@ impl<
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
-        trace_chunks: Vec<Vec<Span<T>>>,
+        trace_chunks: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
         // There is no agent to negotiate with, skip the poll.
         if self.log_output.is_none() && self.agentless_config.is_none() {
@@ -651,7 +654,7 @@ impl<
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        traces: PooledChunks<'_, T>,
         config: &AgentlessTraceConfig,
         client_side_stats: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
@@ -679,11 +682,11 @@ impl<
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        traces: &[Vec<Span<T>>],
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
-        let counts = PayloadCounts::from_traces(&traces);
+        let counts = PayloadCounts::from_traces(traces);
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
             r.service = self.metadata.service.clone();
@@ -802,8 +805,13 @@ impl<
 
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
-        mut traces: Vec<Vec<Span<T>>>,
+        mut traces: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // `traces` is a `PooledChunks`: keeping it owned (rather than moving its inner `Vec`
+        // into the consuming code paths) is what lets its spans be recycled into the pool when
+        // it is dropped at the end of this function. Paths that must consume the spans use
+        // `into_chunks()` and forgo pooling.
+        //
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
         // The builder should reject conflicting destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
@@ -824,7 +832,7 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
-        for chunk in &mut traces {
+        for chunk in traces.iter_mut() {
             for span in chunk.iter_mut() {
                 span.dedup();
             }
@@ -847,7 +855,7 @@ impl<
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            return self.send_otlp_traces_inner(&traces, config).await;
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
@@ -856,7 +864,7 @@ impl<
         let counts = PayloadCounts::from_traces(&traces);
 
         let prepared = match self.serializer.prepare_traces_payload(
-            traces,
+            &traces,
             header_tags,
             &self.metadata,
             self.agent_payload_response_version.as_ref(),

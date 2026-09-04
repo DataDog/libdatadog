@@ -11,6 +11,7 @@ use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
     SendWithRetryError, SendWithRetryResult,
 };
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
@@ -43,7 +44,7 @@ pub enum AgentlessError {
 /// does not double-count the same traces.
 pub async fn send_agentless_traces<C, T>(
     capabilities: &C,
-    traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: PooledChunks<'_, T>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,
@@ -68,7 +69,7 @@ where
 /// The observer is invoked once after the retry loop with the post-compression payload size.
 pub async fn send_agentless_traces_with_observer<C, T, F>(
     capabilities: &C,
-    mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    mut traces: PooledChunks<'_, T>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,
@@ -82,7 +83,7 @@ where
     // Top-level tagging is already done before sending when client-side stats
     // are active
     if !metadata.client_computed_top_level && !client_side_stats {
-        for chunk in &mut traces {
+        for chunk in traces.as_mut_slice() {
             compute_top_level_span(chunk);
         }
     }
@@ -186,7 +187,7 @@ mod tests {
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
     use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_trace_utils::span::{v04::SpanBytes, BytesData};
     use std::{
         sync::{Arc, Mutex},
         time::Duration,
@@ -247,8 +248,8 @@ mod tests {
         }
     }
 
-    fn v04_traces() -> Vec<Vec<SpanBytes>> {
-        vec![vec![SpanBytes {
+    fn v04_traces() -> PooledChunks<'static, BytesData> {
+        PooledChunks::unpooled(vec![vec![SpanBytes {
             name: BytesString::from_static("operation"),
             service: BytesString::from_static("service-1"),
             resource: BytesString::from_static("resource-1"),
@@ -257,7 +258,7 @@ mod tests {
             start: 1,
             duration: 2,
             ..Default::default()
-        }]]
+        }]])
     }
 
     fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {

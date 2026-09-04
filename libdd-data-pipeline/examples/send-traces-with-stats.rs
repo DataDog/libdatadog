@@ -16,7 +16,10 @@ mod example {
     };
     use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::{Span, SpanBytes, VecMap};
+    use libdd_trace_utils::span::{
+        span_pool::PooledChunks,
+        v04::{Span, SpanBytes, VecMap},
+    };
     use std::{
         sync::Arc,
         time::{Duration, UNIX_EPOCH},
@@ -153,7 +156,7 @@ mod example {
         dbg!(&traces);
 
         exporter
-            .send_trace_chunks(traces, None)
+            .send_trace_chunks(PooledChunks::unpooled(traces), None)
             .expect("Failed to send traces");
         shared_runtime
             .shutdown(None)
