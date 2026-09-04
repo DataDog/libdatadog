@@ -6,7 +6,7 @@ use object::read::elf::{ElfFile64, FileHeader};
 use object::read::macho::{LoadCommandVariant, MachHeader};
 use object::{
     Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol, SymbolFlags,
-    SymbolKind,
+    SymbolKind, SymbolScope,
 };
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -111,10 +111,15 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
 pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String> {
     let data = fs::read(target).map_err(|e| format!("read {}: {e}", target.display()))?;
 
+    // Note: deliberately not excluding symbols the `object` crate already reports as
+    // `is_weak()` here — for Mach-O relocatable objects it has been observed to
+    // misreport genuinely non-weak undefined symbols (e.g. `_OnUpdateString`) as weak,
+    // which silently excluded them from candidacy and left them unweakened in the
+    // final object. Re-marking an already-weak symbol is a harmless no-op below.
     let undefined_candidates: HashSet<String> = File::parse(data.as_slice())
         .map_err(|e| format!("parse {}: {e}", target.display()))?
         .symbols()
-        .filter(|s| s.is_undefined() && !s.is_weak())
+        .filter(|s| s.is_undefined())
         .filter_map(|s| s.name().ok().map(|n| n.to_string()))
         .collect();
 
@@ -124,7 +129,19 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
         let so_file = File::parse(bin_data.as_slice())
             .map_err(|e| format!("parse {}: {e}", binary.display()))?;
         let mut result = HashSet::new();
-        for sym in so_file.dynamic_symbols() {
+        // `dynamic_symbols()` reflects ELF's `.dynsym` correctly, but on Mach-O it only
+        // covers a dylib's export trie: a main executable (e.g. the `php` binary) has none,
+        // so this always returned empty on macOS and no symbol was ever weakened. Fall back
+        // to the full symbol table there, restricted to externally-visible (dynamic-scope)
+        // definitions, which is where a main executable's exported symbols actually show up.
+        #[cfg(target_os = "macos")]
+        let candidate_syms: Vec<_> = so_file
+            .symbols()
+            .filter(|s| s.scope() == SymbolScope::Dynamic)
+            .collect();
+        #[cfg(not(target_os = "macos"))]
+        let candidate_syms: Vec<_> = so_file.dynamic_symbols().collect();
+        for sym in candidate_syms {
             if sym_is_definition(&sym) {
                 if let Ok(name) = sym.name() {
                     if undefined_candidates.contains(name) {
@@ -243,11 +260,14 @@ fn weaken_macho(
             File::parse(&*data).map_err(|e| format!("parse macho {}: {e}", obj_path.display()))?;
 
         // Mach-O symbol names have a leading '_' stripped when `symbols` was built.
+        // Note: not filtering on `!sym.is_weak()` here — the `object` crate has been
+        // observed to misreport genuinely non-weak Mach-O undefined symbols (e.g.
+        // `_OnUpdateString`) as already weak, which would wrongly skip patching them.
+        // OR-ing in N_WEAK_REF below is a harmless no-op for symbols already weak.
         let indices: Vec<usize> = file
             .symbols()
             .filter(|sym| {
                 sym.is_undefined()
-                    && !sym.is_weak()
                     && sym
                         .name()
                         .is_ok_and(|n| symbols.contains(n.strip_prefix('_').unwrap_or(n)))
