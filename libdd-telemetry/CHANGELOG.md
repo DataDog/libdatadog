@@ -2,6 +2,15 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v7.0.0..libdd-telemetry-v8.0.0) - 2026-09-04
+
+### Changed
+
+- Avoid doing two separate http requests in stop telemetry ([#2435](https://github.com/datadog/libdatadog/issues/2435)) - ([c5f3b82](https://github.com/datadog/libdatadog/commit/c5f3b821220bd65d7fd6046446d8848cc972e6c4))
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v6.0.0..libdd-telemetry-v7.0.0) - 2026-08-17
 
 ### Added
