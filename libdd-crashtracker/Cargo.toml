@@ -53,7 +53,7 @@ errno = "0.3"
 libdd-capabilities = { version = "3.0.1", path = "../libdd-capabilities" }
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { version = "6.0.0", path = "../libdd-common" }
-libdd-telemetry = { version = "7.0.1", path = "../libdd-telemetry" }
+libdd-telemetry = { version = "8.0.0", path = "../libdd-telemetry" }
 http = { workspace = true, features = ["std"] }
 libc.workspace = true
 nix = { version = "0.29", features = ["poll", "signal", "socket"] }
