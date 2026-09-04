@@ -14,11 +14,11 @@ libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", defa
 libdd-common = { version = "5.2.0", path = "../libdd-common" }
 libdd-data-pipeline = { version = "9.0.0", path = "../libdd-data-pipeline" }
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
-http = "1"
-bytes =  "1.11.1"
+http = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
 futures.workspace = true
 
-percent-encoding = "2.1"
+percent-encoding = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sys-info = { version = "0.9.0" }

@@ -94,7 +94,9 @@ authors = ["Datadog Inc. <info@datadoghq.com>"]
 allocator-api2 = { version = "0.2.21", default-features = false }
 arc-swap = { version = "1.7.1", default-features = false }
 anyhow = { version = "1.0", default-features = false }
+base64 = { version = "0.22", default-features = false }
 bolero = { version = "0.13.4", default-features = false }
+bytes = { version = "1.11", default-features = false }
 chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.3.21", default-features = false }
 # Some default features are necessary: without `cargo_bench_support` the
@@ -104,7 +106,18 @@ clap = { version = "4.3.21", default-features = false }
 criterion = { version = "0.5.1", default-features = true }
 cxx-build = { version = "1.0", default-features = false }
 elf = { version = "0.7", default-features = false }
+fastrand = { version = "2", default-features = false }
+# flate2 without a backend feature is unusable (no compression backend at all).
+# `rust_backend` (pure Rust, no C dependency) is the baseline we want everywhere.
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 futures = { version = "0.3", default-features = false }
+http = { version = "1.1", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
+# httpmock 0.8.0-alpha.1 does not compile without the `cookies` feature: its
+# own `readers.rs` calls `req.cookies()` unconditionally while that method is
+# gated behind `cookies`. Keep it as a baseline at the workspace level.
+httpmock = { version = "0.8.0-alpha.1", default-features = false, features = ["cookies"] }
+httparse = { version = "1.9", default-features = false }
 hyper = { version = "1.6", default-features = false }
 hyper-util = { version = "0.1.10", default-features = false }
 io-lifetimes = { version = "1.0", default-features = false }
@@ -113,14 +126,21 @@ io-lifetimes = { version = "1.0", default-features = false }
 # `no-std` environment is not the recommended way, and that this possibility
 # will be gone in future versions). We enable it by default for everyone.
 libc = { version = "0.2", default-features = true }
+mime = { version = "0.3.16", default-features = false }
+once_cell = { version = "1.18", default-features = false }
+percent-encoding = { version = "2.1", default-features = false }
 prost-build = { version = "0.14.1", default-features = false }
 protoc-bin-vendored = { version = "3.0.0", default-features = false }
+regex = { version = "1.5", default-features = false }
+reqwest = { version = "0.13", default-features = false }
 rustls = { version = "0.23", default-features = false }
+rustls-platform-verifier = { version = "0.6", default-features = false }
 serde = { version = "1.0", default-features = false }
 # serde_json requires at least one of `std` or `alloc`. We set `alloc` here as
 # the minimal working baseline, and to avoid repeating alloc everywhere.
 # Enabling `std` on top of it is fine.
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
 syn = { version = "^2", default-features = false }
 # Without `getrandom`, tempfile seeds its temp-name RNG weakly and its own docs
 # flag that an attacker may then be able to predict the file names. We enable
@@ -131,6 +151,7 @@ tempfile = { version = "3.13", default-features = false, features = [
 tokio = { version = "1.36", default-features = false }
 tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.7.0", default-features = false }
+zstd = { version = "0.13", default-features = false }
 
 [profile.dev]
 debug = 2 # full debug info
@@ -140,6 +161,15 @@ codegen-units = 1
 debug = "line-tables-only"
 lto = true
 opt-level = "s"            # optimize for size
+
+# CI-only verification profile. Same shape as `release`, but ThinLTO and 16
+# codegen units so builds that exist purely to prove the tree compiles are not
+# paying for fat LTO's single-threaded codegen. Anything actually shipped stays
+# on [profile.release].
+[profile.release-ci]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
 
 [profile.bench]
 codegen-units = 1
