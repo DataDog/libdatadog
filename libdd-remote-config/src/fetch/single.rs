@@ -16,7 +16,7 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 /// Simple implementation
 pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability + SleepCapability> {
     fetcher: ConfigFetcher<S, C>,
-    target: Arc<Target>,
+    target: Target,
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
     client_id: String,
@@ -47,7 +47,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
                 )),
             )
             .await?,
-            target: Arc::new(target),
+            target,
             product_capabilities: ConfigProductCapabilities::new(
                 options.products,
                 options.capabilities,
@@ -73,7 +73,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
                     http_client,
                 )),
             ),
-            target: Arc::new(target),
+            target,
             product_capabilities: ConfigProductCapabilities::new(
                 options.products,
                 options.capabilities,
@@ -93,7 +93,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
     pub fn set_identity(&mut self, client_id: String, runtime_id: String, tags: Vec<String>) {
         self.client_id = client_id;
         self.runtime_id = runtime_id;
-        Arc::make_mut(&mut self.target).tags = tags;
+        self.target.tags = tags;
     }
 
     /// Polls the current runtime config files.
