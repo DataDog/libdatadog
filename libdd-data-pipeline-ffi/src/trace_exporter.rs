@@ -495,11 +495,12 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     )
 }
 
-/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+/// Enables OTLP trace export and sets the endpoint URL.
 ///
-/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
-/// agent. The host language is responsible for resolving the endpoint from its configuration
-/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+/// When set, traces are sent to this URL using the protocol selected by
+/// `ddog_trace_exporter_config_set_otlp_protocol` instead of the Datadog agent. The host language
+/// is responsible for resolving the endpoint from its configuration (e.g.
+/// `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     config: Option<&mut TraceExporterConfig>,
@@ -519,9 +520,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
-/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
-/// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
+/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default),
+/// `http/protobuf`, or `grpc`; unknown values are rejected. The host language resolves the value
 /// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+/// The `grpc` protocol currently supports plaintext `http://` endpoints only.
 ///
 /// Has no effect unless an OTLP endpoint is also configured via
 /// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
@@ -540,9 +542,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
                 Ok(s) => s,
                 Err(e) => return Some(e),
             };
-            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts only
-            // the supported HTTP encodings (`http/json`, `http/protobuf`); `grpc` and any unknown
-            // value are rejected with an error, so an unsupported protocol can never be stored.
             match value.parse::<OtlpProtocol>() {
                 Ok(p) => {
                     handle.otlp_protocol = Some(p);
@@ -754,9 +753,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
 
 /// Create a new TraceExporter instance.
 ///
-/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
-/// that endpoint in OTLP over HTTP — JSON or protobuf per the configured protocol — instead of
-/// to the Datadog agent. The same payload (e.g. MessagePack) is passed to
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces using
+/// the configured `http/json`, `http/protobuf`, or `grpc` protocol instead of the Datadog agent.
+/// The same payload (e.g. MessagePack) is passed to
 /// `ddog_trace_exporter_send`; the library decodes and converts it to OTLP when OTLP is enabled.
 ///
 /// # Arguments
@@ -1626,14 +1625,16 @@ mod tests {
                 Some(OtlpProtocol::HttpProtobuf)
             );
 
-            // "grpc" → InvalidArgument
             let mut config = Some(TraceExporterConfig::default());
             let error = ddog_trace_exporter_config_set_otlp_protocol(
                 config.as_mut(),
                 CharSlice::from("grpc"),
             );
-            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
-            ddog_trace_exporter_error_free(error);
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::Grpc)
+            );
 
             // Garbage value → InvalidArgument
             let mut config = Some(TraceExporterConfig::default());
@@ -1714,9 +1715,9 @@ mod tests {
     }
 
     #[test]
-    fn set_otlp_protocol_rejects_grpc_and_unknown() {
+    fn set_otlp_protocol_rejects_unknown() {
         let mut cfg = TraceExporterConfig::default();
-        for bad in ["grpc", "nonsense"] {
+        for bad in ["nonsense", "grcp"] {
             let err = unsafe {
                 ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
             };

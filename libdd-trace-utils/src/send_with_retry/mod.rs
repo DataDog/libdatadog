@@ -22,6 +22,9 @@ pub type Attempts = u32;
 
 pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWithRetryError>;
 
+/// User-agent sent by the trace exporter.
+pub const TRACE_EXPORTER_USER_AGENT: &str = concat!("Tracer/", env!("CARGO_PKG_VERSION"));
+
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
 pub enum SendWithRetryError {
@@ -156,8 +159,7 @@ pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone());
-        builder =
-            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
         for (key, value) in headers {
             builder = builder.header(key, value);
         }

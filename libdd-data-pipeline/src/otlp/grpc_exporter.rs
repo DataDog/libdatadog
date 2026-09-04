@@ -10,17 +10,20 @@
 use crate::otlp::config::OtlpGrpcTraceConfig;
 use crate::trace_exporter::error::{BuilderErrorKind, RequestError, TraceExporterError};
 use bytes::Bytes;
-use http_body_util::{BodyExt, Collected};
+use http_body_util::{BodyExt, Collected, Limited};
 use hyper::client::conn::http2;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::{
-    ExportTraceServiceRequest, ExportTraceServiceResponse,
+    ExportTracePartialSuccess, ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
+use libdd_trace_utils::send_with_retry::TRACE_EXPORTER_USER_AGENT;
+use prost::Message as _;
 use std::error::Error as StdError;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tonic::body::Body as TonicBody;
 use tonic::client::{Grpc, GrpcService};
@@ -29,12 +32,52 @@ use tonic::{Code, Request, Status};
 use tracing::warn;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
+const MAX_GRPC_RESPONSE_SIZE: usize = 4 * 1024 * 1024;
+const RETRY_INFO_TYPE_URL: &str = "type.googleapis.com/google.rpc.RetryInfo";
+
+#[derive(Debug)]
+pub(crate) enum GrpcExportError {
+    Retryable {
+        error: TraceExporterError,
+        retry_after: Option<Duration>,
+    },
+    NonRetryable(TraceExporterError),
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct RpcStatusDetails {
+    #[prost(message, repeated, tag = "3")]
+    details: Vec<RpcStatusDetail>,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct RpcStatusDetail {
+    #[prost(string, tag = "1")]
+    type_url: String,
+    #[prost(bytes = "vec", tag = "2")]
+    value: Vec<u8>,
+}
+
+#[derive(Clone, Copy, PartialEq, prost::Message)]
+struct RetryInfo {
+    #[prost(message, optional, tag = "1")]
+    retry_delay: Option<ProtoDuration>,
+}
+
+#[derive(Clone, Copy, PartialEq, prost::Message)]
+struct ProtoDuration {
+    #[prost(int64, tag = "1")]
+    seconds: i64,
+    #[prost(int32, tag = "2")]
+    nanos: i32,
+}
 
 /// tonic 0.14 moved `ProstCodec` to the separate `tonic-prost` crate; we hand-roll a minimal
 /// codec here to avoid that extra dependency and keep tonic at `default-features = false`.
 pub(crate) mod prost_codec {
     use prost::Message as ProstMessage;
     use std::marker::PhantomData;
+    use std::sync::Arc;
     use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
     use tonic::Status;
 
@@ -53,16 +96,16 @@ pub(crate) mod prost_codec {
         // Shared with the `Encoder` impl below. tonic's `EncodeBuf`/`DecodeBuf` constructors are
         // private to the crate, so tests exercise this generic-over-`BufMut`/`Buf` core directly
         // instead of going through the `Encoder`/`Decoder` traits (see `codec_tests`).
-        fn encode_into(item: T, dst: &mut impl bytes::BufMut) -> Result<(), Status> {
+        fn encode_into(item: &T, dst: &mut impl bytes::BufMut) -> Result<(), Status> {
             item.encode(dst)
                 .map_err(|e| Status::internal(format!("Failed to encode protobuf message: {e}")))
         }
     }
-    impl<T: ProstMessage> Encoder for ProstEncoder<T> {
-        type Item = T;
+    impl<T: ProstMessage + Send + Sync + 'static> Encoder for ProstEncoder<T> {
+        type Item = Arc<T>;
         type Error = Status;
-        fn encode(&mut self, item: T, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
-            Self::encode_into(item, dst)
+        fn encode(&mut self, item: Arc<T>, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
+            Self::encode_into(item.as_ref(), dst)
         }
     }
 
@@ -89,10 +132,10 @@ pub(crate) mod prost_codec {
 
     impl<Enc, Dec> Codec for ProstCodecImpl<Enc, Dec>
     where
-        Enc: ProstMessage + Default + Send + 'static,
+        Enc: ProstMessage + Default + Send + Sync + 'static,
         Dec: ProstMessage + Default + Send + 'static,
     {
-        type Encode = Enc;
+        type Encode = Arc<Enc>;
         type Decode = Dec;
         type Encoder = ProstEncoder<Enc>;
         type Decoder = ProstDecoder<Dec>;
@@ -112,7 +155,6 @@ pub(crate) mod prost_codec {
             ExportTraceServiceRequest, ExportTraceServiceResponse,
         };
         use libdd_trace_protobuf::opentelemetry::proto::trace::v1::ResourceSpans;
-
         // Round-trips through the `BufMut`/`Buf`-generic core (`encode_into`/`decode_from`) that
         // the `Encoder`/`Decoder` impls delegate to, over a plain `BytesMut`; see
         // `ProstEncoder::encode_into` for why the `Codec` traits can't be driven directly.
@@ -126,7 +168,7 @@ pub(crate) mod prost_codec {
                 }],
             };
             let mut buf = BytesMut::new();
-            ProstEncoder::encode_into(msg.clone(), &mut buf).unwrap();
+            ProstEncoder::encode_into(&msg, &mut buf).unwrap();
             assert!(!buf.is_empty());
 
             let out = ProstDecoder::decode_from(&mut buf).unwrap();
@@ -172,7 +214,9 @@ impl GrpcService<TonicBody> for H2Service {
             let request = async move {
                 let resp = sender.send_request(req).await?;
                 let (parts, incoming) = resp.into_parts();
-                let collected = incoming.collect().await?;
+                let collected = Limited::new(incoming, MAX_GRPC_RESPONSE_SIZE)
+                    .collect()
+                    .await?;
                 Ok::<_, BoxError>(http::Response::from_parts(parts, collected))
             };
             tokio::pin!(conn);
@@ -182,17 +226,10 @@ impl GrpcService<TonicBody> for H2Service {
                 biased;
                 response = &mut request => response?,
                 connection = &mut conn => {
-                    connection?;
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "gRPC connection closed before the response completed",
-                    ).into());
+                    let _ = connection;
+                    request.await?
                 }
             };
-
-            // The completed request has dropped its sender. Polling the connection to completion
-            // lets hyper shut it down gracefully; the exporter's outer timeout bounds this wait.
-            conn.await?;
             Ok(response)
         })
     }
@@ -202,7 +239,8 @@ impl GrpcService<TonicBody> for H2Service {
 /// service. Holds no live connection and thus no background task (nothing to rebuild across fork).
 #[derive(Clone, Debug)]
 pub(crate) struct OtlpGrpcTransport {
-    pub(crate) config: OtlpGrpcTraceConfig,
+    pub(crate) timeout: Duration,
+    pub(crate) otel_trace_semantics_enabled: bool,
     origin: http::Uri,
     service: H2Service,
     /// Custom headers parsed to gRPC metadata once at build time.
@@ -210,12 +248,15 @@ pub(crate) struct OtlpGrpcTransport {
 }
 
 /// Validate a gRPC endpoint (plaintext `http://` only) and build the transport.
-// Not yet wired to the trace exporter's send loop; exercised by tests only.
-#[allow(dead_code)]
 pub(crate) fn build_grpc_transport(
     endpoint_url: &str,
     config: OtlpGrpcTraceConfig,
 ) -> Result<OtlpGrpcTransport, TraceExporterError> {
+    let OtlpGrpcTraceConfig {
+        headers,
+        timeout,
+        otel_trace_semantics_enabled,
+    } = config;
     let uri = endpoint_url.parse::<http::Uri>()?;
 
     let scheme = uri.scheme().ok_or_else(|| {
@@ -244,8 +285,28 @@ pub(crate) fn build_grpc_transport(
             "gRPC endpoint must include an authority".to_string(),
         ))
     })?;
+    if authority.host().is_empty() {
+        return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
+            "gRPC endpoint authority must include a host".to_string(),
+        )));
+    }
+    let authority_text = authority.as_str();
+    if authority_text.contains('@') {
+        return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
+            "gRPC endpoint authority must not include userinfo".to_string(),
+        )));
+    }
+    let dial_authority = match authority.port_u16() {
+        Some(_) => authority_text.to_string(),
+        None if authority_text == authority.host() => format!("{}:80", authority.host()),
+        None => {
+            return Err(TraceExporterError::Builder(BuilderErrorKind::InvalidUri(
+                "gRPC endpoint authority contains an invalid port".to_string(),
+            )));
+        }
+    };
     let service = H2Service {
-        authority: Arc::from(authority.as_str()),
+        authority: Arc::from(dial_authority),
     };
 
     // Origin = scheme+authority + normalized path prefix; tonic appends the RPC method path.
@@ -261,9 +322,8 @@ pub(crate) fn build_grpc_transport(
 
     // Parse custom headers to gRPC metadata once here rather than on every send. Invalid entries
     // are skipped with a single warning (logging only the key: a value may carry a secret).
-    let metadata_headers = config
-        .headers
-        .iter()
+    let metadata_headers = headers
+        .into_iter()
         .filter_map(|(k, v)| {
             match (
                 k.parse::<AsciiMetadataKey>(),
@@ -279,7 +339,8 @@ pub(crate) fn build_grpc_transport(
         .collect();
 
     Ok(OtlpGrpcTransport {
-        config,
+        timeout,
+        otel_trace_semantics_enabled,
         origin,
         service,
         metadata_headers,
@@ -293,14 +354,12 @@ type ExportCodec =
     prost_codec::ProstCodecImpl<ExportTraceServiceRequest, ExportTraceServiceResponse>;
 
 /// Send one OTLP trace export request over gRPC. Bounds connect + RPC with a single timeout.
-// Not yet wired to the trace exporter's send loop; exercised by tests only.
-#[allow(dead_code)]
 pub(crate) async fn send_otlp_traces_grpc(
     transport: &OtlpGrpcTransport,
     test_token: Option<&str>,
     client_computed_stats: bool,
-    request: ExportTraceServiceRequest,
-) -> Result<(), TraceExporterError> {
+    request: Arc<ExportTraceServiceRequest>,
+) -> Result<(), GrpcExportError> {
     let mut req = Request::new(request);
     attach_metadata(
         &mut req,
@@ -312,29 +371,55 @@ pub(crate) async fn send_otlp_traces_grpc(
     let path = http::uri::PathAndQuery::from_static(GRPC_EXPORT_PATH);
     let codec = ExportCodec::default();
 
-    tokio::time::timeout(transport.config.timeout, async {
+    tokio::time::timeout(transport.timeout, async {
         let mut client = Grpc::with_origin(transport.service.clone(), transport.origin.clone());
-        client.ready().await.map_err(|e| {
-            TraceExporterError::Io(std::io::Error::other(format!("gRPC not ready: {e}")))
-        })?;
         client
+            .ready()
+            .await
+            .map_err(|e| GrpcExportError::Retryable {
+                error: TraceExporterError::Io(std::io::Error::other(format!(
+                    "gRPC not ready: {e}"
+                ))),
+                retry_after: None,
+            })?;
+        let response = client
             .unary(req, path, codec)
             .await
-            .map(|_resp| ())
-            .map_err(grpc_status_to_error)
+            .map_err(grpc_status_to_error)?;
+        if let Some(details) = partial_success_details(response.get_ref()) {
+            warn!(
+                rejected_spans = details.rejected_spans,
+                error_message = %details.error_message,
+                "OTLP gRPC export was only partially accepted"
+            );
+        }
+        Ok(())
     })
     .await
-    .map_err(|_| TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)))?
+    .map_err(|_| GrpcExportError::Retryable {
+        error: TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)),
+        retry_after: None,
+    })?
 }
 
-// Insert the pre-validated custom headers, the optional test-session token, and (when enabled) the
-// client-computed-stats marker into the request metadata.
-fn attach_metadata(
-    req: &mut Request<ExportTraceServiceRequest>,
+fn attach_metadata<T>(
+    req: &mut Request<T>,
     headers: &[(AsciiMetadataKey, AsciiMetadataValue)],
     test_token: Option<&str>,
     client_computed_stats: bool,
 ) {
+    req.metadata_mut().insert(
+        AsciiMetadataKey::from_static("user-agent"),
+        AsciiMetadataValue::from_static(TRACE_EXPORTER_USER_AGENT),
+    );
+    for (key, value) in libdd_common::entity_id::get_entity_headers() {
+        if let (Ok(key), Ok(value)) = (
+            key.parse::<AsciiMetadataKey>(),
+            value.parse::<AsciiMetadataValue>(),
+        ) {
+            req.metadata_mut().insert(key, value);
+        }
+    }
     for (key, val) in headers {
         req.metadata_mut().insert(key.clone(), val.clone());
     }
@@ -357,37 +442,96 @@ fn attach_metadata(
     }
 }
 
-fn grpc_status_to_error(status: Status) -> TraceExporterError {
-    // Transport/IO failures from our bare `H2Service` fall through to `Code::Unknown` with the
-    // original `std::io::Error` somewhere in the source chain (directly for a connect failure, or
-    // wrapped in a `hyper::Error` for a post-connect handshake/read/write failure). Walk the chain
-    // and recover it so these map to `Io` rather than an application-level `Request` error.
-    if status.code() == Code::Unknown {
-        let mut cause: Option<&(dyn std::error::Error + 'static)> = status.source();
-        while let Some(err) = cause {
-            if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-                return TraceExporterError::Io(std::io::Error::new(
+fn partial_success_details(
+    response: &ExportTraceServiceResponse,
+) -> Option<&ExportTracePartialSuccess> {
+    response
+        .partial_success
+        .as_ref()
+        .filter(|details| details.rejected_spans != 0 || !details.error_message.is_empty())
+}
+
+fn grpc_status_to_error(status: Status) -> GrpcExportError {
+    let retry_after = retry_info_delay(&status);
+
+    // Recover local transport failures before classifying source-less remote gRPC statuses.
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = status.source();
+    while let Some(err) = cause {
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            return GrpcExportError::Retryable {
+                error: TraceExporterError::Io(std::io::Error::new(
                     io_err.kind(),
                     io_err.to_string(),
-                ));
-            }
-            cause = err.source();
+                )),
+                retry_after,
+            };
         }
+        let hyper_retryable = err
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|error| error.is_canceled() || error.is_closed());
+        let h2_retryable = err.downcast_ref::<h2::Error>().is_some_and(|error| {
+            matches!(
+                error.reason(),
+                Some(h2::Reason::REFUSED_STREAM | h2::Reason::CANCEL)
+            )
+        });
+        if hyper_retryable || h2_retryable {
+            return GrpcExportError::Retryable {
+                error: TraceExporterError::Io(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    err.to_string(),
+                )),
+                retry_after,
+            };
+        }
+        cause = err.source();
     }
-    match status.code() {
-        Code::Unavailable => TraceExporterError::Io(std::io::Error::new(
-            std::io::ErrorKind::ConnectionRefused,
-            status.message(),
-        )),
-        Code::DeadlineExceeded => TraceExporterError::Io(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            status.message(),
-        )),
-        _ => TraceExporterError::Request(RequestError::new(
-            http::StatusCode::INTERNAL_SERVER_ERROR,
-            status.message(),
-        )),
+    let code = status.code();
+    let (http_status, retryable) = match code {
+        Code::Cancelled => (http::StatusCode::REQUEST_TIMEOUT, true),
+        Code::InvalidArgument => (http::StatusCode::BAD_REQUEST, false),
+        Code::OutOfRange => (http::StatusCode::BAD_REQUEST, true),
+        Code::DeadlineExceeded => (http::StatusCode::GATEWAY_TIMEOUT, true),
+        Code::NotFound => (http::StatusCode::NOT_FOUND, false),
+        Code::AlreadyExists => (http::StatusCode::CONFLICT, false),
+        Code::Aborted => (http::StatusCode::CONFLICT, true),
+        Code::PermissionDenied => (http::StatusCode::FORBIDDEN, false),
+        Code::ResourceExhausted => (http::StatusCode::TOO_MANY_REQUESTS, retry_after.is_some()),
+        Code::FailedPrecondition => (http::StatusCode::PRECONDITION_FAILED, false),
+        Code::Unauthenticated => (http::StatusCode::UNAUTHORIZED, false),
+        Code::Unavailable => (http::StatusCode::SERVICE_UNAVAILABLE, true),
+        Code::Unimplemented => (http::StatusCode::NOT_IMPLEMENTED, false),
+        Code::DataLoss => (http::StatusCode::INTERNAL_SERVER_ERROR, true),
+        _ => (http::StatusCode::INTERNAL_SERVER_ERROR, false),
+    };
+    let error = TraceExporterError::Request(RequestError::new(
+        http_status,
+        &format!("gRPC {code:?}: {}", status.message()),
+    ));
+    if retryable {
+        GrpcExportError::Retryable { error, retry_after }
+    } else {
+        GrpcExportError::NonRetryable(error)
     }
+}
+
+fn retry_info_delay(status: &Status) -> Option<Duration> {
+    let rich_status = RpcStatusDetails::decode(status.details()).ok()?;
+    rich_status.details.into_iter().find_map(|detail| {
+        if detail.type_url != RETRY_INFO_TYPE_URL {
+            return None;
+        }
+        let retry_info = RetryInfo::decode(detail.value.as_slice()).ok()?;
+        let Some(delay) = retry_info.retry_delay else {
+            return Some(Duration::ZERO);
+        };
+        let seconds = u64::try_from(delay.seconds).ok()?;
+        let nanos = u32::try_from(delay.nanos).ok()?;
+        if nanos >= 1_000_000_000 {
+            return None;
+        }
+        Some(Duration::new(seconds, nanos))
+    })
 }
 
 #[cfg(test)]
@@ -422,6 +566,49 @@ mod build_tests {
     }
 
     #[test]
+    fn supplies_http_default_port_for_dialing() {
+        let transport = build_grpc_transport("http://collector", cfg()).unwrap();
+
+        assert_eq!(transport.service.authority.as_ref(), "collector:80");
+        assert_eq!(
+            transport
+                .origin
+                .authority()
+                .map(|authority| authority.as_str()),
+            Some("collector")
+        );
+
+        let ipv6_transport = build_grpc_transport("http://[::1]", cfg()).unwrap();
+        assert_eq!(ipv6_transport.service.authority.as_ref(), "[::1]:80");
+    }
+
+    #[test]
+    fn preserves_explicit_port_for_dialing() {
+        let transport = build_grpc_transport("http://collector:4317", cfg()).unwrap();
+        assert_eq!(transport.service.authority.as_ref(), "collector:4317");
+
+        let ipv6_transport = build_grpc_transport("http://[::1]:4317", cfg()).unwrap();
+        assert_eq!(ipv6_transport.service.authority.as_ref(), "[::1]:4317");
+    }
+
+    #[test]
+    fn rejects_invalid_dial_authorities() {
+        for endpoint in [
+            "http://collector:not-a-port",
+            "http://collector:99999",
+            "http://collector:",
+            "http://:4317",
+            "http://user@collector",
+            "http://user@collector:4317",
+        ] {
+            assert!(
+                build_grpc_transport(endpoint, cfg()).is_err(),
+                "accepted invalid endpoint {endpoint}"
+            );
+        }
+    }
+
+    #[test]
     fn normalizes_origin_path_prefix() {
         let t = build_grpc_transport("http://localhost:4317/otel/", cfg()).unwrap();
         assert_eq!(t.origin.path(), "/otel");
@@ -432,13 +619,11 @@ mod build_tests {
         let config = OtlpGrpcTraceConfig {
             headers: vec![
                 ("good-key".to_string(), "ok".to_string()),
-                // Invalid metadata key (contains a space): skipped, not fatal to the build.
                 ("bad key".to_string(), "v".to_string()),
             ],
             timeout: Duration::from_secs(5),
             otel_trace_semantics_enabled: false,
         };
-        // A malformed header must not fail the build; it is dropped and the valid one retained.
         let t = build_grpc_transport("http://localhost:4317", config).unwrap();
         assert_eq!(t.metadata_headers.len(), 1);
         assert_eq!(t.metadata_headers[0].0.as_str(), "good-key");
@@ -452,7 +637,6 @@ mod integration_tests {
     use bytes::Bytes;
     use h2::server;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest;
-    use prost::Message as _;
     use std::time::Duration;
     use tokio::net::TcpListener;
 
@@ -467,26 +651,91 @@ mod integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn connection_refused_maps_to_io() {
-        // Port 1 has no listener → connect fails.
         let transport = build_grpc_transport("http://127.0.0.1:1", cfg()).unwrap();
         let err = send_otlp_traces_grpc(
             &transport,
             None,
             false,
-            ExportTraceServiceRequest::default(),
+            Arc::new(ExportTraceServiceRequest::default()),
         )
         .await
         .unwrap_err();
-        assert!(matches!(err, TraceExporterError::Io(_)), "got: {err:?}");
+        assert!(
+            matches!(
+                err,
+                GrpcExportError::Retryable {
+                    error: TraceExporterError::Io(_),
+                    retry_after: None
+                }
+            ),
+            "got: {err:?}"
+        );
     }
 
-    // Minimal in-process gRPC server: accepts one unary Export call, decodes the request, and
-    // replies OK with an empty ExportTraceServiceResponse plus a `grpc-status` trailer.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn response_body_is_limited() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut conn = server::handshake(socket).await.unwrap();
+            let (_req, mut respond) = conn.accept().await.unwrap().unwrap();
+            let sender = tokio::spawn(async move {
+                let response = http::Response::builder().status(200).body(()).unwrap();
+                let mut stream = respond.send_response(response, false).unwrap();
+                let data = Bytes::from(vec![0; MAX_GRPC_RESPONSE_SIZE + 1]);
+                let mut offset = 0;
+                while offset < data.len() {
+                    stream.reserve_capacity((data.len() - offset).min(16 * 1024));
+                    let Some(Ok(capacity)) =
+                        std::future::poll_fn(|cx| stream.poll_capacity(cx)).await
+                    else {
+                        break;
+                    };
+                    let end = (offset + capacity.min(data.len() - offset)).min(data.len());
+                    if stream
+                        .send_data(data.slice(offset..end), end == data.len())
+                        .is_err()
+                    {
+                        break;
+                    }
+                    offset = end;
+                }
+            });
+            while conn.accept().await.is_some() {}
+            sender.await.unwrap();
+        });
+
+        let mut service = H2Service {
+            authority: Arc::from(addr.to_string()),
+        };
+        let request = http::Request::builder()
+            .uri("http://localhost/")
+            .body(TonicBody::empty())
+            .unwrap();
+        let error = service.call(request).await.unwrap_err();
+        server.await.unwrap();
+
+        let mut source: Option<&(dyn StdError + 'static)> = Some(error.as_ref());
+        let mut length_limited = false;
+        while let Some(error) = source {
+            if error
+                .downcast_ref::<http_body_util::LengthLimitError>()
+                .is_some()
+            {
+                length_limited = true;
+                break;
+            }
+            source = error.source();
+        }
+        assert!(length_limited, "got: {error:?}");
+    }
+
     async fn run_one_shot_grpc_server(listener: TcpListener) -> ExportTraceServiceRequest {
         let (socket, _) = listener.accept().await.unwrap();
         let mut conn = server::handshake(socket).await.unwrap();
         let (req, mut respond) = conn.accept().await.unwrap().unwrap();
-        // Drain the gRPC-framed request body: 1-byte compression flag + 4-byte length + message.
         let mut body = req.into_body();
         let mut buf = Vec::new();
         while let Some(chunk) = body.data().await {
@@ -496,7 +745,6 @@ mod integration_tests {
         }
         let decoded = ExportTraceServiceRequest::decode(&buf[5..]).unwrap();
 
-        // Respond: headers, one empty framed message, then grpc-status trailer.
         let resp = http::Response::builder()
             .status(200)
             .header("content-type", "application/grpc")
@@ -506,15 +754,12 @@ mod integration_tests {
         let msg = ExportTraceServiceResponse::default();
         let mut framed = vec![0u8; 5];
         msg.encode(&mut framed).unwrap();
-        let len = (framed.len() - 5) as u32;
+        let len = u32::try_from(framed.len() - 5).expect("response exceeds gRPC frame length");
         framed[1..5].copy_from_slice(&len.to_be_bytes());
         send.send_data(Bytes::from(framed), false).unwrap();
         let mut trailers = http::HeaderMap::new();
         trailers.insert("grpc-status", "0".parse().unwrap());
         send.send_trailers(trailers).unwrap();
-        // Keep the connection future alive (driving any remaining H2 protocol traffic, e.g. the
-        // client's final stream-closing frames) until the client drops its side and this
-        // `accept()` resolves to `None`, so the connection task doesn't outlive the test.
         let _ = tokio::time::timeout(Duration::from_secs(2), conn.accept()).await;
         decoded
     }
@@ -530,7 +775,7 @@ mod integration_tests {
         let mut request = ExportTraceServiceRequest::default();
         request.resource_spans.push(Default::default());
 
-        send_otlp_traces_grpc(&transport, None, false, request.clone())
+        send_otlp_traces_grpc(&transport, None, false, Arc::new(request.clone()))
             .await
             .expect("send should succeed");
 
@@ -540,11 +785,93 @@ mod integration_tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
+    async fn successful_response_wins_over_connection_teardown() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut conn = server::handshake(socket).await.unwrap();
+            let (req, mut respond) = conn.accept().await.unwrap().unwrap();
+            let mut body = req.into_body();
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                body.flow_control().release_capacity(chunk.len()).unwrap();
+            }
+
+            let response = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let mut send = respond.send_response(response, false).unwrap();
+            send.send_data(Bytes::from_static(&[0, 0, 0, 0, 0]), false)
+                .unwrap();
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", "0".parse().unwrap());
+            send.send_trailers(trailers).unwrap();
+            let flush_deadline = tokio::time::sleep(Duration::from_millis(25));
+            tokio::pin!(flush_deadline);
+            tokio::select! {
+                _ = &mut flush_deadline => {}
+                _ = conn.accept() => {}
+            }
+            conn.abrupt_shutdown(h2::Reason::INTERNAL_ERROR);
+            while conn.accept().await.is_some() {}
+        });
+
+        let transport = build_grpc_transport(&format!("http://{addr}"), cfg()).unwrap();
+        send_otlp_traces_grpc(
+            &transport,
+            None,
+            false,
+            Arc::new(ExportTraceServiceRequest::default()),
+        )
+        .await
+        .expect("completed response should remain successful");
+        server.await.unwrap();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn refused_stream_is_retryable() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut conn = server::handshake(socket).await.unwrap();
+            let (_req, mut respond) = conn.accept().await.unwrap().unwrap();
+            respond.send_reset(h2::Reason::REFUSED_STREAM);
+            while conn.accept().await.is_some() {}
+        });
+
+        let transport = build_grpc_transport(&format!("http://{addr}"), cfg()).unwrap();
+        let error = send_otlp_traces_grpc(
+            &transport,
+            None,
+            false,
+            Arc::new(ExportTraceServiceRequest::default()),
+        )
+        .await
+        .unwrap_err();
+        server.await.unwrap();
+
+        assert!(
+            matches!(
+                error,
+                GrpcExportError::Retryable {
+                    error: TraceExporterError::Io(_),
+                    retry_after: None
+                }
+            ),
+            "expected retryable transport error, got: {error:?}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
     async fn timeout_maps_to_io_timedout() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        // Accept the connection but never drive the H2 handshake or send a response, so the send
-        // blocks until the timeout fires rather than completing or failing fast.
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -561,16 +888,19 @@ mod integration_tests {
             &transport,
             None,
             false,
-            ExportTraceServiceRequest::default(),
+            Arc::new(ExportTraceServiceRequest::default()),
         )
         .await
         .unwrap_err();
         server.abort();
         match err {
-            TraceExporterError::Io(e) => {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Io(e),
+                retry_after: None,
+            } => {
                 assert_eq!(e.kind(), std::io::ErrorKind::TimedOut, "got: {e:?}")
             }
-            other => panic!("expected Io(TimedOut), got {other:?}"),
+            other => panic!("expected retryable Io(TimedOut), got {other:?}"),
         }
     }
 
@@ -579,28 +909,17 @@ mod integration_tests {
     async fn post_connect_transport_failure_maps_to_io() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        // Complete the H2 handshake and accept the request, then abort the TCP connection with a
-        // RST (SO_LINGER=0) instead of a graceful close or a gRPC-status trailer. The client's
-        // in-flight read then fails with ECONNRESET. This is the FIX-1 case: the resulting
-        // `std::io::Error` is wrapped inside a `hyper::Error` below the tonic `Status`, so it is
-        // recovered only by walking the source chain in `grpc_status_to_error` — a graceful FIN
-        // instead surfaces as an h2 "canceled" status that would be misreported as `Request`.
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
-            // Force a RST on close rather than a graceful FIN. `set_linger` is deprecated because a
-            // non-zero linger blocks the thread on drop; a zero duration instead drops buffered
-            // data and sends the RST immediately without blocking, which is exactly what we want.
             #[allow(deprecated)]
             socket.set_linger(Some(Duration::ZERO)).unwrap();
             let mut conn = server::handshake(socket).await.unwrap();
             let (req, _respond) = conn.accept().await.unwrap().unwrap();
-            // Drain the request body so the client is parked awaiting the response when we reset.
             let mut body = req.into_body();
             while let Some(chunk) = body.data().await {
                 let chunk = chunk.unwrap();
                 body.flow_control().release_capacity(chunk.len()).unwrap();
             }
-            // Drop the connection (and its socket) -> RST.
             drop(conn);
         });
 
@@ -609,13 +928,19 @@ mod integration_tests {
             &transport,
             None,
             false,
-            ExportTraceServiceRequest::default(),
+            Arc::new(ExportTraceServiceRequest::default()),
         )
         .await
         .unwrap_err();
         server.await.unwrap();
         assert!(
-            matches!(err, TraceExporterError::Io(_)),
+            matches!(
+                err,
+                GrpcExportError::Retryable {
+                    error: TraceExporterError::Io(_),
+                    retry_after: None
+                }
+            ),
             "expected Io (post-connect transport failure), got: {err:?}"
         );
     }
@@ -625,38 +950,143 @@ mod integration_tests {
 mod send_tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest;
+    use std::time::Duration;
     use tonic::{Code, Request, Status};
 
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct TestRpcStatus {
+        #[prost(message, repeated, tag = "3")]
+        details: Vec<TestAny>,
+    }
+
+    #[derive(Clone, PartialEq, prost::Message)]
+    struct TestAny {
+        #[prost(string, tag = "1")]
+        type_url: String,
+        #[prost(bytes = "vec", tag = "2")]
+        value: Vec<u8>,
+    }
+
+    #[derive(Clone, Copy, PartialEq, prost::Message)]
+    struct TestRetryInfo {
+        #[prost(message, optional, tag = "1")]
+        retry_delay: Option<TestDuration>,
+    }
+
+    #[derive(Clone, Copy, PartialEq, prost::Message)]
+    struct TestDuration {
+        #[prost(int64, tag = "1")]
+        seconds: i64,
+        #[prost(int32, tag = "2")]
+        nanos: i32,
+    }
+
+    fn status_with_retry_info(code: Code, retry_delay: Duration) -> Status {
+        let retry_info = TestRetryInfo {
+            retry_delay: Some(TestDuration {
+                seconds: i64::try_from(retry_delay.as_secs()).unwrap(),
+                nanos: i32::try_from(retry_delay.subsec_nanos()).unwrap(),
+            }),
+        };
+        let rich_status = TestRpcStatus {
+            details: vec![TestAny {
+                type_url: RETRY_INFO_TYPE_URL.to_string(),
+                value: retry_info.encode_to_vec(),
+            }],
+        };
+        Status::with_details(
+            code,
+            "retry later",
+            Bytes::from(rich_status.encode_to_vec()),
+        )
+    }
+
     #[test]
-    fn status_transient_maps_to_io_kind() {
-        for (s, want) in [
-            (
-                Status::unavailable("down"),
-                std::io::ErrorKind::ConnectionRefused,
-            ),
-            (
-                Status::deadline_exceeded("slow"),
-                std::io::ErrorKind::TimedOut,
-            ),
+    fn resource_exhausted_with_retry_info_is_retryable() {
+        let retry_after = Duration::new(3, 250_000_000);
+
+        match grpc_status_to_error(status_with_retry_info(Code::ResourceExhausted, retry_after)) {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Request(error),
+                retry_after: actual_retry_after,
+            } => {
+                assert_eq!(error.status(), http::StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(actual_retry_after, Some(retry_after));
+            }
+            other => panic!("expected retryable throttling error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unavailable_honors_retry_info_delay() {
+        let retry_after = Duration::from_secs(7);
+
+        match grpc_status_to_error(status_with_retry_info(Code::Unavailable, retry_after)) {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Request(error),
+                retry_after: actual_retry_after,
+            } => {
+                assert_eq!(error.status(), http::StatusCode::SERVICE_UNAVAILABLE);
+                assert_eq!(error.msg(), "gRPC Unavailable: retry later");
+                assert_eq!(actual_retry_after, Some(retry_after));
+            }
+            other => panic!("expected throttled unavailable error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_transient_remains_retryable_request_error() {
+        for (code, http_status) in [
+            (Code::Unavailable, http::StatusCode::SERVICE_UNAVAILABLE),
+            (Code::DeadlineExceeded, http::StatusCode::GATEWAY_TIMEOUT),
+            (Code::Cancelled, http::StatusCode::REQUEST_TIMEOUT),
+            (Code::Aborted, http::StatusCode::CONFLICT),
+            (Code::OutOfRange, http::StatusCode::BAD_REQUEST),
+            (Code::DataLoss, http::StatusCode::INTERNAL_SERVER_ERROR),
         ] {
-            match grpc_status_to_error(s) {
-                TraceExporterError::Io(e) => assert_eq!(e.kind(), want),
-                other => panic!("expected Io, got {other:?}"),
+            match grpc_status_to_error(Status::new(code, "transient")) {
+                GrpcExportError::Retryable {
+                    error: TraceExporterError::Request(error),
+                    retry_after: None,
+                } => {
+                    assert_eq!(error.status(), http_status);
+                    assert_eq!(error.msg(), format!("gRPC {code:?}: transient"));
+                }
+                other => panic!("expected retryable Request, got {other:?}"),
             }
         }
     }
 
     #[test]
     fn status_unknown_with_io_source_maps_to_io() {
-        // Exercises the `Code::Unknown` + io-source recovery path in `grpc_status_to_error`.
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
         let status = Status::from_error(Box::new(io_err));
         assert_eq!(status.code(), Code::Unknown);
         match grpc_status_to_error(status) {
-            TraceExporterError::Io(e) => {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Io(e),
+                retry_after: None,
+            } => {
                 assert_eq!(e.kind(), std::io::ErrorKind::ConnectionRefused)
             }
-            other => panic!("expected Io, got {other:?}"),
+            other => panic!("expected retryable Io, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_unavailable_with_io_source_maps_to_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "reset");
+        let mut status = Status::unavailable("transport failure");
+        status.set_source(Arc::new(io_err));
+        assert_eq!(status.code(), Code::Unavailable);
+        match grpc_status_to_error(status) {
+            GrpcExportError::Retryable {
+                error: TraceExporterError::Io(e),
+                retry_after: None,
+            } => {
+                assert_eq!(e.kind(), std::io::ErrorKind::ConnectionReset)
+            }
+            other => panic!("expected retryable Io, got {other:?}"),
         }
     }
 
@@ -664,16 +1094,62 @@ mod send_tests {
     fn status_unknown_without_io_source_maps_to_request() {
         assert!(matches!(
             grpc_status_to_error(Status::new(Code::Unknown, "mystery")),
-            TraceExporterError::Request(_)
+            GrpcExportError::NonRetryable(TraceExporterError::Request(_))
         ));
     }
 
     #[test]
     fn status_application_errors_map_to_request() {
-        assert!(matches!(
-            grpc_status_to_error(Status::new(Code::Internal, "boom")),
-            TraceExporterError::Request(_)
-        ));
+        for (code, http_status) in [
+            (Code::InvalidArgument, http::StatusCode::BAD_REQUEST),
+            (Code::Unauthenticated, http::StatusCode::UNAUTHORIZED),
+            (Code::PermissionDenied, http::StatusCode::FORBIDDEN),
+            (Code::NotFound, http::StatusCode::NOT_FOUND),
+            (Code::AlreadyExists, http::StatusCode::CONFLICT),
+            (Code::ResourceExhausted, http::StatusCode::TOO_MANY_REQUESTS),
+            (
+                Code::FailedPrecondition,
+                http::StatusCode::PRECONDITION_FAILED,
+            ),
+            (Code::Unimplemented, http::StatusCode::NOT_IMPLEMENTED),
+            (Code::Internal, http::StatusCode::INTERNAL_SERVER_ERROR),
+        ] {
+            match grpc_status_to_error(Status::new(code, "failure")) {
+                GrpcExportError::NonRetryable(TraceExporterError::Request(error)) => {
+                    assert_eq!(error.status(), http_status);
+                    assert_eq!(error.msg(), format!("gRPC {code:?}: failure"));
+                }
+                other => panic!("expected Request, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn partial_success_details_ignores_empty_response() {
+        let empty = ExportTraceServiceResponse::default();
+        assert!(partial_success_details(&empty).is_none());
+
+        let present_but_empty = ExportTraceServiceResponse {
+            partial_success: Some(
+                libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTracePartialSuccess::default(),
+            ),
+        };
+        assert!(partial_success_details(&present_but_empty).is_none());
+    }
+
+    #[test]
+    fn partial_success_details_returns_rejections_and_warnings() {
+        let response = ExportTraceServiceResponse {
+            partial_success: Some(
+                libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTracePartialSuccess {
+                    rejected_spans: 3,
+                    error_message: "too many spans".to_string(),
+                },
+            ),
+        };
+        let details = partial_success_details(&response).unwrap();
+        assert_eq!(details.rejected_spans, 3);
+        assert_eq!(details.error_message, "too many spans");
     }
 
     #[test]
