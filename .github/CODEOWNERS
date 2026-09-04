@@ -47,7 +47,7 @@ libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
 libdd-crashtracker*/                 @DataDog/libdatadog-profiling
-libdd-data-pipeline*/                @DataDog/libdatadog-apm
+libdd-data-pipeline*/                @DataDog/apm-common-components-core
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog @DataDog/libdatadog-profiling
