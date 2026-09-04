@@ -123,7 +123,7 @@ fn bench_iter<
             b.iter(|| {
                 let chunks = build_chunks(num_chunks, spans_per_chunk, &get_span, &get_chunk);
                 // Enqueue: returning the chunks to the pool recycles the spans.
-                black_box(return_chunks(black_box(chunks)));
+                return_chunks(black_box(chunks));
             });
         },
     );
