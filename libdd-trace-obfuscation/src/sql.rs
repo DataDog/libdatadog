@@ -206,6 +206,9 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, us
     None
 }
 
+/// Maximum recursion depth for nested dollar-quoted strings (`$tag$...$tag$`).
+const MAX_DOLLAR_QUOTE_DEPTH: usize = 64;
+
 struct Tokenizer<'a> {
     s: &'a str,
     bytes: &'a [u8],
@@ -213,6 +216,8 @@ struct Tokenizer<'a> {
     result: String,
     dbms: DbmsKind,
     config: &'a SqlObfuscateConfig,
+    // Nesting depth of dollar-quote recursion; see MAX_DOLLAR_QUOTE_DEPTH.
+    dollar_recursion_depth: usize,
     // For alias stripping: length of result before we emitted the most recent ' AS' segment
     before_as_len: Option<usize>,
     // After SAVEPOINT keyword, next token should become ?
@@ -228,7 +233,12 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(s: &'a str, config: &'a SqlObfuscateConfig, dbms: DbmsKind) -> Self {
+    fn new(
+        s: &'a str,
+        config: &'a SqlObfuscateConfig,
+        dbms: DbmsKind,
+        dollar_recursion_depth: usize,
+    ) -> Self {
         Self {
             s,
             bytes: s.as_bytes(),
@@ -236,6 +246,7 @@ impl<'a> Tokenizer<'a> {
             result: String::with_capacity(s.len()),
             dbms,
             config,
+            dollar_recursion_depth,
             before_as_len: None,
             pending_savepoint: false,
             last_was_placeholder: false,
@@ -1056,19 +1067,34 @@ impl<'a> Tokenizer<'a> {
                                     let tag_str = &self.s[start..inner_start];
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
-                                    let normalized_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                    let normalized_inner = obfuscate_sql_at_depth(
+                                        inner,
+                                        self.config,
+                                        self.dbms,
+                                        self.dollar_recursion_depth + 1,
+                                    );
                                     self.space();
                                     self.result.push_str(tag_str);
                                     self.result.push_str(&normalized_inner);
                                     self.result.push_str(close_tag);
                                 } else if self.config.dollar_quoted_func {
-                                    // Obfuscate the content inside dollar quotes
+                                    // Obfuscate the content inside dollar quotes.
+                                    // Past MAX_DOLLAR_QUOTE_DEPTH, use a placeholder directly
+                                    // rather than recursing, so the nested literal can't leak.
                                     let tag_str = &self.s[start..inner_start];
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
-                                    let obfuscated_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                    if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
+                                        self.emit_placeholder();
+                                        self.pos = outer_end;
+                                        continue;
+                                    }
+                                    let obfuscated_inner = obfuscate_sql_at_depth(
+                                        inner,
+                                        self.config,
+                                        self.dbms,
+                                        self.dollar_recursion_depth + 1,
+                                    );
                                     // If inner collapses to just '?' (trivial content), emit ?
                                     // directly
                                     if obfuscated_inner.trim() == "?" {
@@ -2188,10 +2214,27 @@ fn collapse_limit_two_args(s: &str) -> String {
 /// Obfuscates a SQL string using a proper tokenizer.
 #[must_use]
 pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
+    obfuscate_sql_at_depth(s, config, dbms, 0)
+}
+
+/// Same as `obfuscate_sql`, tracking recursion depth for nested dollar-quoted strings.
+/// Once `MAX_DOLLAR_QUOTE_DEPTH` is reached, this returns the content unmodified rather than
+/// recursing further, so pathologically nested input can't overflow the stack. The
+/// `dollar_quoted_func` obfuscate branch guards against this itself (see its call site) so it
+/// never leaks a literal this way; only the `NormalizeOnly` caller relies on this fallback.
+fn obfuscate_sql_at_depth(
+    s: &str,
+    config: &SqlObfuscateConfig,
+    dbms: DbmsKind,
+    dollar_recursion_depth: usize,
+) -> String {
     if s.is_empty() {
         return String::new();
     }
-    let mut tokenizer = Tokenizer::new(s, config, dbms);
+    if dollar_recursion_depth >= MAX_DOLLAR_QUOTE_DEPTH {
+        return s.to_string();
+    }
+    let mut tokenizer = Tokenizer::new(s, config, dbms, dollar_recursion_depth);
     tokenizer.process();
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
@@ -2289,6 +2332,55 @@ fn normalize_plan_sql(s: &str) -> String {
 mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
     use core::fmt::Write;
+
+    #[test]
+    fn test_dollar_quote_nesting_does_not_overflow_stack() {
+        const NESTING: usize = 20_000;
+        let mut sql = String::new();
+        for i in 0..NESTING {
+            let _ = write!(sql, "$a{i}$");
+        }
+        sql.push_str("SELECT 1");
+        for i in (0..NESTING).rev() {
+            let _ = write!(sql, "$a{i}$");
+        }
+
+        let config = SqlObfuscateConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let _ = super::obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+
+        let normalize_config = SqlObfuscateConfig {
+            obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
+            ..Default::default()
+        };
+        let _ = super::obfuscate_sql(&sql, &normalize_config, DbmsKind::Postgresql);
+    }
+
+    #[test]
+    fn test_dollar_quote_nesting_past_depth_limit_does_not_leak_literal() {
+        const NESTING: usize = 100; // comfortably past MAX_DOLLAR_QUOTE_DEPTH (64)
+        let secret = "'123-45-6789'";
+        let mut sql = String::new();
+        for i in 0..NESTING {
+            let _ = write!(sql, "$a{i}$");
+        }
+        sql.push_str(secret);
+        for i in (0..NESTING).rev() {
+            let _ = write!(sql, "$a{i}$");
+        }
+
+        let config = SqlObfuscateConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let got = super::obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+        assert!(
+            !got.contains(secret),
+            "obfuscated SQL must not contain the nested literal: {got:?}"
+        );
+    }
 
     #[test]
     fn test_sql_obfuscation() {
@@ -2972,7 +3064,7 @@ mod tests {
         let config = SqlObfuscateConfig::default();
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
-        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic);
+        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic, 0);
         tok.process();
         let raw = tok.finalize();
         eprintln!("RAW: {raw:?}");

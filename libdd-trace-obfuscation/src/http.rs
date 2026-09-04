@@ -71,6 +71,35 @@ fn encode_char(out: &mut String, c: char) {
     }
 }
 
+/// Best-effort userinfo stripping for URLs that fail strict RFC 3986 parsing (or contain control
+/// chars) and would otherwise be returned unchanged: credentials must never survive obfuscation
+/// even when we can't fully parse the rest of the URL.
+///
+/// `prefix_end` bounds the scan to the path portion (before query/fragment) so a `@` inside the
+/// query or fragment is never mistaken for userinfo.
+///
+/// This is a heuristic, not a parser: it may occasionally strip more than necessary on
+/// non-URL-like malformed input, but it never leaves real credentials in the output.
+fn strip_userinfo_best_effort(url: &str, prefix_end: usize) -> String {
+    let prefix = &url[..prefix_end];
+    let Some(marker) = prefix.find("//") else {
+        return url.to_string();
+    };
+    let authority_start = marker + 2;
+    let authority_end = prefix[authority_start..]
+        .find('/')
+        .map_or(prefix.len(), |i| authority_start + i);
+    let authority = &prefix[authority_start..authority_end];
+    let Some(at_pos) = authority.rfind('@') else {
+        return url.to_string();
+    };
+    let mut out = String::with_capacity(url.len());
+    out.push_str(&url[..authority_start]);
+    out.push_str(&authority[at_pos + 1..]);
+    out.push_str(&url[authority_end..]);
+    out
+}
+
 fn redact_path_digits(path: &str) -> String {
     path.split('/')
         .map(|seg| {
@@ -187,7 +216,7 @@ pub fn obfuscate_url_string(
         return if remove_query_string || remove_path_digits {
             "?".to_string()
         } else {
-            url.to_string()
+            strip_userinfo_best_effort(url, path_end)
         };
     }
 
@@ -232,7 +261,7 @@ pub fn obfuscate_url_string(
         return if remove_query_string || remove_path_digits {
             "?".to_string()
         } else {
-            url.to_string()
+            strip_userinfo_best_effort(url, path_end)
         };
     };
 
@@ -745,6 +774,34 @@ mod tests {
             remove_path_digits  [false]
             input               ["http://user:password@foo.com/1/2/3?q=james"]
             expected_output     ["http://foo.com/1/2/3?q=james"];
+        ]
+        [
+            // Regression for APMSP-3086: malformed percent-encoding fails strict parsing and
+            // used to fall back to returning the URL (with userinfo) unchanged.
+            test_name           [regression_malformed_pct_encoding_strips_userinfo]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://user:password@foo.com/%"]
+            expected_output     ["http://foo.com/%"];
+        ]
+        [
+            // Regression for APMSP-3086: a control char in the path also fell back to returning
+            // the URL (with userinfo) unchanged when both flags are false.
+            test_name           [regression_control_char_strips_userinfo]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://user:password@foo.com/\u{1}"]
+            expected_output     ["http://foo.com/\u{1}"];
+        ]
+        [
+            // Regression: an '@' in the query (not real userinfo) must not be mistaken for
+            // userinfo when a control char forces the best-effort stripping fallback. The
+            // authority scan must stop at the query delimiter, not the fragment delimiter.
+            test_name           [regression_control_char_query_at_not_mistaken_for_userinfo]
+            remove_query_string [false]
+            remove_path_digits  [false]
+            input               ["http://example.com?email=a@b\u{0}"]
+            expected_output     ["http://example.com?email=a@b\u{0}"];
         ]
         [
             test_name           [parity_colon_both_false]
