@@ -12,11 +12,13 @@ use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::codec::DecodeError;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
+use std::cell::Cell;
 use std::sync::Mutex;
 use std::{
     io,
@@ -58,11 +60,12 @@ impl SidecarTransport {
         sender.channel.0.conn.as_raw_fd()
     }
 
-    pub fn reconnect<F>(&mut self, factory: F)
+    pub fn reconnect<F>(&mut self, factory: F) -> bool
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        Self::do_reconnect(&mut self.inner, factory, false);
+        let was_closed = self.is_closed();
+        was_closed && Self::do_reconnect(&mut self.inner, factory, false)
     }
 
     pub fn do_reconnect<F>(
@@ -80,22 +83,36 @@ impl SidecarTransport {
 
         #[allow(clippy::unwrap_used)]
         if force_reconnect || transport.channel.0.is_closed() {
-            warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
-            let new = match factory() {
-                None => return false,
-                Some(n) => n.inner.into_inner(),
-            };
-            if new.is_err() {
+            // Avoid recursive reconnect, just to make sure we don't loop.
+            thread_local! {
+                static RECONNECT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+            }
+            if RECONNECT_IN_PROGRESS.with(Cell::get) {
+                warn!("Reconnect already in progress on this thread; not attempting a nested reconnect.");
                 return false;
             }
-            let registrations = std::mem::take(&mut transport.metric_registrations);
+            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(true));
+            let reconnected = (|| {
+                warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
+                let new = match factory() {
+                    None => return false,
+                    Some(n) => n.inner.into_inner(),
+                };
+                if new.is_err() {
+                    return false;
+                }
+                let registrations = std::mem::take(&mut transport.metric_registrations);
 
-            *transport = new.unwrap();
+                *transport = new.unwrap();
 
-            // Replay all registered metrics after a reconnect
-            for metric in registrations.into_values() {
-                transport.register_telemetry_metric(metric);
-            }
+                // Replay all registered metrics after a reconnect
+                for metric in registrations.into_values() {
+                    transport.register_telemetry_metric(metric);
+                }
+                true
+            })();
+            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(false));
+            return reconnected;
         }
         true
     }
@@ -184,6 +201,17 @@ impl From<SeqpacketConn> for SidecarTransport {
             inner: Mutex::new(SidecarSender::new(SidecarInterfaceChannel::new(conn))),
             reconnect_fn: None,
         }
+    }
+}
+
+/// Converts a [`DecodeError`] to an [`io::Error`], preserving the original
+/// [`io::ErrorKind`] when the decode failure was itself an I/O error.
+///
+/// This ensures `with_retry` properly reacts to errors and doesn't ignore some actual errors.
+fn decode_error_to_io(e: DecodeError) -> io::Error {
+    match e {
+        DecodeError::Io(io_err) => io_err,
+        other => io::Error::other(other.to_string()),
     }
 }
 
@@ -523,18 +551,18 @@ pub fn ensure_appsec_started(
     transport.with_retry(|sender| {
         sender
             .ensure_appsec_started(log_file_path.clone(), log_level.clone())
-            .map_err(|e| io::Error::other(e.to_string()))
+            .map_err(decode_error_to_io)
     })
 }
 
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
-    transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))
+    transport.with_retry(|s| s.dump().map_err(decode_error_to_io))
 }
 
 /// Retrieves the current statistics of the service.
 pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
-    transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
+    transport.with_retry(|s| s.stats().map_err(decode_error_to_io))
 }
 
 /// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
@@ -546,10 +574,7 @@ pub fn send_appsec_message(
     data: &[u8],
 ) -> io::Result<(Vec<u8>, bool)> {
     let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
-    transport.with_retry(|s| {
-        s.send_appsec_message(&request)
-            .map_err(|e| io::Error::other(e.to_string()))
-    })
+    transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
 }
 
 /// Flushes traces/stats and/or telemetry, as specified by options.
