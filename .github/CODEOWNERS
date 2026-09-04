@@ -33,7 +33,7 @@ libdd-ffe                            @DataDog/feature-flagging-and-experimentati
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ipc*/                          @DataDog/libdatadog-php
-datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
+libdd-live-debugger*/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
 libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
@@ -77,17 +77,21 @@ README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
 rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
-scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
-scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
-scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/check_cargo_metadata.sh      @DataDog/apm-common-components-core
+scripts/check_crypto_providers.sh    @DataDog/apm-common-components-core
+scripts/commits-since-release.sh     @DataDog/apm-common-components-core
 scripts/create-release.sh            @DataDog/apm-common-components-core
-scripts/crates-to-package.sh         @DataDog/libdatadog-core
-scripts/exclude-from-green-ci.sh     @DataDog/libdatadog-core
-scripts/major-bumps-level.sh         @DataDog/libdatadog-core
-scripts/publication-order.sh         @DataDog/libdatadog-core
-scripts/reformat_copyright.sh        @DataDog/libdatadog-core
-scripts/semver-level.sh              @DataDog/libdatadog-core
-scripts/update_license_3rdparty.sh   @DataDog/libdatadog-core
+scripts/crates-to-package.sh         @DataDog/apm-common-components-core
+scripts/exclude-from-green-ci.sh     @DataDog/apm-common-components-core
+scripts/major-bumps-level.sh         @DataDog/apm-common-components-core
+scripts/publication-order.sh         @DataDog/apm-common-components-core
+scripts/reformat_copyright.sh        @DataDog/apm-common-components-core
+scripts/release-excluded-crates-hints.sh  @DataDog/apm-common-components-core
+scripts/release-generate-changelogs.sh  @DataDog/apm-common-components-core
+scripts/release-version-bumps.sh     @DataDog/apm-common-components-core
+scripts/release-version-major-bumps.sh  @DataDog/apm-common-components-core
+scripts/semver-level.sh              @DataDog/apm-common-components-core
+scripts/update_license_3rdparty.sh   @DataDog/apm-common-components-core
 scripts/Dockerfile.license           @DataDog/libdatadog-core
 spawn_worker/                        @DataDog/libdatadog-php @DataDog/libdatadog-apm
 symbolizer-ffi                       @DataDog/libdatadog-profiling
