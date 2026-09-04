@@ -3,7 +3,6 @@
 
 use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
-use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
@@ -138,7 +137,7 @@ impl RemoteConfigWriter {
         })
     }
 
-    pub fn write(&self, contents: &[u8]) {
+    pub fn write(&self, contents: &[u8]) -> io::Result<()> {
         self.writer.write(contents)
     }
 
@@ -166,8 +165,22 @@ struct ConfigFileStorage<N: NotifyTarget + 'static> {
 
 struct StoredShmFile {
     handle: Mutex<Option<NamedShmHandle>>, // just an option to use the handle under lock
-    limiter: Option<ShmLimiter<()>>,
+    limiter: Mutex<Option<ShmLimiter<()>>>,
     refcount: FileRefcountData,
+}
+
+fn alloc_live_debugging_limiter() -> Option<ShmLimiter<()>> {
+    crate::tracer::with_shm_limiter(|mem| mem.alloc()).and_then(|result| {
+        result
+            .inspect_err(|e| {
+                warn!(
+                    "Failed to allocate a shared-memory rate limiter slot for \
+                         live debugging config (will retry on the next remote config \
+                         fetch): {e}"
+                );
+            })
+            .ok()
+    })
 }
 
 impl RefcountedFile for StoredShmFile {
@@ -187,11 +200,11 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                Some(SHM_LIMITER.lock_or_panic().alloc())
+            limiter: Mutex::new(if path.product() == RemoteConfigProduct::LiveDebugging {
+                alloc_live_debugging_limiter()
             } else {
                 None
-            },
+            }),
             refcount: FileRefcountData::new(version, path),
         }))
     }
@@ -203,6 +216,12 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
         *file.handle.lock_or_panic() = Some(store_shm(version, &file.refcount.path, contents)?);
+        if file.refcount.path.product() == RemoteConfigProduct::LiveDebugging {
+            let mut limiter = file.limiter.lock_or_panic();
+            if limiter.is_none() {
+                *limiter = alloc_live_debugging_limiter();
+            }
+        }
         Ok(())
     }
 }
@@ -281,7 +300,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
                 file.handle.lock_or_panic().as_ref().unwrap().get_path()
             });
             serialized.push(b':');
-            if let Some(ref limiter) = file.limiter {
+            if let Some(ref limiter) = *file.limiter.lock_or_panic() {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
             } else {
                 serialized.push(b'0');
@@ -328,7 +347,12 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
         }
 
         if writer.writer.as_slice() != serialized {
-            writer.write(&serialized);
+            if let Err(e) = writer.write(&serialized) {
+                warn!(
+                    "Failed to write remote config shm segment (will retry on the next fetch): {e}"
+                );
+                return false;
+            }
 
             debug!(
                 "Active configuration files are: {}",
@@ -351,7 +375,10 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     fn expired(&self, target: &Arc<Target>) {
         if let Some(writer) = self.writers.lock_or_panic().remove(target) {
             // clear to signal it's no longer being fetched
-            writer.write(&[]);
+            if let Err(e) = writer.write(&[]) {
+                // shouldn't happen as it never should increase shm size
+                warn!("Failed to clear remote config shm segment on expiry: {e}");
+            }
         }
     }
 

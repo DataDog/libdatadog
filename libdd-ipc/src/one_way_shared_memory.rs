@@ -283,7 +283,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
 
                 #[allow(clippy::unwrap_used)]
                 let handle = reader.handle.as_mut().unwrap();
-                handle.ensure_space(size);
+                if let Err(e) = handle.ensure_space(size) {
+                    tracing::warn!(
+                        "Failed to grow shared-memory reader mapping to {size} bytes: {e}"
+                    );
+                    return None;
+                }
 
                 // aligned on 8 byte boundary, round up to closest 8 byte boundary
                 let mut new_mem = Vec::<u64>::with_capacity(size.div_ceil(8));
@@ -410,11 +415,11 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     /// Linux this also wakes readers blocked in
     /// [`OneWayShmReader::wait_for_change`]; the wake is a cheap no-op syscall when
     /// there are no waiters.
-    pub fn write(&self, contents: &[u8]) {
+    pub fn write(&self, contents: &[u8]) -> io::Result<()> {
         let mut mapped = self.handle.lock_or_panic();
 
         let size = contents.len() + 1; // trailing zero byte, to keep some C code happy
-        mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
+        mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size)?;
 
         // Safety: ShmHandle is always big enough
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
@@ -431,6 +436,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         // Wake any readers blocked in `wait_for_change` on the generation word.
         // A wake with no waiters is a cheap no-op syscall.
         futex_wake((&data.meta.generation as *const AtomicU64).cast::<u32>());
+        Ok(())
     }
 
     /// Borrow the buffer currently published in the segment (excluding the
