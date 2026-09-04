@@ -9,7 +9,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use libdd_common::bench_utils::{
-    memory_allocated_measurement, AllocatedBytesMeasurement, ReportingAllocator,
+    memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
 use libdd_sampling::glob_matcher::GlobMatcher;
 
@@ -122,9 +122,10 @@ fn bench_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
 }
 
 criterion_group!(benches, bench_wall_time);
-criterion_group!(
-    name = alloc_benches;
-    config = memory_allocated_measurement(&GLOBAL);
-    targets = bench_allocs
-);
+
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+fn alloc_benches() {
+    bench_allocs(&mut memory_allocated_criterion(&GLOBAL));
+}
+
 criterion_main!(alloc_benches, benches);
