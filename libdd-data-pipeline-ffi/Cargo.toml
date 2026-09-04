@@ -38,7 +38,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils" }
 [dependencies]
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
-libdd-shared-runtime = { version = "3.1.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }

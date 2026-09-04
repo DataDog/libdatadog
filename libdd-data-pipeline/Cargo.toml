@@ -35,7 +35,7 @@ tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "1.0.0" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
-libdd-shared-runtime = { version = "3.1.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "7.0.1", path = "../libdd-telemetry", default-features = false, optional = true}
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-normalization = { version = "4.0.0", path = "../libdd-trace-normalization" }
@@ -78,7 +78,7 @@ path = "benches/trace_buffer.rs"
 [dev-dependencies]
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
-libdd-shared-runtime = { version = "3.1.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime" }
 regex = { workspace = true, features = ["std", "unicode", "perf"] }
 clap = { workspace = true, default-features = true, features = ["derive"] }
 criterion.workspace = true
