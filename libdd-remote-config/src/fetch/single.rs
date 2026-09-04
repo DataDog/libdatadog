@@ -89,6 +89,13 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> SingleFetcher<S,
         self
     }
 
+    /// Replaces the identity sent on subsequent polls without resetting client or file state.
+    pub fn set_identity(&mut self, client_id: String, runtime_id: String, tags: Vec<String>) {
+        self.client_id = client_id;
+        self.runtime_id = runtime_id;
+        Arc::make_mut(&mut self.target).tags = tags;
+    }
+
     /// Polls the current runtime config files.
     pub async fn fetch_once(&mut self) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
         self.fetcher
@@ -194,6 +201,11 @@ where
         self
     }
 
+    /// See [`SingleFetcher::set_identity`].
+    pub fn set_identity(&mut self, client_id: String, runtime_id: String, tags: Vec<String>) {
+        self.fetcher.set_identity(client_id, runtime_id, tags);
+    }
+
     /// Polls for new changes
     pub async fn fetch_changes<R>(&mut self) -> anyhow::Result<Vec<Change<Arc<S::StoredFile>, R>>>
     where
@@ -235,5 +247,61 @@ where
     ) {
         self.fetcher
             .set_product_capabilities(products, capabilities);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fetch::test_server::RemoteConfigServer;
+    use crate::file_storage::SimpleFileStorage;
+    use libdd_capabilities_impl::NativeCapabilities;
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn updates_identity_without_resetting_client_state() {
+        let server = RemoteConfigServer::spawn();
+        let target = Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.2.3".to_string(),
+            vec!["runtime-id:old-runtime-id".to_string()],
+            vec!["entrypoint.type:script".to_string()],
+        );
+        server.files.lock().unwrap().insert(
+            RemoteConfigPath::parse("employee/APM_TRACING/identity/config").unwrap(),
+            (vec![Arc::new(target.clone())], 1, "v1".to_string()),
+        );
+        let mut fetcher = SingleChangesFetcher::new_no_agentless(
+            SimpleFileStorage::default(),
+            target,
+            "old-runtime-id".to_string(),
+            server.dummy_options(),
+            NativeCapabilities::new_without_connection_pooling(),
+        )
+        .with_client_id("old-client-id".to_string());
+
+        fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+        fetcher.set_identity(
+            "new-client-id".to_string(),
+            "new-runtime-id".to_string(),
+            vec!["runtime-id:new-runtime-id".to_string()],
+        );
+        fetcher.fetch_changes::<Vec<u8>>().await.unwrap();
+
+        let request = server.last_request.lock().unwrap();
+        let client = request.as_ref().unwrap().client.as_ref().unwrap();
+        let tracer = client.client_tracer.as_ref().unwrap();
+        assert_eq!(client.id, "new-client-id");
+        assert_eq!(tracer.runtime_id, "new-runtime-id");
+        assert_eq!(tracer.service, "service");
+        assert_eq!(tracer.env, "env");
+        assert_eq!(tracer.app_version, "1.2.3");
+        assert_eq!(tracer.tags, ["runtime-id:new-runtime-id"]);
+        assert_eq!(tracer.process_tags, ["entrypoint.type:script"]);
+        assert_eq!(
+            client.state.as_ref().unwrap().backend_client_state,
+            b"some state"
+        );
     }
 }
