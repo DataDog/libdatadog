@@ -91,6 +91,15 @@ mod native {
             std::fs::rename(&tmp, &dest)
                 .map_err(|e| HttpError::Other(anyhow::anyhow!("renaming to {dest:?}: {e}")))?;
         } else {
+            // Concurrent flush tasks (traces, telemetry, ...) can all target the same
+            // single-file endpoint. A single `write_all` call for a large record may
+            // issue more than one underlying `write()` syscall, so two concurrent
+            // writers can interleave their bytes into the file even under O_APPEND
+            // (which only makes each individual `write()` atomic, not the whole
+            // record). Serialize the open+write here so a record is never split.
+            static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
