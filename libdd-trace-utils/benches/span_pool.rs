@@ -84,16 +84,18 @@ fn populate_span(span: &mut Span<BytesData>, span_idx: u64, trace_id: u128) {
 
 /// Build `num_chunks` chunks of `spans_per_chunk` spans, populating each span via
 /// [`populate_span`]. `get_span` decides whether spans come from the pool or are freshly
-/// allocated.
-fn build_chunks<F: FnMut() -> Span<BytesData>>(
+/// allocated; `pull_empty_chunk` supplies the backing `Vec` (recycled by the pooled path).
+fn build_chunks<F: FnMut() -> Span<BytesData>, G: FnMut() -> Vec<Span<BytesData>>>(
     num_chunks: usize,
     spans_per_chunk: usize,
     mut get_span: F,
+    mut pull_empty_chunk: G,
 ) -> Vec<Vec<Span<BytesData>>> {
     let mut chunks = Vec::with_capacity(num_chunks);
     for chunk_idx in 0..num_chunks {
         let trace_id = (chunk_idx as u128) << 64 | chunk_idx as u128;
-        let mut chunk = Vec::with_capacity(spans_per_chunk);
+        let mut chunk = pull_empty_chunk();
+        chunk.reserve(spans_per_chunk);
         let base = chunk_idx * spans_per_chunk;
         for i in 0..spans_per_chunk {
             let mut span = get_span();
@@ -106,15 +108,18 @@ fn build_chunks<F: FnMut() -> Span<BytesData>>(
 }
 
 /// Build a single chunk of `spans` spans, populating each span via [`populate_span`].
-/// `get_span` decides whether spans come from the pool or are freshly allocated. Used by the
-/// concurrent benchmarks where each worker thread builds one chunk.
-fn build_chunk<F: FnMut() -> Span<BytesData>>(
+/// `get_span` decides whether spans come from the pool or are freshly allocated; `pull_empty_chunk`
+/// supplies the backing `Vec` (recycled by the pooled path). Used by the concurrent benchmarks
+/// where each worker thread builds one chunk.
+fn build_chunk<F: FnMut() -> Span<BytesData>, G: FnMut() -> Vec<Span<BytesData>>>(
     spans: usize,
     base: u64,
     trace_id: u128,
     mut get_span: F,
+    mut pull_empty_chunk: G,
 ) -> Vec<Span<BytesData>> {
-    let mut chunk = Vec::with_capacity(spans);
+    let mut chunk = pull_empty_chunk();
+    chunk.reserve(spans);
     for i in 0..spans {
         let mut span = get_span();
         populate_span(&mut span, base + i as u64, trace_id);
@@ -126,7 +131,7 @@ fn build_chunk<F: FnMut() -> Span<BytesData>>(
 /// Warm the pool with `count` freshly-allocated, populated spans so that the first
 /// measured iterations dequeue recycled spans (steady state) rather than allocating.
 fn warm_pool(pool: &SpanPool<BytesData>, count: usize) {
-    let chunks = build_chunks(1, count, Span::<BytesData>::default);
+    let chunks = build_chunks(1, count, Span::<BytesData>::default, Vec::new);
     // Returning the chunks to the pool recycles the spans (minus the ~10% dropped by the
     // drop policy).
     drop(pool.wrap_chunks(chunks));
@@ -147,7 +152,12 @@ fn enqueue_dequeue_pooled<M: Measurement + MeasurementName + 'static>(c: &mut Cr
             &(num_chunks, spans_per_chunk),
             |b, &(num_chunks, spans_per_chunk)| {
                 b.iter(|| {
-                    let chunks = build_chunks(num_chunks, spans_per_chunk, || pool.get_span());
+                    let chunks = build_chunks(
+                        num_chunks,
+                        spans_per_chunk,
+                        || pool.get_span(),
+                        || pool.pull_empty_chunk(),
+                    );
                     // Enqueue: returning the chunks to the pool recycles the spans.
                     drop(pool.wrap_chunks(black_box(chunks)));
                 });
@@ -169,8 +179,12 @@ fn enqueue_dequeue_allocating<M: Measurement + MeasurementName + 'static>(c: &mu
             &(num_chunks, spans_per_chunk),
             |b, &(num_chunks, spans_per_chunk)| {
                 b.iter(|| {
-                    let chunks =
-                        build_chunks(num_chunks, spans_per_chunk, Span::<BytesData>::default);
+                    let chunks = build_chunks(
+                        num_chunks,
+                        spans_per_chunk,
+                        Span::<BytesData>::default,
+                        Vec::new,
+                    );
                     // No pool: spans are dropped (deallocated) with no recycling.
                     drop(black_box(chunks));
                 });
@@ -222,8 +236,13 @@ fn concurrent_enqueue_dequeue_pooled<M: Measurement + MeasurementName + 'static>
                         let base = worker_idx as u64 * spans_per_worker as u64;
                         let trace_id = worker_idx as u128;
                         handles.push(thread::spawn(move || {
-                            let chunk =
-                                build_chunk(spans_per_worker, base, trace_id, || pool.get_span());
+                            let chunk = build_chunk(
+                                spans_per_worker,
+                                base,
+                                trace_id,
+                                || pool.get_span(),
+                                || pool.pull_empty_chunk(),
+                            );
                             let _ = chunk_tx.send(chunk);
                         }));
                     }
@@ -280,6 +299,7 @@ fn concurrent_enqueue_dequeue_allocating<M: Measurement + MeasurementName + 'sta
                                 base,
                                 trace_id,
                                 Span::<BytesData>::default,
+                                Vec::new,
                             );
                             let _ = chunk_tx.send(chunk);
                         }));

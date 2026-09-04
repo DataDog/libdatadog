@@ -101,12 +101,13 @@ fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Sp
 ///
 /// Backed by an unbounded crossbeam channel of chunks (one send per chunk, not per span). The
 /// capacity (in spans) bounds the channel only
-/// Thread-local caches are not counted, so idle threads holding cached spans don't reduce the pool's headroom.
+/// Thread-local caches are not counted, so idle threads holding cached spans don't reduce the
+/// pool's headroom.
 ///
-/// Returning a piece reserves span-count atomically before sending, so the channel never exceeds capacity across threads.
-/// `get_span` first hits a per-thread chunk cache ([`ThreadLocal`]) and only when empty does it
-/// dequeue a fresh chunk. This keeps the single-producer path lock-free and gives each thread a
-/// local chunk under contention.
+/// Returning a piece reserves span-count atomically before sending, so the channel never exceeds
+/// capacity across threads. `get_span` first hits a per-thread chunk cache ([`ThreadLocal`]) and
+/// only when empty does it dequeue a fresh chunk. This keeps the single-producer path lock-free and
+/// gives each thread a local chunk under contention.
 #[derive(Debug, Clone)]
 pub struct SpanPool<T: TraceData> {
     inner: Arc<SpanPoolInner<T>>,
@@ -116,15 +117,28 @@ pub struct SpanPool<T: TraceData> {
 struct SpanPoolInner<T: TraceData> {
     queue: crossbeam_channel::Sender<Vec<Span<T>>>,
     receiver: crossbeam_channel::Receiver<Vec<Span<T>>>,
-    /// Per-thread cache of the last chunk pulled from the channel.
-    last_chunk: ThreadLocal<RefCell<Option<Vec<Span<T>>>>>,
+    /// Per-thread cache: the last chunk pulled from the channel plus one recycled empty `Vec`.
+    thread_cache: ThreadLocal<RefCell<ThreadCache<T>>>,
     /// Total spans currently held in the global queue (channel); the capacity bound is in spans.
     len: AtomicUsize,
     /// Maximum number of recycled spans the pool will hold.
     capacity: usize,
 }
 
+#[derive(Debug, Default)]
+struct ThreadCache<T: TraceData> {
+    /// Last chunk pulled from the channel; spans are popped from it by `get_span`.
+    last_chunk: Option<Vec<Span<T>>>,
+    /// One recycled empty `Vec` kept for `pull_empty_chunk`; never returned to the pool.
+    empty_chunk: Option<Vec<Span<T>>>,
+}
+
 impl<T: TraceData> SpanPool<T> {
+    /// New pool holding at most `pool_capacity` recycled spans.
+    pub fn new(pool_capacity: usize) -> Self {
+        Self::with_capacity(pool_capacity)
+    }
+
     /// New pool holding at most `capacity` recycled spans.
     pub fn with_capacity(capacity: usize) -> Self {
         let (queue, receiver) = crossbeam_channel::unbounded();
@@ -132,7 +146,7 @@ impl<T: TraceData> SpanPool<T> {
             inner: Arc::new(SpanPoolInner {
                 queue,
                 receiver,
-                last_chunk: ThreadLocal::new(),
+                thread_cache: ThreadLocal::new(),
                 len: AtomicUsize::new(0),
                 capacity,
             }),
@@ -156,7 +170,7 @@ impl<T: TraceData> SpanPool<T> {
                     return;
                 }
                 self.inner.len.fetch_add(piece_len, Ordering::Relaxed);
-                if let Err(_) = self.inner.queue.send(piece) {
+                if self.inner.queue.send(piece).is_err() {
                     return;
                 }
             }
@@ -167,13 +181,18 @@ impl<T: TraceData> SpanPool<T> {
     /// Tries the per-thread cache first (lock-free), dequeues a new chunk only when it's empty.
     pub fn get_span(&self) -> Span<T> {
         loop {
-            let cell = self.inner.last_chunk.get_or_default();
+            let cell = self.inner.thread_cache.get_or_default();
             {
                 let mut slot = cell.borrow_mut();
-                if let Some(chunk) = slot.as_mut() {
+                if let Some(chunk) = slot.last_chunk.as_mut() {
                     if let Some(span) = chunk.pop() {
                         if chunk.is_empty() {
-                            *slot = None;
+                            // Recycle the now-empty `Vec` for `pull_empty_chunk`.
+                            let empty = std::mem::take(chunk);
+                            slot.last_chunk = None;
+                            if slot.empty_chunk.is_none() {
+                                slot.empty_chunk = Some(empty);
+                            }
                         }
                         return span;
                     }
@@ -181,14 +200,28 @@ impl<T: TraceData> SpanPool<T> {
             }
             match self.inner.receiver.try_recv() {
                 Ok(chunk) => {
-                    // Chunk leaves the channel for the thread-local cache; len counts only the
-                    // channel, so decrement by chunk here (one atomic per chunk, not per span).
                     self.inner.len.fetch_sub(chunk.len(), Ordering::Relaxed);
-                    *self.inner.last_chunk.get_or_default().borrow_mut() = Some(chunk);
+                    self.inner
+                        .thread_cache
+                        .get_or_default()
+                        .borrow_mut()
+                        .last_chunk = Some(chunk);
                 }
                 Err(_) => return Span::default(),
             }
         }
+    }
+
+    /// Get an empty `Vec<Span<T>>` with retained capacity for building a chunk, or a fresh one if
+    /// the thread has none cached. Not counted in the pool's length; never returned to the pool.
+    pub fn pull_empty_chunk(&self) -> Vec<Span<T>> {
+        self.inner
+            .thread_cache
+            .get_or_default()
+            .borrow_mut()
+            .empty_chunk
+            .take()
+            .unwrap_or_default()
     }
 
     /// Spans currently held in the global queue (channel only, not thread-local caches).
@@ -233,6 +266,15 @@ impl<T: TraceData> MaybePool<'_, T> {
             return;
         };
         pool.add_chunks(chunks);
+    }
+
+    /// Get an empty chunk: recycled from the pool's thread-local cache when a pool is attached,
+    /// or a fresh `Vec` otherwise.
+    pub fn pull_empty_chunk(&self) -> Vec<Span<T>> {
+        match self.pool {
+            Some(pool) => pool.pull_empty_chunk(),
+            None => Vec::new(),
+        }
     }
 }
 
