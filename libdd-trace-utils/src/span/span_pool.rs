@@ -107,8 +107,8 @@ fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Sp
 /// The capacity bound is best-effort: `add_chunks` checks-and-increments `len` with relaxed
 /// atomics, so concurrent producers can briefly exceed `capacity` (the channel itself is
 /// unbounded).
-/// Since there is a single task returning chunks to the queue (the exporter task) the bound is exact.
-/// `get_span` first hits a per-thread
+/// Since there is a single task returning chunks to the queue (the exporter task) the bound is
+/// exact. `get_span` first hits a per-thread
 /// chunk cache ([`ThreadLocal`]) and only when empty does it dequeue a fresh chunk. This keeps
 /// the single-producer path lock-free and gives each thread a local chunk under contention.
 #[derive(Debug, Clone)]
