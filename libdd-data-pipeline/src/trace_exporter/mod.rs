@@ -812,6 +812,8 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
+        // Process stats computation and drop non-sampled (p0) chunks.
+        // This must run before the OTLP path so that unsampled spans are not exported.
         let client_side_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
@@ -840,7 +842,7 @@ impl<
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(ref config) = self.otlp_config {
+        if let Some(config) = self.otlp_config.as_ref() {
             libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
