@@ -49,19 +49,37 @@ fn populate_span(span: &mut Span<BytesData>, span_idx: u64, trace_id: u128) {
     span.duration = 5_000;
     span.error = 0;
     span.meta.insert(
-        BytesString::from_static("app"),
-        BytesString::from_static("test-app"),
+        BytesString::from_static("http.method"),
+        BytesString::from_static("GET"),
     );
     span.meta.insert(
-        BytesString::from_static("thread.id"),
-        BytesString::from_static("58"),
+        BytesString::from_static("http.route"),
+        BytesString::from_static("/api/echo"),
     );
     span.meta.insert(
-        BytesString::from_static("thread.name"),
-        BytesString::from_static("pool-5"),
+        BytesString::from_static("http.status_code"),
+        BytesString::from_static("200"),
+    );
+    span.meta.insert(
+        BytesString::from_static("_dd.p.dm"),
+        BytesString::from_static("-0"),
+    );
+    span.meta.insert(
+        BytesString::from_static("language"),
+        BytesString::from_static("python"),
+    );
+    span.meta.insert(
+        BytesString::from_static("runtime-id"),
+        BytesString::from_static("bcc8589f1d534d2abf2bd7eb4a8eba2d"),
     );
     span.metrics
         .insert(BytesString::from_static("_sampling_priority_v1"), 2.0);
+    span.metrics
+        .insert(BytesString::from_static("_dd.top_level"), 1.0);
+    span.metrics
+        .insert(BytesString::from_static("_dd.tracer_kr"), 1.0);
+    span.metrics
+        .insert(BytesString::from_static("process_id"), 80474.0);
 }
 
 /// Build `num_chunks` chunks of `spans_per_chunk` spans, populating each span via

@@ -3671,6 +3671,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thin-vec",
+ "thread_local",
  "tokio",
  "tracing",
  "urlencoding",
