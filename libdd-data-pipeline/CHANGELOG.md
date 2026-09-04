@@ -2,6 +2,29 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v9.0.0..libdd-data-pipeline-v10.0.0) - 2026-09-04
+
+### Added
+
+- Emit native trace export telemetry ([#2338](https://github.com/datadog/libdatadog/issues/2338)) - ([1887a57](https://github.com/datadog/libdatadog/commit/1887a57ca4564b1aacc9270622a896f14c3250de))
+- Add fork-safe OTLP gRPC trace transport ([#2273](https://github.com/datadog/libdatadog/issues/2273)) - ([3c5ccac](https://github.com/datadog/libdatadog/commit/3c5ccac3555116846d393f2f9833d834103f051d))
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Obfuscate v04 spans in agentless context ([#2418](https://github.com/datadog/libdatadog/issues/2418)) - ([0265610](https://github.com/datadog/libdatadog/commit/026561026770a138f567e6c552e5df3a88cf1c18))
+- Add runtime-independent agentless sending ([#2389](https://github.com/datadog/libdatadog/issues/2389)) - ([4cfd390](https://github.com/datadog/libdatadog/commit/4cfd390c26275689456a8bd7db26d37601d232d7))
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Prepare crate for publishing ([#2466](https://github.com/datadog/libdatadog/issues/2466)) - ([64ad2ed](https://github.com/datadog/libdatadog/commit/64ad2ed5c793ce0b2550239734bb48c9ce442116))
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Pass obfuscation config to OTLP stats ([#2444](https://github.com/datadog/libdatadog/issues/2444)) - ([1688816](https://github.com/datadog/libdatadog/commit/16888160b35477f89aae7557fdf9599b7b32dc27))
+- Read OTel HTTP names for the status and method dimensions ([#2323](https://github.com/datadog/libdatadog/issues/2323)) - ([c172290](https://github.com/datadog/libdatadog/commit/c1722904796778e193703397dcd516c2bbf6f577))
+
+
+
 ## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v8.0.0..libdd-data-pipeline-v9.0.0) - 2026-08-25
 
 ### Added

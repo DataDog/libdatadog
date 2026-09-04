@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "11.0.0"
+version = "12.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -45,11 +45,11 @@ rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
 rustc-hash = "2.1.1"
 
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
-libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
+libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 libdd-trace-normalization = { version = "4.0.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
-libdd-tinybytes = { version = "1.1.2", path = "../libdd-tinybytes", features = [
+libdd-tinybytes = { version = "1.1.3", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
@@ -67,7 +67,7 @@ httpmock = { workspace = true, optional = true }
 urlencoding = { version = "2.1.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
 tokio = { version = "1", features = ["time"], optional = true }
 zstd = {workspace = true, optional = true }
 
@@ -76,7 +76,7 @@ getrandom = { version = "0.2", features = ["js"] }
 zrip = { version = "=0.6.0", default-features = false, features = ["frame"], optional = true }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", default-features = false, features = [
     "bench-utils",
 ] }

@@ -2,6 +2,18 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v7.0.0..libdd-trace-obfuscation-v8.0.0) - 2026-09-04
+
+### Added
+
+- Obfuscate v04 spans in agentless context ([#2418](https://github.com/datadog/libdatadog/issues/2418)) - ([0265610](https://github.com/datadog/libdatadog/commit/026561026770a138f567e6c552e5df3a88cf1c18))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v6.0.0..libdd-trace-obfuscation-v7.0.0) - 2026-08-25
 
 ### Changed

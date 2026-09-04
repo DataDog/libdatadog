@@ -2,6 +2,14 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v5.0.0..libdd-dogstatsd-client-v6.0.0) - 2026-09-04
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v4.0.0..libdd-dogstatsd-client-v5.0.0) - 2026-08-17
 
 ### Added

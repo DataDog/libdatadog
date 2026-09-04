@@ -2,6 +2,14 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v3.0.0..libdd-shared-runtime-v4.0.0) - 2026-09-04
+
+### Fixed
+
+- Allow disabling worker fork restart ([#2464](https://github.com/datadog/libdatadog/issues/2464)) - ([48e990d](https://github.com/datadog/libdatadog/commit/48e990d1554aabec43e139e27ebb5514df6dab89))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v2.0.0..libdd-shared-runtime-v3.0.0) - 2026-08-17
 
 ### Added

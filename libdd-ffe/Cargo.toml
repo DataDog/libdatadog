@@ -13,7 +13,7 @@ description = "Feature Flagging and Experimentation"
 bench = false
 
 [dependencies]
-libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
+libdd-remote-config = { version = "5.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
@@ -21,8 +21,8 @@ chrono = { workspace = true, features = ["now", "serde"] }
 derive_more = { version = "2.0.0", default-features = false, features = ["from", "into"] }
 log = { version = "0.4.21", default-features = false, features = ["kv", "kv_serde"] }
 md5 = { version = "0.7.0", default-features = false }
-libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0", optional = true }
+libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 tokio = { version = "1.49.0", features = ["time"], optional = true }
 semver = "1.0"

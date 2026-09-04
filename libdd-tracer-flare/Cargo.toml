@@ -12,9 +12,9 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare
 
 [dependencies]
 anyhow = "1.0"
-libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false }
-libdd-common = { version = "5.2.0", path = "../libdd-common" }
-libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils" }
+libdd-remote-config = { version = "5.0.0", path = "../libdd-remote-config", default-features = false }
+libdd-common = { version = "6.0.0", path = "../libdd-common" }
+libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils" }
 http = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["time"] }
@@ -24,7 +24,7 @@ walkdir = "2.4"
 tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false

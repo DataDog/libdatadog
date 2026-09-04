@@ -2,6 +2,18 @@
 
 
 
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v3.0.0..libdd-capabilities-v3.0.1) - 2026-09-04
+
+### Added
+
+- Do not entirely disable connection pooling for periodic connections ([#2440](https://github.com/datadog/libdatadog/issues/2440)) - ([a4df07e](https://github.com/datadog/libdatadog/commit/a4df07ed442e88e70d9e6248c79a1ab1319d2182))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v2.1.0..libdd-capabilities-v3.0.0) - 2026-08-07
 
 ### Added
