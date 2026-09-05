@@ -46,12 +46,21 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
         }
     }
 
+    // `shm.size` is read from a negotiation slot shared by every process mapping this
+    // segment (see above): it stays zero if no writer has called `ensure_space` (and thus
+    // written a real size into that slot) yet. A reader that opens the segment in that
+    // window sees a technically-valid-but-not-yet-populated mapping; treat it the same as
+    // the mapping not being present yet, rather than panicking, so callers that already
+    // tolerate a transient read failure here (e.g. remote-config file reads, which log and
+    // retry on the next poll) do so uniformly instead of aborting the process.
+    let size = NonZeroUsize::new(shm.size)
+        .ok_or_else(|| io::Error::other("shared memory mapping size not yet committed"))?;
+
     Ok(MappedMem {
-        #[allow(clippy::unwrap_used)]
         ptr: unsafe {
             mmap(
                 None,
-                NonZeroUsize::new(shm.size).unwrap(),
+                size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
                 fd,
