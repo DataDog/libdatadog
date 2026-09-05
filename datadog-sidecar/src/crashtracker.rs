@@ -14,8 +14,6 @@
 //! boundaries, [`SeqpacketStreamReader`] concatenates the collector's datagrams back into a
 //! contiguous stream (a zero-length datagram is EOF).
 
-use libdd_ipc::AsyncConn;
-
 /// Returns the abstract socket name the Linux listener binds.
 #[cfg(target_os = "linux")]
 pub fn crashtracker_ipc_socket_path(
@@ -95,12 +93,12 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
 }
 
 mod adapter {
-    use super::*;
     use libdd_ipc::platform::sockets::max_message_size;
     use std::io;
     use std::os::fd::AsRawFd;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use tokio::io::unix::AsyncFd;
     use tokio::io::{AsyncRead, ReadBuf};
 
     /// `AsyncRead` adapter that concatenates an ordered stream of SEQPACKET datagrams into a
@@ -108,16 +106,16 @@ mod adapter {
     /// `enter_crashtracker_receiver` handler runs it to completion), so there is no concurrent
     /// reader. A zero-length datagram is EOF; a datagram larger than the caller's buffer is
     /// buffered and drained on later reads, so boundaries never truncate data.
-    pub struct SeqpacketStreamReader<'a> {
-        conn: &'a AsyncConn,
+    pub struct SeqpacketStreamReader<'a, C: AsRawFd = libdd_ipc::SeqpacketConn> {
+        conn: &'a AsyncFd<C>,
         /// Scratch buffer for one `recv()`, avoiding reallocation.
         recv_buf: Vec<u8>,
         buf_pos: usize,
         eof: bool,
     }
 
-    impl<'a> SeqpacketStreamReader<'a> {
-        pub fn new(conn: &'a AsyncConn) -> Self {
+    impl<'a, C: AsRawFd> SeqpacketStreamReader<'a, C> {
+        pub fn new(conn: &'a AsyncFd<C>) -> Self {
             Self {
                 conn,
                 recv_buf: Vec::with_capacity(max_message_size()),
@@ -127,7 +125,7 @@ mod adapter {
         }
     }
 
-    impl AsyncRead for SeqpacketStreamReader<'_> {
+    impl<C: AsRawFd> AsyncRead for SeqpacketStreamReader<'_, C> {
         fn poll_read(
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
@@ -210,7 +208,7 @@ mod adapter {
 pub use adapter::SeqpacketStreamReader;
 
 /// Wrap `AsyncConn` and dispatch it to crashtracking receiver.
-pub async fn run_crashtracker_receiver(conn: &AsyncConn) {
+pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(conn: &tokio::io::unix::AsyncFd<C>) {
     use std::os::fd::AsRawFd;
     use tokio::io::BufReader;
 
@@ -342,7 +340,7 @@ mod tests {
         // bound it with a timeout that would fail the test rather than hang the suite.
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            recv_raw_async::<_, ()>(&async_fd, |_| ()),
+            recv_raw_async::<_, (), _>(&async_fd, |_| ()),
         )
         .await
         .expect("serve loop's next recv did not return promptly after the receiver finished");
