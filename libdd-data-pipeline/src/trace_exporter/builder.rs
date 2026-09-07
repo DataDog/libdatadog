@@ -12,20 +12,25 @@ use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
+#[cfg(feature = "telemetry")]
+use crate::trace_exporter::TelemetryInstrumentationSessions;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
+    TraceExporterOutputFormat, TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwap;
+#[cfg(feature = "telemetry")]
+use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
+use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -81,6 +86,8 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     client_side_stats_obfuscation_enabled: bool,
+    /// Span obfuscation configuration applied on the agentless export path
+    span_obfuscation_config: ObfuscationConfig,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     #[cfg(feature = "telemetry")]
@@ -95,6 +102,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     agentless_endpoint: Option<String>,
     agentless_api_key: Option<String>,
     agentless_timeout: Option<Duration>,
+    agentless_stats_endpoint: Option<String>,
     otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
@@ -156,6 +164,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats_cardinality_limits: None,
             #[cfg(feature = "stats-obfuscation")]
             client_side_stats_obfuscation_enabled: false,
+            span_obfuscation_config: ObfuscationConfig::default(),
             #[cfg(feature = "telemetry")]
             telemetry: None,
             #[cfg(feature = "telemetry")]
@@ -175,6 +184,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
+            agentless_stats_endpoint: None,
             output_to_log: false,
             log_max_line_size: None,
             restart_after_fork: true,
@@ -391,6 +401,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
+    /// Replace the span obfuscation configuration. The builder starts from
+    /// [`ObfuscationConfig::default`] (which mirrors the Datadog Agent defaults)
+    ///
+    /// Only applied in the agentless export path.
+    pub fn set_span_obfuscation_config(&mut self, config: ObfuscationConfig) -> &mut Self {
+        self.span_obfuscation_config = config;
+        self
+    }
+
     #[cfg(feature = "telemetry")]
     /// Enables sending telemetry metrics.
     pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
@@ -501,6 +520,34 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// return [`BuilderErrorKind::InvalidConfiguration`].
     pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.agentless_timeout = Some(timeout);
+        self
+    }
+
+    /// Enables agentless stats export to the Datadog intake and sets the exact
+    /// stats endpoint URL.
+    ///
+    /// When both this and stats computation ([`Self::enable_stats`]) are set,
+    /// the computed stats are sent directly to the intake at `url` (e.g.
+    /// `https://trace.agent.{DD_SITE}/api/v0.2/stats`) instead of to the local
+    /// Agent's `/v0.6/stats`. The URL must be the full stats endpoint URL.
+    ///
+    /// **Constraints** (enforced in [`Self::build`]/[`Self::build_async`]):
+    /// - [`Self::set_agentless_endpoint`] must also be called. Agentless stats cannot be enabled
+    ///   without agentless trace export.
+    /// - [`Self::set_otlp_metrics_endpoint`] must not be set. OTLP stats and agentless stats cannot
+    ///   both be enabled.
+    /// - The `stats-obfuscation` crate feature must be enabled. Unlike the agent-assisted path
+    ///   (where the Agent obfuscates SQL/Redis resources before forwarding stats), the agentless
+    ///   path sends stats directly to the intake with no downstream obfuscation.
+    /// - `url` must be a fully-qualified URL with an `http`/`https` scheme and a host/authority
+    ///   (e.g. `https://trace.agent.{DD_SITE}/api/v0.2/stats`). A relative path is rejected at
+    ///   build time because the background worker cannot route a request to it.
+    ///
+    /// Authentication reuses the agentless API key configured via
+    /// [`Self::set_agentless_endpoint`].
+    #[cfg(feature = "stats-obfuscation")]
+    pub fn set_agentless_stats_endpoint(&mut self, url: &str) -> &mut Self {
+        self.agentless_stats_endpoint = Some(url.to_owned());
         self
     }
 
@@ -743,6 +790,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 endpoint_url: url,
                 api_key,
                 timeout: self.agentless_timeout.unwrap_or(DEFAULT_AGENTLESS_TIMEOUT),
+                obfuscation_config: self.span_obfuscation_config,
             }),
             _ => None,
         };
@@ -772,6 +820,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
+        #[cfg(feature = "stats-obfuscation")]
+        let stats_obfuscation_config =
+            Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
+                enabled: otlp_metrics_config.is_some()
+                    && self.stats_bucket_size.is_some()
+                    && self.client_side_stats_obfuscation_enabled,
+                ..Default::default()
+            }));
+
         let runtime_id = self
             .runtime_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -797,7 +854,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 self.stats_cardinality_limits,
                 self.additional_metric_tag_keys.clone(),
                 #[cfg(feature = "stats-obfuscation")]
-                None,
+                Some(stats_obfuscation_config.clone()),
             )));
             let mut resource = OtlpResourceInfo::default();
             resource.service = self.service.clone();
@@ -829,6 +886,129 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 worker_handle,
             };
             otlp_stats_enabled = true;
+        }
+
+        // Agentless stats: when a stats intake endpoint and stats computation are both
+        // configured, start the concentrator unconditionally (bypass the agent gate, which is
+        // never reached in agentless mode) and send the top-level `StatsPayload` directly to the
+        // intake. Mutually exclusive with OTLP stats above (both set `stats` to `Enabled`).
+        if let (Some(stats_url), Some(bucket_size)) = (
+            self.agentless_stats_endpoint.as_ref(),
+            self.stats_bucket_size,
+        ) {
+            use libdd_trace_stats::span_concentrator::SpanConcentrator;
+            use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+            use std::sync::Mutex;
+
+            // Agentless stats authenticate with the agentless API key (from
+            // `set_agentless_endpoint`).
+            let api_key = agentless_config
+                .as_ref()
+                .map(|c| c.api_key.clone())
+                .ok_or_else(|| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        "Agentless stats export requires an API key; call set_agentless_endpoint \
+                         before set_agentless_stats_endpoint"
+                            .to_string(),
+                    ))
+                })?;
+
+            let stats_uri = parse_uri(stats_url).map_err(|e: anyhow::Error| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+            })?;
+            let stats_endpoint = Endpoint {
+                url: stats_uri,
+                api_key: Some(api_key.into()),
+                timeout_ms: self
+                    .agentless_timeout
+                    .unwrap_or(DEFAULT_AGENTLESS_TIMEOUT)
+                    .as_millis() as u64,
+                ..Endpoint::default()
+            };
+            let target = AgentlessStatsTarget {
+                endpoint: stats_endpoint,
+                version: crate::agentless::stats::agentless_stats_version(
+                    &self.tracer_version,
+                    &self.language,
+                ),
+            };
+
+            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            // Shortcutting the Agent means nothing downstream obfuscates the stats, so
+            // client-side obfuscation must always be on for the agentless intake (matching
+            // what the Agent does before sending stats to the backend).
+            #[cfg(feature = "stats-obfuscation")]
+            let obfuscation_config = Some(Arc::new(ArcSwap::from_pointee(
+                StatsComputationObfuscationConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+            )));
+            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                web_time::SystemTime::now(),
+                span_kinds,
+                self.peer_tags.clone(),
+                self.stats_cardinality_limits,
+                self.additional_metric_tag_keys.clone(),
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_config,
+            )));
+
+            let meta = StatsMetadata {
+                hostname: self.hostname.clone(),
+                env: self.env.clone(),
+                app_version: self.app_version.clone(),
+                runtime_id: runtime_id.clone(),
+                language: self.language.clone(),
+                lang_version: self.language_version.clone(),
+                lang_interpreter: self.language_interpreter.clone(),
+                lang_vendor: self.language_interpreter_vendor.clone(),
+                tracer_version: self.tracer_version.clone(),
+                git_commit_sha: self.git_commit_sha.clone(),
+                process_tags: self.process_tags.clone(),
+                service: self.service.clone(),
+                // The Agent normally enriches `container_id` downstream. In agentless
+                // mode there is no Agent, so forward the caller-configured container id
+                // to preserve container identity in the stats payload.
+                container_id: self.container_id.clone(),
+            };
+
+            // TODO(agentless-stats): the Datadog Agent's stats writer emits the following
+            // `datadog.trace_agent.stats_writer.*` metrics via statsd/dogstatsd (not
+            // instrumentation-telemetry) in `pkg/trace/writer/stats.go`; port them through the
+            // exporter's DogStatsDClient: `client_payloads`, `payloads`, `stats_buckets`,
+            // `stats_entries`, `bytes`, `retries`, `splits`, `errors` (counts); `encode_ms`,
+            // `flush_duration` (timings); `connection_fill`, `queue_fill` (histograms);
+            // `dropped`, `dropped_bytes` (queue-full counts).
+            let stats_exporter = StatsExporter::<C, _>::new_agentless(
+                bucket_size,
+                concentrator.clone(),
+                meta,
+                target,
+                capabilities.clone(),
+                #[cfg(feature = "telemetry")]
+                None,
+                if self.health_metrics_enabled {
+                    dogstatsd.clone()
+                } else {
+                    None
+                },
+            );
+            let worker_handle = shared_runtime
+                .spawn_worker(stats_exporter, self.restart_after_fork)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
+            stats = StatsComputationStatus::Enabled {
+                stats_concentrator: concentrator,
+                worker_handle,
+            };
         }
 
         let log_output = self
@@ -875,9 +1055,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 stats_cardinality_limits: self.stats_cardinality_limits,
                 additional_metric_tag_keys: self.additional_metric_tag_keys,
                 #[cfg(feature = "stats-obfuscation")]
-                obfuscation_config: Arc::new(ArcSwap::from_pointee(
-                    StatsComputationObfuscationConfig::default(),
-                )),
+                obfuscation_config: stats_obfuscation_config,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
             },
@@ -917,6 +1095,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// - Agentless cannot be combined with a caller-supplied agent URL.
     /// - Log output cannot be combined with OTLP or agentless trace export.
     /// - [`Self::set_agentless_timeout`] requires [`Self::set_agentless_endpoint`].
+    /// - [`Self::set_agentless_stats_endpoint`] requires agentless trace export
+    ///   ([`Self::set_agentless_endpoint`]) and is incompatible with OTLP stats
+    ///   ([`Self::set_otlp_metrics_endpoint`]).
     ///
     /// OTLP and an agent URL may coexist: the agent URL is still useful for auxiliary
     /// agent endpoints (info, stats) even when trace payloads are routed to OTLP.
@@ -963,6 +1144,72 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
                     "agentless timeout was set but no agentless trace endpoint is configured"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        if self.agentless_stats_endpoint.is_some() && !agentless_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export requires agentless trace export; \
+                     call set_agentless_endpoint before set_agentless_stats_endpoint"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        if self.agentless_stats_endpoint.is_some() && self.otlp_metrics_endpoint.is_some() {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export and OTLP stats export cannot both be enabled"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        // The agentless stats endpoint must be a fully-qualified URL: an `http`/`https`
+        // scheme plus a host/authority. A relative path such as `/api/v0.2/stats` parses
+        // successfully here, but the background stats worker cannot issue a request
+        // against it and would discard the resulting send error in `Worker::run`,
+        // silently losing every flush. Fail fast at build time instead.
+        if let Some(endpoint) = self.agentless_stats_endpoint.as_deref() {
+            let uri = parse_uri(endpoint).map_err(|e: anyhow::Error| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidUri(e.to_string()))
+            })?;
+            let scheme = uri.scheme_str().ok_or_else(|| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(format!(
+                    "agentless stats endpoint {endpoint:?} must include an http(s) scheme"
+                )))
+            })?;
+            if !matches!(scheme, "http" | "https") {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(format!(
+                        "agentless stats endpoint {endpoint:?} must use http or https, got {scheme}"
+                    )),
+                ));
+            }
+            if uri.host().is_none() {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(format!(
+                        "agentless stats endpoint {endpoint:?} must include a host/authority"
+                    )),
+                ));
+            }
+        }
+
+        // Agentless stats bypass the Agent, so nothing downstream obfuscates SQL/Redis
+        // resources. Without the `stats-obfuscation` feature the concentrator would emit
+        // raw resource names directly to the intake, inflating cardinality and retaining
+        // literal values. Reject the configuration at build time so this is a hard error
+        // rather than a silent data-quality issue.
+        #[cfg(not(feature = "stats-obfuscation"))]
+        if self.agentless_stats_endpoint.is_some() {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless stats export requires the `stats-obfuscation` crate feature; \
+                     without it, SQL/Redis resource names are sent to the intake unobfuscated. \
+                     Enable the `stats-obfuscation` feature or use the agent-assisted stats path."
                         .to_string(),
                 ),
             ));
@@ -1248,6 +1495,38 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
+    #[cfg(feature = "stats-obfuscation")]
+    fn test_agentless_stats_without_agentless_traces_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats");
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agentless stats") && msg.contains("agentless trace"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    #[cfg(feature = "stats-obfuscation")]
+    fn test_agentless_stats_with_otlp_stats_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            )
+            .set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats")
+            .set_otlp_metrics_endpoint("http://localhost:4318/v1/metrics");
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agentless stats") && msg.contains("OTLP"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
     fn test_otlp_with_agent_url_allowed() {
         // OTLP + agent URL must coexist (only agentless conflicts with the agent URL).
         let mut builder = TraceExporterBuilder::default();
@@ -1255,6 +1534,60 @@ mod tests {
             .set_url("http://localhost:8126")
             .set_otlp_endpoint("http://localhost:4318/v1/traces");
         assert!(builder.build::<NativeCapabilities>().is_ok());
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_otlp_stats_receive_obfuscation_flag() {
+        use libdd_trace_utils::span::v04::SpanBytes;
+
+        fn aggregated_resource(opt_in: bool) -> String {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .enable_stats(Duration::from_secs(3600))
+                .set_otlp_metrics_endpoint("http://localhost:4318/v1/metrics");
+            if opt_in {
+                builder.enable_client_side_stats_obfuscation();
+            }
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            let status = exporter.client_side_stats.status.load_full();
+            let StatsComputationStatus::Enabled {
+                stats_concentrator, ..
+            } = &*status
+            else {
+                panic!("OTLP stats concentrator was not enabled");
+            };
+            let stats_concentrator = stats_concentrator.clone();
+            drop(status);
+
+            let span = SpanBytes {
+                service: "test-service".into(),
+                name: "postgres.query".into(),
+                resource: "SELECT * FROM users WHERE id = 42".into(),
+                r#type: "sql".into(),
+                duration: 1,
+                metrics: vec![("_top_level".into(), 1.0)].into(),
+                ..Default::default()
+            };
+            let resource = {
+                let mut concentrator = stats_concentrator.lock().unwrap();
+                concentrator.add_span(&span);
+                let buckets = concentrator.flush_with_otlp_exact(web_time::SystemTime::now(), true);
+                buckets[0].bucket.stats[0].resource.clone()
+            };
+            exporter.shutdown(None).unwrap();
+            resource
+        }
+
+        assert_eq!(
+            aggregated_resource(false),
+            "SELECT * FROM users WHERE id = 42"
+        );
+        assert_eq!(
+            aggregated_resource(true),
+            "SELECT * FROM users WHERE id = ?"
+        );
     }
 
     #[cfg_attr(miri, ignore)]

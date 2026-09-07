@@ -684,11 +684,10 @@ impl<C: HttpClientCapability + SleepCapability> AgentlessFetcher<C> {
             .method(method)
             .body(body)?;
         let timeout = Duration::from_millis(self.endpoint.timeout_ms);
-        let sleeper = <C as SleepCapability>::new();
         let response = tokio::select! {
             biased;
             result = self.http.request(req) => result?,
-            _ = sleeper.sleep(timeout) => {
+            _ = self.http.sleep(timeout) => {
                 bail!(
                     "Remote config request timed out after {}ms",
                     self.endpoint.timeout_ms,
