@@ -21,9 +21,6 @@ use libdd_telemetry::data::LogLevel;
 /// Bit N is set if signal number N is monitored. Supports signals 0–63.
 static MONITORED_SIGNALS: AtomicU64 = AtomicU64::new(0);
 
-/// Bit N is set when the hook has fired for signal N
-pub(crate) static INTERCEPTED_SIGNALS: AtomicU64 = AtomicU64::new(0);
-
 /// Resolved address of the original `sigaction`, set once during
 /// [`install_sigaction_hook`].
 static ORIG_SIGACTION_FN: AtomicUsize = AtomicUsize::new(0);
@@ -75,18 +72,20 @@ fn emit_sigaction_telemetry(signum: libc::c_int) {
         }
     };
 
-    // Check if we are in a runtime so we don't block the sigaction call
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(task);
     } else {
-        std::thread::spawn(move || {
-            if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                rt.block_on(task);
-            }
-        });
+        // No runtime active. Swallow errors here because we don't want to panic.
+        let _ = std::thread::Builder::new()
+            .name("dd-sigaction-telemetry".into())
+            .spawn(move || {
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    rt.block_on(task);
+                }
+            });
     }
 }
 
@@ -96,20 +95,9 @@ unsafe extern "C" fn hook_sigaction(
     act: *const libc::sigaction,
     oldact: *mut libc::sigaction,
 ) -> libc::c_int {
-    if (0..64).contains(&signum)
-        && !act.is_null()
-        && MONITORED_SIGNALS.load(Relaxed) & (1u64 << signum) != 0
-    {
-        // Only emit for real handlers (sa_sigaction > 1).
-        let handler_addr = unsafe { (*act).sa_sigaction } as *const () as usize;
-        if handler_addr > 1 {
-            emit_sigaction_telemetry(signum);
-        }
-    }
-
-    // Forward to the real sigaction.
+    // Forward to the real sigaction first
     let orig = ORIG_SIGACTION_FN.load(Acquire);
-    if orig != 0 {
+    let ret = if orig != 0 {
         // SAFETY: `orig` was stored by `install_sigaction_hook` from a
         // successful `hook_symbol` call which resolved the real `sigaction`.
         let func: SigactionFn = unsafe { core::mem::transmute::<usize, SigactionFn>(orig) };
@@ -118,7 +106,20 @@ unsafe extern "C" fn hook_sigaction(
         // Fallback: should not happen, but don't crash.
         unsafe { *libc::__errno_location() = libc::ENOSYS };
         -1
+    };
+
+    if ret == 0
+        && (0..64).contains(&signum)
+        && !act.is_null()
+        && MONITORED_SIGNALS.load(Relaxed) & (1u64 << signum) != 0
+    {
+        let handler_addr = unsafe { (*act).sa_sigaction } as *const () as usize;
+        if handler_addr > 1 {
+            emit_sigaction_telemetry(signum);
+        }
     }
+
+    ret
 }
 
 /// Install the `sigaction` GOT hook across all currently loaded libraries.

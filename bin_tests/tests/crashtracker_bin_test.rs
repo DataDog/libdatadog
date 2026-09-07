@@ -196,10 +196,14 @@ fn test_crash_tracking_bin_assert_fail() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
-/// Tests that the sigaction GOT hook fires when the test binary calls sigaction
-/// for a monitored signal after crashtracker init, emitting a telemetry warning.
-/// The crash report is still generated because the test's handler chains back
-/// to the crashtracker handler.
+/// Tests that the sigaction GOT hook fires when a dynamically-loaded library
+/// installs a handler for a monitored signal after crashtracker init, and that
+/// crash handling still works correctly afterwards.
+///
+/// libsigaction_caller.so is LD_PRELOAD'd so its GOT entry for sigaction is
+/// patched at init time. The test's post() calls dd_test_sigaction_on_sigsegv()
+/// via dlsym(RTLD_DEFAULT) to trigger the hook, then immediately restores the
+/// crashtracker's handler so the crash report is generated normally.
 #[test]
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 #[cfg_attr(miri, ignore)]
@@ -208,7 +212,8 @@ fn test_crash_tracking_bin_sigaction_interception() {
         BuildProfile::Release,
         TestMode::SigactionInterception,
         CrashType::NullDeref,
-    );
+    )
+    .with_env("LD_PRELOAD", env!("SIGACTION_CALLER_SO"));
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
@@ -216,32 +221,11 @@ fn test_crash_tracking_bin_sigaction_interception() {
         PayloadValidator::new(payload).validate_counters()?;
         let sig_info = &payload["sig_info"];
         assert_siginfo_message(sig_info, "null_deref");
-
-        validate_sigaction_interception_telemetry(&fixtures.crash_telemetry_path)?;
-
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
         Ok(())
     });
 
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
-}
-
-/// Checks that the telemetry file contains at least one entry with the
-/// `sigaction_intercepted` tag emitted by the GOT hook.
-fn validate_sigaction_interception_telemetry(telemetry_path: &Path) -> anyhow::Result<()> {
-    let content = fs::read(telemetry_path)
-        .with_context(|| format!("reading crashtracker telemetry at {:?}", telemetry_path))?;
-
-    let found = content
-        .split(|&b| b == b'\n')
-        .any(|line| String::from_utf8_lossy(line).contains("sigaction_intercepted"));
-
-    anyhow::ensure!(
-        found,
-        "expected a telemetry entry with 'sigaction_intercepted' tag in {:?}",
-        telemetry_path
-    );
-
-    Ok(())
 }
 
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via

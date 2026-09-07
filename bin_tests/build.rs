@@ -25,6 +25,27 @@ fn main() {
     // Make the built shared object path available at compile time for tests/tools.
     println!("cargo:rustc-env=PRELOAD_LOGGER_SO={}", so_path.display());
 
+    // --- sigaction_caller shared library ---
+    // A minimal .so whose PLT/GOT entry for sigaction IS patched by the
+    // crashtracker's hook_symbol_excluding_self (unlike the statically-linked
+    // test binary). LD_PRELOAD'd in sigaction interception tests.
+    let caller_src = PathBuf::from("preload/sigaction_caller.c");
+    let caller_so = out_dir.join("libsigaction_caller.so");
+    let status = Command::new("cc")
+        .args(["-std=c11", "-fPIC", "-shared", "-Wall", "-o"])
+        .arg(&caller_so)
+        .arg(&caller_src)
+        .status()
+        .expect("failed to spawn cc for sigaction_caller.c");
+    if !status.success() {
+        panic!("compiling sigaction_caller.c failed with status {status}");
+    }
+    println!(
+        "cargo:rustc-env=SIGACTION_CALLER_SO={}",
+        caller_so.display()
+    );
+    println!("cargo:rerun-if-changed=preload/sigaction_caller.c");
+
     // --- trigger_assert static library (Linux only) ---
     #[cfg(target_os = "linux")]
     {

@@ -97,7 +97,18 @@ pub enum CrashHandlerError {
 ///     No other crash-handler functions should be called concurrently.
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
+/// Mutex-protected snapshot of metadata and endpoint for telemetry use by the
+/// sigaction interceptor.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+static TELEMETRY_PEEK: std::sync::Mutex<(Option<Metadata>, Option<libdd_common::Endpoint>)> =
+    std::sync::Mutex::new((None, None));
+
 pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    if let Ok(mut guard) = TELEMETRY_PEEK.lock() {
+        guard.0 = Some(metadata.clone());
+    }
+
     let metadata_string = serde_json::to_string(&metadata)?;
     let box_ptr = Box::into_raw(Box::new((metadata, metadata_string)));
     let old = METADATA.swap(box_ptr, SeqCst);
@@ -204,6 +215,12 @@ fn call_previous_panic_hook(panic_info: &PanicHookInfo<'_>) {
 /// ATOMICITY:
 ///     This function uses a swap on an atomic pointer.
 pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
+    // Snapshot the endpoint for telemetry before consuming `config`.
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+    if let Ok(mut guard) = TELEMETRY_PEEK.lock() {
+        guard.1 = config.endpoint().clone();
+    }
+
     let config_string = serde_json::to_string(&config)?;
     let box_ptr = Box::into_raw(Box::new((config, config_string)));
     let old = CONFIG.swap(box_ptr, SeqCst);
@@ -371,36 +388,18 @@ fn handle_posix_signal_impl(
     Ok(())
 }
 
-/// Clone the current metadata out of global storage without consuming it.
-/// Returns `None` if metadata has not yet been set.
-///
-/// Not async-signal-safe
+/// Return a clone of the most recently stored metadata for telemetry use.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub(crate) fn peek_metadata() -> Option<Metadata> {
-    let ptr = METADATA.load(Acquire);
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: non-null means it was created with Box::into_raw in update_metadata
-        // and has not been freed (free only happens on the next update_metadata call,
-        // which swaps the pointer first). We clone to avoid taking ownership.
-        Some(unsafe { &*ptr }.0.clone())
-    }
+    let guard = TELEMETRY_PEEK.lock().ok()?;
+    guard.0.clone()
 }
 
-/// Clone the endpoint out of global config without consuming it.
-/// Returns `None` if the config has not yet been set or has no endpoint.
-///
-/// Not async-signal-safe
+/// Return a clone of the most recently stored endpoint for telemetry use.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub(crate) fn peek_endpoint() -> Option<libdd_common::Endpoint> {
-    let ptr = CONFIG.load(Acquire);
-    if ptr.is_null() {
-        None
-    } else {
-        // SAFETY: same reasoning as peek_metadata.
-        unsafe { &*ptr }.0.endpoint().clone()
-    }
+    let guard = TELEMETRY_PEEK.lock().ok()?;
+    guard.1.clone()
 }
 
 /// Atomically swaps the metadata pointer to null and returns the old raw pointer.
