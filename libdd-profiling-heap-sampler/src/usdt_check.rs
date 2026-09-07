@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Runtime ELF self-inspection for the ddheap USDT probes. Verifies that each
+//! Runtime ELF self-inspection for the otel_memory USDT probes. Verifies that each
 //! probe has exactly one `.note.stapsdt` entry, so an attached consumer
 //! (bpftrace / eBPF) sees one probe per site rather than attaching twice.
 //!
@@ -10,7 +10,7 @@
 //! note; a regression (e.g. `static inline` + bindgen's `wrap_static_fns`, or
 //! LTO inlining across TUs) could duplicate the entry. This check catches that.
 //!
-//! `ddheap:alloc` is expected in every build. `ddheap:free` is only expected
+//! `otel_memory:alloc` is expected in every build. `otel_memory:free` is only expected
 //! when compiled with live-heap tracking (the `live-heap` feature): its
 //! absence is how external profilers detect that a binary doesn't support
 //! live-heap correlation (see `probes.h`), so callers must pass the probe
@@ -28,12 +28,12 @@ use elf::{endian::AnyEndian, ElfBytes};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// USDT provider name emitted by `probes.c` (`USDT(ddheap, ...)`).
-const PROVIDER: &str = "ddheap";
+/// USDT provider name emitted by `probes.c` (`USDT(otel_memory, ...)`).
+const PROVIDER: &str = "otel_memory";
 
 /// As [`sanity_check`], but takes the object file as an argument. Useful for a
 /// test setting where the test code is separate from the artifact to
-/// validate. `expected_probes` lists the probe names (without the `ddheap:`
+/// validate. `expected_probes` lists the probe names (without the `otel_memory:`
 /// provider prefix) that must each appear exactly once.
 pub fn check_usdt_probes_in(path: &Path, expected_probes: &[&str]) -> anyhow::Result<()> {
     let data = std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
@@ -44,7 +44,7 @@ pub fn check_usdt_probes_in(path: &Path, expected_probes: &[&str]) -> anyhow::Re
 }
 
 /// Check that the current running module carries exactly one `.note.stapsdt`
-/// entry per ddheap probe expected in this build (`alloc` always, `free`
+/// entry per otel_memory probe expected in this build (`alloc` always, `free`
 /// only when the `live-heap` feature is enabled).
 pub fn sanity_check() -> anyhow::Result<()> {
     let mut expected = vec!["alloc"];
