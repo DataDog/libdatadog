@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod span_pool;
 pub mod trace_utils;
 pub mod trace_utils_v1;
 pub mod v04;
@@ -37,7 +38,7 @@ pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
+pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default + Send {
     fn from_static_str(value: &'static str) -> Self;
 
     /// Copies this text into an owned [`BytesString`].
@@ -77,7 +78,7 @@ impl SpanText for BytesString {
     }
 }
 
-pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default + Clone {
+pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default + Clone + Send {
     fn from_static_bytes(value: &'static [u8]) -> Self;
 }
 
