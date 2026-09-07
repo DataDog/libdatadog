@@ -91,3 +91,10 @@ tokio-util = "0.7.1"
 libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
+
+[package.metadata.semver-level]
+# scripts/semver-level.sh diffs the public API under several feature sets. Its
+# "explicit" set is the empty feature list, which does not build here. Use the
+# minimal configuration that does: `ddcommon-ffi` without `catch_panic`, which is
+# the abort-on-panic flavor builder produces when its own default is switched off.
+explicit-features = ["ddcommon-ffi"]

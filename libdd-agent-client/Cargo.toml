@@ -38,3 +38,8 @@ httpmock = "0.8.0-alpha.1"
 rustls = { workspace = true, features = ["ring"] }
 serial_test = "3.2"
 tokio = { version = "1.23", features = ["rt", "macros"] }
+
+[package.metadata.semver-level]
+# Same as libdd-http-client: the empty feature list does not build, because this
+# crate re-exports that crate's backend selection. See scripts/semver-level.sh.
+explicit-features = ["https", "hyper-backend"]

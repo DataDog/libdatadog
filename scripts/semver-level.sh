@@ -159,6 +159,150 @@ crate_target_kinds_at_rev() {
     echo "$kinds"
 }
 
+# ------------------------------------------------------------------------------
+# Feature sets
+#
+# Both tools compare one feature set per invocation, so a single run only ever
+# sees the API surface that set activates. Checking just one of them masks real
+# breakage in both directions: --all-features hides items that exist only while a
+# feature is *off* (`#[cfg(not(feature = "x"))]`) and hides a removed feature
+# whose items moved under another one, while the default set hides everything
+# gated behind an opt-in feature. Each set is therefore diffed independently and
+# the highest level wins.
+#
+# cargo-public-api has no --default-features flag: default features are what it
+# activates when given neither --all-features nor --no-default-features.
+#
+# The `explicit` set is the empty feature list by default, which for some crates
+# is not a configuration any consumer can build: libdd-http-client's lib.rs has a
+# `compile_error!` demanding a backend. Such a crate declares the minimal set that
+# does compile, and it is diffed in place of the empty one:
+#
+#     [package.metadata.semver-level]
+#     explicit-features = ["https", "hyper-backend"]
+#
+# `explicit-features = false` instead drops the set, for a crate whose only valid
+# minimal configuration is already covered by `default`. Declaring either keeps a
+# permanent, unactionable build-failure warning out of CI.
+# ------------------------------------------------------------------------------
+FEATURE_SETS=(all default explicit)
+
+# Emit the cargo-semver-checks flags selecting feature set $1, one per line.
+# $2 is the crate's declared explicit-features list (comma separated, may be empty).
+semver_checks_feature_args() {
+    local set=$1 extra=$2
+    case "$set" in
+        all)      printf '%s\n' --all-features ;;
+        default)  printf '%s\n' --default-features ;;
+        explicit)
+            printf '%s\n' --only-explicit-features
+            if [[ -n "$extra" ]]; then
+                printf '%s\n%s\n' --features "$extra"
+            fi
+            ;;
+        *)        echo "Unknown feature set: $set" >&2; return 1 ;;
+    esac
+}
+
+# Emit the cargo-public-api flags selecting feature set $1, one per line
+# (nothing for the default set — see above). $2 as above.
+public_api_feature_args() {
+    local set=$1 extra=$2
+    case "$set" in
+        all)      printf '%s\n' --all-features ;;
+        default)  ;;
+        explicit)
+            printf '%s\n' --no-default-features
+            if [[ -n "$extra" ]]; then
+                printf '%s\n%s\n' --features "$extra"
+            fi
+            ;;
+        *)        echo "Unknown feature set: $set" >&2; return 1 ;;
+    esac
+}
+
+# Echo, space separated: the crate's feature count, its default-feature count, how
+# it configures the `explicit` set ("none" | "features" | "off") and, for
+# "features", the declared list. Reads [package.metadata.semver-level] documented
+# above. Emits "-1 -1 none" for a crate cargo does not know about.
+crate_feature_meta() {
+    cargo metadata --format-version=1 --no-deps 2>/dev/null \
+        | jq -r --arg crate "$1" '
+            [.packages[] | select(.name == $crate)][0] as $p
+            | if $p == null then "-1 -1 none"
+              else
+                (try $p.metadata["semver-level"]["explicit-features"] catch null) as $ef
+                | (if $ef == null then "none"
+                   elif ($ef | type) == "boolean" then (if $ef then "none" else "off" end)
+                   elif ($ef | type) == "array" then "features"
+                   else "none" end) as $mode
+                | "\($p.features | length) \($p.features.default // [] | length) \($mode) "
+                  + (if $mode == "features" then ($ef | join(",")) else "" end)
+              end'
+}
+
+# Echo the features crate $1 declares for the `explicit` set, or nothing.
+crate_explicit_features() {
+    local n_all n_default mode feats
+    read -r n_all n_default mode feats <<< "$(crate_feature_meta "$1")"
+    if [[ "$mode" == "features" ]]; then
+        printf '%s' "$feats"
+    fi
+}
+
+# Echo the feature sets worth running for crate $1, dropping the ones that would
+# resolve to an identical feature list:
+#   - a crate declaring no features at all collapses to a single set;
+#   - an absent or empty `default` makes the default set identical to the
+#     explicit one — but only while `explicit` really is the empty set, so a
+#     declared explicit-features list keeps both.
+#   - `explicit-features = false` drops the explicit set outright, and with it
+#     the default set when that is empty too, since both would be the empty list.
+#
+# `all` is always kept, which is what makes pruning against the *current*
+# manifest sound: it is the only set that also activates features which exist
+# solely on the baseline side, so a feature deleted by the change under review is
+# still compared even when the current manifest no longer mentions it.
+crate_feature_sets() {
+    local n_all n_default mode feats
+    read -r n_all n_default mode feats <<< "$(crate_feature_meta "$1")"
+
+    # Unknown crate: hand back the full list and let the caller's own metadata
+    # check produce the error message.
+    if [[ -z "$n_all" || "$n_all" == "-1" ]]; then
+        printf '%s\n' "${FEATURE_SETS[@]}"
+        return
+    fi
+
+    local -a sets=(all)
+    if (( n_all == 0 )); then
+        printf '%s\n' "${sets[@]}"
+        return
+    fi
+
+    # An empty `default` is the empty feature list, i.e. whatever `explicit`
+    # resolves to when nothing is declared — keep just one of the two.
+    if (( n_default > 0 )); then
+        sets+=(default)
+    fi
+    if [[ "$mode" != "off" ]]; then
+        sets+=(explicit)
+    fi
+
+    printf '%s\n' "${sets[@]}"
+}
+
+# True when the tool output shows rustdoc failed to build the crate, rather than
+# the tool completing and reporting an API difference.
+#
+# Toggling features can legitimately break compilation for a crate that has not
+# declared an explicit-features list (see above). That is a property of the crate,
+# not a semver signal, so such a feature set is skipped with a warning instead of
+# failing the run. A crate that builds under *no* feature set is still an error.
+is_rustdoc_build_failure() {
+    grep -qE "could not document|failed to build rustdoc" <<< "$1"
+}
+
 compute_semver_results() {
     local crate=$1
     local baseline=$2
@@ -274,6 +418,15 @@ compute_semver_results() {
     fi
 
     # ----------------------------------------------------------------
+    # 0d) Feature sets to compare under (see FEATURE_SETS above).
+    # ----------------------------------------------------------------
+    local -a feature_sets
+    mapfile -t feature_sets < <(crate_feature_sets "$crate")
+    local explicit_features
+    explicit_features=$(crate_explicit_features "$crate")
+    log_verbose "Feature sets for $crate: ${feature_sets[*]}${explicit_features:+ (explicit = $explicit_features)}"
+
+    # ----------------------------------------------------------------
     # 1) cargo-semver-checks (type-signature lints) — library targets only.
     # ----------------------------------------------------------------
     local semver_level="none"
@@ -294,37 +447,78 @@ compute_semver_results() {
     elif ! $has_lib || ! $baseline_has_lib; then
         log_verbose "Skipping cargo-semver-checks: $crate has no library target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
-        SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
-        SEMVER_EXIT_CODE=$?
+        local fs fs_level fs_reason fs_details
+        local semver_ran=false
+        local -a fs_args
 
-        if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
-            log_verbose "cargo-semver-checks: no violations"
-            semver_level="none"
-        elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
-            if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
-                semver_level="major"
-                semver_reason="cargo-semver-checks detected breaking changes"
-                semver_details=$(extract_semver_details "$SEMVER_OUTPUT")
-                log_verbose "cargo-semver-checks: major"
-            elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
-                # The crate doesn't exist in the baseline — it's a new crate being added
-                semver_level="minor"
-                semver_reason="New crate (not present in baseline)"
-                crate_is_new=true
-                log_verbose "cargo-semver-checks: new crate, treat as minor"
-            elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
-                semver_level="minor"
-                semver_reason="cargo-semver-checks detected minor breaking changes"
-                semver_details=$(extract_semver_details "$SEMVER_OUTPUT")
-                log_verbose "cargo-semver-checks: minor"
+        for fs in "${feature_sets[@]}"; do
+            mapfile -t fs_args < <(semver_checks_feature_args "$fs" "$explicit_features")
+            SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never "${fs_args[@]}" --baseline-rev "$baseline" 2>&1)
+            SEMVER_EXIT_CODE=$?
+
+            fs_level="none"
+            fs_reason=""
+            fs_details=""
+
+            if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
+                log_verbose "cargo-semver-checks [features: $fs]: no violations"
+                semver_ran=true
+            elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
+                if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
+                    fs_level="major"
+                    fs_reason="cargo-semver-checks detected breaking changes (features: $fs)"
+                    fs_details=$(extract_semver_details "$SEMVER_OUTPUT")
+                    semver_ran=true
+                    log_verbose "cargo-semver-checks [features: $fs]: major"
+                elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
+                    # The crate doesn't exist in the baseline — it's a new crate being
+                    # added. (0b) normally catches this first; this is the fallback for
+                    # a manifest whose package name the git grep there could not match.
+                    semver_level="minor"
+                    semver_reason="New crate (not present in baseline)"
+                    semver_details=""
+                    crate_is_new=true
+                    semver_ran=true
+                    log_verbose "cargo-semver-checks: new crate, treat as minor"
+                    break
+                elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
+                    fs_level="minor"
+                    fs_reason="cargo-semver-checks detected minor breaking changes (features: $fs)"
+                    fs_details=$(extract_semver_details "$SEMVER_OUTPUT")
+                    semver_ran=true
+                    log_verbose "cargo-semver-checks [features: $fs]: minor"
+                elif is_rustdoc_build_failure "$SEMVER_OUTPUT"; then
+                    echo "Warning: $crate does not build under feature set '$fs', skipping it for cargo-semver-checks" >&2
+                    log_verbose "$SEMVER_OUTPUT"
+                    continue
+                else
+                    echo "Error running cargo-semver-checks (features: $fs): $SEMVER_OUTPUT" >&2
+                    exit $SEMVER_EXIT_CODE
+                fi
             else
-                echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
+                echo "Unexpected exit code from cargo-semver-checks (features: $fs): $SEMVER_EXIT_CODE" >&2
+                echo "$SEMVER_OUTPUT" >&2
                 exit $SEMVER_EXIT_CODE
             fi
-        else
-            echo "Unexpected exit code from cargo-semver-checks: $SEMVER_EXIT_CODE" >&2
-            echo "$SEMVER_OUTPUT" >&2
-            exit $SEMVER_EXIT_CODE
+
+            # Keep the highest level seen, along with the feature set that produced it.
+            if [[ "$(max_level "$semver_level" "$fs_level")" == "$fs_level" \
+                  && "$fs_level" != "$semver_level" ]]; then
+                semver_level="$fs_level"
+                semver_reason="$fs_reason"
+                semver_details="$fs_details"
+            fi
+
+            # major is the ceiling; no remaining feature set can raise it.
+            if [[ "$semver_level" == "major" ]]; then
+                log_verbose "cargo-semver-checks: major reached, skipping remaining feature sets"
+                break
+            fi
+        done
+
+        if ! $semver_ran; then
+            echo "Error: $crate does not build under any of the feature sets (${feature_sets[*]}), cargo-semver-checks could not analyze it" >&2
+            exit 1
         fi
     fi
 
@@ -363,76 +557,113 @@ compute_semver_results() {
         # When that is a change rather than the status quo, (0c) already scored it.
         log_verbose "Skipping cargo-public-api: $crate has no library or proc-macro target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
-        # --all-features matches the cargo-semver-checks invocation above, so both
-        # tools compare the same API surface. It is load-bearing for proc-macro
+        # Sweep the same feature sets as cargo-semver-checks above, so both tools
+        # compare the same API surfaces. The sweep is load-bearing for proc-macro
         # crates: cargo-semver-checks is skipped for them, so this is the only
-        # comparison, and under the default feature set a removed or renamed
-        # feature-gated macro would be invisible and pass as a patch.
-        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --all-features --color=never diff "$baseline..$current" 2>&1)
-        EXIT_CODE=$?
+        # comparison, and a removed or renamed macro visible under just one feature
+        # set would otherwise pass as a patch.
+        local pa_fs pa_level pa_reason pa_details
+        local public_api_ran=false
+        local -a pa_args
 
-        if [[ $EXIT_CODE -ne 0 ]]; then
-          echo "Unexpected error from cargo-public-api for $crate (exit code: $EXIT_CODE)" >&2
-          echo "$PUBLIC_API_OUTPUT" >&2
-          exit $EXIT_CODE
-        fi
+        for pa_fs in "${feature_sets[@]}"; do
+            mapfile -t pa_args < <(public_api_feature_args "$pa_fs" "$explicit_features")
+            PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" "${pa_args[@]}" --color=never diff "$baseline..$current" 2>&1)
+            EXIT_CODE=$?
 
-        log_verbose "$PUBLIC_API_OUTPUT"
-
-        # Removed public items → major.
-        local removed_breaking=false
-        if grep -q "Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" \
-           && ! grep -A 2 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
-            removed_breaking=true
-        fi
-
-        # Changed public items → breaking only if a semver-significant delta
-        # survives normalization. This is the case cargo-semver-checks misses:
-        # a parameter/return type change on a non-generic fn renders here as a
-        # "-old / +new" signature pair rather than as Removed+Added. We compare
-        # the normalized old vs new signatures; if they still differ after
-        # stripping non-breaking churn (#[repr(C)] additions, const/async/unsafe
-        # qualifiers — see normalize_api_line), the change is breaking → major.
-        local changed_breaking=false
-        local changed_section
-        changed_section=$(sed -n '/^Changed items in the public API$/,/^Added items to the public API$/p' <<< "$PUBLIC_API_OUTPUT")
-        if [[ -n "$changed_section" ]] \
-           && ! grep -A 2 "^Changed items in the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
-            local changed_old changed_new
-            changed_old=$(grep '^-' <<< "$changed_section" | normalize_api_line | sort)
-            changed_new=$(grep '^+' <<< "$changed_section" | normalize_api_line | sort)
-            if [[ "$changed_old" != "$changed_new" ]]; then
-                changed_breaking=true
-            else
-                log_verbose "cargo-public-api: changed items are non-breaking (attribute/qualifier only)"
+            if [[ $EXIT_CODE -ne 0 ]]; then
+              if is_rustdoc_build_failure "$PUBLIC_API_OUTPUT"; then
+                  echo "Warning: $crate does not build under feature set '$pa_fs', skipping it for cargo-public-api" >&2
+                  log_verbose "$PUBLIC_API_OUTPUT"
+                  continue
+              fi
+              echo "Unexpected error from cargo-public-api for $crate (features: $pa_fs, exit code: $EXIT_CODE)" >&2
+              echo "$PUBLIC_API_OUTPUT" >&2
+              exit $EXIT_CODE
             fi
-        fi
 
-        # Added public items → minor.
-        local added=false
-        if grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" \
-           && ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
-            added=true
-        fi
+            public_api_ran=true
+            log_verbose "cargo-public-api [features: $pa_fs]:"
+            log_verbose "$PUBLIC_API_OUTPUT"
 
-        if $removed_breaking; then
-            public_api_level="major"
-            public_api_reason="cargo-public-api detected removed public API items"
-            public_api_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
-                "Removed items from the public API" "Changed items in the public API" \
-                | truncate_details 50)
-            log_verbose "cargo-public-api: major (removed items)"
-        elif $changed_breaking; then
-            public_api_level="major"
-            public_api_reason="cargo-public-api detected breaking signature changes"
-            public_api_details=$(truncate_details 50 <<< "$changed_section")
-            log_verbose "cargo-public-api: major (changed signatures)"
-        elif $added; then
-            public_api_level="minor"
-            public_api_reason="cargo-public-api detected new public API items"
-            public_api_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
-                "Added items to the public API" "" | truncate_details 50)
-            log_verbose "cargo-public-api: minor (added items)"
+            # Removed public items → major.
+            local removed_breaking=false
+            if grep -q "Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" \
+               && ! grep -A 2 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
+                removed_breaking=true
+            fi
+
+            # Changed public items → breaking only if a semver-significant delta
+            # survives normalization. This is the case cargo-semver-checks misses:
+            # a parameter/return type change on a non-generic fn renders here as a
+            # "-old / +new" signature pair rather than as Removed+Added. We compare
+            # the normalized old vs new signatures; if they still differ after
+            # stripping non-breaking churn (#[repr(C)] additions, const/async/unsafe
+            # qualifiers — see normalize_api_line), the change is breaking → major.
+            local changed_breaking=false
+            local changed_section
+            changed_section=$(sed -n '/^Changed items in the public API$/,/^Added items to the public API$/p' <<< "$PUBLIC_API_OUTPUT")
+            if [[ -n "$changed_section" ]] \
+               && ! grep -A 2 "^Changed items in the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
+                local changed_old changed_new
+                changed_old=$(grep '^-' <<< "$changed_section" | normalize_api_line | sort)
+                changed_new=$(grep '^+' <<< "$changed_section" | normalize_api_line | sort)
+                if [[ "$changed_old" != "$changed_new" ]]; then
+                    changed_breaking=true
+                else
+                    log_verbose "cargo-public-api [features: $pa_fs]: changed items are non-breaking (attribute/qualifier only)"
+                fi
+            fi
+
+            # Added public items → minor.
+            local added=false
+            if grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" \
+               && ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
+                added=true
+            fi
+
+            pa_level="none"
+            pa_reason=""
+            pa_details=""
+
+            if $removed_breaking; then
+                pa_level="major"
+                pa_reason="cargo-public-api detected removed public API items (features: $pa_fs)"
+                pa_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
+                    "Removed items from the public API" "Changed items in the public API" \
+                    | truncate_details 50)
+                log_verbose "cargo-public-api [features: $pa_fs]: major (removed items)"
+            elif $changed_breaking; then
+                pa_level="major"
+                pa_reason="cargo-public-api detected breaking signature changes (features: $pa_fs)"
+                pa_details=$(truncate_details 50 <<< "$changed_section")
+                log_verbose "cargo-public-api [features: $pa_fs]: major (changed signatures)"
+            elif $added; then
+                pa_level="minor"
+                pa_reason="cargo-public-api detected new public API items (features: $pa_fs)"
+                pa_details=$(public_api_section "$PUBLIC_API_OUTPUT" \
+                    "Added items to the public API" "" | truncate_details 50)
+                log_verbose "cargo-public-api [features: $pa_fs]: minor (added items)"
+            fi
+
+            # Keep the highest level seen, along with the feature set that produced it.
+            if [[ "$(max_level "$public_api_level" "$pa_level")" == "$pa_level" \
+                  && "$pa_level" != "$public_api_level" ]]; then
+                public_api_level="$pa_level"
+                public_api_reason="$pa_reason"
+                public_api_details="$pa_details"
+            fi
+
+            # major is the ceiling; no remaining feature set can raise it.
+            if [[ "$public_api_level" == "major" ]]; then
+                log_verbose "cargo-public-api: major reached, skipping remaining feature sets"
+                break
+            fi
+        done
+
+        if ! $public_api_ran; then
+            echo "Error: $crate does not build under any of the feature sets (${feature_sets[*]}), cargo-public-api could not diff it" >&2
+            exit 1
         fi
     fi
 
