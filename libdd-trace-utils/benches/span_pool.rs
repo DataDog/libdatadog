@@ -3,7 +3,7 @@
 
 use criterion::measurement::Measurement;
 use criterion::{black_box, criterion_group, Criterion, Throughput};
-use libdd_common::bench_utils::{memory_allocated_measurement, MeasurementName};
+use libdd_common::bench_utils::{memory_allocated_criterion, MeasurementName};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::span_pool::SpanPool;
 use libdd_trace_utils::span::v04::Span;
@@ -164,6 +164,6 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
 criterion_group!(span_pool_benches, enqueue_dequeue,);
 criterion_group!(
     name = span_pool_alloc_benches;
-    config = memory_allocated_measurement(&super::GLOBAL);
+    config = memory_allocated_criterion(&super::GLOBAL);
     targets = enqueue_dequeue,
 );

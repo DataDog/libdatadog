@@ -267,7 +267,7 @@ pub fn decode_to_trace_chunks(
             let (data, size) = msgpack_decoder::v05::from_bytes(data).map_err(|e| {
                 anyhow::format_err!("Error deserializing trace from request body: {e}")
             })?;
-            Ok((convert_trace_chunks_v04_to_v05(data)?, size))
+            Ok((convert_trace_chunks_v04_to_v05(&data)?, size))
         }
         TraceEncoding::V1 => {
             let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
