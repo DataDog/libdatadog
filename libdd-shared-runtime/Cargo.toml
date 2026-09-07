@@ -22,7 +22,7 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tokio-util = "0.7.11"
 tracing.workspace = true
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 
 [features]
