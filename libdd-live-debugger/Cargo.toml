@@ -1,6 +1,6 @@
 [package]
 name = "libdd-live-debugger"
-version = "0.1.0"
+version = "1.0.0"
 description = "Live debugger"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-live-debugger"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-live-debugger"
