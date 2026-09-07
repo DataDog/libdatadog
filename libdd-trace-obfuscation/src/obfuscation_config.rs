@@ -10,7 +10,7 @@ use crate::{
     sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemcachedConfig {
     pub enabled: bool,
@@ -28,7 +28,7 @@ impl Default for MemcachedConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CreditCardConfig {
     pub enabled: bool,
@@ -98,7 +98,7 @@ impl JsonObfuscatorConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RedisConfig {
     pub enabled: bool,
@@ -117,7 +117,7 @@ impl Default for RedisConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct HttpConfig {
     // pub enabled: bool,
@@ -125,7 +125,7 @@ pub struct HttpConfig {
     pub remove_paths_with_digits: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ObfuscationConfig {
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
