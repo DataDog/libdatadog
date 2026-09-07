@@ -648,7 +648,15 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     chunk: &v1::TraceChunk<T>,
     metadata: &TracerMetadata,
 ) -> Result<S::Ok, S::Error> {
-    let mut map = ser.serialize_map(None)?;
+    let container_id = libdd_common::entity_id::get_container_id();
+    let len = 2 // hostname + spans
+        + usize::from(!metadata.env.is_empty())
+        + usize::from(!metadata.language.is_empty())
+        + usize::from(!metadata.language_version.is_empty())
+        + usize::from(!metadata.tracer_version.is_empty())
+        + usize::from(!metadata.runtime_id.is_empty())
+        + usize::from(container_id.is_some());
+    let mut map = ser.serialize_map(Some(len))?;
 
     map.serialize_entry("hostname", &metadata.hostname)?;
     if !metadata.env.is_empty() {
@@ -666,7 +674,7 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     if !metadata.runtime_id.is_empty() {
         map.serialize_entry("runtimeID", &metadata.runtime_id)?;
     }
-    if let Some(container_id) = libdd_common::entity_id::get_container_id() {
+    if let Some(container_id) = container_id {
         map.serialize_entry("containerID", container_id)?;
     }
 
