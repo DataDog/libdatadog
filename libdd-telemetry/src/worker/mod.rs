@@ -20,8 +20,8 @@ use crate::worker::metric_ring::MetricRing;
 use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, HttpError, MaybeSend, SleepCapability};
-use libdd_common::tag::Tag;
 use libdd_shared_runtime::Worker;
+use libdd_types::tag::Tag;
 
 use std::iter::Sum;
 use std::marker::PhantomData;
@@ -328,7 +328,7 @@ mod serialize {
     use crate::data;
     use http::HeaderValue;
     #[allow(clippy::declare_interior_mutable_const)]
-    pub const CONTENT_TYPE_VALUE: HeaderValue = libdd_common::header::APPLICATION_JSON;
+    pub const CONTENT_TYPE_VALUE: HeaderValue = libdd_types::header::APPLICATION_JSON;
     pub fn serialize(telemetry: &data::Telemetry) -> anyhow::Result<Vec<u8>> {
         Ok(serde_json::to_vec(telemetry)?)
     }

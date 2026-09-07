@@ -35,6 +35,7 @@ hashbrown = "0.15"
 bytes = { workspace = true, features = ["std"] }
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
+libdd-types = { version = "5.2.0", path = "../libdd-types" }
 libdd-shared-runtime = { version = "3.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-ddsketch = { version = "1.1.1", path = "../libdd-ddsketch" }
 web-time = "1" # cross-platform Instant/SystemTime; shims via js-sys on wasm32

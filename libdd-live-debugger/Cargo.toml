@@ -12,6 +12,7 @@ license.workspace = true
 anyhow.workspace = true
 libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "5.2.0", path = "../libdd-common" }
+libdd-types = { version = "5.2.0", path = "../libdd-types" }
 libdd-data-pipeline = { version = "9.0.0", path = "../libdd-data-pipeline" }
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
 http = { workspace = true, features = ["std"] }

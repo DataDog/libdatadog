@@ -41,6 +41,7 @@ anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-types = { path = "../libdd-types" }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { version = "12.8.0", default-features = false, optional = true }
 function_name = "0.3.0"

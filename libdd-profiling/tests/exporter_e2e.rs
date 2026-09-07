@@ -213,13 +213,13 @@ async fn export_full_profile(
 ) -> anyhow::Result<ReceivedRequest> {
     // Build tags
     let tags = vec![
-        libdd_common::tag::Tag::new("service", "test-service")?,
-        libdd_common::tag::Tag::new("env", "test")?,
+        libdd_types::tag::Tag::new("service", "test-service")?,
+        libdd_types::tag::Tag::new("env", "test")?,
     ];
 
     let additional_tags = vec![
-        libdd_common::tag::Tag::new("runtime", "rust")?,
-        libdd_common::tag::Tag::new("version", "1.0")?,
+        libdd_types::tag::Tag::new("runtime", "rust")?,
+        libdd_types::tag::Tag::new("version", "1.0")?,
     ];
 
     // Build additional files

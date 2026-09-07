@@ -42,8 +42,8 @@ impl OtlpProtocol {
     /// is only constructed/selected by callers; encoding is the exporter's job.
     pub(crate) fn content_type(&self) -> http::HeaderValue {
         match self {
-            OtlpProtocol::HttpJson => libdd_common::header::APPLICATION_JSON,
-            OtlpProtocol::HttpProtobuf => libdd_common::header::APPLICATION_PROTOBUF,
+            OtlpProtocol::HttpJson => libdd_types::header::APPLICATION_JSON,
+            OtlpProtocol::HttpProtobuf => libdd_types::header::APPLICATION_PROTOBUF,
         }
     }
 
@@ -126,11 +126,11 @@ mod tests {
     fn protocol_content_types() {
         assert_eq!(
             OtlpProtocol::HttpJson.content_type(),
-            libdd_common::header::APPLICATION_JSON
+            libdd_types::header::APPLICATION_JSON
         );
         assert_eq!(
             OtlpProtocol::HttpProtobuf.content_type(),
-            libdd_common::header::APPLICATION_PROTOBUF
+            libdd_types::header::APPLICATION_PROTOBUF
         );
     }
 }

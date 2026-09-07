@@ -14,6 +14,7 @@ serde_json.workspace = true
 thiserror = "1.0"
 libdd-capabilities = { version = "3.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
+libdd-types = { version = "5.2.0", path = "../libdd-types" }
 libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "7.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 

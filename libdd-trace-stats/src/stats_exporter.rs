@@ -296,7 +296,7 @@ impl<
                 let _ = handle.add_point(
                     flush.collapsed_spans as f64,
                     key,
-                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                    vec![libdd_types::tag!("collapsed_spans", "whole_key")],
                 );
             }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
@@ -308,7 +308,7 @@ impl<
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                    [libdd_types::tag!("collapsed_spans", "whole_key")].iter(),
                 )]);
             }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
@@ -430,7 +430,7 @@ impl<
         let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
         headers.insert(
             http::header::CONTENT_TYPE,
-            libdd_common::header::APPLICATION_MSGPACK,
+            libdd_types::header::APPLICATION_MSGPACK,
         );
         #[cfg(feature = "stats-obfuscation")]
         if obfuscated {
@@ -490,7 +490,7 @@ fn build_agentless_request(
     let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_MSGPACK,
+        libdd_types::header::APPLICATION_MSGPACK,
     );
 
     #[cfg(feature = "compression")]

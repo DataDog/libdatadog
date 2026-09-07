@@ -25,6 +25,7 @@ anyhow.workspace = true
 chrono = { workspace = true, features = ["clock", "std"] }
 crossbeam-queue = "0.3.11"
 libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 hyper = { workspace = true, features = ["http1", "client"] }
 serde.workspace = true
 

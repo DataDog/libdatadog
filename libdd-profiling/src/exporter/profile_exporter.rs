@@ -26,8 +26,9 @@
 
 use super::errors::SendError;
 use anyhow::Context;
-use libdd_common::tag::Tag;
-use libdd_common::{azure_app_services, tag, Endpoint};
+use libdd_common::{azure_app_services, Endpoint};
+use libdd_types::tag;
+use libdd_types::tag::Tag;
 use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;

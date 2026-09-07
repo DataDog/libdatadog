@@ -64,7 +64,7 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let sleeper = <NativeCapabilities as SleepCapability>::new();
     let req = request_builder(&config)?
         .method(http::Method::POST)
-        .header(CONTENT_TYPE, libdd_common::header::APPLICATION_JSON)
+        .header(CONTENT_TYPE, libdd_types::header::APPLICATION_JSON)
         .body(Bytes::from(serde_json::to_vec(telemetry)?))?;
 
     let resp = select! {

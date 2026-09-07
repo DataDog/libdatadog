@@ -578,7 +578,7 @@ impl ErrorsIntakeUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(payload)?.into())?;
 

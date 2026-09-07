@@ -43,6 +43,7 @@ httparse = { workspace = true, features = ["std"] }
 indexmap = "2.11"
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
+libdd-types = { version = "5.2.0", path = "../libdd-types" }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime.workspace = true
 parking_lot = { version = "0.12", default-features = false }

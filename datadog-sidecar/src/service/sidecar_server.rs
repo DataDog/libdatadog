@@ -56,7 +56,6 @@ use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_ipc::ipc_server::OwnedServerConn;
 use libdd_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
@@ -64,6 +63,7 @@ use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetSta
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.

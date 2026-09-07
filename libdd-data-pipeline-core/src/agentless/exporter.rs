@@ -163,7 +163,7 @@ fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> Hea
     let mut headers: HeaderMap = metadata.into();
     headers.insert(
         http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
+        libdd_types::header::APPLICATION_JSON,
     );
     headers.insert(
         http::HeaderName::from_static("x-datadog-trace-count"),

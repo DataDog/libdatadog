@@ -423,7 +423,7 @@ impl<S: FileStorage, C: HttpClientCapability + SleepCapability> ConfigFetcher<S,
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
         let sleeper = <C as SleepCapability>::new();

@@ -7,7 +7,7 @@ use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::MutexExt;
 use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use libdd_ipc::rate_limiter::ShmLimiter;
@@ -21,6 +21,7 @@ use libdd_remote_config::{
     default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
     Target,
 };
+use libdd_types::tag::Tag;
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;

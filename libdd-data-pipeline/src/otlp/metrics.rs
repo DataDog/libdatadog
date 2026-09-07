@@ -317,7 +317,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
             &self.config.headers,
             self.config.timeout,
             self.test_token.as_deref(),
-            libdd_common::header::APPLICATION_JSON,
+            libdd_types::header::APPLICATION_JSON,
             serde_json::to_vec(&request)?,
             max_retries,
         )

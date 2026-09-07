@@ -27,6 +27,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-types = { path = "../libdd-types" }
 function_name = "0.3"
 libc.workspace = true
 paste = "1"

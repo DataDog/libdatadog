@@ -364,7 +364,7 @@ impl TelemetryCrashUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .header(
                 libdd_telemetry::worker::http_client::header::API_VERSION,

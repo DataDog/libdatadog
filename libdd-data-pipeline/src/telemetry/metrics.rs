@@ -3,10 +3,10 @@
 
 //! Provides an abstraction layer to hold metrics that comes from 'SendDataResult'.
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::tag;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::TelemetryWorkerHandle;
+use libdd_types::tag;
 use std::ops::Index;
 
 /// Used as identifier to match the different metrics.
@@ -58,7 +58,7 @@ struct Metric {
     name: &'static str,
     metric_type: MetricType,
     namespace: MetricNamespace,
-    tags: &'static [libdd_common::tag::Tag],
+    tags: &'static [libdd_types::tag::Tag],
 }
 
 const METRICS: &[Metric] = &[

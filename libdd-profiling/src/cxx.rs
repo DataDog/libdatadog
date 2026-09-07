@@ -477,11 +477,11 @@ impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
     }
 }
 
-impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_common::tag::Tag {
+impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_types::tag::Tag {
     type Error = anyhow::Error;
 
     fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
-        libdd_common::tag::Tag::new(tag.key, tag.value)
+        libdd_types::tag::Tag::new(tag.key, tag.value)
     }
 }
 
@@ -679,7 +679,7 @@ fn prepare_profile_for_export<'a>(
 ) -> anyhow::Result<(
     internal::EncodedProfile,
     Vec<exporter::File<'a>>,
-    Vec<libdd_common::tag::Tag>,
+    Vec<libdd_types::tag::Tag>,
     Option<&'a str>,
     Option<serde_json::Value>,
     Option<serde_json::Value>,
@@ -691,7 +691,7 @@ fn prepare_profile_for_export<'a>(
     let files_to_compress_vec: Vec<exporter::File> =
         files_to_compress.iter().map(Into::into).collect();
 
-    let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
+    let additional_tags_vec: Vec<libdd_types::tag::Tag> = additional_tags
         .iter()
         .map(TryInto::try_into)
         .collect::<Result<Vec<_>, _>>()?;
@@ -750,7 +750,7 @@ impl ProfileExporter {
         }
         endpoint = endpoint.with_system_resolver(use_system_resolver);
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+        let tags_vec: Vec<libdd_types::tag::Tag> = tags
             .iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
@@ -785,7 +785,7 @@ impl ProfileExporter {
         }
         endpoint = endpoint.with_system_resolver(use_system_resolver);
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+        let tags_vec: Vec<libdd_types::tag::Tag> = tags
             .iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
@@ -810,7 +810,7 @@ impl ProfileExporter {
     ) -> anyhow::Result<Box<ProfileExporter>> {
         let endpoint = exporter::config::file(output_path)?;
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+        let tags_vec: Vec<libdd_types::tag::Tag> = tags
             .iter()
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
@@ -1255,7 +1255,7 @@ mod tests {
         assert_eq!(file.bytes, data.as_slice());
 
         // Tag conversion with special characters
-        let tag: libdd_common::tag::Tag = (&ffi::Tag {
+        let tag: libdd_types::tag::Tag = (&ffi::Tag {
             key: "test-key.with_special:chars",
             value: "test_value/with@special#chars",
         })
@@ -1267,7 +1267,7 @@ mod tests {
         );
 
         // Tag validation - empty key should fail
-        assert!(TryInto::<libdd_common::tag::Tag>::try_into(&ffi::Tag {
+        assert!(TryInto::<libdd_types::tag::Tag>::try_into(&ffi::Tag {
             key: "",
             value: "value"
         })

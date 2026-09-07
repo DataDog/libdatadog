@@ -10,10 +10,12 @@ use crate::service::ffe_flagevaluation_flusher::{
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{tag, tag::Tag, MutexExt};
+use libdd_common::MutexExt;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
+use libdd_types::tag;
+use libdd_types::tag::Tag;
 
 /// The sidecar runs the telemetry worker on native, so its handle is pinned to
 /// [`NativeCapabilities`].

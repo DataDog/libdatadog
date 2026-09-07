@@ -1,0 +1,31 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-types"
+version = "5.2.0"
+description = "Common, dependency-light shared data types for Datadog libraries"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-types"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-types"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib"]
+bench = false
+
+[dependencies]
+anyhow.workspace = true
+http = { workspace = true, features = ["std"] }
+serde = { workspace = true, default-features = true, features = ["derive"] }
+static_assertions = "1.1.0"
+const_format = "0.2.34"
+thiserror = "1.0"
+
+[dev-dependencies]
+proptest = "1"
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
