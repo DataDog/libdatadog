@@ -3605,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
