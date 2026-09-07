@@ -94,7 +94,7 @@ tokio = { version = "1.23", features = [
     "time",
     "test-util",
 ], default-features = false }
-duplicate = "2.0.1"
+duplicate = { workspace = true, default-features = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2 = "0.4"

@@ -105,6 +105,7 @@ clap = { version = "4.3.21", default-features = false }
 # dev-dependency anyway, which doesn't impact release binary size.
 criterion = { version = "0.5.1", default-features = true }
 cxx-build = { version = "1.0", default-features = false }
+duplicate = { version = "2.0.1", default-features = false }
 elf = { version = "0.7", default-features = false }
 fastrand = { version = "2", default-features = false }
 # flate2 without a backend feature is unusable (no compression backend at all).
