@@ -1,13 +1,13 @@
 /**
  * @file allocation_created.h
  *
- * Post-allocation hook for the ddheap sampler.
+ * Post-allocation hook for the otel_memory sampler.
  *
  * Call dd_allocation_created() immediately after the underlying allocator
  * returns. On the common (unsampled) fast path this is a single branch on
  * req.weight and an immediate return of the raw pointer. On the sampled slow
  * path it applies the architecture-specific sample flag to the raw pointer,
- * emits the ddheap:alloc USDT, and closes the reentry guard that was opened
+ * emits the otel_memory:alloc USDT, and closes the reentry guard that was opened
  * by the paired dd_allocation_requested() call.
  *
  * Always call this even when the allocator returns NULL: the reentry guard
@@ -37,7 +37,7 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req)
  *
  * Fast path (not sampled): returns raw unchanged.
  * Slow path (sampled): applies the architecture-specific flag, emits
- * the ddheap:alloc USDT, closes the reentry guard opened by the paired
+ * the otel_memory:alloc USDT, closes the reentry guard opened by the paired
  * requested() call, returns the user-visible pointer.
  *
  * Safe when raw == NULL (allocator failed): no USDT, guard still closed.

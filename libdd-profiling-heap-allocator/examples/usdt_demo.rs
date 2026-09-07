@@ -5,7 +5,7 @@
 //!
 //! Install `SampledAllocator<System>` globally, then loop producing
 //! allocations (strings joined into a single buffer) so a tracer attached
-//! to the `ddheap:alloc` USDT probe sees samples fire periodically.
+//! to the `otel_memory:alloc` USDT probe sees samples fire periodically.
 //!
 //! Run (Linux, inside the crate's Lima VM):
 //! ```
@@ -13,7 +13,7 @@
 //! ```
 //! and in another shell, attach a tracer, e.g.
 //! ```
-//! sudo bpftrace -p <pid> -e 'usdt:*:ddheap:alloc { printf("alloc %p %d %d\n", arg0, arg1, arg2); }'
+//! sudo bpftrace -p <pid> -e 'usdt:*:otel_memory:alloc { printf("alloc %p %d %d\n", arg0, arg1, arg2); }'
 //! ```
 //!
 //! `SampledAllocator` is Linux-only; on other targets the example
@@ -40,7 +40,7 @@ mod linux {
 
     pub fn main() {
         println!(
-            "pid={}; attach a tracer on 'usdt:*:ddheap:alloc'",
+            "pid={}; attach a tracer on 'usdt:*:otel_memory:alloc'",
             std::process::id()
         );
 
