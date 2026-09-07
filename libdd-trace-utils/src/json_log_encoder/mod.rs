@@ -175,7 +175,12 @@ pub fn encode_traces_v1<T: TraceData>(
     let mut line_span_count: usize = 0;
 
     for chunk in &payload.chunks {
-        let ctx = ChunkContextV1::new(chunk, &payload.env, &payload.app_version, &payload.attributes);
+        let ctx = ChunkContextV1::new(
+            chunk,
+            &payload.env,
+            &payload.app_version,
+            &payload.attributes,
+        );
         for span in &chunk.spans {
             span_buf.clear();
             serde_json::to_writer(&mut span_buf, &LogSpanV1(span, &ctx))

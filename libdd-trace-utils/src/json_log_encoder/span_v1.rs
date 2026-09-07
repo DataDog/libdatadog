@@ -480,6 +480,8 @@ impl<T: TraceData> Serialize for LogSpanV1<'_, T> {
         let chunk = self.1;
 
         let span_attrs_dd = span.attributes.defensive_dedup();
+        let span_keys: HashSet<&str> = span_attrs_dd.iter().map(|(k, _)| k.borrow()).collect();
+        let chunk_keys: HashSet<&str> = chunk.attrs_dd.iter().map(|(k, _)| k.borrow()).collect();
         // Precedence: span attributes override chunk attributes override payload
         // attributes. Attributes sharing a name with a "promoted" dedicated field are
         // dropped so the dedicated field always wins and each key is written at most once.
@@ -487,13 +489,12 @@ impl<T: TraceData> Serialize for LogSpanV1<'_, T> {
             .iter()
             .filter(|(k, _)| !PROMOTED_ATTR_KEYS.contains(&(*k).borrow()))
             .chain(chunk.attrs_dd.iter().filter(|(k, _)| {
-                !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
-                    && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+                !PROMOTED_ATTR_KEYS.contains(&(*k).borrow()) && !span_keys.contains((*k).borrow())
             }))
             .chain(chunk.payload_attrs_dd.iter().filter(|(k, _)| {
                 !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
-                    && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
-                    && !chunk.attrs_dd.iter().any(|(k2, _)| k2 == *k)
+                    && !span_keys.contains((*k).borrow())
+                    && !chunk_keys.contains((*k).borrow())
             }));
 
         let mut meta_leaves: Vec<(String, String)> = Vec::new();
@@ -673,8 +674,10 @@ mod tests {
         assert_eq!(span["duration"], 500);
         // `error` is always present as an integer, even when false.
         assert_eq!(span["error"], 0);
-        // Optional fields must be absent when their underlying value is zero/empty.
+        // `parent_id` is always emitted (as a 16-hex string), even when zero — it isn't an
+        // optional field in this encoding.
         assert_eq!(span["parent_id"], "0000000000000000");
+        // Optional fields must be absent when their underlying value is zero/empty.
         assert!(span.get("type").is_none());
         assert!(span.get("meta").is_none());
         assert!(span.get("metrics").is_none());
