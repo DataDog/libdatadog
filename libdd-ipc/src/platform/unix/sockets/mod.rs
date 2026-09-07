@@ -437,14 +437,6 @@ impl SeqpacketConn {
     }
 
     /// Convert to an async connection for use in async server dispatch loops.
-    ///
-    /// Wraps the whole `SeqpacketConn`, not just its raw fd: on macOS, `self` also carries
-    /// `_peer` and `liveness` (the accepted connection's copy of the client's liveness-pipe
-    /// read end). Extracting only `self.inner` here would drop those immediately on return,
-    /// closing the daemon's `liveness` fd right after every accept — which the client reads
-    /// as an instant, false disconnect (`POLLHUP`) even though the data connection itself
-    /// (`self.inner`) is still perfectly usable, causing a spurious reconnect on essentially
-    /// every call.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
         AsyncFd::new(self)
     }
@@ -463,8 +455,7 @@ impl AsRawFd for SeqpacketConn {
 /// The async connection type on Unix: a Tokio `AsyncFd` wrapping the connection.
 ///
 /// Wraps the full `SeqpacketConn` (not just its raw fd) so that macOS's `_peer` and
-/// `liveness` fds stay alive for as long as the async connection is in use, and are only
-/// closed (signaling disconnect to the peer, as intended) when it is finally dropped.
+/// `liveness` fds stay alive for as long as the async connection is in use.
 pub type AsyncConn = AsyncFd<SeqpacketConn>;
 
 /// Async receive on a Tokio `AsyncFd`-wrapped IPC connection.

@@ -208,7 +208,9 @@ mod adapter {
 pub use adapter::SeqpacketStreamReader;
 
 /// Wrap `AsyncConn` and dispatch it to crashtracking receiver.
-pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(conn: &tokio::io::unix::AsyncFd<C>) {
+pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(
+    conn: &tokio::io::unix::AsyncFd<C>,
+) {
     use std::os::fd::AsRawFd;
     use tokio::io::BufReader;
 

@@ -308,18 +308,11 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
-    // If another process just won the race to create the listener, its daemon may not
-    // have started accepting connections yet: the listener socket exists once bound,
-    // but on platforms without a kernel-level accept backlog (see the SCM_RIGHTS/DGRAM
-    // rendezvous connect on macOS) nothing is actually reading from it until the newly
-    // spawned daemon's accept loop is running, which lags bind() by the time it takes
-    // to fork/exec/init. `attempt_listen()` losing the lock race is the expected,
-    // transient signal for this; retry *that* (cheap, side-effect-free beyond its own
-    // probe) with a short backoff rather than `connect_to_server()`, whose handshake
-    // creates a real fd pair and sends real SCM_RIGHTS data to the server on every
-    // call — retrying it blindly leaves behind abandoned, server-accepted connections
-    // for every attempt that the client itself doesn't end up using.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // On macos only actually listening binds the sidecar socket, so there might be a race, unlike
+    // linux where binding the socket is sufficient. Hence we need a retry-loop on macos for this
+    // edge case.
+    #[cfg(target_os = "macos")]
+    let deadline = Instant::now() + Duration::from_secs(1);
     let err = loop {
         match liaison.attempt_listen() {
             Ok(Some(listener)) => {
@@ -327,6 +320,7 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
                 break None;
             }
             Ok(None) => break None,
+            #[cfg(target_os = "macos")]
             Err(_e) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(5));
                 continue;
