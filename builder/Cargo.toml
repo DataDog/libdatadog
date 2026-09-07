@@ -53,7 +53,7 @@ pico-args.workspace = true
 # Only reads/writes tar archives; no extended-attribute handling needed.
 tar.workspace = true
 tools = { path = "../tools" }
-toml = { workspace = true, default-features = false, features = ["parse"] }
+toml = { workspace = true, features = ["parse"] }
 serde.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false }
 

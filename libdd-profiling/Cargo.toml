@@ -29,9 +29,9 @@ harness = false
 allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 bitmaps = { workspace = true, default-features = true }
-# std is byteorder's only default feature; listed explicitly to keep the
-# workspace's default-features = false policy honest.
-byteorder = { workspace = true, default-features = false, features = ["std"] }
+# std is byteorder's only default feature; the workspace disables default
+# features, so enable std explicitly.
+byteorder = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 crossbeam-channel = { workspace = true, default-features = true }
@@ -50,7 +50,7 @@ mime.workspace = true
 parking_lot.workspace = true
 # Only the prost::Message trait is used here; the Message derives live in
 # libdd-profiling-protobuf (which enables prost/derive for its generated code).
-prost = { workspace = true, default-features = false, features = ["std"] }
+prost = { workspace = true, features = ["std"] }
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
@@ -87,7 +87,7 @@ libdd-profiling = { path = ".", features = ["test-utils"] }
 # thread RNG, i.e. both `std` and `std_rng` defaults.
 rand = { workspace = true, default-features = true }
 proptest = { workspace = true, default-features = true }
-strum = { workspace = true, default-features = false, features = ["derive"] }
+strum = { workspace = true, features = ["derive"] }
 tempfile.workspace = true
 
 [build-dependencies]

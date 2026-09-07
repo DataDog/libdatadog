@@ -22,10 +22,10 @@ serde_json.workspace = true
 libc.workspace = true
 errno = { workspace = true, default-features = true }
 nix = { workspace = true, features = ["signal", "socket"] }
-os_info = { workspace = true, default-features = false }
+os_info.workspace = true
 
 [dev-dependencies]
-serial_test = { workspace = true, default-features = false }
+serial_test.workspace = true
 
 [features]
 regex-lite = ["libdd-common/regex-lite"]

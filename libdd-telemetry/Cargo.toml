@@ -55,7 +55,7 @@ winver.workspace = true
 
 [dev-dependencies]
 # Examples only call fmt(); ansi/tracing-log/smallvec extras not needed.
-tracing-subscriber = { workspace = true, default-features = false, features = ["fmt"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 tokio = { workspace = true, features = ["sync", "io-util", "rt-multi-thread"] }
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }

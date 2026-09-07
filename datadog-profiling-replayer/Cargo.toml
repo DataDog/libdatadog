@@ -13,7 +13,7 @@ anyhow.workspace = true
 clap = { workspace = true, default-features = true, features = ["cargo", "derive"] }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-profiling-protobuf = { path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-prost = { workspace = true, default-features = false, features = ["std"] }
+prost = { workspace = true, features = ["std"] }
 sysinfo.workspace = true
 
 [[bin]]

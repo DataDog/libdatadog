@@ -62,7 +62,7 @@ num-derive.workspace = true
 num-traits.workspace = true
 # os_info::get() is converted into our own OsInfo type before serialization,
 # so os_info's own `serde` default feature is unnecessary.
-os_info = { workspace = true, default-features = false }
+os_info.workspace = true
 page_size.workspace = true
 portable-atomic = { workspace = true, default-features = true, features = ["serde"] }
 rand = { workspace = true, default-features = true }
@@ -80,7 +80,7 @@ windows = { version = "0.59.0", features = ["Win32_System_Diagnostics_Debug", "W
 
 [dev-dependencies]
 criterion.workspace = true
-goblin = { workspace = true, default-features = false, features = ["std", "pe32", "pe64"] }
+goblin = { workspace = true, features = ["std", "pe32", "pe64"] }
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]

@@ -58,22 +58,22 @@ base64 = { workspace = true, features = ["std"], optional = true }
 sha2 = { workspace = true, features = ["std"], optional = true }
 getrandom = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["std"], optional = true }
-futures-util = { workspace = true, default-features = false, features = ["std"], optional = true }
+futures-util = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, optional = true, features = ["macros"] }
 tokio-util = { workspace = true, optional = true }
 manual_future = { workspace = true, optional = true }
-time = { workspace = true, default-features = false, features = ["parsing", "serde", "formatting"], optional = true }
+time = { workspace = true, features = ["parsing", "serde", "formatting"], optional = true }
 tracing = { workspace = true, optional = true }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
-serde_with = { workspace = true, default-features = false }
+serde_with.workspace = true
 rand = { workspace = true, default-features = true, optional = true }
 thiserror = { workspace = true, default-features = true }
 hashbrown = { workspace = true, default-features = true }
 tuf = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["clock"], optional = true }
-prost = { workspace = true, default-features = false, features = ["std"], optional = true }
-futures = { workspace = true, default-features = false, features = ["std", "async-await"], optional = true }
+prost = { workspace = true, features = ["std"], optional = true }
+futures = { workspace = true, features = ["std", "async-await"], optional = true }
 # `EnumIter` for external consumers to make struct available to runtime
 strum.workspace = true
 strum_macros.workspace = true

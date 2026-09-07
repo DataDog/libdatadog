@@ -32,4 +32,4 @@ libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-h
 libc.workspace = true
 libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 # Only sync #[serial] is used; `logging`/`async` defaults are unneeded.
-serial_test = { workspace = true, default-features = false }
+serial_test.workspace = true

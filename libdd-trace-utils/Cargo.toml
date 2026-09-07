@@ -34,7 +34,7 @@ http-body.workspace = true
 http-body-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 # Only uses the prost::Message trait on generated types; no local derives.
-prost = { workspace = true, default-features = false, features = ["std"] }
+prost = { workspace = true, features = ["std"] }
 rmp-serde.workspace = true
 tracing.workspace = true
 serde_json = { workspace = true, features = ["std"] }

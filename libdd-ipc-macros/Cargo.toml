@@ -16,7 +16,7 @@ bench = false
 proc-macro2 = { workspace = true, default-features = true }
 quote = { workspace = true, default-features = true }
 # Needs full (ItemTrait, Pat), parsing, printing, clone-impls, proc-macro; derive not used.
-syn = { workspace = true, default-features = false, features = [
+syn = { workspace = true, features = [
     "full",
     "parsing",
     "printing",

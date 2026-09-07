@@ -22,8 +22,8 @@ protoc-bin-vendored = { workspace = true, optional = true }
 criterion.workspace = true
 # Bench only uses gen_range + seed_from_u64 (ChaCha8Rng); no thread_rng/StdRng,
 # so the default `std_rng` feature is unneeded.
-rand = { workspace = true, default-features = false, features = ["std"] }
-rand_chacha = { workspace = true, default-features = false }
+rand = { workspace = true, features = ["std"] }
+rand_chacha.workspace = true
 
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
