@@ -3421,7 +3421,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
