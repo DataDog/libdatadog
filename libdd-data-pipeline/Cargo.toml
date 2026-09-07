@@ -1,6 +1,6 @@
 [package]
 name = "libdd-data-pipeline"
-version= "9.0.0"
+version= "10.0.0"
 description = "Trace exporter package allowing sending data from datadog SDKs to the Trace Agent."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline"
