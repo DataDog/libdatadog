@@ -34,8 +34,8 @@ impl crate::modes::behavior::Behavior for Test {
         Ok(())
     }
 
-    fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        install_handler()
+    fn post(&self, output_dir: &Path) -> anyhow::Result<()> {
+        install_handler(output_dir)
     }
 }
 
@@ -63,7 +63,7 @@ extern "C" fn sigsegv_handler(
     }
 }
 
-fn install_handler() -> anyhow::Result<()> {
+fn install_handler(output_dir: &Path) -> anyhow::Result<()> {
     let sig_action = SigAction::new(
         SigHandler::SigAction(sigsegv_handler),
         SaFlags::empty(),
@@ -76,9 +76,24 @@ fn install_handler() -> anyhow::Result<()> {
     let old_handler = unsafe { signal::sigaction(signal::SIGSEGV, &sig_action) }?;
     set_atomic(&OLD_ACTION, old_handler);
 
-    // Give the background telemetry thread time to write the warning to the
-    // telemetry file before the crash kills the process.
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    // Poll here because we crash immediately after installing this. I'd rather not
+    // implement some sleep -- rather, we can just poll here and move on if we don't
+    // find the telemetry.
+    let telemetry_path = output_dir.join("crash.telemetry");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if let Ok(content) = std::fs::read_to_string(&telemetry_path) {
+            if content.contains("sigaction_intercepted") {
+                break;
+            }
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for sigaction_intercepted telemetry in {:?}",
+            telemetry_path
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 
     Ok(())
 }
