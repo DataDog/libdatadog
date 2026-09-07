@@ -48,11 +48,12 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 build_common = { path = "../build-common", features = ["cbindgen"] }
-cmake = "0.1.50"
-pico-args = "0.5.0"
-tar = "0.4.45"
+cmake.workspace = true
+pico-args.workspace = true
+# Only reads/writes tar archives; no extended-attribute handling needed.
+tar.workspace = true
 tools = { path = "../tools" }
-toml = "0.8.19"
+toml = { workspace = true, default-features = false, features = ["parse"] }
 serde.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false }
 

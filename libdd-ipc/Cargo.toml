@@ -12,12 +12,12 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-zwohash = "0.1.2"
-bincode = { version = "1" }
+zwohash.workspace = true
+bincode.workspace = true
 futures.workspace = true
 io-lifetimes = { workspace = true, features = ["close"] }
-page_size = "0.6.0"
-memfd = { version = "0.6" }
+page_size.workspace = true
+memfd.workspace = true
 serde = { workspace = true, features = ["derive"] }
 libc.workspace = true
 libdd-tinybytes = { path = "../libdd-tinybytes", version = "1.1.3", optional = true }
@@ -32,7 +32,8 @@ tracing.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-pretty_assertions = "1.3"
+# Unused in this crate's sources; kept with defaults (the crate needs its own `std` to compile).
+pretty_assertions = { workspace = true, default-features = true }
 tempfile.workspace = true
 tokio = { workspace = true, features = [
     "macros",
@@ -42,22 +43,23 @@ tokio = { workspace = true, features = [
     "fs",
     "io-util",
 ] }
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3.22" }
+# Both appear unused in this crate's tests/benches; keep them with no default features.
+tracing.workspace = true
+tracing-subscriber.workspace = true
 spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
-nix = { version = "0.29", features = ["fs", "mman", "process", "poll", "socket", "uio", "user"] }
-sendfd = { version = "0.4", features = ["tokio"] }
-tokio = { version = "1.23", features = ["sync", "io-util"] }
+nix = { workspace = true, features = ["fs", "mman", "process", "poll", "socket", "uio", "user"] }
+sendfd = { workspace = true, features = ["tokio"] }
+tokio = { workspace = true, features = ["sync", "io-util"] }
 
 [target.'cfg(target_env = "gnu")'.build-dependencies]
-glibc_version = "0.1.2"
+glibc_version.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "memoryapi", "winbase", "winnt", "winerror", "processthreadsapi", "fileapi", "minwinbase"] }
 windows-sys = { version = "0.48.0", features = ["Win32_System", "Win32_System_WindowsProgramming", "Win32_Foundation", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }
-tokio = { version = "1.23", features = ["sync", "io-util", "net", "rt-multi-thread", "rt"] }
+tokio = { workspace = true, features = ["sync", "io-util", "net", "rt-multi-thread", "rt"] }
 
 [lib]
 bench = false

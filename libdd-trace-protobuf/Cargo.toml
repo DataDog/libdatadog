@@ -13,9 +13,11 @@ bench = false
 
 [dependencies]
 bolero = { workspace = true, features = ["std"], optional = true }
-prost = "0.14.1"
+prost = { workspace = true, default-features = true }
 serde = { workspace = true, features = ["derive"] }
-serde_bytes = "0.11.9"
+# `std` is required: it gates the alloc-backed `ByteBuf`/`Vec<u8>` serde impls used by
+# `#[serde(with = "serde_bytes")]` in the generated code.
+serde_bytes = { workspace = true, default-features = true }
 
 [build-dependencies]
 prost-build = { workspace = true, features = ["format"], optional = true }

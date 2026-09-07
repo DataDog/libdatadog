@@ -26,26 +26,27 @@ required-features = ["bench-internals"]
 [dependencies]
 anyhow.workspace = true
 base64 = { workspace = true, features = ["std"] }
-hex = "0.4"
-itoa = "1.0"
+hex = { workspace = true, default-features = true }
+itoa.workspace = true
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 "http" = { workspace = true, features = ["std"] }
-"http-body" = "1"
+http-body.workspace = true
 http-body-util.workspace = true
 serde = { workspace = true, features = ["derive"] }
-prost = "0.14.1"
-rmp-serde = "1.3.0"
+# Only uses the prost::Message trait on generated types; no local derives.
+prost = { workspace = true, default-features = false, features = ["std"] }
+rmp-serde.workspace = true
 tracing.workspace = true
 serde_json = { workspace = true, features = ["std"] }
-serde-transcode = "1.1"
+serde-transcode.workspace = true
 futures.workspace = true
-rand = { version = "0.8.6", features = ["small_rng"] }
+rand = { workspace = true, default-features = true, features = ["small_rng"] }
 bytes = { workspace = true, features = ["std"] }
-rmpv = { version = "1.3.0", default-features = false }
-rmp = { version = "0.8.14", default-features = false }
-rustc-hash = "2.1.1"
-crossbeam-channel = "0.5.16"
-thread_local = "1.1"
+rmpv.workspace = true
+rmp.workspace = true
+rustc-hash = { workspace = true, default-features = true }
+crossbeam-channel.workspace = true
+thread_local.workspace = true 
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
@@ -55,27 +56,27 @@ libdd-tinybytes = { version = "1.1.3", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
-indexmap = "2.11"
-thin-vec = "0.2"
+indexmap = { workspace = true, default-features = true }
+thin-vec = { workspace = true, default-features = true }
 
 # Compression feature
 flate2 = { workspace = true, optional = true }
 
 # test-utils feature
-cargo_metadata = { version = "0.18.1", optional = true }
+cargo_metadata = { workspace = true, optional = true }
 # Dependency of cargo metadata, but 0.1.8 requires too new of a rust version.
-cargo-platform = { version = "=0.1.7", optional = true }
+cargo-platform = { workspace = true, optional = true }
 httpmock = { workspace = true, optional = true }
-urlencoding = { version = "2.1.3", optional = true }
+urlencoding = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false, optional = true }
-tokio = { version = "1", features = ["time"], optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
 zstd = {workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
-zrip = { version = "=0.6.0", default-features = false, features = ["frame"], optional = true }
+getrandom = { workspace = true, features = ["js"] }
+zrip = { workspace = true, features = ["frame"], optional = true }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
@@ -86,7 +87,7 @@ bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 httpmock.workspace = true
 serde_json.workspace = true
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 libdd-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile.workspace = true
 

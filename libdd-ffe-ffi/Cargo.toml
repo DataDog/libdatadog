@@ -21,9 +21,10 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-anyhow = "1.0.103"
+# Only the `ensure!` macro is used; no std-specific anyhow APIs needed.
+anyhow = { workspace = true, default-features = false }
 libdd-ffe = { path = "../libdd-ffe", version = "=2.0.0" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-function_name = "0.3.0"
+function_name.workspace = true
 
 [dev-dependencies]

@@ -23,15 +23,15 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true, features = ["clock", "std"] }
-crossbeam-queue = "0.3.11"
+crossbeam-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
 hyper = { workspace = true, features = ["http1", "client"] }
 serde.workspace = true
 
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
-assert_no_alloc = "1.1.2"
-function_name = "0.3.0"
+assert_no_alloc.workspace = true
+function_name.workspace = true
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

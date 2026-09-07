@@ -11,7 +11,7 @@ homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = { workspace = true, default-features = true }
 libdd-remote-config = { version = "5.0.0", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "6.0.0", path = "../libdd-common" }
 libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils" }
@@ -19,8 +19,8 @@ http = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["time"] }
 serde_json.workspace = true
-zip = { version = "4.0.0", default-features = false, features = ["deflate"] }
-walkdir = "2.4"
+zip = { workspace = true, features = ["deflate"] }
+walkdir.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -33,7 +33,7 @@ bench = false
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-tokio = { version = "1.36.0", features = ["time", "macros", "rt"] }
+tokio = { workspace = true, features = ["time", "macros", "rt"] }
 
 [features]
 default = ["listener"]
