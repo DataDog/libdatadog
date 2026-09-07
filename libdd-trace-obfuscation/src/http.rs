@@ -88,6 +88,87 @@ fn redact_path_digits(path: &str) -> String {
         .join("/")
 }
 
+/// Returns whether [`obfuscate_url_string`] could change `url`, letting callers skip building the
+/// obfuscated `String` when there is nothing to do.
+///
+/// Conservative superset of the transform's triggers: it may return `true` for an input the
+/// transform leaves unchanged, but never `false` for one it would modify.
+#[must_use]
+pub fn should_obfuscate_url(
+    url: &str,
+    remove_query_string: bool,
+    remove_path_digits: bool,
+) -> bool {
+    // Every trigger is single-byte ASCII, and non-ASCII bytes are caught by the range guard, so we
+    // scan bytes directly and avoid UTF-8 decoding. Path and query need different checks, so we
+    // split the scan at the first '?'.
+    let bytes = url.as_bytes();
+
+    // Path region.
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // A fragment is always normalized and userinfo always stripped. Returning on the first
+            // '#' guarantees any '@' seen here precedes the fragment.
+            b'#' | b'@' => return true,
+            b'?' => {
+                if remove_query_string {
+                    return true;
+                }
+                i += 1;
+                break;
+            }
+            b if (remove_path_digits && b.is_ascii_digit())
+                    // non-ASCII (>= 0x80) or control char (< 0x20)
+                    || !(0x20..0x80).contains(&b)
+                    || b == 0x7F
+                    || b == b'%'
+                    // uppercase scheme gets lowercased
+                    || b.is_ascii_uppercase()
+                    || is_go_url_escape_cat1(b as char)
+                    || is_go_url_escape_cat2_path(b as char) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    // Query region: reached only when remove_query_string is false, so a control char still
+    // forces "?" output only under remove_path_digits (obfuscate_url_string rejects control
+    // chars in path+query when either flag is set).
+    while i < bytes.len() {
+        match bytes[i] {
+            b'#' | b'@' => return true,
+            b if remove_path_digits && (b < 0x20 || b == 0x7F) => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+
+    false
+}
+
+/// Obfuscates an HTTP URL, returning `None` when nothing needs to change.
+///
+/// Runs [`should_obfuscate_url`] first so no `String` is allocated when there is nothing to do.
+#[must_use]
+pub fn obfuscate_url(
+    url: &str,
+    remove_query_string: bool,
+    remove_path_digits: bool,
+) -> Option<String> {
+    if !should_obfuscate_url(url, remove_query_string, remove_path_digits) {
+        return None;
+    }
+    Some(obfuscate_url_string(
+        url,
+        remove_query_string,
+        remove_path_digits,
+    ))
+}
+
 pub fn obfuscate_url_string(
     url: &str,
     remove_query_string: bool,
@@ -729,5 +810,21 @@ mod tests {
     fn test_name() {
         let result = obfuscate_url_string(input, remove_query_string, remove_path_digits);
         assert_eq!(result, expected_output);
+    }
+
+    #[test]
+    fn should_obfuscate_url_precheck() {
+        use super::should_obfuscate_url;
+
+        // Control char in query with remove_path_digits triggers obfuscation.
+        assert!(should_obfuscate_url("http://foo.com/p?q=\0", false, true));
+        // Same input without remove_path_digits: query restored verbatim, no trigger.
+        assert!(!should_obfuscate_url("http://foo.com/p?q=\0", false, false));
+        // Clean query, both flags false: no trigger.
+        assert!(!should_obfuscate_url("http://foo.com/p?q=1", false, false));
+        // Clean path, both flags false: no trigger.
+        assert!(!should_obfuscate_url("http://foo.com/path", false, false));
+        // Path digit with remove_path_digits triggers obfuscation.
+        assert!(should_obfuscate_url("http://foo.com/p1", false, true));
     }
 }

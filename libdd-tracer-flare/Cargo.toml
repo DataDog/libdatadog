@@ -15,8 +15,8 @@ anyhow = "1.0"
 libdd-remote-config = { version = "4.0.0", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "5.2.0", path = "../libdd-common" }
 libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils" }
-http = "1"
-bytes = "1.11.1"
+http = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["time"] }
 serde_json.workspace = true
 zip = { version = "4.0.0", default-features = false, features = ["deflate"] }
@@ -31,7 +31,7 @@ bench = false
 
 [dev-dependencies]
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
-httpmock = "0.8.0-alpha.1"
+httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 tokio = { version = "1.36.0", features = ["time", "macros", "rt"] }
 

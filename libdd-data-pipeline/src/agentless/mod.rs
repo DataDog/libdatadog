@@ -25,5 +25,6 @@
 
 pub(crate) mod config;
 pub(crate) mod exporter;
+pub(crate) mod stats;
 
 pub use config::AgentlessTraceConfig;

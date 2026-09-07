@@ -108,4 +108,36 @@ mod linux {
     ) {
         ThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
     }
+
+    /// Update `ctx` and attach it to the current thread. Returns the previously attached different
+    /// context, if any.
+    ///
+    /// # Safety
+    ///
+    /// `ctx` may be null; otherwise it must be a valid non-null pointer obtained from this API.
+    /// If attached, it must be attached only to the calling native thread and must not be
+    /// concurrently updated or freed. A non-null returned context is owned by the caller.
+    #[no_mangle]
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_update_and_attach(
+        ctx: *mut ThreadContextHandle,
+        trace_id: &[u8; 16],
+        span_id: &[u8; 8],
+        trace_flags: u8,
+        local_root_span_id: &[u8; 8],
+    ) -> Option<NonNull<ThreadContextHandle>> {
+        let target = NonNull::new(ctx)?;
+
+        let previous = unsafe {
+            ThreadContext::update_and_attach(
+                target,
+                *trace_id,
+                *span_id,
+                trace_flags,
+                *local_root_span_id,
+                &[],
+            )
+        };
+
+        previous.map(ThreadContext::into_opaque_ptr)
+    }
 }

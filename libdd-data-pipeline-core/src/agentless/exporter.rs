@@ -8,7 +8,8 @@ use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
+    SendWithRetryError, SendWithRetryResult,
 };
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -35,44 +36,90 @@ pub enum AgentlessError {
 }
 
 /// Encodes and sends already-decoded v0.4 traces.
+///
+/// When `client_side_stats` is `true`, the encoder will **not** inject
+/// `meta["_dd.compute_stats"]="1"` on the first span of each chunk. Set this when
+/// the caller is already computing and exporting stats locally so that the intake
+/// does not double-count the same traces.
 pub async fn send_agentless_traces<C, T>(
     capabilities: &C,
-    mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
+    client_side_stats: bool,
 ) -> Result<(), AgentlessError>
 where
     C: HttpClientCapability + SleepCapability,
     T: TraceData,
 {
-    if !metadata.client_computed_top_level {
+    send_agentless_traces_with_observer(
+        capabilities,
+        traces,
+        metadata,
+        config,
+        client_side_stats,
+        |_, _| {},
+    )
+    .await
+}
+
+/// Encodes and sends already-decoded v0.4 traces, reporting the final send result.
+///
+/// The observer is invoked once after the retry loop with the post-compression payload size.
+pub async fn send_agentless_traces_with_observer<C, T, F>(
+    capabilities: &C,
+    mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    metadata: &TracerMetadata,
+    config: &AgentlessTraceConfig,
+    client_side_stats: bool,
+    observer: F,
+) -> Result<(), AgentlessError>
+where
+    C: HttpClientCapability + SleepCapability,
+    T: TraceData,
+    F: FnOnce(&SendWithRetryResult, usize),
+{
+    // Top-level tagging is already done before sending when client-side stats
+    // are active
+    if !metadata.client_computed_top_level && !client_side_stats {
         for chunk in &mut traces {
             compute_top_level_span(chunk);
         }
     }
-    for chunk in &mut traces {
+    for chunk in traces.iter_mut() {
         for span in chunk.iter_mut() {
+            // Obfuscate every span we are about to send to the intake
+            libdd_trace_obfuscation::obfuscate::obfuscate_v04_span(
+                span,
+                &config.obfuscation_config,
+            );
+
+            // Remove duplicate attributes before serialization
             span.dedup();
         }
     }
+
     let trace_count = traces.len();
-    let json_body = libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata)
-        .map_err(AgentlessError::Serialization)?;
+    let json_body =
+        libdd_trace_utils::agentless_encoder::encode_payload(&traces, metadata, client_side_stats)
+            .map_err(AgentlessError::Serialization)?;
     let headers = build_agentless_headers(metadata, trace_count);
-    send_agentless_json(capabilities, config, headers, json_body).await
+    send_agentless_json(capabilities, config, headers, json_body, observer).await
 }
 
 /// Sends an encoded agentless JSON request.
 ///
 /// The configured API key replaces any `dd-api-key` value in `headers`.
-async fn send_agentless_json<C>(
+async fn send_agentless_json<C, F>(
     capabilities: &C,
     config: &AgentlessTraceConfig,
     mut headers: HeaderMap,
     json_body: Vec<u8>,
+    observer: F,
 ) -> Result<(), AgentlessError>
 where
     C: HttpClientCapability + SleepCapability,
+    F: FnOnce(&SendWithRetryResult, usize),
 {
     let api_key =
         http::HeaderValue::from_str(&config.api_key).map_err(|_| AgentlessError::InvalidApiKey)?;
@@ -97,7 +144,7 @@ where
     #[cfg(not(feature = "compression"))]
     let compression_strategy = CompressionStrategy::None;
 
-    send_with_retry(
+    let (result, payload_size) = send_with_retry_and_size(
         capabilities,
         &target,
         json_body,
@@ -105,9 +152,11 @@ where
         &retry_strategy,
         compression_strategy,
     )
-    .await
-    .map(|_| ())
-    .map_err(|error| AgentlessError::Send(Box::new(error)))
+    .await;
+    observer(&result, payload_size);
+    result
+        .map(|_| ())
+        .map_err(|error| AgentlessError::Send(Box::new(error)))
 }
 
 fn build_agentless_headers(metadata: &TracerMetadata, trace_count: usize) -> HeaderMap {
@@ -136,6 +185,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::{
         sync::{Arc, Mutex},
@@ -193,6 +243,7 @@ mod tests {
             endpoint_url: "https://example.test/v1/input".to_string(),
             api_key: "test-api-key".to_string(),
             timeout: Duration::from_millis(1_234),
+            obfuscation_config: ObfuscationConfig::default(),
         }
     }
 
@@ -225,6 +276,7 @@ mod tests {
             v04_traces(),
             &metadata(),
             &config(),
+            false,
         ));
         assert!(result.is_ok());
 
@@ -236,6 +288,25 @@ mod tests {
         assert!(String::from_utf8(request_body(request))
             .unwrap()
             .contains("\"_top_level\":1"));
+    }
+
+    #[test]
+    fn reports_final_send_result_and_payload_size() {
+        let capabilities = TestCapabilities::default();
+        let mut observation = None;
+        let result = futures::executor::block_on(send_agentless_traces_with_observer(
+            &capabilities,
+            v04_traces(),
+            &metadata(),
+            &config(),
+            false,
+            |result, payload_size| observation = Some((result.is_ok(), payload_size)),
+        ));
+
+        assert!(result.is_ok());
+        let (send_succeeded, payload_size) = observation.unwrap();
+        assert!(send_succeeded);
+        assert!(payload_size > 0);
     }
 
     #[test]
@@ -252,6 +323,7 @@ mod tests {
             &config(),
             headers,
             b"[]".to_vec(),
+            |_, _| {},
         ));
         assert!(result.is_ok());
         let requests = capabilities.requests.lock().unwrap();
@@ -269,6 +341,7 @@ mod tests {
             &invalid_config,
             HeaderMap::new(),
             b"[]".to_vec(),
+            |_, _| {},
         ))
         .unwrap_err();
         assert!(matches!(error, AgentlessError::InvalidApiKey));

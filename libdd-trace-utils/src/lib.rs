@@ -15,6 +15,7 @@ pub mod msgpack_encoder;
 pub mod otlp_encoder;
 pub mod send_data;
 pub mod send_with_retry;
+pub mod stats_payload_encoder;
 pub mod stats_utils;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
