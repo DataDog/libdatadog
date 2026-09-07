@@ -117,14 +117,16 @@ mod tests {
     fn encodes_and_writes_through_capability_v1() {
         let cap = CapturingLog::default();
         let payload = TracerPayload::<SliceData<'static>> {
-            chunks: vec![libdd_trace_utils::span::v1::TraceChunk::<SliceData<'static>> {
-                trace_id: [0u8; 16],
-                spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
-                    span_id: 2,
+            chunks: vec![
+                libdd_trace_utils::span::v1::TraceChunk::<SliceData<'static>> {
+                    trace_id: [0u8; 16],
+                    spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
+                        span_id: 2,
+                        ..Default::default()
+                    }],
                     ..Default::default()
-                }],
-                ..Default::default()
-            }],
+                },
+            ],
             ..Default::default()
         };
 
