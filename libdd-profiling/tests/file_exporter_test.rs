@@ -76,7 +76,7 @@ mod tests {
 
         // Validate request line
         assert_eq!(request.method, "POST");
-        assert_eq!(request.path, "/"); // File exporter uses root path
+        assert_eq!(request.path, "/profiling/v1/input");
 
         // Validate headers
         assert!(!request.headers.contains_key("dd-api-key"));

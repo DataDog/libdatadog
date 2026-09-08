@@ -112,6 +112,12 @@ pub trait SidecarInterface {
     /// * `session_id` - The ID of the session.
     async fn shutdown_session();
 
+    /// Registers the calling php-fpm worker's wall-time notification slot.
+    async fn register_wall_time_profiler(#[SerializedHandle] handle: ShmHandle) -> bool;
+
+    /// Removes a php-fpm worker's wall-time notification slot.
+    async fn unregister_wall_time_profiler(pid: libc::pid_t);
+
     /// Sends a trace via shared memory.
     ///
     /// # Arguments

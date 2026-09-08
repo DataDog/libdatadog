@@ -12,7 +12,7 @@ style = "both"
 pragma_once = true
 
 no_includes = true
-sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "sys/types.h"]
 
 after_includes = """
 

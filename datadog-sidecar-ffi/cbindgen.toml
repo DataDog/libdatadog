@@ -16,7 +16,7 @@ include_guard = "DDOG_SIDECAR_H"
 style = "both"
 
 no_includes = true
-sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h", "sys/types.h"]
 includes = ["common.h"]
 
 [defines]
@@ -34,6 +34,7 @@ rename_types = "PascalCase"
 "PushTagResult" = "ddog_Vec_Tag_PushResult"
 "Metadata" = "ddog_crasht_Metadata"
 "FILE" = "FILE"
+"pid_t" = "pid_t"
 
 [enum]
 prefix_with_name = true

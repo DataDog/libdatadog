@@ -53,6 +53,8 @@ impl<'de> serde::Deserialize<'de> for RemoteConfigNotifyFunction {
 pub struct RemoteConfigNotifyTarget {
     #[cfg(unix)]
     pub pid: libc::pid_t,
+    #[cfg(unix)]
+    pub wall_time_registrations: crate::service::wall_time::WallTimeRegistrations,
     #[cfg(windows)]
     pub process_handle: crate::service::sidecar_server::ProcessHandle,
     #[cfg(windows)]
@@ -70,6 +72,7 @@ impl Debug for RemoteConfigNotifyTarget {
 impl NotifyTarget for RemoteConfigNotifyTarget {
     #[cfg(not(windows))]
     fn notify(&self) {
+        self.wall_time_registrations.notify_remote_config(self.pid);
         unsafe { libc::kill(self.pid, libc::SIGVTALRM) };
     }
 
