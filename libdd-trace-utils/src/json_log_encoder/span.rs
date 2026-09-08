@@ -43,7 +43,7 @@ fn serialize_ascii_hex<S: Serializer>(serializer: S, buf: &[u8]) -> Result<S::Ok
 }
 
 /// A `u64` id rendered as a 16-char zero-padded lowercase hex JSON string.
-struct HexU64(u64);
+pub(super) struct HexU64(pub(super) u64);
 
 impl Serialize for HexU64 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -55,7 +55,7 @@ impl Serialize for HexU64 {
 
 /// A 128-bit trace id rendered as hex. When the high 64 bits are zero it is
 /// emitted as 16 hex chars (the low 64 bits); otherwise as the full 32 chars.
-struct HexTraceId(u128);
+pub(super) struct HexTraceId(pub(super) u128);
 
 impl Serialize for HexTraceId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
