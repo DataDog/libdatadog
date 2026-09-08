@@ -2959,6 +2959,7 @@ dependencies = [
 name = "libdd-data-pipeline-core"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "futures",
  "http 1.1.0",
@@ -2966,6 +2967,7 @@ dependencies = [
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
+ "libdd-trace-stats",
  "libdd-trace-utils",
  "serde_json",
  "thiserror 2.0.17",
