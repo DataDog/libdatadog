@@ -47,3 +47,11 @@ httpmock.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 tokio = { version = "1.23", features = ["rt", "macros", "io-util", "net"] }
 tempfile.workspace = true
+
+[package.metadata.semver-level]
+# scripts/semver-level.sh diffs the public API under several feature sets. Its
+# "explicit" set is the empty feature list, which this crate rejects outright:
+# lib.rs raises `compile_error!` unless a backend is selected. Point it at the
+# minimal configuration that does build — the same hyper-backend combination
+# AGENTS.md requires to be exercised independently.
+explicit-features = ["https", "hyper-backend"]
