@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
+use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::Span, TraceData};
 
 use aggregation::StatsBucket;
 
@@ -22,6 +23,10 @@ use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 pub use stat_span::{ChunkSpanView, StatSpan};
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+
+/// Span kinds that are eligible for stats computation without Agent configuration.
+pub const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
+    ["client", "server", "producer", "consumer"];
 
 /// Deduplicate, sort alphabetically, and cap `keys` using [`ADDITIONAL_METRIC_TAGS_MAX_KEYS`].
 /// Excess keys are dropped and logged as a one time warning.
@@ -359,6 +364,20 @@ impl SpanConcentrator {
             span.is_error(),
             span.has_top_level(),
         );
+    }
+
+    /// Compute top-level spans when needed and add one v0.4 trace to the concentrator.
+    pub fn add_trace<T: TraceData>(
+        &mut self,
+        trace: &mut [Span<T>],
+        client_computed_top_level: bool,
+    ) {
+        if !client_computed_top_level {
+            compute_top_level_span(trace);
+        }
+        for span in trace {
+            self.add_span(span);
+        }
     }
 
     #[cfg(feature = "stats-obfuscation")]

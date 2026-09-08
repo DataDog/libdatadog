@@ -10,11 +10,13 @@ use std::{
 };
 
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
+#[cfg(feature = "worker-exporter")]
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt as _;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
+#[cfg(feature = "worker-exporter")]
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -126,6 +128,98 @@ impl From<TracerMetadata> for StatsMetadata {
     }
 }
 
+/// Agentless stats exporter for runtimes that provide their own flush triggers.
+#[derive(Debug)]
+pub struct AgentlessStatsExporter<Cap: HttpClientCapability + SleepCapability> {
+    concentrator: Mutex<SpanConcentrator>,
+    target: AgentlessStatsTarget,
+    meta: StatsMetadata,
+    sequence_id: AtomicU64,
+    capabilities: Cap,
+}
+
+impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
+    /// Create an agentless stats exporter with client-side resource obfuscation.
+    #[cfg(feature = "stats-obfuscation")]
+    pub fn new(
+        bucket_size: time::Duration,
+        meta: StatsMetadata,
+        target: AgentlessStatsTarget,
+        capabilities: Cap,
+        peer_tags: Vec<String>,
+        additional_metric_tag_keys: Vec<String>,
+    ) -> Self {
+        let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+            .map(String::from)
+            .to_vec();
+        let obfuscation_config = Some(Arc::new(arc_swap::ArcSwap::from_pointee(
+            crate::span_concentrator::StatsComputationObfuscationConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        )));
+        Self {
+            concentrator: Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                web_time::SystemTime::now(),
+                span_kinds,
+                peer_tags,
+                None,
+                additional_metric_tag_keys,
+                obfuscation_config,
+            )),
+            target,
+            meta,
+            sequence_id: AtomicU64::new(0),
+            capabilities,
+        }
+    }
+
+    /// Add decoded v0.4 traces to the stats concentrator.
+    pub fn add_traces<T: libdd_trace_utils::span::TraceData>(
+        &self,
+        traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
+        client_computed_top_level: bool,
+    ) {
+        let mut concentrator = self.concentrator.lock_or_panic();
+        for trace in traces {
+            concentrator.add_trace(trace, client_computed_top_level);
+        }
+    }
+
+    /// Flush and send stats. Returns `false` when no buckets are due.
+    pub async fn send(&self, force: bool) -> anyhow::Result<bool> {
+        let flush = self.concentrator.lock_or_panic().flush_buckets(force);
+        let futures = FuturesUnordered::new();
+        if !flush.obfuscated_buckets.is_empty() {
+            futures.push(send_agentless_payloads(
+                &self.capabilities,
+                &self.meta,
+                &self.target,
+                &self.sequence_id,
+                flush.obfuscated_buckets,
+            ));
+        }
+        if !flush.unobfuscated_buckets.is_empty() {
+            futures.push(send_agentless_payloads(
+                &self.capabilities,
+                &self.meta,
+                &self.target,
+                &self.sequence_id,
+                flush.unobfuscated_buckets,
+            ));
+        }
+
+        let sent = !futures.is_empty();
+        futures
+            .collect::<Vec<anyhow::Result<()>>>()
+            .await
+            .into_iter()
+            .collect::<anyhow::Result<()>>()?;
+        Ok(sent)
+    }
+}
+
 /// An exporter that concentrates and sends stats to the agent.
 ///
 /// `Cap` is the capabilities bundle (HTTP + sleep). Leaf crates pin it to a
@@ -135,6 +229,7 @@ pub struct StatsExporter<
     Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     Con: FlushableConcentrator = SpanConcentrator,
 > {
+    #[cfg(feature = "worker-exporter")]
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
     destination: StatsDestination,
@@ -241,6 +336,8 @@ impl<
         >,
         #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     ) -> Self {
+        #[cfg(not(feature = "worker-exporter"))]
+        let _ = flush_interval;
         #[cfg(feature = "telemetry")]
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
@@ -253,6 +350,7 @@ impl<
             (handle, key)
         });
         Self {
+            #[cfg(feature = "worker-exporter")]
             flush_interval,
             concentrator,
             destination,
@@ -347,72 +445,44 @@ impl<
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
     ) -> anyhow::Result<()> {
-        let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
-        let split = groups.len() > 1;
-        // All fragments of one flush share a single sequence id, as the Agent does.
-        let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
-        let mut errors = Vec::new();
-        for group in groups {
-            if let Err(e) = self
-                .send_single_payload(group, obfuscated, split, sequence)
+        match &self.destination {
+            StatsDestination::Agentless(target) => {
+                send_agentless_payloads(
+                    &self.capabilities,
+                    &self.meta,
+                    target,
+                    &self.sequence_id,
+                    buckets,
+                )
                 .await
-            {
-                errors.push(e);
             }
-        }
-        if let Some(last_err) = errors.pop() {
-            if !errors.is_empty() {
-                struct AdditionalErrors(Vec<anyhow::Error>);
-                impl std::fmt::Display for AdditionalErrors {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        writeln!(f, "with {} additional errors:", self.0.len())?;
-                        for e in &self.0 {
-                            writeln!(f, "{e}")?;
-                        }
-                        Ok(())
+            StatsDestination::Agent { endpoint } => {
+                let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+                let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+                let mut errors = Vec::new();
+                for group in groups {
+                    if let Err(error) = self
+                        .send_agent_payload(endpoint.clone(), group, obfuscated, sequence)
+                        .await
+                    {
+                        errors.push(error);
                     }
                 }
-                return Err(last_err.context(AdditionalErrors(errors)));
+                payload_errors(errors)
             }
-            return Err(last_err);
         }
-        Ok(())
     }
 
     /// Encode a single (already split) group of buckets into a stats payload and send it.
-    async fn send_single_payload(
+    async fn send_agent_payload(
         &self,
+        endpoint: Endpoint,
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
-        split: bool,
         sequence: u64,
     ) -> anyhow::Result<()> {
-        let request = match &self.destination {
-            StatsDestination::Agent { endpoint } => {
-                self.build_agent_request(endpoint.clone(), sequence, buckets, obfuscated)?
-            }
-            StatsDestination::Agentless(target) => {
-                build_agentless_request(&self.meta, sequence, buckets, target, split)?
-            }
-        };
-
-        let result = send_with_retry(
-            &self.capabilities,
-            &request.endpoint,
-            request.body,
-            &request.headers,
-            &request.retry,
-            request.compression,
-        )
-        .await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                error!(?err, "Error with the StatsExporter when sending stats");
-                anyhow::bail!("Failed to send stats: {err}");
-            }
-        }
+        let request = self.build_agent_request(endpoint, sequence, buckets, obfuscated)?;
+        send_stats_request(&self.capabilities, request).await
     }
 
     /// Build the request for the Agent `/v0.6/stats` destination: a
@@ -489,6 +559,14 @@ fn build_agentless_request(
     // endpoint (`Endpoint::api_key`), so only the payload-specific headers are added here.
     let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
     headers.insert(
+        http::HeaderName::from_static("datadog-client-computed-stats"),
+        http::HeaderValue::from_static("true"),
+    );
+    headers.insert(
+        http::HeaderName::from_static("datadog-client-computed-top-level"),
+        http::HeaderValue::from_static("true"),
+    );
+    headers.insert(
         http::header::CONTENT_TYPE,
         libdd_common::header::APPLICATION_MSGPACK,
     );
@@ -512,8 +590,75 @@ fn build_agentless_request(
     })
 }
 
+async fn send_agentless_payloads<Cap: HttpClientCapability + SleepCapability>(
+    capabilities: &Cap,
+    meta: &StatsMetadata,
+    target: &AgentlessStatsTarget,
+    sequence_id: &AtomicU64,
+    buckets: Vec<pb::ClientStatsBucket>,
+) -> anyhow::Result<()> {
+    let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+    let split = groups.len() > 1;
+    let sequence = sequence_id.fetch_add(1, Ordering::Relaxed);
+    let mut errors = Vec::new();
+    for group in groups {
+        let result = match build_agentless_request(meta, sequence, group, target, split) {
+            Ok(request) => send_stats_request(capabilities, request).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    payload_errors(errors)
+}
+
+async fn send_stats_request<Cap: HttpClientCapability + SleepCapability>(
+    capabilities: &Cap,
+    request: StatsRequest,
+) -> anyhow::Result<()> {
+    match send_with_retry(
+        capabilities,
+        &request.endpoint,
+        request.body,
+        &request.headers,
+        &request.retry,
+        request.compression,
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            error!(?error, "Error with the StatsExporter when sending stats");
+            anyhow::bail!("Failed to send stats: {error}");
+        }
+    }
+}
+
+fn payload_errors(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
+    let Some(last_error) = errors.pop() else {
+        return Ok(());
+    };
+    if errors.is_empty() {
+        return Err(last_error);
+    }
+
+    struct AdditionalErrors(Vec<anyhow::Error>);
+    impl std::fmt::Display for AdditionalErrors {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            writeln!(formatter, "with {} additional errors:", self.0.len())?;
+            for error in &self.0 {
+                writeln!(formatter, "{error}")?;
+            }
+            Ok(())
+        }
+    }
+    Err(last_error.context(AdditionalErrors(errors)))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg(feature = "worker-exporter")]
 impl<
         Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
         Con: FlushableConcentrator + Send + Debug,
@@ -581,6 +726,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
+    #[cfg(feature = "worker-exporter")]
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::{poll_for_mock_hit, poll_for_mock_hits};
@@ -841,6 +987,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_run() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
@@ -887,6 +1034,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_worker_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");

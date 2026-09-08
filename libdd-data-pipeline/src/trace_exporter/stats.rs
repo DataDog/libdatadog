@@ -18,6 +18,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+pub(crate) use libdd_trace_stats::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
@@ -31,8 +32,6 @@ use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
 use web_time::SystemTime;
 
-pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
-    ["client", "server", "producer", "consumer"];
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// The maximum obfuscation version this tracer supports.
@@ -308,13 +307,13 @@ pub(crate) async fn handle_stats_enabled(
 /// Will panic if another thread panicked while holding the lock on `stats_concentrator`
 fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
+    traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
+    client_computed_top_level: bool,
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
-    let spans = traces.iter().flat_map(|trace| trace.iter());
-    for span in spans {
-        stats_concentrator.add_span(span);
+    for trace in traces {
+        stats_concentrator.add_trace(trace, client_computed_top_level);
     }
 }
 
@@ -348,12 +347,7 @@ pub(crate) fn process_traces_for_stats<
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
         let _ = dropped_by_trace_filter;
 
-        if !client_computed_top_level {
-            for chunk in traces.iter_mut() {
-                libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-            }
-        }
-        add_spans_to_stats(stats_concentrator, traces);
+        add_spans_to_stats(stats_concentrator, traces, client_computed_top_level);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
         let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
