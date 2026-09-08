@@ -26,7 +26,8 @@ use thread_local::ThreadLocal;
 fn drop_policy() -> bool {
     const PCT_OF_SPANS_RETURNED_DROPPED: f64 = 0.1;
     thread_local! {
-        static RNG: RefCell<rand::rngs::SmallRng> = RefCell::new(rand::rngs::SmallRng::from_entropy());
+        // https://xkcd.com/221/
+        static RNG: RefCell<rand::rngs::SmallRng> = RefCell::new(rand::rngs::SmallRng::from_seed([4; 32]));
     }
     RNG.with_borrow_mut(|r| r.gen_bool(PCT_OF_SPANS_RETURNED_DROPPED))
 }
@@ -145,6 +146,8 @@ impl<T: TraceData> SpanPool<T> {
     /// New pool holding at most `capacity` recycled spans.
     pub fn with_capacity(capacity: usize) -> Self {
         let (queue, receiver) = crossbeam_channel::unbounded();
+        // Capacity can never be smaller than a chunk
+        let capacity = capacity.max(MAX_CHUNK_SIZE);
         Self {
             inner: Arc::new(SpanPoolInner {
                 queue,
@@ -338,7 +341,7 @@ impl<T: TraceData> Drop for PooledChunks<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, VecMap};
     use libdd_tinybytes::BytesString;
 
     fn span(name: &str) -> SpanBytes {
@@ -356,13 +359,26 @@ mod tests {
             // If we drop 10% of spans, the likelyhood all spans are dropped is 1/10**100
             // which is basically never happening if we ran this test until the heat death of
             // this universe
-            let chunks = pool.wrap_chunks(vec![vec![span("a"); 100]]);
+            let chunks = pool.wrap_chunks(vec![
+                vec![SpanBytes {
+                    name: "a".into(),
+                    meta: VecMap::with_capacity(100),
+                    ..Default::default()
+                }];
+                100
+            ]);
             drop(chunks);
         }
+        let mut retained_capacity = false;
         for _ in 0..100 {
             let s = pool.get_span();
             assert_eq!(s.name, BytesString::default());
+            retained_capacity = s.meta.capacity() > 0 || retained_capacity;
         }
+        assert!(
+            retained_capacity,
+            "no span actually retained capacity on the span meta collection"
+        );
     }
 
     #[test]
