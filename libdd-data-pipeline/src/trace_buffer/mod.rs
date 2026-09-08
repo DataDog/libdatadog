@@ -1552,7 +1552,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_discard_drops_buffered_chunk() {
+    fn test_worker_reset_drops_buffered_chunk() {
         let (sender, mut worker) = TraceBuffer::new(
             TraceBufferConfig::default().flush_threshold_bytes(2),
             Box::new(|_| {}),
@@ -1565,7 +1565,7 @@ mod tests {
         sender.send_chunk(vec![()]).unwrap();
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 1);
 
-        worker.discard();
+        worker.reset();
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 0);
     }
 }

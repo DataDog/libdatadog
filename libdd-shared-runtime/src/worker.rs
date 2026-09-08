@@ -40,14 +40,6 @@ pub trait Worker: std::fmt::Debug + MaybeSend {
 
     /// Hook called when the app is shutting down. Can be used to flush remaining data.
     async fn shutdown(&mut self) {}
-
-    /// Discard buffered data without performing the normal shutdown flush.
-    ///
-    /// By default, discard has the same state-clearing behavior as [`Worker::reset`]. Workers
-    /// that need additional discard-only cleanup can override this method.
-    fn discard(&mut self) {
-        self.reset();
-    }
 }
 
 // Blanket implementation for boxed trait objects
@@ -72,9 +64,5 @@ impl Worker for Box<dyn Worker + Sync> {
 
     async fn shutdown(&mut self) {
         (**self).shutdown().await
-    }
-
-    fn discard(&mut self) {
-        (**self).discard()
     }
 }

@@ -258,7 +258,7 @@ impl WorkerHandle {
         Ok(())
     }
 
-    /// Stop the worker and discard its buffered data without executing shutdown flushing.
+    /// Stop the worker and clear restartable state without executing shutdown flushing.
     ///
     /// # Errors
     /// Returns an error if the worker has already been stopped.
@@ -279,7 +279,7 @@ impl WorkerHandle {
             worker
         };
         worker.pause().await?;
-        worker.discard();
+        worker.reset();
         Ok(())
     }
 }
