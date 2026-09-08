@@ -97,7 +97,7 @@ tokio = { version = "1.23", features = [
 duplicate = "2.0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-h2 = "0.4"
+h2 = ">=0.4.19, <0.5"
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
