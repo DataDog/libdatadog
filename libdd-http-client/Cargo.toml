@@ -36,7 +36,7 @@ fastrand = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "time"] }
 reqwest = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
-libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false, optional = true }
+libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy"] }
 http-body-util = { workspace = true, optional = true }
