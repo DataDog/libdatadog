@@ -118,7 +118,7 @@ http-body-util = { version = "0.1", default-features = false }
 # gated behind `cookies`. Keep it as a baseline at the workspace level.
 httpmock = { version = "0.8.0-alpha.1", default-features = false, features = ["cookies"] }
 httparse = { version = "1.9", default-features = false }
-hyper = { version = "1.6", default-features = false }
+hyper = { version = "1.11", default-features = false }
 hyper-util = { version = "0.1.10", default-features = false }
 io-lifetimes = { version = "1.0", default-features = false }
 # libc's only default feature is `std`, which is needed by virtually every
