@@ -1,6 +1,6 @@
 [package]
 name = "libdd-ipc-macros"
-version = "1.0.0"
+version = "1.0.1"
 description = "IPC macros for libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
