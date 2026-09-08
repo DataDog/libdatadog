@@ -245,6 +245,20 @@ pub fn shutdown_session(transport: &mut SidecarTransport) -> io::Result<()> {
     Ok(())
 }
 
+pub fn register_wall_time_profiler(
+    transport: &mut SidecarTransport,
+    handle: ShmHandle,
+) -> io::Result<()> {
+    transport.with_retry(move |sender| sender.register_wall_time_profiler(handle.clone()))
+}
+
+pub fn unregister_wall_time_profiler(
+    transport: &mut SidecarTransport,
+    pid: libc::pid_t,
+) -> io::Result<()> {
+    transport.with_retry(|sender| sender.unregister_wall_time_profiler(pid))
+}
+
 /// Enqueues a list of actions to be performed.
 ///
 /// Uses `with_retry`: if the connection is broken the transport reconnects and the actions

@@ -350,6 +350,27 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    pub fn register_wall_time_profiler(&mut self, handle: ShmHandle) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        match self
+            .channel
+            .call_register_wall_time_profiler(handle)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
+        {
+            true => Ok(()),
+            false => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sidecar rejected wall-time profiler shared region",
+            )),
+        }
+    }
+
+    pub fn unregister_wall_time_profiler(&mut self, pid: libc::pid_t) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel
+            .send_request_blocking(&SidecarInterfaceRequest::UnregisterWallTimeProfiler { pid })
+    }
+
     /// Enqueue telemetry actions.
     ///
     /// When `outstanding > max_outstanding / 2`, 90% of calls are dropped to shed load.

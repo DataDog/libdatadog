@@ -31,6 +31,15 @@ use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryAct
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use libc::c_char;
 use libdd_common::tag::Tag;
+
+#[repr(C)]
+pub struct WallTimeShmRegion {
+    pub pid: libc::pid_t,
+    pub wall_sample_pending: u32,
+    pub config_reread_pending: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<WallTimeShmRegion>() == 12);
 use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
@@ -174,6 +183,95 @@ pub extern "C" fn ddog_unmap_shm(mapped: Box<MappedMem<ShmHandle>>) -> Box<ShmHa
 
 #[no_mangle]
 pub extern "C" fn ddog_drop_anon_shm_handle(_: Box<ShmHandle>) {}
+
+#[no_mangle]
+pub extern "C" fn ddog_clone_anon_shm_handle(handle: &ShmHandle) -> Box<ShmHandle> {
+    Box::new(handle.clone())
+}
+
+/// Initialize a worker-owned wall-time profiling notification region.
+///
+/// # Safety
+///
+/// `pointer` must be writable, properly aligned, and valid for at least `size` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_wall_time_profiler_init_region(
+    pointer: *mut WallTimeShmRegion,
+    size: usize,
+    pid: libc::pid_t,
+) -> bool {
+    if pointer.is_null() || size < std::mem::size_of::<WallTimeShmRegion>() {
+        return false;
+    }
+    pointer.write(WallTimeShmRegion {
+        pid,
+        wall_sample_pending: 0,
+        config_reread_pending: 0,
+    });
+    true
+}
+
+/// Consume the wall-time pending bit with acquire ordering.
+///
+/// # Safety
+///
+/// `pointer` must be null or point to a live, properly aligned shared region.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_wall_time_profiler_consume_wall(
+    pointer: *mut WallTimeShmRegion,
+) -> bool {
+    pointer.as_ref().is_some_and(|region| {
+        let pending: &std::sync::atomic::AtomicU32 =
+            &*std::ptr::addr_of!(region.wall_sample_pending).cast();
+        pending.swap(0, std::sync::atomic::Ordering::Acquire) != 0
+    })
+}
+
+/// Publish the wall-time pending bit with release ordering.
+///
+/// # Safety
+///
+/// `pointer` must be null or point to a live, properly aligned shared region.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_wall_time_profiler_mark_wall(pointer: *mut WallTimeShmRegion) {
+    if let Some(region) = pointer.as_ref() {
+        let pending: &std::sync::atomic::AtomicU32 =
+            &*std::ptr::addr_of!(region.wall_sample_pending).cast();
+        pending.store(1, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Consume the remote-config pending bit with acquire ordering.
+///
+/// # Safety
+///
+/// `pointer` must be null or point to a live, properly aligned shared region.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_wall_time_profiler_consume_remote_config(
+    pointer: *mut WallTimeShmRegion,
+) -> bool {
+    pointer.as_ref().is_some_and(|region| {
+        let pending: &std::sync::atomic::AtomicU32 =
+            &*std::ptr::addr_of!(region.config_reread_pending).cast();
+        pending.swap(0, std::sync::atomic::Ordering::Acquire) != 0
+    })
+}
+
+/// Publish the remote-config pending bit with release ordering.
+///
+/// # Safety
+///
+/// `pointer` must be null or point to a live, properly aligned shared region.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_wall_time_profiler_mark_remote_config(
+    pointer: *mut WallTimeShmRegion,
+) {
+    if let Some(region) = pointer.as_ref() {
+        let pending: &std::sync::atomic::AtomicU32 =
+            &*std::ptr::addr_of!(region.config_reread_pending).cast();
+        pending.store(1, std::sync::atomic::Ordering::Release);
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn ddog_create_agent_remote_config_writer(
@@ -743,6 +841,37 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         is_fork,
     ));
 
+    MaybeError::None
+}
+
+/// Register the worker's shared notification region with the sidecar.
+///
+/// # Safety
+///
+/// `transport` and `handle` must be live objects created by this library.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_register_wall_time_profiler(
+    transport: &mut Box<SidecarTransport>,
+    handle: &ShmHandle,
+) -> MaybeError {
+    try_c!(blocking::register_wall_time_profiler(
+        transport,
+        handle.clone()
+    ));
+    MaybeError::None
+}
+
+/// Unregister a worker's shared notification region from the sidecar.
+///
+/// # Safety
+///
+/// `transport` must be a live object created by this library.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_sidecar_unregister_wall_time_profiler(
+    transport: &mut Box<SidecarTransport>,
+    pid: libc::pid_t,
+) -> MaybeError {
+    try_c!(blocking::unregister_wall_time_profiler(transport, pid));
     MaybeError::None
 }
 

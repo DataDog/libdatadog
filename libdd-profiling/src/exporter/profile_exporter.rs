@@ -131,7 +131,13 @@ impl ProfileExporter {
         // Precompute the base tags string (includes configured tags + Azure App Services tags)
         let base_tags_string: String = tags.iter().flat_map(|tag| [tag.as_ref(), ","]).collect();
 
-        let (builder, request_url) = endpoint.to_reqwest_client_builder()?;
+        let is_file_endpoint = endpoint.url.scheme_str() == Some("file");
+        let (builder, mut request_url) = endpoint.to_reqwest_client_builder()?;
+        if is_file_endpoint {
+            // The file endpoint path selects where the dump server writes the
+            // captured request. It is not the HTTP request target.
+            request_url.push_str("profiling/v1/input");
+        }
         let builder = builder.tls_backend_preconfigured(tls_config.0);
 
         Ok(Self {
