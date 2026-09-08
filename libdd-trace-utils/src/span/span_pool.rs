@@ -27,7 +27,7 @@ fn drop_policy() -> bool {
     const PCT_OF_SPANS_RETURNED_DROPPED: f64 = 0.1;
     thread_local! {
         // https://xkcd.com/221/
-        static RNG: RefCell<rand::rngs::SmallRng> = RefCell::new(rand::rngs::SmallRng::from_seed([4; 32]));
+        static RNG: RefCell<rand::rngs::SmallRng> = RefCell::new(rand::rngs::SmallRng::seed_from_u64(4));
     }
     RNG.with_borrow_mut(|r| r.gen_bool(PCT_OF_SPANS_RETURNED_DROPPED))
 }
