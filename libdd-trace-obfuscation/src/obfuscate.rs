@@ -43,9 +43,6 @@ const TAG_SQLQUERY: &str = "sql.query";
 const TAG_HTTPURL: &str = "http.url";
 /// `TAG_DBMS` represents a DBMS tag
 const TAG_DBMS: &str = "db.type";
-/// `TAG_CARD_NUMBER` represents a card number tag
-const TAG_CARD_NUMBER: &str = "card.number";
-
 /// Obfuscate a resource name for client-side stats (Version 1).
 ///
 /// Applies the same resource transformations as `obfuscate_pb_span`, but only for span types whose
@@ -84,9 +81,14 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
         obfuscate_span_event(span_event, config);
     }
 
-    if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
-        if config.credit_cards.enabled && is_card_number(&credit_card, config.credit_cards.luhn) {
-            *credit_card = "?".to_string();
+    if config.credit_cards.enabled {
+        for (key, value) in &mut span.meta {
+            if !should_obfuscate_cc_key(key, config) {
+                continue;
+            }
+            if is_card_number(value.as_str(), config.credit_cards.luhn) {
+                *value = "?".to_string();
+            }
         }
     }
     match span.r#type.as_str() {
@@ -246,8 +248,11 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
     }
 
     if config.credit_cards.enabled {
-        if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
-            apply(credit_card, |v| {
+        for (key, value) in &mut span.meta {
+            if !should_obfuscate_cc_key(as_str(key), config) {
+                continue;
+            }
+            apply(value, |v| {
                 obfuscate_card_number(v, config.credit_cards.luhn)
             });
         }
@@ -565,6 +570,46 @@ mod tests {
             "GEOADD key longitude latitude ?"
         );
     }
+
+    #[test]
+    fn obfuscate_credit_card_arbitrary_meta_key() {
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
+        span.meta.insert(
+            "some.custom.tag".to_string(),
+            "4111111111111111".to_string(),
+        );
+        let obf_config = obfuscation_config::ObfuscationConfig::default();
+        obfuscate_pb_span(&mut span, &obf_config);
+        assert_eq!(span.meta.get("some.custom.tag").unwrap(), "?");
+    }
+
+    #[test]
+    fn obfuscate_credit_card_keep_values_skipped() {
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
+        span.meta
+            .insert("protected.key".to_string(), "4111111111111111".to_string());
+        let obf_config = obfuscation_config::ObfuscationConfig {
+            credit_cards: obfuscation_config::CreditCardConfig {
+                enabled: true,
+                luhn: false,
+                keep_values: core::iter::once("protected.key".to_string()).collect(),
+            },
+            ..Default::default()
+        };
+        obfuscate_pb_span(&mut span, &obf_config);
+        assert_eq!(span.meta.get("protected.key").unwrap(), "4111111111111111");
+    }
+
+    #[test]
+    fn obfuscate_credit_card_skip_list_key_skipped() {
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
+        // "env" is in the built-in skip-list inside should_obfuscate_cc_key
+        span.meta
+            .insert("env".to_string(), "4111111111111111".to_string());
+        let obf_config = obfuscation_config::ObfuscationConfig::default();
+        obfuscate_pb_span(&mut span, &obf_config);
+        assert_eq!(span.meta.get("env").unwrap(), "4111111111111111");
+    }
 }
 
 #[cfg(test)]
@@ -732,6 +777,45 @@ mod v04_tests {
     }
 
     #[test]
+    fn obfuscate_credit_card_arbitrary_meta_key_v04() {
+        let mut span = test_span();
+        span.meta
+            .insert(bs("some.custom.tag"), bs("4111111111111111"));
+        let obf_config = ObfuscationConfig::default();
+        obfuscate_v04_span(&mut span, &obf_config);
+        assert_eq!(span.meta.get("some.custom.tag").unwrap().as_str(), "?");
+    }
+
+    #[test]
+    fn obfuscate_credit_card_keep_values_skipped_v04() {
+        let mut span = test_span();
+        span.meta
+            .insert(bs("protected.key"), bs("4111111111111111"));
+        let obf_config = ObfuscationConfig {
+            credit_cards: CreditCardConfig {
+                enabled: true,
+                luhn: false,
+                keep_values: core::iter::once("protected.key".to_string()).collect(),
+            },
+            ..Default::default()
+        };
+        obfuscate_v04_span(&mut span, &obf_config);
+        assert_eq!(
+            span.meta.get("protected.key").unwrap().as_str(),
+            "4111111111111111"
+        );
+    }
+
+    #[test]
+    fn obfuscate_credit_card_skip_list_key_skipped_v04() {
+        let mut span = test_span();
+        span.meta.insert(bs("env"), bs("4111111111111111"));
+        let obf_config = ObfuscationConfig::default();
+        obfuscate_v04_span(&mut span, &obf_config);
+        assert_eq!(span.meta.get("env").unwrap().as_str(), "4111111111111111");
+    }
+
+    #[test]
     fn obfuscate_span_event_credit_cards() {
         let mut span = test_span();
         let mut attributes = HashMap::new();
@@ -765,6 +849,39 @@ mod v04_tests {
         assert!(matches!(
             attrs.get("cc_array"),
             Some(AttributeAnyValue::Array(v)) if matches!(&v[0], AttributeArrayValue::String(s) if s.as_str() == "?")
+        ));
+    }
+
+    #[test]
+    fn obfuscate_span_event_credit_card_double_attr() {
+        // A double-valued span event attribute whose stringified form looks like
+        // a card number should be obfuscated to String("?").
+        // 4111111111111111 as f64 is 4.111111111111111e15, which stringifies to
+        // "4111111111111111" — a valid card-number candidate.
+        let mut span = test_span();
+        let mut attributes = HashMap::new();
+        attributes.insert(
+            bs("cc_double"),
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4_111_111_111_111_111.0)),
+        );
+        span.span_events.push(SpanEventBytes {
+            time_unix_nano: 0,
+            name: bs("event"),
+            attributes,
+        });
+        let obf_config = ObfuscationConfig {
+            credit_cards: CreditCardConfig {
+                enabled: true,
+                luhn: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        obfuscate_v04_span(&mut span, &obf_config);
+        let attrs = &span.span_events[0].attributes;
+        assert!(matches!(
+            attrs.get("cc_double"),
+            Some(AttributeAnyValue::SingleValue(AttributeArrayValue::String(s))) if s.as_str() == "?"
         ));
     }
 }
