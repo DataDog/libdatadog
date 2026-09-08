@@ -19,6 +19,6 @@ bench = false
 http = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2"
 futures-channel = { version = "0.3", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
