@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-stats"
-version = "8.0.0"
+version = "9.0.0"
 description = "This crate provides utilities to compute stats from Datadog traces."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
@@ -12,15 +12,15 @@ autobenches = false
 [dependencies]
 arc-swap.workspace = true
 anyhow.workspace = true
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
-libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
+libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.1.1", path = "../libdd-ddsketch" }
-libdd-dogstatsd-client = { version = "5.0.0", path = "../libdd-dogstatsd-client", default-features = false, optional = true }
-libdd-shared-runtime = { version = "3.0.0", path = "../libdd-shared-runtime", default-features = false }
-libdd-telemetry = { version = "7.0.0", path = "../libdd-telemetry", default-features = false, optional = true }
+libdd-dogstatsd-client = { version = "6.0.0", path = "../libdd-dogstatsd-client", default-features = false, optional = true }
+libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-telemetry = { version = "8.0.0", path = "../libdd-telemetry", default-features = false, optional = true }
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
-libdd-trace-obfuscation = { version = "7.0.0", path = "../libdd-trace-obfuscation", default-features = false }
-libdd-trace-utils = { version = "11.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-trace-obfuscation = { version = "8.0.0", path = "../libdd-trace-obfuscation", default-features = false }
+libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils", default-features = false }
 hashbrown = { version = "0.15" }
 http = { workspace = true, features = ["std"] }
 rmp-serde = "1.3.0"
@@ -34,7 +34,7 @@ web-time = "1"
 futures = { workspace = true, features = ["alloc"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "4.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false
