@@ -2,6 +2,19 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v4.0.0..libdd-remote-config-v5.0.0) - 2026-09-08
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Refresh fetcher identity ([#2469](https://github.com/datadog/libdatadog/issues/2469)) - ([e1bf271](https://github.com/datadog/libdatadog/commit/e1bf271d8757c309e9ca7dac3bed0e1ed977efe4))
+- Reuse injected sleep capability ([#2429](https://github.com/datadog/libdatadog/issues/2429)) - ([ad3606f](https://github.com/datadog/libdatadog/commit/ad3606f700b77cc19387b3cfc14f0751b5689f9b))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v3.0.0..libdd-remote-config-v4.0.0) - 2026-08-25
 
 ### Added
