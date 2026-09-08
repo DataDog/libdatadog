@@ -257,6 +257,31 @@ impl WorkerHandle {
         worker.shutdown().await;
         Ok(())
     }
+
+    /// Stop the worker and discard its buffered data without executing shutdown flushing.
+    ///
+    /// # Errors
+    /// Returns an error if the worker has already been stopped.
+    ///
+    /// # Cancel safety
+    /// This function is *NOT* cancel safe and shouldn't be called in [Worker::trigger].
+    /// If cancelled, the discarded worker can end up in an invalid state.
+    pub async fn discard(self) -> Result<(), WorkerHandleError> {
+        let mut worker = {
+            let mut workers_lock = self.workers.lock_or_panic();
+            let Some(position) = workers_lock
+                .iter()
+                .position(|entry| entry.id == self.worker_id)
+            else {
+                return Err(WorkerHandleError::AlreadyStopped);
+            };
+            let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
+            worker
+        };
+        worker.pause().await?;
+        worker.discard();
+        Ok(())
+    }
 }
 
 /// Errors that can occur when using a `SharedRuntime` implementation.

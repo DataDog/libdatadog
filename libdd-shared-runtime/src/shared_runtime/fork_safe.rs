@@ -331,6 +331,52 @@ mod tests {
     }
 
     #[test]
+    fn test_worker_handle_discard_does_not_shutdown() {
+        #[derive(Debug)]
+        struct DiscardWorker(Sender<i32>);
+
+        #[async_trait]
+        impl Worker for DiscardWorker {
+            async fn run(&mut self) {}
+
+            async fn trigger(&mut self) {
+                std::future::pending::<()>().await;
+            }
+
+            fn reset(&mut self) {
+                let _ = self.0.send(-2);
+            }
+
+            async fn shutdown(&mut self) {
+                let _ = self.0.send(-1);
+            }
+        }
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (sender, receiver) = channel();
+
+        let handle = shared_runtime
+            .spawn_worker(DiscardWorker(sender), true)
+            .unwrap();
+
+        rt.block_on(async {
+            assert!(handle.discard().await.is_ok());
+        });
+
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("discard did not run"),
+            -2
+        );
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "discard must not run shutdown"
+        );
+    }
+    #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();

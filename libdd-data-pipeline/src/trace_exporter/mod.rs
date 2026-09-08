@@ -321,6 +321,16 @@ impl<
         runtime.block_on(self.shutdown_async(timeout))?
     }
 
+    /// Discard buffered worker data without sending it to any endpoint.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn shutdown_without_flush(&mut self) -> Result<(), TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
+        let runtime = self.shared_runtime.clone();
+        runtime.block_on(self.shutdown_without_flush_async())?
+    }
+
     /// Async version of [`Self::shutdown`].
     ///
     /// # Errors
@@ -342,6 +352,14 @@ impl<
                 ShutdownError::TimedOut(timeout),
             )),
         }
+    }
+
+    /// Async version of [`Self::shutdown_without_flush`].
+    ///
+    /// # Cancel safety
+    /// This function is *NOT* cancel safe. If cancelled, workers can be left in an invalid state.
+    pub async fn shutdown_without_flush_async(&mut self) -> Result<(), TraceExporterError> {
+        self.discard_workers().await
     }
 
     async fn shutdown_workers(self) {
@@ -373,6 +391,47 @@ impl<
                 error!("Worker failed to shutdown: {:?}", e);
             }
         }
+    }
+
+    async fn discard_workers(&self) -> Result<(), TraceExporterError> {
+        let mut handles: Vec<WorkerHandle> = Vec::new();
+
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.status.load()
+        {
+            handles.push(worker_handle.clone());
+        }
+
+        if let Some(info_fetcher) = &self.workers.info_fetcher {
+            handles.push(info_fetcher.clone());
+        }
+
+        if let Some(dogstatsd) = &self.workers.dogstatsd {
+            handles.push(dogstatsd.clone())
+        }
+
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = &self.workers.telemetry {
+            handles.push(telemetry.clone());
+        }
+
+        let mut futures: FuturesUnordered<_> = handles.into_iter().map(|h| h.discard()).collect();
+
+        let mut first_error = None;
+        while let Some(result) = futures.next().await {
+            if let Err(e) = result {
+                error!("Worker failed to discard: {:?}", e);
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+
+        first_error
+            .map(|err| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(err.to_string()))
+            })
+            .map_or(Ok(()), Err)
     }
 
     /// Send msgpack serialized traces to the agent.
@@ -2727,6 +2786,109 @@ mod single_threaded_tests {
 
         mock_traces.assert();
         mock_stats.assert();
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_shutdown_without_flush_discards_buffered_stats() {
+        // Clear the agent info cache to ensure test isolation
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path(V04_TRACES_ENDPOINT);
+            then.status(200).body("");
+        });
+
+        let mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path(STATS_ENDPOINT);
+            then.status(200).body("");
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
+                ));
+        });
+
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
+            .enable_stats(Duration::from_secs(10));
+        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let trace_chunk = vec![SpanBytes {
+            service: "test".into(),
+            name: "test".into(),
+            resource: "test".into(),
+            r#type: "test".into(),
+            duration: 10,
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
+
+        // Wait for the info fetcher so sending the trace starts stats computation.
+        while agent_info::get_agent_info().is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        // The mock returns an empty response body, which is reported as an agent response error
+        // after the trace has still been processed for client-side stats.
+        assert!(exporter.send(data.as_ref()).is_err());
+
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        exporter.shutdown_without_flush().unwrap();
+        runtime.shutdown(None).unwrap();
+
+        mock_traces.assert();
+        assert_eq!(
+            mock_stats.calls(),
+            0,
+            "discard must not flush buffered stats"
+        );
+    }
+
+    #[test]
+    fn test_shutdown_without_flush_reports_prior_runtime_shutdown() {
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder.set_shared_runtime(runtime.clone());
+        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        runtime.shutdown(None).unwrap();
+
+        assert!(matches!(
+            exporter.shutdown_without_flush(),
+            Err(TraceExporterError::Internal(
+                InternalErrorKind::InvalidWorkerState(_)
+            ))
+        ));
     }
 
     #[cfg_attr(miri, ignore)]

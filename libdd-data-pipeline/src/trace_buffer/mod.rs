@@ -958,7 +958,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, Worker};
 
     use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
@@ -1549,5 +1549,23 @@ mod tests {
 
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 2);
         rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    fn test_worker_discard_drops_buffered_chunk() {
+        let (sender, mut worker) = TraceBuffer::new(
+            TraceBufferConfig::default().flush_threshold_bytes(2),
+            Box::new(|_| {}),
+            Box::new(AssertExporter(
+                Box::new(|_| panic!("discard must not export buffered chunks")),
+                Arc::new(tokio::sync::Semaphore::new(0)),
+            )),
+        );
+
+        sender.send_chunk(vec![()]).unwrap();
+        assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 1);
+
+        worker.discard();
+        assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 0);
     }
 }

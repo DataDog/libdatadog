@@ -1554,8 +1554,8 @@ mod tests {
             assert!(event.0.attributes.is_empty());
 
             // Misaligned pointer
-            let buf = [0u8; 32];
-            let misaligned = buf.as_ptr().add(1).cast::<i64>();
+            let buf = [0i64; 3];
+            let misaligned = buf.as_ptr().cast::<u8>().add(1).cast::<i64>();
             assert!(!misaligned.is_aligned());
             let err = ddog_tracer_span_event_set_int_array(
                 Some(&mut event),

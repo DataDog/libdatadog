@@ -901,6 +901,42 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
 }
 
+/// Discards buffered data without sending it, then frees the TraceExporter instance.
+///
+/// This is intended for runtime identity refreshes. Unlike
+/// [`ddog_trace_exporter_free`], it does not execute the normal flush-capable shutdown path.
+///
+/// Returns `None` when every worker has been discarded and sets `*handle` to null. On an ordinary
+/// error, the exporter remains owned by `*handle` so the caller can retry. A caught panic sets
+/// `*handle` to null.
+///
+/// # Arguments
+///
+/// * handle - A non-null pointer to the TraceExporter handle. The pointee must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_free_without_flush(
+    handle: &mut *mut TraceExporter,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        {
+            let Some(exporter) = NonNull::new(*handle) else {
+                return gen_error!(ErrorCode::InvalidArgument);
+            };
+            let mut exporter = Box::from_raw(exporter.as_ptr());
+            *handle = std::ptr::null_mut();
+
+            match exporter.shutdown_without_flush() {
+                Ok(()) => None,
+                Err(err) => {
+                    *handle = Box::into_raw(exporter);
+                    Some(Box::new(ExporterError::from(err)))
+                }
+            }
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Send traces to the Datadog Agent.
 ///
 /// # Arguments
@@ -1347,6 +1383,28 @@ mod tests {
             assert_eq!(ret, None);
 
             ddog_trace_exporter_free(exporter);
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn exporter_free_without_flush_test() {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let cfg = config.assume_init();
+
+            let mut exporter: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let error = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut exporter).cast(),
+                Some(cfg.borrow()),
+            );
+            assert!(error.is_none());
+
+            let mut exporter = Box::into_raw(exporter.assume_init());
+            assert!(ddog_trace_exporter_free_without_flush(&mut exporter).is_none());
+            assert!(exporter.is_null());
             ddog_trace_exporter_config_free(cfg);
         }
     }

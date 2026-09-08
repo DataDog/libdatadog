@@ -203,6 +203,13 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
             worker.shutdown().await;
         }
     }
+
+    /// Discard the paused worker's buffered data without running shutdown logic.
+    pub fn discard(&mut self) {
+        if let PausableWorker::Paused { worker } = self {
+            worker.discard();
+        }
+    }
 }
 
 #[cfg(test)]
