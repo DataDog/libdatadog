@@ -132,6 +132,7 @@ impl BlockingRuntime for BasicRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_runtime::BlockOnTimeoutError;
     use async_trait::async_trait;
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
@@ -265,6 +266,68 @@ mod tests {
 
         // The outer runtime must still be usable after shutdown_async.
         rt.block_on(async { sleep(Duration::from_millis(10)).await });
+    }
+
+    #[test]
+    fn test_block_on_with_timeout_completes() {
+        let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
+
+        let value = shared_runtime
+            .block_on_with_timeout(async { 42 }, Duration::from_secs(1))
+            .expect("block_on_with_timeout should complete before the deadline");
+
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn test_block_on_with_timeout_times_out() {
+        let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
+
+        let err = shared_runtime
+            .block_on_with_timeout(
+                async { sleep(Duration::from_secs(60)).await },
+                Duration::from_millis(10),
+            )
+            .expect_err("block_on_with_timeout should time out before the sleep completes");
+
+        assert!(matches!(err, BlockOnTimeoutError::TimedOut(_)));
+    }
+
+    #[test]
+    fn test_block_on_with_timeout_errors_when_timers_disabled() {
+        // `from_handle` accepts any caller-provided runtime, including one built without
+        // `enable_time`. When Tokio polls a timer on such a runtime, it panics instead of
+        // returning an error. The default `block_on_with_timeout` must catch that panic and
+        // report the panic as `BlockOnTimeoutError::Io` instead of letting the panic escape.
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("failed to build a timerless runtime for this test"),
+        );
+        let shared_runtime = BasicRuntime::from_handle(rt);
+
+        let err = shared_runtime
+            .block_on_with_timeout(async { 42 }, Duration::from_secs(1))
+            .expect_err("block_on_with_timeout should error when timers are disabled");
+
+        assert!(matches!(err, BlockOnTimeoutError::Io(_)));
+    }
+
+    #[test]
+    fn test_block_on_with_timeout_errors_when_timers_disabled_multi_thread() {
+        let rt = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .build()
+                .expect("failed to build a timerless multi-thread runtime for this test"),
+        );
+        let shared_runtime = BasicRuntime::from_handle(rt);
+
+        let err = shared_runtime
+            .block_on_with_timeout(async { 42 }, Duration::from_secs(1))
+            .expect_err("block_on_with_timeout should error when timers are disabled");
+
+        assert!(matches!(err, BlockOnTimeoutError::Io(_)));
     }
 
     #[test]

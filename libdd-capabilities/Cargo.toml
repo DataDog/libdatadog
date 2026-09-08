@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-capabilities"
-version = "2.1.0"
+version = "3.0.0"
 description = "Portable capability traits for cross-platform libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
@@ -16,8 +16,8 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-http = "1"
-bytes = "1.11.1"
+http = { workspace = true, features = ["std"] }
+bytes = { workspace = true, features = ["std"] }
 anyhow = "1.0"
 thiserror = "1.0"
 futures-channel = { version = "0.3", default-features = false, features = ["std"] }

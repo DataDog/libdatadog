@@ -24,6 +24,40 @@ fn main() {
 
     // Make the built shared object path available at compile time for tests/tools.
     println!("cargo:rustc-env=PRELOAD_LOGGER_SO={}", so_path.display());
+
+    // --- trigger_assert static library (Linux only) ---
+    #[cfg(target_os = "linux")]
+    {
+        let assert_src = PathBuf::from("src/c/trigger_assert.c");
+        let assert_obj = out_dir.join("trigger_assert.o");
+        let assert_lib = out_dir.join("libtrigger_assert.a");
+
+        let status = Command::new("cc")
+            .args([
+                "-std=c11", "-fPIC", "-UNDEBUG", "-Wall", "-Wextra", "-c", "-o",
+            ])
+            .arg(&assert_obj)
+            .arg(&assert_src)
+            .status()
+            .expect("failed to compile trigger_assert.c");
+        if !status.success() {
+            panic!("compiling trigger_assert.c failed with status {status}");
+        }
+
+        let status = Command::new("ar")
+            .args(["rcs"])
+            .arg(&assert_lib)
+            .arg(&assert_obj)
+            .status()
+            .expect("failed to run ar");
+        if !status.success() {
+            panic!("creating libtrigger_assert.a failed with status {status}");
+        }
+
+        println!("cargo:rustc-link-search=native={}", out_dir.display());
+        println!("cargo:rustc-link-lib=static=trigger_assert");
+        println!("cargo:rerun-if-changed=src/c/trigger_assert.c");
+    }
 }
 
 #[cfg(not(unix))]

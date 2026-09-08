@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Config;
 use crate::log;
+use crate::service::ffe_flagevaluation_flusher::{
+    FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC, FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC,
+    FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC, FLAG_EVALUATION_REASON_CARDINALITY_CAP,
+    FLAG_EVALUATION_REASON_DEGRADED_CAP, FLAG_EVALUATION_REASON_PAYLOAD_LIMIT,
+};
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
@@ -34,6 +39,9 @@ struct MetricData<'a> {
     trace_api_bytes: ContextKey,
     trace_chunks_sent: ContextKey,
     trace_chunks_dropped: ContextKey,
+    flagevaluation_evaluations_dropped: ContextKey,
+    flagevaluation_evaluations_degraded: ContextKey,
+    flagevaluation_payload_splits: ContextKey,
 }
 impl MetricData<'_> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
@@ -45,6 +53,10 @@ impl MetricData<'_> {
 
     async fn collect_and_send(&self) {
         let trace_metrics = self.server.trace_flusher.collect_metrics();
+        let flagevaluation_writer_stats = self
+            .server
+            .ffe_flagevaluation_coalescer
+            .collect_writer_stats();
 
         let submitted_payloads_delta = {
             let mut counters = self.server.connection_counters.lock_or_panic();
@@ -155,6 +167,41 @@ impl MetricData<'_> {
                     Tag::new("status_code", status_code.to_string().as_str()).unwrap(),
                     tag!("src_library", "libdatadog"),
                 ],
+            ));
+        }
+        if flagevaluation_writer_stats.rows_dropped_degraded_cap > 0 {
+            futures.push(self.send(
+                self.flagevaluation_evaluations_dropped,
+                flagevaluation_writer_stats.rows_dropped_degraded_cap as f64,
+                vec![tag!("reason", FLAG_EVALUATION_REASON_DEGRADED_CAP)],
+            ));
+        }
+        if flagevaluation_writer_stats.rows_dropped_payload_limit > 0 {
+            futures.push(self.send(
+                self.flagevaluation_evaluations_dropped,
+                flagevaluation_writer_stats.rows_dropped_payload_limit as f64,
+                vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
+            ));
+        }
+        if flagevaluation_writer_stats.rows_degraded_cardinality_cap > 0 {
+            futures.push(self.send(
+                self.flagevaluation_evaluations_degraded,
+                flagevaluation_writer_stats.rows_degraded_cardinality_cap as f64,
+                vec![tag!("reason", FLAG_EVALUATION_REASON_CARDINALITY_CAP)],
+            ));
+        }
+        if flagevaluation_writer_stats.rows_degraded_payload_limit > 0 {
+            futures.push(self.send(
+                self.flagevaluation_evaluations_degraded,
+                flagevaluation_writer_stats.rows_degraded_payload_limit as f64,
+                vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
+            ));
+        }
+        if flagevaluation_writer_stats.payload_splits > 0 {
+            futures.push(self.send(
+                self.flagevaluation_payload_splits,
+                flagevaluation_writer_stats.payload_splits as f64,
+                vec![],
             ));
         }
 
@@ -280,6 +327,27 @@ impl SelfTelemetry {
             ),
             trace_chunks_dropped: worker.register_metric_context(
                 "trace_chunks_dropped".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            flagevaluation_evaluations_dropped: worker.register_metric_context(
+                FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC.to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            flagevaluation_evaluations_degraded: worker.register_metric_context(
+                FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC.to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            flagevaluation_payload_splits: worker.register_metric_context(
+                FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC.to_string(),
                 vec![],
                 MetricType::Count,
                 true,

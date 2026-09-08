@@ -52,6 +52,24 @@ impl MetricBucket {
 #[repr(C)]
 pub struct ContextKey(u32, metrics::MetricType);
 
+impl ContextKey {
+    /// The index into the metric-context store.
+    pub(crate) fn index(self) -> u32 {
+        self.0
+    }
+
+    /// The metric type this context was registered with.
+    pub(crate) fn metric_type(self) -> metrics::MetricType {
+        self.1
+    }
+
+    /// Reconstruct a key from its parts (used by the metric ring buffer, which encodes the key
+    /// into an atomic slot). Only valid for indices/types produced by [`MetricContexts`].
+    pub(crate) fn from_parts(index: u32, metric_type: metrics::MetricType) -> Self {
+        ContextKey(index, metric_type)
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct BucketKey {
     context_key: ContextKey,
@@ -121,7 +139,7 @@ impl MetricBuckets {
             extra_tags,
         };
         match context_key.1 {
-            metrics::MetricType::Count => self
+            metrics::MetricType::Count | metrics::MetricType::Rate => self
                 .buckets
                 .entry(bucket_key)
                 .or_insert_with(|| MetricBucket {

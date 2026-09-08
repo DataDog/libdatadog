@@ -4,7 +4,7 @@
 pub mod dict;
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
-use crate::span::{SharedDictBytes, SpanText, TraceData};
+use crate::span::{SharedDictBytes, SpanText, TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use anyhow::Result;
 use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
@@ -43,7 +43,7 @@ pub struct Span {
 ///   low 64 bits).
 /// - `span_id` is the 64-bit id hex-encoded as 16 lowercase chars.
 /// - `tracestate` and `attributes` are only emitted when non-empty.
-/// - `flags` is only emitted when not zero.
+/// - `flags` is only emitted when not zero, with [`SPAN_LINK_FLAGS_SET_SENTINEL`] masked off.
 struct SpanLinksSerializerV05<'a, T: TraceData>(&'a [SpanLink<T>]);
 struct SpanLinkSerializerV05<'a, T: TraceData>(&'a SpanLink<T>);
 
@@ -81,7 +81,7 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
             )?;
         }
         if has_flags {
-            map.serialize_entry("flags", &link.flags)?;
+            map.serialize_entry("flags", &(link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL))?;
         }
         map.end()
     }
@@ -465,8 +465,8 @@ mod tests {
         assert!(meta_json(&dict, &v05_span, "meta_struct").is_none());
     }
 
-    /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`;
-    /// `flags` is dropped.
+    /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`,
+    /// plus `flags` since it is non-zero.
     #[test]
     fn span_link_minimal_serialization_test() {
         let links = vec![SpanLink::<BytesData> {
@@ -482,6 +482,38 @@ mod tests {
             json,
             "[{\"trace_id\":\"000000000000000000000000deadbeef\",\"span_id\":\"000000000000feed\",\"flags\":7}]"
         );
+    }
+
+    /// Covers all three [`SPAN_LINK_FLAGS_SET_SENTINEL`] states: unset, kept, and explicitly
+    /// dropped.
+    #[test]
+    fn span_link_flags_sentinel_bit_masked_test() {
+        let kept = vec![SpanLink::<BytesData> {
+            span_id: 1,
+            flags: 0x8000_0001,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&kept)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["flags"], serde_json::json!(1));
+
+        let dropped = vec![SpanLink::<BytesData> {
+            span_id: 2,
+            flags: 0x8000_0000,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&dropped)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["flags"], serde_json::json!(0));
+
+        let unset = vec![SpanLink::<BytesData> {
+            span_id: 3,
+            flags: 0,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&unset)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed[0].get("flags").is_none());
     }
 
     /// Multiple links serialize as an ordered JSON array preserving input order.

@@ -45,6 +45,11 @@ impl<T: DeserializableTraceData> Buffer<T> {
         self.0.borrow()
     }
 
+    /// Returns the underlying owned bytes buffer.
+    pub fn bytes(&self) -> &T::Bytes {
+        &self.0
+    }
+
     /// Tries to extract a slice of `bytes` from the buffer and advances the buffer.
     pub fn try_slice_and_advance(&mut self, bytes: usize) -> Option<T::Bytes> {
         T::try_slice_and_advance(&mut self.0, bytes)

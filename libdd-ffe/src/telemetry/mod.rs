@@ -5,6 +5,8 @@
 pub mod evaluation_metrics;
 #[cfg(feature = "exposure-events")]
 pub mod exposures;
+#[cfg(feature = "flagevaluation-evp")]
+pub mod flagevaluation;
 
 use serde::{Deserialize, Serialize};
 

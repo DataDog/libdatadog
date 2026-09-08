@@ -13,6 +13,7 @@ pub struct Selection {
     pub telemetry: bool,
     pub data_pipeline: bool,
     pub data_pipeline_compression: bool,
+    pub data_pipeline_stats_obfuscation: bool,
     pub crashtracker: bool,
     pub symbolizer: bool,
     pub library_config: bool,
@@ -33,6 +34,7 @@ impl Selection {
             telemetry: cfg!(feature = "telemetry"),
             data_pipeline: cfg!(feature = "data-pipeline"),
             data_pipeline_compression: cfg!(feature = "data-pipeline-compression"),
+            data_pipeline_stats_obfuscation: cfg!(feature = "data-pipeline-stats-obfuscation"),
             crashtracker: cfg!(feature = "crashtracker"),
             symbolizer: cfg!(feature = "symbolizer"),
             library_config: cfg!(feature = "library-config"),
@@ -70,6 +72,9 @@ pub fn profiling_features(selection: &Selection) -> Vec<String> {
     }
     if selection.data_pipeline_compression {
         features.push("data-pipeline-compression");
+    }
+    if selection.data_pipeline_stats_obfuscation {
+        features.push("data-pipeline-stats-obfuscation");
     }
     if selection.crashtracker {
         features.extend([
@@ -117,6 +122,7 @@ mod tests {
         |s| s.telemetry = true,
         |s| s.data_pipeline = true,
         |s| s.data_pipeline_compression = true,
+        |s| s.data_pipeline_stats_obfuscation = true,
         |s| s.crashtracker = true,
         |s| s.symbolizer = true,
         |s| s.library_config = true,
@@ -139,6 +145,7 @@ mod tests {
 
     /// APMSP-3830 was the feature being present for some builds and absent for others, so
     /// cover every combination a project can ask for, not just the one we release.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn catch_panic_survives_every_module_combination() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -152,6 +159,7 @@ mod tests {
     }
 
     /// The converse: not asking for it never sneaks it in, whatever else is selected.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn catch_panic_is_never_implied_by_another_feature() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -171,6 +179,7 @@ mod tests {
             telemetry: true,
             data_pipeline: true,
             data_pipeline_compression: true,
+            data_pipeline_stats_obfuscation: true,
             crashtracker: true,
             symbolizer: true,
             library_config: true,
@@ -191,6 +200,7 @@ mod tests {
                 "ddtelemetry-ffi",
                 "data-pipeline-ffi",
                 "data-pipeline-compression",
+                "data-pipeline-stats-obfuscation",
                 "crashtracker-ffi",
                 "crashtracker-collector",
                 "crashtracker-receiver",
@@ -208,6 +218,7 @@ mod tests {
 
     /// Nothing is inherited under `--no-default-features`, so still-needed defaults must be
     /// listed explicitly.
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn always_lists_features_that_no_longer_come_from_defaults() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -244,6 +255,7 @@ mod tests {
         assert_eq!(features, vec!["cbindgen", "ddcommon-ffi"]);
     }
 
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn emitted_list_has_no_duplicates() {
         for bits in 0..(1u32 << MODULE_SETTERS.len()) {
@@ -302,6 +314,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)] // exhaustive feature combinations are prohibitively slow under Miri
     #[test]
     fn every_containment_capable_sub_crate_is_fanned_out() {
         let root = workspace_root();

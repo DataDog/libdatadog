@@ -158,6 +158,15 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            #[cfg(target_os = "linux")]
+            "assert_fail" => {
+                extern "C" {
+                    fn trigger_c_assert() -> !;
+                }
+                // SAFETY: trigger_c_assert calls the real C assert() macro,
+                // which expands to __assert_fail and never returns.
+                unsafe { trigger_c_assert() }
+            }
             "unhandled_exception" => {
                 let mut stacktrace = StackTrace::new_incomplete();
                 let mut stackframe1 = StackFrame::new();

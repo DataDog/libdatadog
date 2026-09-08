@@ -223,6 +223,9 @@ int main(int argc, char* argv[]) {
     ddog_ffe_Handle_Configuration config = config_result.ok;
     printf("  Configuration loaded successfully\n");
 
+    bool observe_full_evaluation_data = ddog_ffe_configuration_get_observe_full_evaluation_data(config);
+    printf("  observeFullEvaluationData: %s\n", observe_full_evaluation_data ? "true" : "false");
+
     // Step 2: Create evaluation context with targeting key and attributes
     printf("\nStep 2: Creating evaluation context...\n");
 

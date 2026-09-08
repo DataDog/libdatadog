@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::primary_sidecar_identifier;
-use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
-use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::Endpoint;
+use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -36,7 +36,7 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {
-    let (writer, handle) = datadog_ipc::one_way_shared_memory::create_anon_pair()?;
+    let (writer, handle) = libdd_ipc::one_way_shared_memory::create_anon_pair()?;
     Ok((AgentRemoteConfigWriter(writer), handle))
 }
 

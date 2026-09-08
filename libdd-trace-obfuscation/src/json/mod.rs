@@ -4,6 +4,7 @@
 use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
 mod scanner;
 use scanner::{Op, Scanner};
+use serde::Deserialize;
 
 /// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value belongs to a
 /// key listed in `keep_keys`, in which case it is left verbatim.
@@ -13,6 +14,8 @@ use scanner::{Op, Scanner};
 ///
 /// Multiple concatenated JSON objects in the input are each obfuscated independently.
 /// On a parse error the output so far is returned with `"..."` appended.
+#[derive(Debug, Default, Deserialize)]
+#[serde(transparent)]
 pub struct JsonObfuscator {
     config: JsonObfuscatorConfig,
 }
@@ -26,6 +29,25 @@ impl JsonObfuscator {
     #[must_use]
     pub const fn new(config: JsonObfuscatorConfig) -> Self {
         Self { config }
+    }
+
+    #[must_use]
+    pub const fn config(&self) -> &JsonObfuscatorConfig {
+        &self.config
+    }
+
+    /// Obfuscates a JSON string, returning `None` for empty input.
+    ///
+    /// Any parse error is discarded and a possibly truncated value returned, like
+    /// [`JsonObfuscator::obfuscate`].
+    // TODO(APMSP-2764): surface the parse error instead of discarding it.
+    #[must_use]
+    pub fn obfuscate_opt(&self, input: &str) -> Option<String> {
+        if input.is_empty() {
+            return None;
+        }
+        let (res, _err) = self.obfuscate(input);
+        Some(res)
     }
 
     /// Obfuscates json string and return an optional error on malformatted json

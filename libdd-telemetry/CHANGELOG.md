@@ -2,6 +2,28 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v6.0.0..libdd-telemetry-v7.0.0) - 2026-08-17
+
+### Added
+
+- Add Installation signature and AppProduct changes payloads ([#2213](https://github.com/datadog/libdatadog/issues/2213)) - ([f3d3d80](https://github.com/datadog/libdatadog/commit/f3d3d80b807b82d2a49d57df99a0eb02a800a978))
+- Make telemetry worker wasm-compatible for the TraceExporter ([#2172](https://github.com/datadog/libdatadog/issues/2172)) - ([73f23a2](https://github.com/datadog/libdatadog/commit/73f23a2c03be39971c966e444785d63b6fd52e81))
+
+### Changed
+
+- Make conversion from RemoteConfigProduct back and forth generally available ([#2325](https://github.com/datadog/libdatadog/issues/2325)) - ([ea75b04](https://github.com/datadog/libdatadog/commit/ea75b04c3547037937730a14cf8a72a5ebf702d7))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Don't double-encode file:// telemetry endpoints ([#2230](https://github.com/datadog/libdatadog/issues/2230)) - ([20c267e](https://github.com/datadog/libdatadog/commit/20c267e23caac58839a9ebe660601ee381117d22))
+- Stop sending Connection: close to the Agent ([#2286](https://github.com/datadog/libdatadog/issues/2286)) - ([8dfe721](https://github.com/datadog/libdatadog/commit/8dfe721a5b24fe225ed4cab66b2e07cb0f2ff6dd))
+- Drain the mailbox before stopping ([#2258](https://github.com/datadog/libdatadog/issues/2258)) - ([0c78ffc](https://github.com/datadog/libdatadog/commit/0c78ffcfab27d9a3ce5197b6cf56dfa017d15b72))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.1..libdd-telemetry-v6.0.0) - 2026-07-07
 
 ### Added

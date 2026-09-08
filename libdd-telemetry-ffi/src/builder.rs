@@ -118,7 +118,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
     let seq_id = seq_id.to_std();
     builder.configurations.insert(data::Configuration {
         name,
-        value,
+        value: Some(value),
         origin,
         config_id,
         seq_id,

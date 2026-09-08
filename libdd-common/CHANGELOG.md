@@ -2,6 +2,35 @@
 
 
 
+## [5.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.1..libdd-common-v5.2.0) - 2026-08-17
+
+### Added
+
+- Allocation-free tag validation and parsing ([#2329](https://github.com/datadog/libdatadog/issues/2329)) - ([acec90d](https://github.com/datadog/libdatadog/commit/acec90d515ddd2dd1b669cec1b04ef45d7c82b92))
+- Agentless RC fetcher ([#2112](https://github.com/datadog/libdatadog/issues/2112)) - ([20a3f4d](https://github.com/datadog/libdatadog/commit/20a3f4d67bba02004554be4c4e32a27ebe574fa7))
+
+
+
+## [5.1.1](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.0..libdd-common-v5.1.1) - 2026-08-07
+
+### Added
+
+- Add Installation signature and AppProduct changes payloads ([#2213](https://github.com/datadog/libdatadog/issues/2213)) - ([f3d3d80](https://github.com/datadog/libdatadog/commit/f3d3d80b807b82d2a49d57df99a0eb02a800a978))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+- Stabilize flaky tests ([#2256](https://github.com/datadog/libdatadog/issues/2256)) - ([054402d](https://github.com/datadog/libdatadog/commit/054402d28cb03f0b99df938e5ac0b419da18423b))
+
+### Fixed
+
+- Don't double-encode file:// telemetry endpoints ([#2230](https://github.com/datadog/libdatadog/issues/2230)) - ([20c267e](https://github.com/datadog/libdatadog/commit/20c267e23caac58839a9ebe660601ee381117d22))
+- Last new clippy lint ([#2221](https://github.com/datadog/libdatadog/issues/2221)) - ([a41a0f4](https://github.com/datadog/libdatadog/commit/a41a0f480b265e57fd7d70d998c5ccd3e7690248))
+
+
+
 ## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.0.0..libdd-common-v5.1.0) - 2026-07-07
 
 ### Added

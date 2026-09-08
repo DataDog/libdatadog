@@ -282,12 +282,12 @@ pub struct TracerPayload {
 }
 /// ContainerDebug holds debug information about the container tags resolution process.
 #[derive(Deserialize, Serialize, PartialOrd, Ord)]
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ContainerDebug {
-    /// error specifies any error that occurred during container tag resolution.
-    #[prost(string, tag = "1")]
+    /// errorRef specifies the string table ref of any error that occurred during container tag resolution.
+    #[prost(uint32, tag = "1")]
     #[serde(default)]
-    pub error: ::prost::alloc::string::String,
+    pub error_ref: u32,
     /// latencyMs specifies the latency in milliseconds of the container tag resolution.
     #[prost(int64, tag = "2")]
     #[serde(default)]
@@ -300,8 +300,8 @@ pub struct ContainerDebug {
     #[prost(int64, tag = "4")]
     #[serde(default)]
     pub buffer_ms: i64,
-    /// bufferEvictionReason specifies why the payload was evicted from the buffer.
-    #[prost(string, tag = "5")]
+    /// bufferEvictionReasonRef specifies the string table ref of why the payload was evicted from the buffer.
+    #[prost(uint32, tag = "5")]
     #[serde(default)]
-    pub buffer_eviction_reason: ::prost::alloc::string::String,
+    pub buffer_eviction_reason_ref: u32,
 }

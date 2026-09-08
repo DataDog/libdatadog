@@ -85,6 +85,19 @@ pub struct OtlpTraceConfig {
     pub otel_trace_semantics_enabled: bool,
 }
 
+/// Per-request OTLP gRPC trace exporter configuration.
+// Not yet wired to the trace exporter's send loop; exercised by tests only.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct OtlpGrpcTraceConfig {
+    /// Custom key-value pairs forwarded as gRPC request metadata.
+    pub headers: Vec<(String, String)>,
+    /// Per-request timeout.
+    pub timeout: Duration,
+    /// When `true`, omit DD-specific per-span attributes from the payload.
+    pub otel_trace_semantics_enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,7 +147,7 @@ pub struct OtlpMetricsConfig {
     /// Protocol (for future use; currently only HttpJson is supported).
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
-    /// When `true`, emit only OTel attributes; omit `dd.*`/`_dd.*` ones
-    /// (`DD_TRACE_OTEL_SEMANTICS_ENABLED`).
+    /// Retained for downstream compatibility; OTLP trace metrics ignore this value.
+    #[allow(dead_code)]
     pub otel_trace_semantics_enabled: bool,
 }

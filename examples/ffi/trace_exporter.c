@@ -81,8 +81,81 @@ int test_error_on_panic(void) {
     return 0;
 }
 
+int verify_structured_value_encoder(void) {
+    uint8_t text[] = "stable";
+    uint8_t binary[] = {0x00, 0xff};
+    ddog_TracerValueToken tokens[] = {
+        {.kind = DDOG_TRACER_VALUE_ARRAY, .child_count = 2},
+        {
+            .kind = DDOG_TRACER_VALUE_STRING,
+            .bytes = {.ptr = text, .len = sizeof(text) - 1},
+        },
+        {
+            .kind = DDOG_TRACER_VALUE_BINARY,
+            .bytes = {.ptr = binary, .len = sizeof(binary)},
+        },
+    };
+    ddog_TracerEncodedValue *blob = NULL;
+    ddog_TraceExporterError *err = ddog_tracer_encode_value(
+        (ddog_Slice_TracerValueToken){
+            .ptr = tokens,
+            .len = sizeof(tokens) / sizeof(tokens[0]),
+        },
+        &blob);
+    if (err) {
+        handle_error(err);
+        return 1;
+    }
+
+    memset(text, 'x', sizeof(text) - 1);
+    memset(binary, 'x', sizeof(binary));
+    static const uint8_t expected[] = {
+        0x92, 0xa6, 's','t','a','b','l','e', 0xc4, 0x02, 0x00, 0xff,
+    };
+    ddog_ByteSlice encoded = ddog_tracer_encoded_value_as_slice(blob);
+    int matches = encoded.len == sizeof(expected) &&
+        memcmp(encoded.ptr, expected, sizeof(expected)) == 0;
+    ddog_tracer_encoded_value_free(blob);
+    if (!matches) {
+        fprintf(stderr, "Structured value encoder did not return an owned blob\n");
+        return 1;
+    }
+    return 0;
+}
+
+int verify_structured_value_encoder_rejects_invalid(void) {
+    ddog_TracerValueToken tokens[] = {
+        {.kind = 255},
+    };
+    ddog_TracerEncodedValue *blob = NULL;
+    ddog_TraceExporterError *err = ddog_tracer_encode_value(
+        (ddog_Slice_TracerValueToken){
+            .ptr = tokens,
+            .len = sizeof(tokens) / sizeof(tokens[0]),
+        },
+        &blob);
+    if (err == NULL) {
+        fprintf(stderr, "Structured value encoder accepted an unknown token kind\n");
+        ddog_tracer_encoded_value_free(blob);
+        return 1;
+    }
+    ddog_trace_exporter_error_free(err);
+
+    // The encoder writes the out-handle only on success, so a rejected input
+    // leaves the caller's NULL blob untouched and there is nothing to free.
+    if (blob != NULL) {
+        fprintf(stderr, "Structured value encoder wrote a blob on the error path\n");
+        ddog_tracer_encoded_value_free(blob);
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
+    if (verify_structured_value_encoder() != 0) return 1;
+    if (verify_structured_value_encoder_rejects_invalid() != 0) return 1;
+
     // Initialize logger with optional path from command line
     const char* log_path = (argc > 1) ? argv[1] : NULL;
     if (log_init(log_path) != 0) {

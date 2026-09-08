@@ -22,7 +22,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0.103"
-libdd-ffe = { path = "../libdd-ffe", version = "=0.1.0" }
+libdd-ffe = { path = "../libdd-ffe", version = "=1.0.0" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3.0"
 

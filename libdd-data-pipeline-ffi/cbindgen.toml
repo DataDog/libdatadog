@@ -12,14 +12,16 @@ includes = ["common.h"]
 after_includes = """
 typedef struct ddog_TraceExporter ddog_TraceExporter;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
+typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
 typedef struct ddog_TraceExporterCancelToken ddog_TraceExporterCancelToken;
+typedef uint8_t ddog_TracerValueKind;
 """
 
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
-exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellationToken"]
+exclude = ["TraceExporter", "TracerSpan", "TracerSpanEvent", "TracerTraceChunks", "TokioCancellationToken"]
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
@@ -31,9 +33,21 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellatio
 "ExporterErrorCode" = "ddog_TraceExporterErrorCode"
 "ExporterError" = "ddog_TraceExporterError"
 "TracerSpan" = "ddog_TracerSpan"
+"TracerSpanEvent" = "ddog_TracerSpanEvent"
 "TracerSpanFields" = "ddog_TracerSpanFields"
+"TracerSpanLink" = "ddog_TracerSpanLink"
+"TracerSpanLinkAttribute" = "ddog_TracerSpanLinkAttribute"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
 "TokioCancellationToken" = "ddog_TraceExporterCancelToken"
+"DDOG_TRACER_VALUE_NIL" = "DDOG_TRACER_VALUE_NIL"
+"DDOG_TRACER_VALUE_BOOL" = "DDOG_TRACER_VALUE_BOOL"
+"DDOG_TRACER_VALUE_I64" = "DDOG_TRACER_VALUE_I64"
+"DDOG_TRACER_VALUE_U64" = "DDOG_TRACER_VALUE_U64"
+"DDOG_TRACER_VALUE_F64" = "DDOG_TRACER_VALUE_F64"
+"DDOG_TRACER_VALUE_STRING" = "DDOG_TRACER_VALUE_STRING"
+"DDOG_TRACER_VALUE_BINARY" = "DDOG_TRACER_VALUE_BINARY"
+"DDOG_TRACER_VALUE_ARRAY" = "DDOG_TRACER_VALUE_ARRAY"
+"DDOG_TRACER_VALUE_MAP" = "DDOG_TRACER_VALUE_MAP"
 
 [export.mangle]
 rename_types = "PascalCase"

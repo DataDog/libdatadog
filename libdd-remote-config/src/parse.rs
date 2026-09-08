@@ -7,7 +7,7 @@ use crate::{
         agent_task::{self, AgentTaskFile},
         dynamic::{self, DynamicConfigFile},
     },
-    RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
+    RemoteConfigPath, RemoteConfigProduct,
 };
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
@@ -185,35 +185,26 @@ pub fn default_registry() -> ParserRegistry {
 // ── RemoteConfigValue ─────────────────────────────────────────────────────────
 
 pub struct RemoteConfigValue {
-    pub source: RemoteConfigSource,
-    pub product: RemoteConfigProduct,
+    pub path: RemoteConfigPath,
     pub data: Option<RemoteConfigParsed>,
-    pub config_id: String,
-    pub name: String,
 }
 
 impl Debug for RemoteConfigValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         f.debug_struct("RemoteConfigValue")
-            .field("source", &self.source)
-            .field("product", &self.product)
-            .field("config_id", &self.config_id)
-            .field("name", &self.name)
+            .field("source", &self.path.source())
+            .field("product", &self.path.product())
+            .field("config_id", &self.path.config_id())
+            .field("name", &self.path.name())
             .finish()
     }
 }
 
 impl RemoteConfigValue {
     pub fn try_parse(path: &str, data: &[u8], registry: &ParserRegistry) -> anyhow::Result<Self> {
-        let path = RemoteConfigPath::try_parse(path)?;
-        let data = registry.parse(path.product, data)?;
-        Ok(RemoteConfigValue {
-            source: path.source,
-            product: path.product,
-            data,
-            config_id: path.config_id.to_string(),
-            name: path.name.to_string(),
-        })
+        let path: RemoteConfigPath = RemoteConfigPath::try_parse(path)?.into();
+        let data = registry.parse(path.product(), data)?;
+        Ok(RemoteConfigValue { data, path })
     }
 }
 

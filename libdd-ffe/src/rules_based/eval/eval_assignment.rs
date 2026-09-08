@@ -201,3 +201,71 @@ impl Shard {
         self.ranges.iter().any(|range| range.contains(h))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use super::*;
+    use crate::rules_based::{AssignmentReason, AssignmentValue, UniversalFlagConfig};
+
+    #[test]
+    fn invalid_flag_does_not_poison_valid_neighbor() {
+        let config = UniversalFlagConfig::from_json(
+            br#"
+            {
+              "createdAt": "2026-08-11T00:00:00Z",
+              "environment": {"name": "test"},
+              "flags": {
+                "invalid-regex": {
+                  "key": "invalid-regex",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"trap": {"key": "trap", "value": "trap"}},
+                  "allocations": [{
+                    "key": "invalid",
+                    "rules": [{"conditions": [{
+                      "attribute": "email",
+                      "operator": "MATCHES",
+                      "value": "[invalid"
+                    }]}],
+                    "splits": [{"variationKey": "trap", "shards": []}]
+                  }]
+                },
+                "valid": {
+                  "key": "valid",
+                  "enabled": true,
+                  "variationType": "STRING",
+                  "variations": {"on": {"key": "on", "value": "valid"}},
+                  "allocations": [{
+                    "key": "static",
+                    "splits": [{"variationKey": "on", "shards": []}]
+                  }]
+                }
+              }
+            }
+            "#
+            .to_vec(),
+        )
+        .unwrap();
+        let config = Configuration::from_server_response(config);
+        let context = EvaluationContext::new(None, Arc::new(HashMap::new()));
+        let now = chrono::Utc::now();
+
+        assert_eq!(
+            config
+                .eval_flag("invalid-regex", &context, ExpectedFlagType::String, now)
+                .unwrap_err(),
+            EvaluationError::FlagConfigurationInvalid
+        );
+
+        let assignment = config
+            .eval_flag("valid", &context, ExpectedFlagType::String, now)
+            .unwrap();
+        assert!(matches!(
+            assignment.value,
+            AssignmentValue::String(ref value) if value.as_str() == "valid"
+        ));
+        assert_eq!(assignment.reason, AssignmentReason::Static);
+    }
+}
