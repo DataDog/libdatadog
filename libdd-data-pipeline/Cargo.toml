@@ -32,7 +32,7 @@ tokio = { workspace = true, features = [
 ], default-features = false }
 uuid = { workspace = true, features = ["v4", "std"] }
 tokio-util = "0.7.11"
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "0.1.0" }
 libdd-common = { version = "5.2.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "3.0.0", path = "../libdd-shared-runtime", default-features = false }
