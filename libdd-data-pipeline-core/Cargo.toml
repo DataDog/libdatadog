@@ -1,6 +1,6 @@
 [package]
 name = "libdd-data-pipeline-core"
-version = "0.1.0"
+version = "1.0.0"
 description = "Runtime-independent operations for Datadog APM data pipelines."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline-core"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-data-pipeline-core"
