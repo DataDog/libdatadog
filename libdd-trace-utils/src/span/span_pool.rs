@@ -399,12 +399,12 @@ mod tests {
 
     #[test]
     fn pool_is_bounded() {
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(2);
+        let pool = SpanPool::<crate::span::BytesData>::with_capacity(20);
         // drop_policy keeps ~90%; push far more than capacity and check the bound holds.
         for _ in 0..1000 {
             pool.add_chunks(std::iter::once(vec![span("x")]));
         }
-        assert!(pool.len() <= 2);
+        assert!(pool.len() <= 20);
     }
 
     #[test]
