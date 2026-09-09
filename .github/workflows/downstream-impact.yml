@@ -236,9 +236,14 @@ jobs:
 
             if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
               echo
-              echo "### Compiler errors introduced by the PR"
+              echo "### Cargo/compiler errors introduced by the PR"
               echo
-              jq -r '.[] | "- `\(.target)` `\(.code // "")`: \(.message)"' \
+              jq -r '
+                .[]
+                | "- `\(.target)`"
+                  + (if (.code // "") == "" then "" else " `\(.code)`" end)
+                  + ": \(.message)"
+              ' \
                 "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
             fi
 
