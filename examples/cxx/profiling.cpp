@@ -4,7 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <fstream>
-#include <format>
+#include <string>
 #include <vector>
 #include <cstdlib>
 #include "libdd-profiling/src/cxx.rs.h"
@@ -54,10 +54,10 @@ int main() {
         for (int i = 0; i < 100; i++) {
             // String storage must outlive add_sample() call for the profile to intern them
             std::vector<std::string> string_storage;
-            string_storage.push_back(std::format("hot_function_{}", i % 3));
-            string_storage.push_back(std::format("_Z12hot_function{}v", i % 3));
-            string_storage.push_back(std::format("process_request_{}", i % 5));
-            string_storage.push_back(std::format("_Z15process_request{}v", i % 5));
+            string_storage.push_back("hot_function_" + std::to_string(i % 3));
+            string_storage.push_back("_Z12hot_function" + std::to_string(i % 3) + "v");
+            string_storage.push_back("process_request_" + std::to_string(i % 5));
+            string_storage.push_back("_Z15process_request" + std::to_string(i % 5) + "v");
             
             Mapping mapping{
                 .memory_start = 0x10000000,
@@ -267,6 +267,52 @@ int main() {
                 *cancel_token
             );
             std::cout << "✅ Profile exported successfully!" << std::endl;
+
+            // Split serialize/send flow: useful when callers need to reset the
+            // profile under their own lock, release that lock, and upload the
+            // already-encoded profile later.
+            std::cout << "Exporting a second profile with split serialize/send..." << std::endl;
+            auto split_profile = Profile::create({SampleType::WallTime}, period);
+            Mapping split_mapping{
+                .memory_start = 0x30000000,
+                .memory_limit = 0x40000000,
+                .file_offset = 0,
+                .filename = "/usr/lib/libsplit-example.so",
+                .build_id = "split-build-id"
+            };
+            split_profile->add_sample(Sample{
+                .locations = {
+                    Location{
+                        .mapping = split_mapping,
+                        .function = Function{
+                            .name = "split_export_function",
+                            .system_name = "_Z21split_export_functionv",
+                            .filename = "/src/split_export.cpp"
+                        },
+                        .address = 0x30001234,
+                        .line = 77
+                    }
+                },
+                .values = {42'000'000},
+                .labels = {
+                    Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}
+                }
+            });
+            split_profile->add_endpoint_count("/api/split-export", 1);
+
+            auto encoded_profile = split_profile->serialize();
+            auto encoded_bytes = encoded_profile->bytes();
+            std::cout << "ℹ️  Split profile serialized to " << encoded_bytes.size() << " compressed bytes" << std::endl;
+
+            (*exporter)->send_encoded_profile(
+                std::move(encoded_profile),
+                {},
+                {Tag{.key = "export_flow", .value = "split"}},
+                "language:cpp,profiler_version:1.0,runtime:native",
+                R"({"profiler_version": "1.0", "export_flow": "split"})",
+                R"({"os": "macos", "arch": "arm64", "cores": 8})"
+            );
+            std::cout << "✅ Split profile exported successfully!" << std::endl;
             
             // Print mode-specific info
             if (!agent_url && !api_key) {

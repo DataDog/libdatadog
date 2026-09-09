@@ -264,6 +264,7 @@ pub mod ffi {
     extern "Rust" {
         type Profile;
         type ProfileExporter;
+        type EncodedProfile;
         type ExporterManager;
         type ProfilesDictionary;
         type StringId2Opaque;
@@ -379,7 +380,20 @@ pub mod ffi {
         ) -> Result<()>;
 
         fn reset(self: &mut Profile) -> Result<()>;
+
+        /// Serialize and reset the profile, returning the encoded previous
+        /// profile data. The returned EncodedProfile includes the compressed
+        /// pprof bytes plus metadata needed by exporters, such as endpoint
+        /// counts.
+        fn serialize(self: &mut Profile) -> Result<Box<EncodedProfile>>;
+
+        /// Serialize and reset the profile, returning only compressed pprof
+        /// bytes. This is a convenience/debug API; callers that intend to send
+        /// the profile should prefer serialize() plus send_encoded_profile().
         fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        /// Return a copy of the compressed pprof bytes.
+        fn bytes(self: &EncodedProfile) -> Vec<u8>;
 
         // Static factory methods for ProfileExporter
         #[Self = "ProfileExporter"]
@@ -476,6 +490,45 @@ pub mod ffi {
             cancel: &CancellationToken,
         ) -> Result<()>;
 
+        /// Sends a previously serialized profile to Datadog.
+        ///
+        /// This is the split form of send_profile(). It allows callers to
+        /// serialize/reset a Profile under their own lock, then release that
+        /// lock before performing blocking I/O.
+        ///
+        /// # Arguments
+        /// * `encoded` - EncodedProfile previously returned by Profile::serialize().
+        /// * `files_to_compress` - Additional files to compress and attach.
+        /// * `additional_tags` - Per-profile tags in addition to exporter-level tags.
+        /// * `process_tags` - Process-level tags as comma-separated string; empty if not needed.
+        /// * `internal_metadata` - Internal metadata JSON object; empty if not needed.
+        /// * `info` - System/environment info JSON object; empty if not needed.
+        fn send_encoded_profile(
+            self: &mut ProfileExporter,
+            encoded: Box<EncodedProfile>,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
+
+        /// Sends a previously serialized profile to Datadog with cancellation
+        /// support.
+        ///
+        /// This is the split form of send_profile_with_cancellation().
+        #[allow(clippy::too_many_arguments)]
+        fn send_encoded_profile_with_cancellation(
+            self: &mut ProfileExporter,
+            encoded: Box<EncodedProfile>,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+            cancel: &CancellationToken,
+        ) -> Result<()>;
+
         // ExporterManager methods
         /// Creates a new ExporterManager with a background worker thread
         #[Self = "ExporterManager"]
@@ -489,6 +542,21 @@ pub mod ffi {
         fn queue_profile(
             self: &ExporterManager,
             profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
+
+        /// Queue a previously serialized profile to be sent asynchronously by
+        /// the background worker thread.
+        ///
+        /// This is the split form of queue_profile().
+        #[allow(clippy::too_many_arguments)]
+        fn queue_encoded_profile(
+            self: &ExporterManager,
+            encoded: Box<EncodedProfile>,
             files_to_compress: Vec<AttachmentFile>,
             additional_tags: Vec<Tag>,
             process_tags: &str,
@@ -1053,12 +1121,31 @@ impl Profile {
         Ok(())
     }
 
-    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
-        // Reset the profile and get the old one to serialize
+    pub fn serialize(&mut self) -> anyhow::Result<Box<EncodedProfile>> {
+        // Reset the profile and get the old one to serialize.
         let old_profile = self.inner.reset_and_return_previous()?;
         let end_time = Some(std::time::SystemTime::now());
         let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
-        Ok(encoded.buffer)
+        Ok(Box::new(EncodedProfile { inner: encoded }))
+    }
+
+    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
+        let EncodedProfile { inner } = *self.serialize()?;
+        Ok(inner.buffer)
+    }
+}
+
+// ============================================================================
+// EncodedProfile - Wrapper around internal::EncodedProfile
+// ============================================================================
+
+pub struct EncodedProfile {
+    inner: internal::EncodedProfile,
+}
+
+impl EncodedProfile {
+    pub fn bytes(&self) -> Vec<u8> {
+        self.inner.buffer.clone()
     }
 }
 
@@ -1066,30 +1153,21 @@ impl Profile {
 // Helper Functions
 // ============================================================================
 
-/// Helper to encode a profile and prepare arguments for sending/queuing.
-///
-/// Resets the profile and returns the encoded previous profile data along with
-/// converted arguments ready for the exporter APIs.
-#[allow(clippy::type_complexity)]
-fn prepare_profile_for_export<'a>(
-    profile: &mut Profile,
-    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
-    additional_tags: Vec<ffi::Tag>,
-    process_tags: &'a str,
-    internal_metadata: &str,
-    info: &str,
-) -> anyhow::Result<(
-    internal::EncodedProfile,
+type PreparedExportArgs<'a> = (
     Vec<exporter::File<'a>>,
     Vec<libdd_common::tag::Tag>,
     Option<&'a str>,
     Option<serde_json::Value>,
     Option<serde_json::Value>,
-)> {
-    let old_profile = profile.inner.reset_and_return_previous()?;
-    let end_time = Some(std::time::SystemTime::now());
-    let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+);
 
+fn prepare_export_args<'a>(
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<PreparedExportArgs<'a>> {
     let files_to_compress_vec: Vec<exporter::File> =
         files_to_compress.iter().map(Into::into).collect();
 
@@ -1115,6 +1193,50 @@ fn prepare_profile_for_export<'a>(
     } else {
         Some(process_tags)
     };
+
+    Ok((
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ))
+}
+
+/// Helper to encode a profile and prepare arguments for sending/queuing.
+///
+/// Resets the profile and returns the encoded previous profile data along with
+/// converted arguments ready for the exporter APIs.
+#[allow(clippy::type_complexity)]
+fn prepare_profile_for_export<'a>(
+    profile: &mut Profile,
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<(
+    Box<EncodedProfile>,
+    Vec<exporter::File<'a>>,
+    Vec<libdd_common::tag::Tag>,
+    Option<&'a str>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+)> {
+    let encoded = profile.serialize()?;
+    let (
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ) = prepare_export_args(
+        files_to_compress,
+        additional_tags,
+        process_tags,
+        internal_metadata,
+        info,
+    )?;
 
     Ok((
         encoded,
@@ -1324,13 +1446,118 @@ impl ProfileExporter {
             info,
         )?;
 
-        let status = self.inner.send_blocking(
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.send_encoded_profile_prepared(
             encoded,
             &files_to_compress_vec,
             &additional_tags_vec,
+            process_tags_opt,
             internal_metadata_json,
             info_json,
+            cancel,
+        )
+    }
+
+    /// Sends a previously serialized profile to Datadog.
+    #[allow(clippy::boxed_local)]
+    pub fn send_encoded_profile(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        self.send_encoded_profile_impl(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            None,
+        )
+    }
+
+    /// Sends a previously serialized profile to Datadog with cancellation support.
+    #[allow(clippy::boxed_local, clippy::too_many_arguments)]
+    pub fn send_encoded_profile_with_cancellation(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
+        self.send_encoded_profile_impl(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            Some(&cancel.inner),
+        )
+    }
+
+    #[allow(clippy::boxed_local, clippy::too_many_arguments)]
+    fn send_encoded_profile_impl(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
+        let (
+            files_to_compress_vec,
+            additional_tags_vec,
             process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_export_args(
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.send_encoded_profile_prepared(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+            cancel,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_encoded_profile_prepared(
+        &mut self,
+        encoded: internal::EncodedProfile,
+        files_to_compress: &[exporter::File<'_>],
+        additional_tags: &[libdd_common::tag::Tag],
+        process_tags: Option<&str>,
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
+        let status = self.inner.send_blocking(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            internal_metadata,
+            info,
+            process_tags,
             cancel,
         )?;
 
@@ -1387,13 +1614,68 @@ impl ExporterManager {
             info,
         )?;
 
-        self.inner.queue(
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.queue_encoded_profile_prepared(
             encoded,
             &files_to_compress_vec,
             &additional_tags_vec,
+            process_tags_opt,
             internal_metadata_json,
             info_json,
+        )
+    }
+
+    #[allow(clippy::boxed_local)]
+    pub fn queue_encoded_profile(
+        &self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        let (
+            files_to_compress_vec,
+            additional_tags_vec,
             process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_export_args(
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.queue_encoded_profile_prepared(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        )
+    }
+
+    fn queue_encoded_profile_prepared(
+        &self,
+        encoded: internal::EncodedProfile,
+        files_to_compress: &[exporter::File<'_>],
+        additional_tags: &[libdd_common::tag::Tag],
+        process_tags: Option<&str>,
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
+        self.inner.queue(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            internal_metadata,
+            info,
+            process_tags,
         )?;
 
         Ok(())
@@ -1420,6 +1702,11 @@ impl ExporterManager {
 mod tests {
     use super::*;
     use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
+    use libdd_common::test_utils::{
+        create_temp_file_path, parse_http_request_sync, HttpRequest, TempFileGuard,
+    };
+    use serde_json::json;
+    use std::time::{Duration, Instant};
 
     const TEST_LIB_NAME: &str = "dd-trace-test";
     const TEST_LIB_VERSION: &str = "1.0.0";
@@ -1532,6 +1819,49 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    fn create_test_file_exporter(test_name: &str) -> (Box<ProfileExporter>, TempFileGuard) {
+        let file_path = create_temp_file_path(test_name, "http");
+        let exporter = ProfileExporter::create_file_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag {
+                key: "env",
+                value: "test",
+            }],
+            file_path.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+
+        (exporter, file_path)
+    }
+
+    fn read_dumped_request_and_event(
+        file_path: &std::path::Path,
+    ) -> (HttpRequest, serde_json::Value) {
+        let request_bytes = std::fs::read(file_path).expect("read dumped request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse dumped request");
+        let event_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.filename.as_deref() == Some("event.json"))
+            .expect("event.json multipart part");
+        let event_json = serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        (request, event_json)
+    }
+
+    fn wait_for_request(file_path: &std::path::Path, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if file_path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        file_path.exists()
     }
 
     #[test]
@@ -1869,6 +2199,162 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_serialize_returns_encoded_profile_and_resets() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+
+        assert!(
+            encoded.bytes().len() > 100,
+            "Encoded profile should contain non-trivial compressed bytes"
+        );
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after serialize"
+        );
+    }
+
+    #[test]
+    fn test_send_encoded_profile_with_attachments() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/api/test", 100).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+        let mut exporter = create_test_exporter();
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+
+        // Should fail with connection error because test exporter points at localhost:1,
+        // but this validates request construction and the encoded-profile API boundary.
+        let result = exporter.send_encoded_profile(
+            encoded,
+            vec![ffi::AttachmentFile {
+                name: "metadata.json",
+                data: &attachment_data,
+            }],
+            vec![ffi::Tag {
+                key: "profile_type",
+                value: "cpu",
+            }],
+            "language:rust,profiler_version:1.0",
+            r#"{"version": "1.0", "profiler": "test"}"#,
+            r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+        );
+
+        assert!(result.is_err(), "Should fail when no server is available");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_encoded_profile_file_export_preserves_metadata() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/api/test", 2).unwrap();
+        profile.add_endpoint_count("/api/test", 3).unwrap();
+        profile.add_endpoint_count("/api/other", 7).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+        let (mut exporter, file_path) = create_test_file_exporter("cxx_send_encoded_profile");
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+
+        exporter
+            .send_encoded_profile(
+                encoded,
+                vec![ffi::AttachmentFile {
+                    name: "metadata.json",
+                    data: &attachment_data,
+                }],
+                vec![ffi::Tag {
+                    key: "profile_type",
+                    value: "cpu",
+                }],
+                "language:rust,profiler_version:1.0",
+                r#"{"version": "1.0", "profiler": "test"}"#,
+                r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+            )
+            .unwrap();
+
+        let (request, event_json) = read_dumped_request_and_event(file_path.as_ref());
+        assert_eq!(request.method, "POST");
+        assert_eq!(
+            event_json["attachments"],
+            json!(["metadata.json", "profile.pprof"])
+        );
+        assert_eq!(
+            event_json["endpoint_counts"],
+            json!({
+                "/api/test": 5,
+                "/api/other": 7,
+            })
+        );
+        assert_eq!(
+            event_json["process_tags"],
+            "language:rust,profiler_version:1.0"
+        );
+        assert_eq!(event_json["internal"]["version"], "1.0");
+        assert_eq!(event_json["internal"]["profiler"], "test");
+        assert_eq!(
+            event_json["internal"]["libdatadog_version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(event_json["info"]["os"], "linux");
+        assert_eq!(event_json["info"]["arch"], "x86_64");
+        assert_eq!(event_json["info"]["cores"], 8);
+
+        let tags_profiler = event_json["tags_profiler"].as_str().unwrap();
+        assert!(tags_profiler.split(',').any(|tag| tag == "env:test"));
+        assert!(tags_profiler
+            .split(',')
+            .any(|tag| tag == "profile_type:cpu"));
+        assert!(tags_profiler
+            .split(',')
+            .any(|tag| tag.starts_with("runtime_platform:")));
+
+        let attachment_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.filename.as_deref() == Some("metadata.json"))
+            .expect("metadata.json multipart part");
+        assert!(!attachment_part.content.is_empty());
+        let profile_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.name == "profile.pprof")
+            .expect("profile.pprof multipart part");
+        assert!(!profile_part.content.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        let encoded = profile.serialize().unwrap();
+        let (mut exporter, file_path) =
+            create_test_file_exporter("cxx_send_encoded_profile_cancelled");
+        let cancel = new_cancellation_token();
+        cancel.cancel();
+
+        let result = exporter.send_encoded_profile_with_cancellation(
+            encoded,
+            vec![],
+            vec![],
+            "",
+            "",
+            "",
+            &cancel,
+        );
+
+        assert!(result.is_err(), "pre-cancelled upload should fail");
+        assert!(
+            !file_path.exists(),
+            "pre-cancelled upload should not write a request dump"
+        );
+    }
+
+    #[test]
     fn test_profile_add_sample2_rejects_wrong_value_count() {
         let dictionary = create_test_dictionary();
         let mut profile = create_test_profile_with_dictionary(&dictionary);
@@ -2138,6 +2624,51 @@ mod tests {
 
         // Verify profile was reset
         assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_manager_queue_encoded_profile_writes_file_export() {
+        let (exporter, file_path) = create_test_file_exporter("cxx_queue_encoded_profile");
+        let manager = ExporterManager::new_manager(exporter).unwrap();
+
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/queued", 11).unwrap();
+        let encoded = profile.serialize().unwrap();
+
+        manager
+            .queue_encoded_profile(
+                encoded,
+                vec![],
+                vec![ffi::Tag {
+                    key: "profile_type",
+                    value: "wall",
+                }],
+                "runtime:rust",
+                r#"{"queued": true}"#,
+                r#"{"worker": "background"}"#,
+            )
+            .unwrap();
+
+        assert!(
+            wait_for_request(file_path.as_ref(), Duration::from_secs(5)),
+            "queued encoded profile should be exported"
+        );
+        let (_request, event_json) = read_dumped_request_and_event(file_path.as_ref());
+        assert_eq!(event_json["attachments"], json!(["profile.pprof"]));
+        assert_eq!(event_json["endpoint_counts"], json!({ "/queued": 11 }));
+        assert_eq!(event_json["process_tags"], "runtime:rust");
+        assert_eq!(event_json["internal"]["queued"], true);
+        assert_eq!(event_json["info"]["worker"], "background");
+        assert!(event_json["tags_profiler"]
+            .as_str()
+            .unwrap()
+            .split(',')
+            .any(|tag| tag == "profile_type:wall"));
+
+        let mut manager = manager;
+        manager.abort().unwrap();
     }
 
     #[test]
