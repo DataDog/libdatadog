@@ -8,15 +8,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 
-def error_fingerprints(path: Path) -> set[tuple[str, str, str]]:
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def error_fingerprints(
+    messages_path: Path, log_path: Path | None = None
+) -> set[tuple[str, str, str]]:
     """Return stable fingerprints for error-level Cargo compiler messages."""
     fingerprints: set[tuple[str, str, str]] = set()
-    with path.open(encoding="utf-8") as messages:
+    with messages_path.open(encoding="utf-8") as messages:
         for line in messages:
             try:
                 cargo_message: dict[str, Any] = json.loads(line)
@@ -31,12 +37,27 @@ def error_fingerprints(path: Path) -> set[tuple[str, str, str]]:
             code = (diagnostic.get("code") or {}).get("code", "")
             message = diagnostic.get("message", "unknown compiler error")
             fingerprints.add((target, code, message))
+
+    # Dependency resolution and manifest failures happen before rustc emits JSON.
+    # Use only their leading Cargo error lines, and only when no compiler
+    # diagnostic exists, to avoid duplicating rendered rustc messages.
+    if not fingerprints and log_path:
+        with log_path.open(encoding="utf-8") as log:
+            for line in log:
+                normalized = ANSI_ESCAPE.sub("", line).strip()
+                if normalized.startswith("error:"):
+                    fingerprints.add(("cargo", "", normalized.removeprefix("error:").strip()))
     return fingerprints
 
 
-def new_errors(base_path: Path, head_path: Path) -> list[dict[str, str]]:
-    base = error_fingerprints(base_path)
-    head = error_fingerprints(head_path)
+def new_errors(
+    base_path: Path,
+    head_path: Path,
+    base_log: Path | None = None,
+    head_log: Path | None = None,
+) -> list[dict[str, str]]:
+    base = error_fingerprints(base_path, base_log)
+    head = error_fingerprints(head_path, head_log)
     return [
         {"target": target, "code": code, "message": message}
         for target, code, message in sorted(head - base)
@@ -47,6 +68,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", type=Path, required=True)
     parser.add_argument("--head", type=Path, required=True)
+    parser.add_argument("--base-log", type=Path)
+    parser.add_argument("--head-log", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
@@ -54,7 +77,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    additional_errors = new_errors(args.base, args.head)
+    additional_errors = new_errors(args.base, args.head, args.base_log, args.head_log)
     args.output.write_text(json.dumps(additional_errors, indent=2) + "\n", encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:

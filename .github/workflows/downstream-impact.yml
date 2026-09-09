@@ -156,13 +156,7 @@ jobs:
             cd "$DOWNSTREAM_ROOT"
             export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
             if [ "$label" = "head" ] && [ "$INJECT_DOWNSTREAM_FAILURE" = "true" ]; then
-              smoke_source=$(cargo +1.92.0 metadata \
-                --manifest-path "$MANIFEST_PATH" \
-                --format-version=1 \
-                --no-deps \
-                | jq -er '[.packages[].targets[] | select(.kind | index("lib")) | .src_path][0]')
-              printf '\ncompile_error!("DOWNSTREAM_IMPACT_NEW_FAILURE_SMOKE_TEST");\n' \
-                >> "$smoke_source"
+              printf '\n[DOWNSTREAM_IMPACT_NEW_FAILURE_SMOKE_TEST\n' >> "$MANIFEST_PATH"
             fi
             cargo +1.92.0 update \
               --manifest-path "$MANIFEST_PATH" \
@@ -199,6 +193,8 @@ jobs:
           python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
             --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
             --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
+            --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
+            --head-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.log" \
             --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
             --github-output "$GITHUB_OUTPUT"
 
