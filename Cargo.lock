@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2804,7 +2804,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.2.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker"
-version = "2.0.1"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "blazesym",
@@ -2925,7 +2925,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2978,7 +2978,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "futures",
@@ -3036,7 +3036,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "bincode",
  "chrono",
@@ -3112,7 +3112,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3130,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ipc-macros"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3215,7 +3215,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-live-debugger"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3276,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-otel-thread-ctx"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "elf",
@@ -3422,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3474,7 +3474,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3499,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3548,7 +3548,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.2"
+version = "1.1.3"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3574,7 +3574,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3606,7 +3606,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "11.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3684,7 +3684,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tracer-flare"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
