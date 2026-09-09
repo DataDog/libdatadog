@@ -79,8 +79,7 @@ impl Default for AgentTransport {
 ///
 /// Call [`AgentClientBuilder::test_agent_session_token`] to inject
 /// `x-datadog-test-session-token` on every request.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct AgentClientBuilder {
     transport: Option<AgentTransport>,
     test_token: Option<String>,
@@ -89,7 +88,6 @@ pub struct AgentClientBuilder {
     retry: Option<RetryConfig>,
     extra_headers: Vec<(String, String)>,
 }
-
 
 impl AgentClientBuilder {
     /// Create a new builder with default settings.
