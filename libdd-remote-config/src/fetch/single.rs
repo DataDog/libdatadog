@@ -277,7 +277,7 @@ mod tests {
             target,
             "old-runtime-id".to_string(),
             server.dummy_options(),
-            NativeCapabilities::new_without_connection_pooling(),
+            NativeCapabilities::new_periodic(),
         )
         .with_client_id("old-client-id".to_string());
 
