@@ -7,7 +7,7 @@
 use std::alloc::System;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use libdd_common::bench_utils::{
     memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
@@ -92,13 +92,7 @@ fn bench_wall_time(c: &mut Criterion) {
     for case in cases() {
         let matcher = GlobMatcher::new(case.pattern);
         c.bench_function(&format!("glob_matcher/{}/wall_time", case.name), |b| {
-            b.iter_batched(
-                || (),
-                |_| {
-                    black_box(matcher.matches(black_box(case.subject)));
-                },
-                BatchSize::SmallInput,
-            )
+            b.iter(|| black_box(matcher.matches(black_box(case.subject))))
         });
     }
 }
@@ -109,13 +103,7 @@ fn bench_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
         c.bench_function(
             &format!("glob_matcher/{}/allocated_bytes", case.name),
             |b| {
-                b.iter_batched(
-                    || (),
-                    |_| {
-                        black_box(matcher.matches(black_box(case.subject)));
-                    },
-                    BatchSize::SmallInput,
-                )
+                b.iter(|| black_box(matcher.matches(black_box(case.subject))))
             },
         );
     }
