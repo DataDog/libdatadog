@@ -1,11 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module provides struct representing the info endpoint response
-use libdd_trace_obfuscation::{
-    json::JsonObfuscator,
-    obfuscation_config::{self, SqlObfuscationMode},
-    replacer::ReplaceRule,
-};
+use libdd_trace_obfuscation::{obfuscation_config, replacer::ReplaceRule};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -120,7 +116,7 @@ impl AgentInfo {
 }
 
 impl From<ObfuscationConfig> for libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig {
-    fn from(mut value: ObfuscationConfig) -> Self {
+    fn from(value: ObfuscationConfig) -> Self {
         let sql_config = match value.sql {
             Some(sql_config) => sql_config,
             // Fallback for the previous /info config format

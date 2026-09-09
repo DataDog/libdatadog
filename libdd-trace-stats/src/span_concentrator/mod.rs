@@ -109,7 +109,7 @@ where
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct StatsComputationObfuscationConfig {
     pub enabled: bool,
-    pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+    pub sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
 }
 
 #[cfg(feature = "stats-obfuscation")]
@@ -363,7 +363,7 @@ impl SpanConcentrator {
 
     #[cfg(feature = "stats-obfuscation")]
     fn compute_obfuscated_span<'a>(
-        sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+        sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
         span: &'a impl StatSpan<'a>,
     ) -> Option<String> {
         let dbms_hint: Option<&str> = span.get_meta("db.type");
