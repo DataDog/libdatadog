@@ -32,6 +32,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use libc::c_char;
 use libdd_common::tag::Tag;
 
+#[cfg(not(target_os = "windows"))]
 #[repr(C)]
 pub struct WallTimeShmRegion {
     pub pid: libc::pid_t,
@@ -39,6 +40,7 @@ pub struct WallTimeShmRegion {
     pub config_reread_pending: u32,
 }
 
+#[cfg(not(target_os = "windows"))]
 const _: () = assert!(std::mem::size_of::<WallTimeShmRegion>() == 12);
 use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
@@ -194,6 +196,7 @@ pub extern "C" fn ddog_clone_anon_shm_handle(handle: &ShmHandle) -> Box<ShmHandl
 /// # Safety
 ///
 /// `pointer` must be writable, properly aligned, and valid for at least `size` bytes.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_wall_time_profiler_init_region(
     pointer: *mut WallTimeShmRegion,
@@ -216,6 +219,7 @@ pub unsafe extern "C" fn ddog_wall_time_profiler_init_region(
 /// # Safety
 ///
 /// `pointer` must be null or point to a live, properly aligned shared region.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_wall_time_profiler_consume_wall(
     pointer: *mut WallTimeShmRegion,
@@ -232,6 +236,7 @@ pub unsafe extern "C" fn ddog_wall_time_profiler_consume_wall(
 /// # Safety
 ///
 /// `pointer` must be null or point to a live, properly aligned shared region.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_wall_time_profiler_mark_wall(pointer: *mut WallTimeShmRegion) {
     if let Some(region) = pointer.as_ref() {
@@ -246,6 +251,7 @@ pub unsafe extern "C" fn ddog_wall_time_profiler_mark_wall(pointer: *mut WallTim
 /// # Safety
 ///
 /// `pointer` must be null or point to a live, properly aligned shared region.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_wall_time_profiler_consume_remote_config(
     pointer: *mut WallTimeShmRegion,
@@ -262,6 +268,7 @@ pub unsafe extern "C" fn ddog_wall_time_profiler_consume_remote_config(
 /// # Safety
 ///
 /// `pointer` must be null or point to a live, properly aligned shared region.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_wall_time_profiler_mark_remote_config(
     pointer: *mut WallTimeShmRegion,
@@ -849,6 +856,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
 /// # Safety
 ///
 /// `transport` and `handle` must be live objects created by this library.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_register_wall_time_profiler(
     transport: &mut Box<SidecarTransport>,
@@ -866,6 +874,7 @@ pub unsafe extern "C" fn ddog_sidecar_register_wall_time_profiler(
 /// # Safety
 ///
 /// `transport` must be a live object created by this library.
+#[cfg(not(target_os = "windows"))]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_sidecar_unregister_wall_time_profiler(
     transport: &mut Box<SidecarTransport>,

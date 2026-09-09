@@ -245,6 +245,7 @@ pub fn shutdown_session(transport: &mut SidecarTransport) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 pub fn register_wall_time_profiler(
     transport: &mut SidecarTransport,
     handle: ShmHandle,
@@ -252,6 +253,7 @@ pub fn register_wall_time_profiler(
     transport.with_retry(move |sender| sender.register_wall_time_profiler(handle.clone()))
 }
 
+#[cfg(unix)]
 pub fn unregister_wall_time_profiler(
     transport: &mut SidecarTransport,
     pid: libc::pid_t,
