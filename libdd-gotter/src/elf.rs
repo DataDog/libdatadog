@@ -25,6 +25,7 @@
 
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::slice;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 
@@ -817,28 +818,43 @@ impl PageProtGuard {
             .map(|m| m.prot)
     }
 
+    /// Make the page containing `addr` writable, recording its original
+    /// protection so [`Drop`] can restore it. No-op if the page was already
+    /// made writable by a previous call on this guard.
+    ///
+    /// Returns `true` on success, `false` if `mprotect` fails.
+    ///
+    /// # Safety
+    /// `addr` must point into a currently-mapped region.
+    pub unsafe fn make_writable(&mut self, addr: usize) -> bool {
+        let aligned = addr & !(self.page_size - 1);
+        if self.touched.contains_key(&aligned) {
+            return true;
+        }
+        // If /proc/self/maps isn't available (or the page isn't in it,
+        // which shouldn't happen for a mapped GOT page) fall back to
+        // PROT_READ, the RELRO'd default. Tighter than leaving pages RW.
+        let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
+        if mprotect(
+            aligned as *mut c_void,
+            self.page_size,
+            PROT_READ | PROT_WRITE,
+        ) != 0
+        {
+            return false;
+        }
+        self.touched.insert(aligned, orig);
+        true
+    }
+
     /// Make the containing page writable if it isn't already touched,
     /// then replace one GOT entry.
     ///
     /// # Safety
     /// `addr` must point to a valid GOT slot in mapped memory.
     pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
-        let aligned = addr & !(self.page_size - 1);
-        if !self.touched.contains_key(&aligned) {
-            // If /proc/self/maps isn't available (or the page isn't in
-            // it, which shouldn't happen for a mapped GOT page) fall
-            // back to PROT_READ - the RELRO'd default. That's tighter
-            // than the previous behavior of leaving pages RW.
-            let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
-            if mprotect(
-                aligned as *mut c_void,
-                self.page_size,
-                PROT_READ | PROT_WRITE,
-            ) != 0
-            {
-                return false;
-            }
-            self.touched.insert(aligned, orig);
+        if !self.make_writable(addr) {
+            return false;
         }
         core::ptr::write_unaligned(addr as *mut usize, new_value);
         true
@@ -1087,29 +1103,9 @@ unsafe fn hook_symbol_impl(
     }
     .ok_or(HookError::SymbolNotFound)?;
 
-    // Pass 1: count matching GOT slots across all libraries so we can
-    // pre-allocate the slots Vec with the exact capacity needed.
-    let mut total_slots: usize = 0;
-    iterate_libraries(|info, is_exe| {
-        let lib_name = unsafe { dlpi_name(info.dlpi_name) };
-        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
-            return false;
-        }
-        if let Some(addr) = skip_addr {
-            if unsafe { phdr_contains_addr(info, addr) } {
-                return false;
-            }
-        }
-        if let Some(dyn_info) = unsafe { DynamicInfo::from_phdr(info) } {
-            total_slots += count_matching_got_entries(&dyn_info, symbol_name_bytes);
-        }
-        false
-    });
-
     let mut entries_patched: usize = 0;
     let mut entries_failed: usize = 0;
-    // Allocate before any GOT entry is written
-    let mut slots: Vec<(usize, usize)> = Vec::with_capacity(total_slots);
+    let mut slots: Vec<(usize, usize)> = Vec::new();
     let mut guard = PageProtGuard::new();
 
     let guard_ptr = &mut guard as *mut PageProtGuard;
@@ -1117,8 +1113,12 @@ unsafe fn hook_symbol_impl(
     let failed_ptr = &mut entries_failed as *mut usize;
     let slots_ptr = &mut slots as *mut Vec<(usize, usize)>;
 
-    // Pass 2: patch GOT entries. Vec::push will not reallocate because
-    // capacity is exact from pass 1
+    // Single pass: count then patch per library, all under the loader
+    // lock held by dl_iterate_phdr. Counting and reserving before
+    // patching each library ensures Vec::push never reallocates mid-patch.
+    // Using a single dl_iterate_phdr call eliminates the window where a
+    // concurrent dlopen between two separate walks could add new libraries
+    // that exceed a pre-counted capacity.
     iterate_libraries(|info, is_exe| {
         // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
         // NUL-terminated C string for the callback's duration.
@@ -1135,13 +1135,19 @@ unsafe fn hook_symbol_impl(
         }
 
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`
+        // `dl_iterate_phdr`.
         let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
             return false;
         };
+
+        // Reserve before patching so push is guaranteed not to allocate
+        // after any GOT entry in this library has been overwritten.
+        let count = count_matching_got_entries(&dyn_info, symbol_name_bytes);
+        unsafe { (*slots_ptr).reserve(count) };
+
         // SAFETY: dyn_info was just produced from a currently-loaded
         // library. guard_ptr/patched_ptr/failed_ptr/slots_ptr are valid
-        // for the duration of iterate_libraries
+        // for the duration of iterate_libraries.
         unsafe {
             patch_got_entries(
                 &dyn_info,
@@ -1266,11 +1272,19 @@ unsafe fn patch_got_entries(
 /// pairs recorded just before each slot was overwritten — and writes
 /// each original value back, provided the slot still contains `hook_fn`.
 /// Slots that were independently overwritten after the hook was installed
-/// are left untouched.
+/// are left untouched. The check-and-replace is performed as an atomic
+/// compare-and-swap so a concurrent writer cannot slip in between the
+/// observation and the write.
 ///
+/// # Stacking order
+/// Hooks must be removed in the reverse order they were installed. If hook
+/// A was installed before hook B on the same slot, unhooking A first leaves
+/// the slot pointing at hook B's code; unhooking B later restores the slot
+/// to A's address. If A's library is subsequently unloaded and B is later
+/// unhooked, B will write A's (now-unmapped) address back into the slot.
+/// Always remove hooks LIFO to avoid resurrecting stale function pointers.
 ///
 /// # Safety
-///
 /// * Every address in `hook_result.slots` must still point into a currently-mapped region. A
 ///   library whose GOT was patched must not be `dlclose`d before this function returns.
 /// * The caller must ensure no other thread is concurrently calling through one of the GOT entries
@@ -1281,16 +1295,29 @@ pub unsafe fn unhook_symbol(hook_result: &HookResult, hook_fn: usize) -> HookRes
     let mut entries_failed: usize = 0;
 
     for &(addr, original_value) in &hook_result.slots {
-        // Only restore slots that still contain our hook. If a caller
-        // independently installed a different function after us, leave
-        // that entry alone.
+        // Make the page writable first; then replace hook_fn with
+        // original_value atomically. The CAS prevents a concurrent writer
+        // from being silently overwritten between our load and store.
         // SAFETY: caller guarantees `addr` is in a currently-mapped region.
-        let current = unsafe { core::ptr::read_unaligned(addr as *const usize) };
-        if current == hook_fn {
-            if unsafe { guard.override_entry(addr, original_value) } {
-                entries_restored += 1;
-            } else {
-                entries_failed += 1;
+        if !unsafe { guard.make_writable(addr) } {
+            entries_failed += 1;
+            continue;
+        }
+        // SAFETY: `addr` is a pointer-aligned GOT slot; AtomicUsize has
+        // the same size and alignment as usize.
+        let slot = addr as *const AtomicUsize;
+        match unsafe {
+            (*slot).compare_exchange(
+                hook_fn,
+                original_value,
+                Ordering::Release,
+                Ordering::Relaxed,
+            )
+        } {
+            Ok(_) => entries_restored += 1,
+            Err(_) => {
+                // Slot no longer holds hook_fn — independently overwritten;
+                // leave it alone.
             }
         }
     }
