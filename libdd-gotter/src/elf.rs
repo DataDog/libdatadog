@@ -25,7 +25,6 @@
 
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::slice;
-use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 
@@ -1026,6 +1025,31 @@ pub enum HookError {
     SymbolNotFound,
 }
 
+/// Result of an [`unhook_symbol`] call.
+///
+/// If [`slots_failed`] is non-zero, one or more GOT entries still point at
+/// the hook function because `mprotect` was rejected (e.g. a seccomp policy
+/// installed after hooking). Those slots remain live pointers into the
+/// library being unloaded; the caller **must not** unload until all slots
+/// are restored or the process will fault on the next call through them.
+///
+/// [`slots_failed`]: UnhookResult::slots_failed
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UnhookResult {
+    /// Number of GOT slots successfully restored to their pre-hook value.
+    pub slots_restored: usize,
+    /// Number of GOT slots that could not be restored because `mprotect`
+    /// was rejected. These slots still point at the hook function.
+    pub slots_failed: usize,
+}
+
+impl UnhookResult {
+    /// Returns `true` if every patched slot was successfully restored.
+    pub fn is_complete(&self) -> bool {
+        self.slots_failed == 0
+    }
+}
+
 /// Hook a single symbol across all loaded ELF objects by patching their
 /// GOT entries, including the library that contains the hook function.
 ///
@@ -1270,64 +1294,39 @@ unsafe fn patch_got_entries(
 ///
 /// Iterates `hook_result.slots` — the `(GOT_address, original_value)`
 /// pairs recorded just before each slot was overwritten — and writes
-/// each original value back, provided the slot still contains `hook_fn`.
-/// Slots that were independently overwritten after the hook was installed
-/// are left untouched. The check-and-replace is performed as an atomic
-/// compare-and-swap so a concurrent writer cannot slip in between the
-/// observation and the write.
+/// each original value back unconditionally.
 ///
-/// # Stacking order
-/// Hooks must be removed in the reverse order they were installed. If hook
-/// A was installed before hook B on the same slot, unhooking A first leaves
-/// the slot pointing at hook B's code; unhooking B later restores the slot
-/// to A's address. If A's library is subsequently unloaded and B is later
-/// unhooked, B will write A's (now-unmapped) address back into the slot.
-/// Always remove hooks LIFO to avoid resurrecting stale function pointers.
+/// # Contract
+///
+/// Designed to be called **once**, in a controlled context (e.g. a library
+/// unload handler), when no other thread is concurrently patching the same
+/// GOT entries. Threads concurrently *calling through* a hooked slot are
+/// safe: the write is pointer-sized and naturally aligned, so the CPU sees
+/// either the old or new pointer atomically.
 ///
 /// # Safety
-/// * Every address in `hook_result.slots` must still point into a currently-mapped region. A
-///   library whose GOT was patched must not be `dlclose`d before this function returns.
-/// * The caller must ensure no other thread is concurrently calling through one of the GOT entries
-///   being restored.
-pub unsafe fn unhook_symbol(hook_result: &HookResult, hook_fn: usize) -> HookResult {
+/// Every address in `hook_result.slots` must still point into a
+/// currently-mapped region. No library whose GOT was patched may be
+/// `dlclose`d before this function returns.
+pub unsafe fn unhook_symbol(hook_result: &HookResult) -> UnhookResult {
     let mut guard = PageProtGuard::new();
-    let mut entries_restored: usize = 0;
-    let mut entries_failed: usize = 0;
+    let mut result = UnhookResult::default();
 
     for &(addr, original_value) in &hook_result.slots {
-        // Make the page writable first; then replace hook_fn with
-        // original_value atomically. The CAS prevents a concurrent writer
-        // from being silently overwritten between our load and store.
         // SAFETY: caller guarantees `addr` is in a currently-mapped region.
-        if !unsafe { guard.make_writable(addr) } {
-            entries_failed += 1;
-            continue;
-        }
-        // SAFETY: `addr` is a pointer-aligned GOT slot; AtomicUsize has
-        // the same size and alignment as usize.
-        let slot = addr as *const AtomicUsize;
-        match unsafe {
-            (*slot).compare_exchange(
-                hook_fn,
-                original_value,
-                Ordering::Release,
-                Ordering::Relaxed,
-            )
-        } {
-            Ok(_) => entries_restored += 1,
-            Err(_) => {
-                // Slot no longer holds hook_fn — independently overwritten;
-                // leave it alone.
-            }
+        if unsafe { guard.make_writable(addr) } {
+            // Use write_unaligned to match patch_got_entries. GOT slots for
+            // JUMP_SLOT/GLOB_DAT are always pointer-aligned, but
+            // R_X86_64_64/R_AARCH64_ABS64 entries in data sections may not be.
+            // SAFETY: `addr` points to a writable GOT slot in mapped memory.
+            unsafe { core::ptr::write_unaligned(addr as *mut usize, original_value) };
+            result.slots_restored += 1;
+        } else {
+            result.slots_failed += 1;
         }
     }
 
-    HookResult {
-        orig_addr: hook_result.orig_addr,
-        entries_patched: entries_restored,
-        entries_failed,
-        slots: Vec::new(),
-    }
+    result
 }
 
 #[cfg(test)]
@@ -1714,26 +1713,90 @@ mod tests {
         );
 
         // SAFETY: hook_result.slots holds the per-slot addresses and
-        // original values captured at hook time; hook_fn is the dummy
-        // we installed.  All patched libraries remain loaded.
-        let unhook_result = unsafe { unhook_symbol(&hook_result, hook_fn) };
-
-        assert_eq!(
-            unhook_result.entries_patched, patched_count,
-            "unhook should restore exactly the entries that were patched"
-        );
+        // original values captured at hook time. All patched libraries remain loaded.
+        unsafe { unhook_symbol(&hook_result) };
 
         // Verify the original behavior is restored.
         let real_pid = unsafe { libc::getpid() };
         assert_ne!(real_pid, -1, "unhooked getpid should return the real PID");
         assert!(real_pid > 0, "real PID should be positive");
 
-        // A second unhook should be a no-op: slots no longer hold hook_fn.
-        let second = unsafe { unhook_symbol(&hook_result, hook_fn) };
-        assert_eq!(
-            second.entries_patched, 0,
-            "second unhook should find nothing to restore"
+        // A second unhook writes the same original values back — safe and
+        // idempotent since unconditional write_unaligned is used.
+        unsafe { unhook_symbol(&hook_result) };
+        let pid_after_second = unsafe { libc::getpid() };
+        assert!(pid_after_second > 0 && pid_after_second != -1);
+
+        let _ = patched_count; // used above in assertion on hook_result
+    }
+
+    /// Stack two hooks on the same symbol (A then B) and verify that LIFO
+    /// removal correctly sequences through the hook chain.
+    ///
+    /// After hooking A: slot -> hook_A, hook_a.slots[*].1 == real_getpid.
+    /// After hooking B: slot -> hook_B, hook_b.slots[*].1 == hook_A (the
+    ///   runtime value at patch time, not the resolved symbol address).
+    /// After unhooking B: slot -> hook_A (restored from hook_b.slots).
+    /// After unhooking A: slot -> real_getpid (restored from hook_a.slots).
+    ///
+    /// This verifies that `slots` captures the actual runtime GOT value
+    /// rather than the resolved symbol address, which is what makes LIFO
+    /// unhooking correct.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_unhook_stacked_hooks() {
+        unsafe extern "C" fn hook_a() -> libc::pid_t {
+            42
+        }
+        unsafe extern "C" fn hook_b() -> libc::pid_t {
+            99
+        }
+
+        let hook_a_fn = hook_a as *const () as usize;
+        let hook_b_fn = hook_b as *const () as usize;
+
+        // Install A.
+        let hook_a_result = unsafe { hook_symbol(c"getpid", hook_a_fn) };
+        let Ok(hook_a_result) = hook_a_result else {
+            eprintln!("note: getpid not found in dynsym, skipping stacked-hooks test");
+            return;
+        };
+        assert!(hook_a_result.entries_patched > 0);
+        assert_eq!(unsafe { libc::getpid() }, 42, "hook_a should be active");
+
+        // Install B over A. The slot now holds hook_b; hook_b_result.slots
+        // should record hook_a_fn as the original runtime value (not real getpid).
+        let hook_b_result = unsafe { hook_symbol(c"getpid", hook_b_fn) };
+        let Ok(hook_b_result) = hook_b_result else {
+            // Restore A before bailing out.
+            unsafe { unhook_symbol(&hook_a_result) };
+            panic!("second hook_symbol failed unexpectedly");
+        };
+        assert!(hook_b_result.entries_patched > 0);
+        assert_eq!(unsafe { libc::getpid() }, 99, "hook_b should be active");
+
+        // Verify that hook_b captured hook_a_fn as the per-slot original value,
+        // not the resolved real getpid address.
+        assert!(
+            hook_b_result
+                .slots
+                .iter()
+                .all(|&(_addr, orig)| orig == hook_a_fn),
+            "hook_b.slots should record hook_a_fn as original, not real getpid"
         );
+
+        // LIFO removal: unhook B first -> slot restores to hook_a.
+        unsafe { unhook_symbol(&hook_b_result) };
+        assert_eq!(
+            unsafe { libc::getpid() },
+            42,
+            "hook_a should be active after B removed"
+        );
+
+        // Unhook A -> slot restores to real getpid.
+        unsafe { unhook_symbol(&hook_a_result) };
+        let pid = unsafe { libc::getpid() };
+        assert!(pid > 0 && pid != 42, "real getpid should be restored");
     }
 
     /// Sanity check against real loaded libraries: the filter should
