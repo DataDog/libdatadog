@@ -103,9 +103,6 @@ impl SeqpacketListener {
         let path = path.as_ref();
         let _ = std::fs::remove_file(path);
         let fd = create_dgram_socket()?;
-        // Size the receive buffer to match clients: when many PHP processes start
-        // simultaneously they all sendmsg their fd to this rendezvous socket before
-        // the daemon has had a chance to accept them.
         set_dgram_buffers(fd.as_raw_fd())?;
         with_short_path(path, |short| {
             let addr = UnixAddr::new(short).map_err(io::Error::from)?;
@@ -132,7 +129,7 @@ impl SeqpacketListener {
                 // macOS SOCK_DGRAM returns EMSGSIZE when the received datagram exceeds
                 // the caller's iov or cmsg buffer — the kernel discards the message.
                 // Treat it as a discarded handshake: log and continue so the accept loop
-                // does not die. The PHP client will retry via the reconnect mechanism.
+                // does not die. The client will retry via the reconnect mechanism.
                 Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
                     // Shouldn't occur with our larger buffers, but guard defensively.
                     tracing::warn!("rendezvous socket: oversized datagram discarded (EMSGSIZE), client will retry");

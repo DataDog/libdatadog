@@ -111,11 +111,7 @@ pub(super) fn recvmsg_raw(
     buf: &mut [u8],
     flags: MsgFlags,
 ) -> io::Result<(usize, Vec<OwnedFd>)> {
-    // On macOS the kernel stores SCM_RIGHTS internally as pointer-sized entries
-    // (struct fileglob *, 8 bytes on arm64) rather than the POSIX int-sized fds.
-    // It checks msg_controllen against its internal format before converting to
-    // userspace format, so CMSG_SPACE(int * n) is too small and triggers EMSGSIZE.
-    // Use usize (= pointer width) as the per-fd size to match the kernel's check.
+    // On macOS the kernel stores SCM_RIGHTS internally as pointer-sized (8 bytes) entries.
     #[cfg(target_os = "macos")]
     let cmsg_space =
         unsafe { libc::CMSG_SPACE((size_of::<usize>() * MAX_FDS) as libc::c_uint) } as usize;

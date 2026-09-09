@@ -120,8 +120,6 @@ async fn accept_socket_loop(
                                 handler(conn);
                             }
                             Ok(Err(e)) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
-                                // Handled inside try_accept on macOS; guard here in case
-                                // it ever escapes so the accept loop stays alive.
                                 warn!("IPC accept: oversized datagram discarded (EMSGSIZE)");
                             }
                             Ok(Err(e)) => {

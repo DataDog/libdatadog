@@ -310,10 +310,7 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
 
     // On macos only actually listening binds the sidecar socket, so there might be a race, unlike
     // linux where binding the socket is sufficient. Hence we need a retry-loop on macos for this
-    // edge case. `deadline` stays `None` on other platforms so the retry arm below is never taken
-    // there; keeping the arm unconditional (rather than #[cfg]-ing it out) avoids a
-    // clippy::never_loop false-negative-turned-real-bug on non-macOS builds, where the loop would
-    // otherwise have no branch that continues.
+    // edge case.
     let deadline = cfg!(target_os = "macos").then(|| Instant::now() + Duration::from_secs(1));
     let err = loop {
         match liaison.attempt_listen() {

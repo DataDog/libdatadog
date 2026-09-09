@@ -13,9 +13,6 @@ use crate::setup::Liaison;
 use libdd_ipc::platform::locks::FLock;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
-#[cfg(feature = "logging")]
-use log::trace;
-#[cfg(not(feature = "logging"))]
 use tracing::trace;
 
 pub type IpcClient = SeqpacketConn;
@@ -54,13 +51,8 @@ impl Liaison for SharedDirLiaison {
             // Failing to acquire the lock means another process is currently creating
             // the socket; the caller then connects to it via connect_to_server(). This
             // is normal under concurrent process startup.
-            // trace, not warn: a warn here fires on every lock race and pollutes test
-            // diffs that capture log output (cf. the "already listening" case below).
             Err(err) => {
-                #[cfg(not(feature = "logging"))]
-                tracing::trace!("another process is creating the sidecar socket");
-                #[cfg(feature = "logging")]
-                log::trace!("another process is creating the sidecar socket");
+                trace!("another process is creating the sidecar socket");
                 return Err(err);
             }
         };
@@ -68,8 +60,6 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if libdd_ipc::platform::sockets::is_listening(&self.socket_path)? {
-                // trace not debug: this fires on every non-first PHP process start and
-                // appears in test diffs whenever debug logging is enabled.
                 trace!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
