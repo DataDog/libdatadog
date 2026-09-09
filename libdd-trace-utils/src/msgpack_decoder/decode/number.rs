@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
-use rmp::{decode::RmpRead, Marker};
+use rmp::Marker;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -148,7 +148,7 @@ impl TryFrom<Number> for f64 {
     }
 }
 
-fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
+fn read_num<R: rmp::decode::RmpRead>(buf: &mut R, allow_null: bool) -> Result<Number, DecodeError> {
     match rmp::decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
     {

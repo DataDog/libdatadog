@@ -98,9 +98,8 @@ where
 /// A boolean indicating whether the next value is null or not.
 #[inline]
 pub fn handle_null_marker<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> bool {
-    let slice = buf.as_mut_slice();
-    if slice.first() == Some(NULL_MARKER) {
-        *slice = &slice[1..];
+    if buf.first() == Some(NULL_MARKER) {
+        buf.advance(1);
         true
     } else {
         false

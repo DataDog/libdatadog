@@ -7,7 +7,7 @@ use crate::msgpack_decoder::decode::{
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::vec_map::VecMap;
-use crate::span::DeserializableTraceData;
+use crate::span::{BytesData, DeserializableTraceData, SliceData};
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
@@ -69,7 +69,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<BytesData>::new(&data))
 }
 
 /// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
@@ -127,7 +127,7 @@ pub fn from_bytes(
 /// assert_eq!("", decoded_span.name);
 /// ```
 pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<SliceData>::new(data))
 }
 
 #[allow(clippy::type_complexity)]
@@ -281,7 +281,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SliceData;
     use std::collections::HashMap;
 
     type V05Span = (

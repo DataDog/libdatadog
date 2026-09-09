@@ -7,7 +7,7 @@ use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
-use crate::span::DeserializableTraceData;
+use crate::span::{BytesData, DeserializableTraceData, SliceData};
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -54,7 +54,7 @@ use crate::span::DeserializableTraceData;
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<BytesData>::new(&data))
 }
 
 /// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
@@ -100,7 +100,7 @@ pub fn from_bytes(
 /// assert_eq!("test-span", decoded_span.name);
 /// ```
 pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<SliceData>::new(data))
 }
 
 #[allow(clippy::type_complexity)]
