@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "name": "workspace",
+      "paths": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "builder/**",
+        "tools/cc_utils/**"
+      ],
+      "consumers": ["*"]
+    },
+    {
+      "name": "profiling",
+      "paths": [
+        "libdd-profiling/**",
+        "libdd-profiling-ffi/**",
+        "libdd-profiling-protobuf/**",
+        "libdd-profiling-heap-*/**"
+      ],
+      "consumers": [
+        "DataDog/dd-trace-dotnet",
+        "DataDog/dd-trace-rb",
+        "DataDog/ddprof",
+        "DataDog/dd-win-prof",
+        "DataDog/libdatadog-dotnet",
+        "DataDog/libdatadog-rb",
+        "DataDog/dd-trace-dotnet-aws-lambda-layer",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "crashtracker",
+      "paths": ["libdd-crashtracker/**", "libdd-crashtracker-ffi/**"],
+      "consumers": [
+        "DataDog/dd-trace-go",
+        "DataDog/dd-trace-php",
+        "DataDog/dd-trace-py",
+        "DataDog/libdatadog-nodejs",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "data-pipeline",
+      "paths": [
+        "libdd-data-pipeline/**",
+        "libdd-data-pipeline-core/**",
+        "libdd-data-pipeline-ffi/**",
+        "libdd-trace-*/**"
+      ],
+      "consumers": [
+        "DataDog/dd-trace-php",
+        "DataDog/dd-trace-py",
+        "DataDog/dd-trace-rs",
+        "DataDog/datadog-lambda-extension",
+        "DataDog/serverless-components",
+        "DataDog/libdatadog-nodejs",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "library-config",
+      "paths": ["libdd-library-config/**", "libdd-library-config-ffi/**"],
+      "consumers": [
+        "DataDog/dd-trace-php",
+        "DataDog/dd-trace-py",
+        "DataDog/dd-trace-rs",
+        "DataDog/datadog-lambda-extension",
+        "DataDog/serverless-components",
+        "DataDog/nginx-datadog",
+        "DataDog/libdatadog-nodejs",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "telemetry",
+      "paths": ["libdd-telemetry/**", "libdd-telemetry-ffi/**"],
+      "consumers": [
+        "DataDog/dd-trace-php",
+        "DataDog/dd-trace-py",
+        "DataDog/dd-trace-rs",
+        "DataDog/datadog-lambda-extension",
+        "DataDog/serverless-components",
+        "DataDog/libdatadog-nodejs",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "common-runtime",
+      "paths": [
+        "libdd-common/**",
+        "libdd-common-ffi/**",
+        "libdd-capabilities/**",
+        "libdd-capabilities-impl/**",
+        "libdd-shared-runtime/**",
+        "libdd-shared-runtime-ffi/**",
+        "libdd-tinybytes/**",
+        "libdd-log/**",
+        "libdd-log-ffi/**"
+      ],
+      "consumers": [
+        "DataDog/dd-trace-dotnet",
+        "DataDog/dd-trace-php",
+        "DataDog/dd-trace-py",
+        "DataDog/dd-trace-rb",
+        "DataDog/dd-trace-rs",
+        "DataDog/ddprof",
+        "DataDog/dd-win-prof",
+        "DataDog/datadog-lambda-extension",
+        "DataDog/serverless-components",
+        "DataDog/nginx-datadog",
+        "DataDog/libdatadog-dotnet",
+        "DataDog/libdatadog-rb",
+        "DataDog/libdatadog-nodejs",
+        "DataDog/dd-trace-dotnet-aws-lambda-layer",
+        "DataDog/system-tests"
+      ]
+    },
+    {
+      "name": "other-published-components",
+      "paths": [
+        "libdd-alloc/**",
+        "libdd-gotter/**",
+        "libdd-ffe/**",
+        "libdd-ffe-ffi/**",
+        "libdd-ipc/**",
+        "libdd-ipc-macros/**",
+        "libdd-live-debugger/**",
+        "libdd-live-debugger-ffi/**",
+        "libdd-otel-thread-ctx/**",
+        "libdd-otel-thread-ctx-ffi/**",
+        "libdd-remote-config/**",
+        "libdd-tracer-flare/**",
+        "libdd-ddsketch/**",
+        "libdd-ddsketch-ffi/**",
+        "libdd-dogstatsd-client/**",
+        "libdd-http-client/**",
+        "libdd-agent-client/**",
+        "libdd-sampling/**",
+        "datadog-sidecar/**",
+        "datadog-sidecar-ffi/**",
+        "datadog-sidecar-macros/**",
+        "spawn_worker/**"
+      ],
+      "consumers": ["*"]
+    }
+  ],
+  "consumers": [
+    {"repository": "DataDog/dd-trace-php", "tier": "direct", "mode": "rust-source"},
+    {"repository": "DataDog/dd-trace-py", "tier": "direct", "mode": "rust-source"},
+    {"repository": "DataDog/dd-trace-rb", "tier": "direct", "mode": "native-artifact"},
+    {"repository": "DataDog/dd-trace-rs", "tier": "direct", "mode": "rust-crates"},
+    {"repository": "DataDog/dd-trace-dotnet", "tier": "direct", "mode": "native-artifact"},
+    {"repository": "DataDog/ddprof", "tier": "direct", "mode": "native-artifact"},
+    {"repository": "DataDog/dd-win-prof", "tier": "direct", "mode": "native-artifact"},
+    {"repository": "DataDog/datadog-lambda-extension", "tier": "direct", "mode": "rust-crates"},
+    {"repository": "DataDog/nginx-datadog", "tier": "direct", "mode": "native-artifact"},
+    {"repository": "DataDog/libdatadog-dotnet", "tier": "wrapper", "mode": "native-package"},
+    {"repository": "DataDog/libdatadog-rb", "tier": "wrapper", "mode": "native-package"},
+    {"repository": "DataDog/libdatadog-nodejs", "tier": "wrapper", "mode": "rust-crates"},
+    {"repository": "DataDog/dd-trace-dotnet-aws-lambda-layer", "tier": "indirect", "mode": "packaging"},
+    {"repository": "DataDog/system-tests", "tier": "indirect", "mode": "contract-tests"},
+    {"repository": "DataDog/serverless-components", "tier": "indirect", "mode": "rust-crates"},
+    {"repository": "DataDog/dd-trace-go", "tier": "indirect", "mode": "contract-tests"}
+  ]
+}

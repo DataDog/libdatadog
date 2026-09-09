@@ -1,0 +1,52 @@
+name: Downstream impact
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect potentially impacted repositories
+    runs-on: ubuntu-latest
+    outputs:
+      has_impacted: ${{ steps.impact.outputs.has_impacted }}
+      impacted_count: ${{ steps.impact.outputs.impacted_count }}
+      matrix: ${{ steps.impact.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate downstream impact detector
+        run: python3 -m unittest scripts/tests/test_downstream_impact.py
+
+      - name: Detect impact
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/downstream-impact.py \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --json-output downstream-impact.json \
+            --markdown-output downstream-impact.md \
+            --github-output "$GITHUB_OUTPUT"
+          cat downstream-impact.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload impact report
+        uses: actions/upload-artifact@v4
+        with:
+          name: downstream-impact
+          path: |
+            downstream-impact.json
+            downstream-impact.md
+          retention-days: 7
