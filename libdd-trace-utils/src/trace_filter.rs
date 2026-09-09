@@ -277,18 +277,16 @@ impl TraceFilterer {
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
     pub fn filter_traces<T: TraceData>(&self, traces: &mut PooledChunks<'_, T>) -> usize {
         let traces_count_before = traces.len();
-        let (pool, traces) = traces.chunks_mut();
-        let dropped_spans = traces.extract_if(.., |trace| {
+        traces.retain_mut(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
-                return false;
+                return true;
             };
             let should_drop = self.should_drop(&trace[root_span_index]);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
-            should_drop
+            !should_drop
         });
-        pool.add_chunks(dropped_spans);
         let traces_count_after = traces.len();
 
         traces_count_before - traces_count_after

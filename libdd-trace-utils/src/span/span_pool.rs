@@ -244,6 +244,26 @@ impl<T: TraceData> SpanPool<T> {
     }
 }
 
+pub struct PooledChunkRefMut<'a, 'b, T: TraceData> {
+    chunk: &'b mut Vec<Span<T>>,
+    pool: MaybePool<'a, T>,
+}
+
+impl<'a, 'b, T: TraceData> PooledChunkRefMut<'a, 'b, T> {
+    pub fn retain_mut<F: FnMut(&mut Span<T>) -> bool>(&mut self, mut f: F) {
+        let dropped_spans = self.chunk.extract_if(.., |s| !f(s));
+        self.pool.add_spans(dropped_spans);
+    }
+}
+
+impl<'a, 'b, T: TraceData> Deref for PooledChunkRefMut<'a, 'b, T> {
+    type Target = Vec<Span<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.chunk
+    }
+}
+
 /// A reference to a `SpanPool` that might be enabled or disabled
 pub struct MaybePool<'a, T: TraceData> {
     pool: Option<&'a SpanPool<T>>,
@@ -309,6 +329,19 @@ impl<'a, T: TraceData> PooledChunks<'a, T> {
 
     pub fn chunks_mut(&mut self) -> (MaybePool<'a, T>, &mut Vec<Vec<Span<T>>>) {
         (MaybePool { pool: self.pool }, &mut self.chunks)
+    }
+
+    pub fn retain_mut<F: for<'b> FnMut(&mut PooledChunkRefMut<'a, 'b, T>) -> bool>(
+        &mut self,
+        mut f: F,
+    ) {
+        let dropped_chunks = self.chunks.extract_if(.., |chunk| {
+            !f(&mut PooledChunkRefMut {
+                chunk,
+                pool: MaybePool { pool: self.pool },
+            })
+        });
+        MaybePool { pool: self.pool }.add_chunks(dropped_chunks);
     }
 }
 

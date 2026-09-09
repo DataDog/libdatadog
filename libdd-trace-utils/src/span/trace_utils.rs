@@ -154,12 +154,11 @@ where
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
 
-    let (pool, traces) = traces.chunks_mut();
-
-    let dropped = traces.extract_if(.., |chunk| {
+    traces.retain_mut(|chunk| {
         // ErrorSampler
         if chunk.iter().any(|s| s.error == 1) {
-            return false;
+            // We send chunks containing an error
+            return true;
         }
 
         // PrioritySampler and NoPrioritySampler
@@ -167,7 +166,8 @@ where
             .iter()
             .find_map(|s| s.metrics.get(SAMPLING_PRIORITY_KEY));
         if chunk_priority.is_none_or(|p| *p > 0.0) {
-            return false;
+            // We send chunks with positive priority or no priority
+            return true;
         }
 
         // SingleSpanSampler and AnalyzedSpansSampler
@@ -188,25 +188,23 @@ where
         if sampled_indexes.is_empty() {
             // If no spans were sampled we can drop the whole chunk
             dropped_p0_traces += 1;
-            return true;
+            return false;
         }
 
         let mut sampled_indices = sampled_indexes.iter().copied().peekable();
         let mut i: usize = 0;
-        let dropped_spans = chunk.extract_if(.., |_span| {
+        chunk.retain_mut(|_span| {
             let drop = if sampled_indices.peek().copied() == Some(i) {
                 sampled_indices.next();
-                false
-            } else {
                 true
+            } else {
+                false
             };
             i += 1;
             drop
         });
-        pool.add_spans(dropped_spans);
-        false
+        true
     });
-    pool.add_chunks(dropped);
 
     DroppedP0Stats {
         dropped_p0_traces,
