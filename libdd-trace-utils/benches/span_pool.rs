@@ -135,7 +135,7 @@ fn enqueue_dequeue<M: Measurement + MeasurementName + 'static>(c: &mut Criterion
     let mut group = c.benchmark_group(format!("span_pool/{}", M::name()));
     for &(num_chunks, spans_per_chunk) in CONFIGS {
         let total = num_chunks * spans_per_chunk;
-        let pool = SpanPool::<BytesData>::new(POOL_CAPACITY);
+        let pool = SpanPool::<BytesData>::with_capacity(POOL_CAPACITY);
         warm_pool(&pool, total);
 
         bench_iter(
