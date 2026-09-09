@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate downstream impact detector
-        run: python3 -m unittest scripts/tests/test_downstream_impact.py
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
       - name: Detect impact
         id: impact
@@ -143,22 +143,35 @@ jobs:
             local patch_config="$GITHUB_WORKSPACE/libdatadog-$label-patches.toml"
             local packages="$GITHUB_WORKSPACE/libdatadog-$label-packages.tsv"
             local log_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log"
+            local messages_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.jsonl"
 
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
             git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
             git -C "$DOWNSTREAM_ROOT" clean -fd
+            : > "$log_path"
+            : > "$messages_path"
 
-            (
-              cd "$DOWNSTREAM_ROOT"
-              export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
-              cargo +1.92.0 update \
-                --manifest-path "$MANIFEST_PATH" \
-                --config "$patch_config"
-              cargo +1.92.0 check \
-                --manifest-path "$MANIFEST_PATH" \
-                --config "$patch_config" \
-                "${CARGO_ARGS[@]}"
-            ) 2>&1 | tee "$log_path"
+            cd "$DOWNSTREAM_ROOT"
+            export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
+            cargo +1.92.0 update \
+              --manifest-path "$MANIFEST_PATH" \
+              --config "$patch_config" \
+              2>&1 | tee "$log_path"
+            local update_status=${PIPESTATUS[0]}
+            if [ "$update_status" -ne 0 ]; then
+              return "$update_status"
+            fi
+
+            cargo +1.92.0 check \
+              --manifest-path "$MANIFEST_PATH" \
+              --config "$patch_config" \
+              --message-format=json \
+              "${CARGO_ARGS[@]}" \
+              2> >(tee -a "$log_path" >&2) \
+              | tee "$messages_path" \
+              | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
+              | tee -a "$log_path"
+            return "${PIPESTATUS[0]}"
           }
 
           set +e
@@ -172,12 +185,18 @@ jobs:
           if [ "$HEAD_STATUS" -eq 0 ]; then HEAD_RESULT=success; else HEAD_RESULT=failure; fi
           echo "base_result=$BASE_RESULT" >> "$GITHUB_OUTPUT"
           echo "head_result=$HEAD_RESULT" >> "$GITHUB_OUTPUT"
+          python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
+            --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
+            --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
+            --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Report downstream compatibility
         if: always()
         env:
           BASE_RESULT: ${{ steps.validate.outputs.base_result }}
           HEAD_RESULT: ${{ steps.validate.outputs.head_result }}
+          NEW_ERROR_COUNT: ${{ steps.validate.outputs.new_error_count }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
           IMPACTED_COMPONENTS: ${{ matrix.components }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
@@ -188,6 +207,7 @@ jobs:
             echo "Components: $IMPACTED_COMPONENTS"
             echo
             echo "Base: **$BASE_RESULT** — Head: **$HEAD_RESULT**"
+            echo "New compiler diagnostics: **${NEW_ERROR_COUNT:-unknown}**"
             echo
             case "$BASE_RESULT:$HEAD_RESULT" in
               success:success)
@@ -197,7 +217,11 @@ jobs:
                 echo "❌ **Regression (non-blocking):** the PR breaks a downstream build that passes on its base."
                 ;;
               failure:failure)
-                echo "⚠️ **Baseline incompatible:** the downstream repository already fails against the PR base; this PR does not introduce a new failure."
+                if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
+                  echo "❌ **Additional regression (non-blocking):** the downstream repository already fails against the base, and this PR introduces new compiler errors."
+                else
+                  echo "⚠️ **Baseline incompatible:** the downstream repository already fails against the PR base, with no additional compiler error detected in this PR."
+                fi
                 ;;
               failure:success)
                 echo "✅ **Improved:** the downstream repository fails against the base but compiles with this PR."
@@ -206,6 +230,14 @@ jobs:
                 echo "⚠️ **Inconclusive:** the differential validation did not produce both results."
                 ;;
             esac
+
+            if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
+              echo
+              echo "### Compiler errors introduced by the PR"
+              echo
+              jq -r '.[] | "- `\(.target)` `\(.code // "")`: \(.message)"' \
+                "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
+            fi
 
             for label in base head; do
               result_var="${label^^}_RESULT"
@@ -229,14 +261,25 @@ jobs:
           path: |
             ${{ matrix.artifact_name }}-base.log
             ${{ matrix.artifact_name }}-head.log
+            ${{ matrix.artifact_name }}-base.jsonl
+            ${{ matrix.artifact_name }}-head.jsonl
+            ${{ matrix.artifact_name }}-new-errors.json
           if-no-files-found: ignore
           retention-days: 7
 
       - name: Mark downstream regression as failed
         if: >-
           always() &&
-          steps.validate.outputs.base_result == 'success' &&
-          steps.validate.outputs.head_result == 'failure'
+          (
+            steps.validate.outcome == 'failure' ||
+            (
+              steps.validate.outputs.head_result == 'failure' &&
+              (
+                steps.validate.outputs.base_result == 'success' ||
+                steps.validate.outputs.new_error_count != '0'
+              )
+            )
+          )
         run: |
           echo "The PR introduces a downstream compilation regression."
           exit 1
