@@ -37,6 +37,7 @@ use std::{
     },
     path::Path,
 };
+use tracing::error;
 
 /// macOS `sockaddr_un::sun_path` is only 104 bytes (103 usable). When the socket path
 /// exceeds that, cd to the socket's parent directory for the operation using the
@@ -63,11 +64,23 @@ fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> i
     let saved_owned = unsafe { OwnedFd::from_raw_fd(saved) };
     let dir_cstr = CString::new(dir.as_os_str().as_bytes())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "socket dir path contains NUL"))?;
-    if unsafe { pthread_chdir_np(dir_cstr.as_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
+    let chdir_err = unsafe { pthread_chdir_np(dir_cstr.as_ptr()) };
+    if chdir_err != 0 {
+        return Err(io::Error::from_raw_os_error(chdir_err));
     }
     let result = f(Path::new(name));
-    unsafe { pthread_fchdir_np(saved_owned.as_raw_fd()) };
+    let restore_err = unsafe { pthread_fchdir_np(saved_owned.as_raw_fd()) };
+    if restore_err != 0 {
+        // The calling thread's CWD is now left pointing at `dir`, which would silently corrupt
+        // any later relative-path resolution on this thread; surface that instead of the
+        // (possibly successful) callback result.
+        error!(
+            "pthread_fchdir_np failed to restore thread CWD after socket op: errno {restore_err}"
+        );
+        if result.is_ok() {
+            return Err(io::Error::from_raw_os_error(restore_err));
+        }
+    }
     result
 }
 

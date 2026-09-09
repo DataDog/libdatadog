@@ -18,9 +18,9 @@ mod native {
     use libdd_common::http_common::{
         new_client_periodic, new_default_client, Body, GenericHttpClient,
     };
+    use libdd_common::MutexExt;
 
     use http_body_util::BodyExt;
-    use libdd_common::MutexExt;
 
     #[derive(Clone)]
     pub struct NativeHttpClient {

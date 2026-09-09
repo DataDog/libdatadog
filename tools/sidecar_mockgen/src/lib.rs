@@ -6,7 +6,7 @@ use object::read::elf::{ElfFile64, FileHeader};
 use object::read::macho::{LoadCommandVariant, MachHeader};
 use object::{
     Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol, SymbolFlags,
-    SymbolKind, SymbolScope,
+    SymbolKind,
 };
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -130,7 +130,7 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
         #[cfg(target_os = "macos")]
         let candidate_syms: Vec<_> = so_file
             .symbols()
-            .filter(|s| s.scope() == SymbolScope::Dynamic)
+            .filter(|s| s.scope() == object::SymbolScope::Dynamic)
             .collect();
         #[cfg(not(target_os = "macos"))]
         let candidate_syms: Vec<_> = so_file.dynamic_symbols().collect();
@@ -139,7 +139,7 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
                 if let Ok(name) = sym.name() {
                     if undefined_candidates.contains(name) {
                         #[cfg(target_os = "macos")]
-                        let name = &name[1..];
+                        let name = name.strip_prefix('_').unwrap_or(name);
                         result.insert(name.to_string());
                     }
                 }
