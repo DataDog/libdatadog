@@ -87,7 +87,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = [
 ] }
 httpmock.workspace = true
 prost = "0.14.1"
-rand = "0.8.5"
+rand = ">=0.8.6, <0.9"
 tempfile.workspace = true
 tokio = { version = "1.23", features = [
     "rt",
@@ -97,7 +97,7 @@ tokio = { version = "1.23", features = [
 duplicate = "2.0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-h2 = "0.4"
+h2 = ">=0.4.19, <0.5"
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
