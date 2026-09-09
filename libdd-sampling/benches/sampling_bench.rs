@@ -6,7 +6,7 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use libdd_common::bench_utils::{
-    memory_allocated_measurement, AllocatedBytesMeasurement, ReportingAllocator,
+    memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
 use libdd_sampling::{v04_span::V04SamplingData, DatadogSampler, SamplingRule};
 use libdd_trace_utils::span::{v04::Span, SliceData};
@@ -439,9 +439,10 @@ fn criterion_benchmark_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System
 }
 
 criterion_group!(benches, criterion_benchmark);
-criterion_group!(
-    name = alloc_benches;
-    config = memory_allocated_measurement(&GLOBAL);
-    targets = criterion_benchmark_allocs
-);
+
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+fn alloc_benches() {
+    criterion_benchmark_allocs(&mut memory_allocated_criterion(&GLOBAL));
+}
+
 criterion_main!(alloc_benches, benches);
