@@ -350,6 +350,7 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    #[cfg(unix)]
     pub fn register_wall_time_profiler(&mut self, handle: ShmHandle) -> io::Result<()> {
         self.drain_outbox_blocking();
         match self
@@ -365,6 +366,7 @@ impl SidecarSender {
         }
     }
 
+    #[cfg(unix)]
     pub fn unregister_wall_time_profiler(&mut self, pid: libc::pid_t) -> io::Result<()> {
         self.drain_outbox_blocking();
         self.channel

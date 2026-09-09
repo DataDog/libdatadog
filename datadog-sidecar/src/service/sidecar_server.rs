@@ -122,6 +122,7 @@ pub struct SidecarServer {
     /// All remote config handling
     remote_configs: RemoteConfigs,
     /// php-fpm wall-time notification slots.
+    #[cfg(unix)]
     wall_time_registrations: crate::service::wall_time::WallTimeRegistrations,
     /// Diagnostics bookkeeper
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
@@ -156,13 +157,16 @@ struct ConnectionSidecarHandler {
     #[cfg(unix)]
     appsec_client_id: Mutex<Option<u64>>,
     /// Wall-time slots owned by this connection, for disconnect cleanup.
+    #[cfg(unix)]
     wall_time_pids: Mutex<std::collections::HashSet<libc::pid_t>>,
     /// Distinguishes replayed registrations from cleanup of an older connection.
+    #[cfg(unix)]
     wall_time_owner: u64,
 }
 
 impl ConnectionSidecarHandler {
     fn new(server: SidecarServer, connection: OwnedServerConn) -> Self {
+        #[cfg(unix)]
         static NEXT_WALL_TIME_OWNER: AtomicU64 = AtomicU64::new(1);
         let submitted_payloads = Arc::new(AtomicU64::new(0));
         server
@@ -178,7 +182,9 @@ impl ConnectionSidecarHandler {
             connection,
             #[cfg(unix)]
             appsec_client_id: Mutex::new(None),
+            #[cfg(unix)]
             wall_time_pids: Default::default(),
+            #[cfg(unix)]
             wall_time_owner: NEXT_WALL_TIME_OWNER.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -188,10 +194,13 @@ impl ConnectionSidecarHandler {
     }
 
     async fn cleanup(&self) {
-        for pid in self.wall_time_pids.lock_or_panic().drain() {
-            self.server
-                .wall_time_registrations
-                .unregister_owned(pid, self.wall_time_owner);
+        #[cfg(unix)]
+        {
+            for pid in self.wall_time_pids.lock_or_panic().drain() {
+                self.server
+                    .wall_time_registrations
+                    .unregister_owned(pid, self.wall_time_owner);
+            }
         }
         let instances: Vec<InstanceId> = self.instances.lock_or_panic().iter().cloned().collect();
 
@@ -487,6 +496,7 @@ impl SidecarServer {
     fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
         Some(RemoteConfigNotifyTarget {
             pid: session.pid.load(Ordering::Relaxed),
+            #[cfg(unix)]
             wall_time_registrations: self.wall_time_registrations.clone(),
         })
     }
@@ -591,6 +601,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         crate::crashtracker::run_crashtracker_receiver(self.connection.async_conn()).await;
     }
 
+    #[cfg(unix)]
     async fn register_wall_time_profiler(&self, handle: ShmHandle) -> bool {
         match self
             .server
@@ -608,6 +619,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
+    #[cfg(unix)]
     async fn unregister_wall_time_profiler(&self, pid: libc::pid_t) {
         self.server
             .wall_time_registrations

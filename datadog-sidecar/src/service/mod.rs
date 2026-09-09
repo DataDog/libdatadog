@@ -31,6 +31,7 @@ pub(crate) use sidecar_server::SidecarServer;
 use runtime_info::RuntimeInfo;
 use session_info::SessionInfo;
 pub(crate) use sidecar_interface::SidecarInterface;
+#[cfg(unix)]
 pub mod wall_time;
 
 pub mod agent_info;
