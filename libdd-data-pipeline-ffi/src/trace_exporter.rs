@@ -901,14 +901,19 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
 }
 
-/// Discards buffered data without sending it, then frees the TraceExporter instance.
+/// Discards runtime-identity-bound state without sending buffered data, then frees the exporter.
 ///
-/// This is intended for runtime identity refreshes. Unlike
-/// [`ddog_trace_exporter_free`], it does not execute the normal flush-capable shutdown path.
+/// Why this exists: SDKs that restore from a process snapshot, such as dd-trace-py in a MicroVM
+/// `/run` hook, can inherit buffered stats, telemetry state, and cached agent `/info` responses
+/// from the snapshotted runtime. The normal [`ddog_trace_exporter_free`] path flushes before
+/// freeing, which is correct for ordinary shutdown but wrong when the SDK is discarding inherited
+/// state and immediately constructing a fresh exporter for the restored runtime identity.
 ///
-/// Returns `None` when every worker has been discarded and sets `*handle` to null. On an ordinary
-/// error, the exporter remains owned by `*handle` so the caller can retry. A caught panic sets
-/// `*handle` to null.
+/// This function gives those snapshot-aware callers an explicit no-flush teardown API. Ordinary
+/// non-snapshot shutdown callers should continue using [`ddog_trace_exporter_free`].
+///
+/// Returns `None` when the inherited state was discarded. Once a non-null handle is accepted,
+/// `*handle` is always set to null, including when an ordinary error is returned.
 ///
 /// # Arguments
 ///
@@ -922,15 +927,12 @@ pub unsafe extern "C" fn ddog_trace_exporter_free_without_flush(
             let Some(exporter) = NonNull::new(*handle) else {
                 return gen_error!(ErrorCode::InvalidArgument);
             };
-            let mut exporter = Box::from_raw(exporter.as_ptr());
+            let exporter = Box::from_raw(exporter.as_ptr());
             *handle = std::ptr::null_mut();
 
             match exporter.shutdown_without_flush() {
                 Ok(()) => None,
-                Err(err) => {
-                    *handle = Box::into_raw(exporter);
-                    Some(Box::new(ExporterError::from(err)))
-                }
+                Err(err) => Some(Box::new(ExporterError::from(err))),
             }
         },
         gen_error!(ErrorCode::Panic)

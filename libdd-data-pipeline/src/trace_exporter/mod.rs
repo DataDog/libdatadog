@@ -46,6 +46,7 @@ use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, S
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::DogStatsDClient;
+use libdd_shared_runtime::shared_runtime::runtime_identity_refresh;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
@@ -321,9 +322,17 @@ impl<
         runtime.block_on(self.shutdown_async(timeout))?
     }
 
-    /// Discard buffered worker data without sending it to any endpoint.
+    /// Discard inherited runtime-identity state without sending buffered worker data.
+    ///
+    /// This exists for SDKs that restore from a process snapshot, such as a MicroVM `/run`
+    /// hook. The restored process can inherit buffered stats, telemetry state, and cached
+    /// `/info` responses from the snapshotted runtime. Normal [`Self::shutdown`] intentionally
+    /// flushes those buffers, so this separate API gives snapshot-aware callers an explicit
+    /// opt-in path that discards inherited state before they create a fresh exporter.
+    ///
+    /// Non-snapshot shutdown callers should continue using [`Self::shutdown`].
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn shutdown_without_flush(&mut self) -> Result<(), TraceExporterError>
+    pub fn shutdown_without_flush(self) -> Result<(), TraceExporterError>
     where
         R: BlockingRuntime,
     {
@@ -358,8 +367,10 @@ impl<
     ///
     /// # Cancel safety
     /// This function is *NOT* cancel safe. If cancelled, workers can be left in an invalid state.
-    pub async fn shutdown_without_flush_async(&mut self) -> Result<(), TraceExporterError> {
-        self.discard_workers().await
+    pub async fn shutdown_without_flush_async(self) -> Result<(), TraceExporterError> {
+        let discard_result = self.discard_workers_without_flush().await;
+        agent_info::clear_cache_for_runtime_identity_refresh();
+        discard_result
     }
 
     async fn shutdown_workers(self) {
@@ -393,7 +404,7 @@ impl<
         }
     }
 
-    async fn discard_workers(&self) -> Result<(), TraceExporterError> {
+    async fn discard_workers_without_flush(&self) -> Result<(), TraceExporterError> {
         let mut handles: Vec<WorkerHandle> = Vec::new();
 
         if let StatsComputationStatus::Enabled { worker_handle, .. } =
@@ -415,7 +426,10 @@ impl<
             handles.push(telemetry.clone());
         }
 
-        let mut futures: FuturesUnordered<_> = handles.into_iter().map(|h| h.discard()).collect();
+        let mut futures: FuturesUnordered<_> = handles
+            .into_iter()
+            .map(runtime_identity_refresh::discard_worker_without_flush)
+            .collect();
 
         let mut first_error = None;
         while let Some(result) = futures.next().await {
@@ -2790,7 +2804,7 @@ mod single_threaded_tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn test_shutdown_without_flush_discards_buffered_stats() {
+    fn test_shutdown_without_flush_discards_buffered_stats_and_agent_info() {
         // Clear the agent info cache to ensure test isolation
         agent_info::clear_cache_for_test();
 
@@ -2835,7 +2849,7 @@ mod single_threaded_tests {
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
-        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),
@@ -2864,6 +2878,7 @@ mod single_threaded_tests {
         }
 
         exporter.shutdown_without_flush().unwrap();
+        assert!(agent_info::get_agent_info().is_none());
         runtime.shutdown(None).unwrap();
 
         mock_traces.assert();
@@ -2879,7 +2894,7 @@ mod single_threaded_tests {
         let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder.set_shared_runtime(runtime.clone());
-        let mut exporter = builder.build::<NativeCapabilities>().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         runtime.shutdown(None).unwrap();
 

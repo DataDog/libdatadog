@@ -242,6 +242,7 @@ impl BlockingRuntime for ForkSafeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_runtime::runtime_identity_refresh::discard_worker_without_flush;
     use async_trait::async_trait;
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
@@ -331,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_handle_discard_does_not_shutdown() {
+    fn test_runtime_identity_refresh_discard_does_not_shutdown() {
         #[derive(Debug)]
         struct DiscardWorker(Sender<i32>);
 
@@ -361,7 +362,7 @@ mod tests {
             .unwrap();
 
         rt.block_on(async {
-            assert!(handle.discard().await.is_ok());
+            assert!(discard_worker_without_flush(handle).await.is_ok());
         });
 
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);

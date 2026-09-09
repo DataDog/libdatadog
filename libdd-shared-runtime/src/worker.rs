@@ -38,6 +38,18 @@ pub trait Worker: std::fmt::Debug + MaybeSend {
     /// Reset the worker state. Called in the child after a fork to cleanup parent state.
     fn reset(&mut self) {}
 
+    /// Reset the worker state after it has been permanently removed from its runtime, e.g. for a
+    /// runtime identity refresh (see
+    /// [`runtime_identity_refresh`](crate::shared_runtime::runtime_identity_refresh)).
+    ///
+    /// Unlike [`reset`](Self::reset), which prepares the worker to keep running (e.g. in a forked
+    /// child), this worker instance is never run again. Override this when a worker holds
+    /// resources whose "keep running" reset behavior would be wrong once discarded permanently
+    /// (e.g. a channel that must be closed rather than reopened).
+    fn discard(&mut self) {
+        self.reset();
+    }
+
     /// Hook called when the app is shutting down. Can be used to flush remaining data.
     async fn shutdown(&mut self) {}
 }
@@ -60,6 +72,10 @@ impl Worker for Box<dyn Worker + Sync> {
 
     fn reset(&mut self) {
         (**self).reset()
+    }
+
+    fn discard(&mut self) {
+        (**self).discard()
     }
 
     async fn shutdown(&mut self) {
