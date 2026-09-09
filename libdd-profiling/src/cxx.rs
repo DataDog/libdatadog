@@ -5,6 +5,8 @@
 
 #![allow(clippy::needless_lifetimes)]
 
+use anyhow::Context;
+
 use crate::api;
 use crate::exporter;
 use crate::internal;
@@ -168,6 +170,11 @@ pub mod ffi {
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_sample_with_timestamp(
+            self: &mut Profile,
+            sample: &Sample,
+            endtime_ns: i64,
+        ) -> Result<()>;
         fn set_custom_sample_type(
             self: &mut Profile,
             slot: SampleType,
@@ -574,6 +581,25 @@ impl Profile {
         // Profile interns the strings
         self.inner.try_add_sample(api_sample, None)?;
         Ok(())
+    }
+
+    pub fn add_sample_with_timestamp(
+        &mut self,
+        sample: &ffi::Sample,
+        endtime_ns: i64,
+    ) -> anyhow::Result<()> {
+        let timestamp =
+            internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero")?;
+
+        let api_sample = api::Sample {
+            locations: sample.locations.iter().map(Into::into).collect(),
+            values: &sample.values,
+            labels: sample.labels.iter().map(Into::into).collect(),
+        };
+
+        self.inner
+            .try_add_sample(api_sample, Some(timestamp))
+            .context("Profile::add_sample_with_timestamp failed")
     }
 
     pub fn set_custom_sample_type(
@@ -1017,6 +1043,7 @@ impl ExporterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
 
     const TEST_LIB_NAME: &str = "dd-trace-test";
     const TEST_LIB_VERSION: &str = "1.0.0";
@@ -1160,6 +1187,92 @@ mod tests {
             0,
             "Profile should be empty after reset"
         );
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_operations() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Timestamped samples should not be aggregated into the non-timestamped bucket"
+        );
+        assert_eq!(
+            profile.inner.only_for_testing_num_timestamped_samples(),
+            1,
+            "Profile should have 1 timestamped sample after adding"
+        );
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(
+            serialized.len() > 100,
+            "Serialized timestamped profile should be non-trivial"
+        );
+        assert!(
+            serialized.starts_with(&[0x28, 0xb5, 0x2f, 0xfd])
+                || serialized.starts_with(&[0x1f, 0x8b]),
+            "Serialized timestamped profile should be compressed"
+        );
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_rejects_zero_timestamp() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        let err = profile.add_sample_with_timestamp(&sample, 0).unwrap_err();
+
+        assert!(err.to_string().contains("endtime_ns must be non-zero"));
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_serializes_end_timestamp_label() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let timestamp_labels = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .collect::<Vec<_>>();
+
+        assert_eq!(timestamp_labels.len(), 1);
+        let timestamp_label = timestamp_labels[0];
+        assert_eq!(timestamp_label.num, 42);
+        assert_eq!(string_table_fetch(&pprof, timestamp_label.str), "");
+        assert_eq!(string_table_fetch(&pprof, timestamp_label.num_unit), "");
+    }
+
+    #[test]
+    fn test_profile_timestamped_identical_samples_remain_distinct() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+        profile.add_sample_with_timestamp(&sample, 43).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let mut timestamps = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .map(|label| label.num)
+            .collect::<Vec<_>>();
+
+        timestamps.sort_unstable();
+
+        assert_eq!(timestamps, vec![42, 43]);
     }
 
     #[test]
