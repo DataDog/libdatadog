@@ -619,7 +619,10 @@ mod tests_v1 {
         assert!(matches!(get("component"), Some(PV::StringValue(ref v)) if v == "pg"));
         assert!(matches!(get("_dd.origin"), Some(PV::StringValue(ref v)) if v == "lambda"));
         assert!(matches!(get("_dd.p.dm"), Some(PV::StringValue(ref v)) if v == "-4"));
-        assert!(matches!(get("_sampling_priority_v1"), Some(PV::IntValue(1))));
+        assert!(matches!(
+            get("_sampling_priority_v1"),
+            Some(PV::IntValue(1))
+        ));
     }
 
     #[test]
