@@ -20,8 +20,12 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
 use crate::agentless::exporter::send_agentless_traces_with_observer;
 use crate::agentless::AgentlessTraceConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
 use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
 use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -57,11 +61,14 @@ use libdd_trace_utils::send_with_retry::{
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+#[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+use prost::Message;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -69,6 +76,36 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_JITTER: Duration = Duration::from_millis(100);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_delay(
+    attempt: u32,
+    retry_after: Option<Duration>,
+    jitter: Duration,
+) -> Option<Duration> {
+    let initial_delay = match retry_after {
+        Some(delay) if delay > OTLP_GRPC_MAX_RETRY_DELAY => return None,
+        Some(delay) if !delay.is_zero() => delay,
+        _ => Duration::from_millis(OTLP_RETRY_DELAY_MS),
+    };
+    let multiplier = 2u32.saturating_pow(attempt.saturating_sub(1));
+    Some(
+        initial_delay
+            .saturating_mul(multiplier)
+            .saturating_add(jitter)
+            .min(OTLP_GRPC_MAX_RETRY_DELAY),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_jitter() -> Duration {
+    let max_millis = u64::try_from(OTLP_GRPC_MAX_JITTER.as_millis()).unwrap_or(u64::MAX);
+    Duration::from_millis(rand::random::<u64>() % max_millis + 1)
+}
 
 #[derive(Clone, Copy)]
 struct PayloadCounts {
@@ -163,6 +200,13 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
+#[derive(Debug)]
+pub(crate) enum OtlpExportMode {
+    Http(OtlpTraceConfig),
+    #[cfg(not(target_arch = "wasm32"))]
+    Grpc(OtlpGrpcTransport),
+}
+
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
@@ -243,8 +287,10 @@ pub struct TraceExporter<
     capabilities: C,
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
-    otlp_config: Option<OtlpTraceConfig>,
+    /// When set, traces are exported via OTLP instead of the Datadog agent.
+    otlp: Option<OtlpExportMode>,
+    /// OTLP Resource attributes derived from tracer metadata.
+    otlp_resource_info: OtlpResourceInfo,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
@@ -302,6 +348,37 @@ impl<
                 error!(?e, "Error sending telemetry");
             }
         }
+    }
+
+    #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+    fn emit_grpc_result(
+        &self,
+        result: &Result<(), TraceExporterError>,
+        attempts: u32,
+        bytes: usize,
+        counts: PayloadCounts,
+    ) {
+        let retry_result = match result {
+            Ok(()) => Ok((http::Response::new(Bytes::new()), attempts)),
+            Err(TraceExporterError::Request(error)) => {
+                let mut response = http::Response::new(Bytes::new());
+                *response.status_mut() = error.status();
+                Err(SendWithRetryError::Http(response, attempts))
+            }
+            Err(TraceExporterError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(TraceExporterError::Network(error))
+                if matches!(
+                    error.kind(),
+                    crate::trace_exporter::error::NetworkErrorKind::TimedOut
+                ) =>
+            {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(_) => Err(SendWithRetryError::ResponseBody(attempts)),
+        };
+        self.emit_retry_result(&retry_result, bytes, counts);
     }
 
     /// Stop the background workers owned by this exporter.
@@ -684,33 +761,27 @@ impl<
     ) -> Result<AgentResponse, TraceExporterError> {
         #[cfg(feature = "telemetry")]
         let counts = PayloadCounts::from_traces(&traces);
-        let resource_info = {
-            let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats =
-                self.metadata.client_computed_stats || self.otlp_stats_enabled;
-            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
-            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
-            r
-        };
-        // Single prost OTLP IR; the configured protocol encodes the same request to its wire
-        // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
-        // the mapper.
-        let request =
-            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
-        let body = config.protocol.encode(&request).map_err(|e| {
-            error!("OTLP serialization error: {e}");
-            #[cfg(feature = "telemetry")]
-            self.emit_serialization_drop(counts);
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-                "failed to encode OTLP request: {e}"
-            )))
-        })?;
+        let request = map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            config.otel_trace_semantics_enabled,
+        );
+        let body = config
+            .protocol
+            .encode(&request)
+            .ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be encoded on the HTTP export path".to_string(),
+                ))
+            })?
+            .map_err(|e| {
+                error!("OTLP serialization error: {e}");
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                    "failed to encode OTLP request: {e}"
+                )))
+            })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
         let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
@@ -734,7 +805,11 @@ impl<
             &config_to_use.headers,
             config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
-            config_to_use.protocol.content_type(),
+            config_to_use.protocol.content_type().ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
+                ))
+            })?,
             body,
             OTLP_MAX_RETRIES,
             |_result| {
@@ -743,6 +818,53 @@ impl<
             },
         )
         .await;
+        result?;
+        Ok(AgentResponse::Unchanged)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn send_otlp_grpc_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        transport: &OtlpGrpcTransport,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(&traces);
+        let request = Arc::new(map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            transport.otel_trace_semantics_enabled,
+        ));
+        #[cfg(feature = "telemetry")]
+        let payload_len = request.encoded_len() + 5;
+        let test_token = self.endpoint.test_token.as_deref();
+        let mut attempt: u32 = 1;
+        let result = loop {
+            match send_otlp_traces_grpc(
+                transport,
+                test_token,
+                self.metadata.client_computed_stats || self.otlp_stats_enabled,
+                request.clone(),
+            )
+            .await
+            {
+                Ok(()) => break Ok(()),
+                Err(GrpcExportError::Retryable { error, retry_after }) => {
+                    if attempt > OTLP_MAX_RETRIES {
+                        break Err(error);
+                    }
+                    let Some(delay) = grpc_retry_delay(attempt, retry_after, grpc_retry_jitter())
+                    else {
+                        break Err(error);
+                    };
+                    self.capabilities.sleep(delay).await;
+                    attempt += 1;
+                }
+                Err(GrpcExportError::NonRetryable(error)) => break Err(error),
+            }
+        };
+        #[cfg(feature = "telemetry")]
+        self.emit_grpc_result(&result, attempt, payload_len, counts);
         result?;
         Ok(AgentResponse::Unchanged)
     }
@@ -842,12 +964,18 @@ impl<
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(config) = self.otlp_config.as_ref() {
+        if let Some(otlp) = &self.otlp {
             libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            return match otlp {
+                OtlpExportMode::Http(config) => self.send_otlp_traces_inner(traces, config).await,
+                #[cfg(not(target_arch = "wasm32"))]
+                OtlpExportMode::Grpc(transport) => {
+                    self.send_otlp_grpc_inner(traces, transport).await
+                }
+            };
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
@@ -1143,6 +1271,42 @@ mod tests {
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
+
+    #[test]
+    fn grpc_retry_delay_applies_backoff_and_cap() {
+        let retry_after = Duration::new(2, 250_000_000);
+
+        assert_eq!(
+            grpc_retry_delay(1, Some(retry_after), Duration::ZERO),
+            Some(retry_after)
+        );
+        assert_eq!(
+            grpc_retry_delay(2, Some(retry_after), Duration::ZERO),
+            Some(Duration::new(4, 500_000_000))
+        );
+        assert_eq!(
+            grpc_retry_delay(3, None, Duration::ZERO),
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS * 4))
+        );
+        assert_eq!(
+            grpc_retry_delay(3, Some(Duration::from_secs(20)), Duration::ZERO),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            grpc_retry_delay(1, Some(Duration::ZERO), Duration::ZERO),
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS))
+        );
+        assert_eq!(
+            grpc_retry_delay(1, Some(Duration::from_secs(31)), Duration::ZERO),
+            None
+        );
+    }
+
+    #[test]
+    fn grpc_retry_delay_adds_bounded_jitter() {
+        let delay = grpc_retry_delay(1, None, Duration::from_millis(50));
+        assert_eq!(delay, Some(Duration::from_millis(150)));
+    }
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
