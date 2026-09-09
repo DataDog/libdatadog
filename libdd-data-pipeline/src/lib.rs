@@ -11,8 +11,6 @@
 //! project at this state is to provide a basic API in order to test its viability and integration
 //! in different languages.
 
-compile_error!("DOWNSTREAM_IMPACT_NEW_FAILURE_SMOKE_TEST");
-
 pub mod agent_info;
 pub(crate) mod agentless;
 mod health_metrics;
