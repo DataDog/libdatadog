@@ -64,10 +64,17 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect.outputs.cargo_matrix) }}
     steps:
-      - name: Checkout libdatadog PR
+      - name: Checkout libdatadog PR head
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          path: libdatadog
+          path: libdatadog-head
+          persist-credentials: false
+
+      - name: Checkout libdatadog PR base
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: libdatadog-base
           persist-credentials: false
 
       - name: Checkout downstream repository
@@ -82,10 +89,10 @@ jobs:
           toolchain: 1.92.0
 
       - name: Compile downstream repository with PR crates
-        id: build
-        continue-on-error: true
+        id: validate
         env:
-          LIBDATADOG_ROOT: ${{ github.workspace }}/libdatadog
+          LIBDATADOG_BASE_ROOT: ${{ github.workspace }}/libdatadog-base
+          LIBDATADOG_HEAD_ROOT: ${{ github.workspace }}/libdatadog-head
           DOWNSTREAM_ROOT: ${{ github.workspace }}/downstream
           DOWNSTREAM_MANIFEST: ${{ matrix.manifest }}
           CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
@@ -93,70 +100,125 @@ jobs:
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
         run: |
           set -euo pipefail
-          PATCH_CONFIG="$GITHUB_WORKSPACE/libdatadog-patches.toml"
-          PACKAGES="$GITHUB_WORKSPACE/libdatadog-packages.tsv"
-
-          cargo +1.92.0 metadata \
-            --manifest-path "$LIBDATADOG_ROOT/Cargo.toml" \
-            --format-version=1 \
-            --no-deps \
-            | jq -r '
-                .packages[]
-                | select(.source == null)
-                | select(.publish == null or (.publish | type == "array" and length > 0))
-                | [.name, .manifest_path]
-                | @tsv
-              ' > "$PACKAGES"
-
-          : > "$PATCH_CONFIG"
           mapfile -t PATCH_SOURCES < <(jq -r '.[]' <<< "$PATCH_SOURCES_JSON")
-          for source in "${PATCH_SOURCES[@]}"; do
-            if [ "$source" = "crates-io" ]; then
-              printf '[patch.crates-io]\n' >> "$PATCH_CONFIG"
-            else
-              printf '[patch."%s"]\n' "$source" >> "$PATCH_CONFIG"
-            fi
-            while IFS=$'\t' read -r crate manifest_path; do
-              crate_path=$(dirname "$manifest_path")
-              printf '"%s" = { path = "%s" }\n' \
-                "$crate" "$crate_path" >> "$PATCH_CONFIG"
-            done < "$PACKAGES"
-            echo >> "$PATCH_CONFIG"
-          done
-
           mapfile -t CARGO_ARGS < <(jq -r '.[]' <<< "$CARGO_ARGS_JSON")
           MANIFEST_PATH="$DOWNSTREAM_ROOT/$DOWNSTREAM_MANIFEST"
-          LOG_PATH="$GITHUB_WORKSPACE/$ARTIFACT_NAME-validation.log"
 
-          cd "$DOWNSTREAM_ROOT"
-          cargo +1.92.0 update \
-            --manifest-path "$MANIFEST_PATH" \
-            --config "$PATCH_CONFIG"
-          cargo +1.92.0 check \
-            --manifest-path "$MANIFEST_PATH" \
-            --config "$PATCH_CONFIG" \
-            "${CARGO_ARGS[@]}" \
-            2>&1 | tee "$LOG_PATH"
+          generate_patch_config() {
+            local libdatadog_root=$1
+            local patch_config=$2
+            local packages=$3
+
+            cargo +1.92.0 metadata \
+              --manifest-path "$libdatadog_root/Cargo.toml" \
+              --format-version=1 \
+              --no-deps \
+              | jq -r '
+                  .packages[]
+                  | select(.source == null)
+                  | select(.publish == null or (.publish | type == "array" and length > 0))
+                  | [.name, .manifest_path]
+                  | @tsv
+                ' > "$packages"
+
+            : > "$patch_config"
+            for source in "${PATCH_SOURCES[@]}"; do
+              if [ "$source" = "crates-io" ]; then
+                printf '[patch.crates-io]\n' >> "$patch_config"
+              else
+                printf '[patch."%s"]\n' "$source" >> "$patch_config"
+              fi
+              while IFS=$'\t' read -r crate manifest_path; do
+                crate_path=$(dirname "$manifest_path")
+                printf '"%s" = { path = "%s" }\n' \
+                  "$crate" "$crate_path" >> "$patch_config"
+              done < "$packages"
+              echo >> "$patch_config"
+            done
+          }
+
+          run_validation() {
+            local label=$1
+            local libdatadog_root=$2
+            local patch_config="$GITHUB_WORKSPACE/libdatadog-$label-patches.toml"
+            local packages="$GITHUB_WORKSPACE/libdatadog-$label-packages.tsv"
+            local log_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log"
+
+            generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
+            git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
+            git -C "$DOWNSTREAM_ROOT" clean -fd
+
+            (
+              cd "$DOWNSTREAM_ROOT"
+              export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
+              cargo +1.92.0 update \
+                --manifest-path "$MANIFEST_PATH" \
+                --config "$patch_config"
+              cargo +1.92.0 check \
+                --manifest-path "$MANIFEST_PATH" \
+                --config "$patch_config" \
+                "${CARGO_ARGS[@]}"
+            ) 2>&1 | tee "$log_path"
+          }
+
+          set +e
+          run_validation base "$LIBDATADOG_BASE_ROOT"
+          BASE_STATUS=$?
+          run_validation head "$LIBDATADOG_HEAD_ROOT"
+          HEAD_STATUS=$?
+          set -e
+
+          if [ "$BASE_STATUS" -eq 0 ]; then BASE_RESULT=success; else BASE_RESULT=failure; fi
+          if [ "$HEAD_STATUS" -eq 0 ]; then HEAD_RESULT=success; else HEAD_RESULT=failure; fi
+          echo "base_result=$BASE_RESULT" >> "$GITHUB_OUTPUT"
+          echo "head_result=$HEAD_RESULT" >> "$GITHUB_OUTPUT"
 
       - name: Report downstream compatibility
         if: always()
         env:
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          BASE_RESULT: ${{ steps.validate.outputs.base_result }}
+          HEAD_RESULT: ${{ steps.validate.outputs.head_result }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
           IMPACTED_COMPONENTS: ${{ matrix.components }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
         run: |
           {
             echo "## $DOWNSTREAM_REPOSITORY compatibility"
             echo
             echo "Components: $IMPACTED_COMPONENTS"
             echo
-            if [ "$BUILD_OUTCOME" = "success" ]; then
-              echo "✅ **Compatible:** the repository compiles with the libdatadog crates from this PR."
-            else
-              echo "❌ **Failed (non-blocking):** the repository did not compile with the libdatadog crates from this PR."
-              echo
-              echo "See the build step and uploaded log for details."
-            fi
+            echo "Base: **$BASE_RESULT** — Head: **$HEAD_RESULT**"
+            echo
+            case "$BASE_RESULT:$HEAD_RESULT" in
+              success:success)
+                echo "✅ **Compatible:** the downstream repository compiles before and after this PR."
+                ;;
+              success:failure)
+                echo "❌ **Regression (non-blocking):** the PR breaks a downstream build that passes on its base."
+                ;;
+              failure:failure)
+                echo "⚠️ **Baseline incompatible:** the downstream repository already fails against the PR base; this PR does not introduce a new failure."
+                ;;
+              failure:success)
+                echo "✅ **Improved:** the downstream repository fails against the base but compiles with this PR."
+                ;;
+              *)
+                echo "⚠️ **Inconclusive:** the differential validation did not produce both results."
+                ;;
+            esac
+
+            for label in base head; do
+              result_var="${label^^}_RESULT"
+              if [ "${!result_var}" = "failure" ]; then
+                echo
+                echo "<details><summary>Last 40 lines of $label failure</summary>"
+                echo
+                echo '```text'
+                tail -n 40 "$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log" || true
+                echo '```'
+                echo "</details>"
+              fi
+            done
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload downstream validation log
@@ -164,6 +226,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-validation
-          path: ${{ matrix.artifact_name }}-validation.log
+          path: |
+            ${{ matrix.artifact_name }}-base.log
+            ${{ matrix.artifact_name }}-head.log
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Mark downstream regression as failed
+        if: >-
+          always() &&
+          steps.validate.outputs.base_result == 'success' &&
+          steps.validate.outputs.head_result == 'failure'
+        run: |
+          echo "The PR introduces a downstream compilation regression."
+          exit 1
