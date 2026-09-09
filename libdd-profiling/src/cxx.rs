@@ -8,8 +8,22 @@
 use anyhow::Context;
 
 use crate::api;
+use crate::api2;
 use crate::exporter;
 use crate::internal;
+use crate::profiles;
+
+pub struct StringId2Opaque {
+    _private: [u8; 0],
+}
+
+pub struct FunctionId2Opaque {
+    _private: [u8; 0],
+}
+
+pub struct MappingId2Opaque {
+    _private: [u8; 0],
+}
 
 // ============================================================================
 // CXX Bridge - C++ Bindings
@@ -137,6 +151,105 @@ pub mod ffi {
         labels: Vec<Label<'a>>,
     }
 
+    /// Opaque pointer-shaped dictionary string id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents the empty string. A non-null handle is only valid with the
+    /// ProfilesDictionary that produced it, or Profiles created from that
+    /// dictionary.
+    struct StringId2 {
+        handle: *mut StringId2Opaque,
+    }
+
+    /// Opaque pointer-shaped dictionary function id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents the default/unknown function. A non-null handle is only valid
+    /// with the ProfilesDictionary that produced it, or Profiles created from
+    /// that dictionary.
+    struct FunctionId2 {
+        handle: *mut FunctionId2Opaque,
+    }
+
+    /// Opaque pointer-shaped dictionary mapping id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents an unknown/no mapping. A non-null handle is only valid with
+    /// the ProfilesDictionary that produced it, or Profiles created from that
+    /// dictionary.
+    struct MappingId2 {
+        handle: *mut MappingId2Opaque,
+    }
+
+    /// Function data for insertion into a ProfilesDictionary.
+    ///
+    /// String ids may be null/default to represent empty strings. Non-null ids
+    /// must come from the same ProfilesDictionary receiving the insertion.
+    struct Function2 {
+        name: StringId2,
+        system_name: StringId2,
+        // NOTE: api2's Rust/C FFI datatype uses file_name, while pprof and
+        // the string-based CXX Function use filename. Keep file_name for now
+        // to match api2; revisit the CXX-facing name during PR review.
+        file_name: StringId2,
+    }
+
+    /// Mapping data for insertion into a ProfilesDictionary.
+    ///
+    /// String ids may be null/default to represent empty strings. Non-null ids
+    /// must come from the same ProfilesDictionary receiving the insertion.
+    struct Mapping2 {
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: StringId2,
+        build_id: StringId2,
+    }
+
+    /// Dictionary-backed location.
+    ///
+    /// mapping and function may be null/default to represent unknown values.
+    /// Non-null ids must come from the same ProfilesDictionary used to create
+    /// the Profile receiving this location.
+    struct Location2 {
+        mapping: MappingId2,
+        function: FunctionId2,
+        address: u64,
+        line: i64,
+    }
+
+    /// Dictionary-backed label.
+    ///
+    /// key may be null/default to represent an empty key, though callers should
+    /// normally use a meaningful dictionary string. Non-null key ids must come
+    /// from the same ProfilesDictionary used to create the Profile receiving
+    /// this label. str and num_unit are borrowed only for the duration of the
+    /// add_sample2 call.
+    struct Label2<'a> {
+        key: StringId2,
+        str: &'a str,
+        num: i64,
+        num_unit: &'a str,
+    }
+
+    /// Dictionary-backed sample.
+    ///
+    /// locations, values, and labels are borrowed only for the duration of the
+    /// add_sample2 call. Null/default ids represent empty or unknown values.
+    /// All non-null ids in locations and labels must come from the
+    /// ProfilesDictionary used to create the Profile receiving this sample.
+    struct Sample2<'a> {
+        locations: &'a [Location2],
+        values: &'a [i64],
+        labels: &'a [Label2<'a>],
+    }
+
     struct Tag<'a> {
         key: &'a str,
         value: &'a str,
@@ -152,6 +265,10 @@ pub mod ffi {
         type Profile;
         type ProfileExporter;
         type ExporterManager;
+        type ProfilesDictionary;
+        type StringId2Opaque;
+        type FunctionId2Opaque;
+        type MappingId2Opaque;
         type CancellationToken;
 
         // CancellationToken factory and methods
@@ -168,6 +285,44 @@ pub mod ffi {
         #[Self = "Profile"]
         fn create_no_period(sample_types: Vec<SampleType>) -> Result<Box<Profile>>;
 
+        // Static factory methods for ProfilesDictionary
+        #[Self = "ProfilesDictionary"]
+        fn create() -> Result<Box<ProfilesDictionary>>;
+
+        /// Inserts value into this dictionary and returns an opaque id.
+        ///
+        /// The returned id must only be used with this dictionary or Profiles
+        /// created from it.
+        fn insert_string(self: &ProfilesDictionary, value: &str) -> Result<StringId2>;
+
+        /// Inserts function into this dictionary and returns an opaque id.
+        ///
+        /// Null/default ids in function represent empty strings. Non-null ids
+        /// in function must have been produced by this dictionary. The returned
+        /// id must only be used with this dictionary or Profiles created from
+        /// it.
+        fn insert_function(self: &ProfilesDictionary, function: &Function2) -> Result<FunctionId2>;
+
+        /// Inserts mapping into this dictionary and returns an opaque id.
+        ///
+        /// Null/default ids in mapping represent empty strings. Non-null ids in
+        /// mapping must have been produced by this dictionary. The returned id
+        /// must only be used with this dictionary or Profiles created from it.
+        fn insert_mapping(self: &ProfilesDictionary, mapping: &Mapping2) -> Result<MappingId2>;
+
+        /// Creates a Profile backed by dictionary.
+        ///
+        /// The Profile keeps dictionary storage alive internally. Future
+        /// add_sample2 calls on the Profile may use null/default ids for empty
+        /// or unknown values, but all non-null ids must be produced by this
+        /// same dictionary.
+        #[Self = "Profile"]
+        fn create_with_dictionary(
+            sample_types: Vec<SampleType>,
+            period: &Period,
+            dictionary: &ProfilesDictionary,
+        ) -> Result<Box<Profile>>;
+
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
         fn add_sample_with_timestamp(
@@ -175,6 +330,16 @@ pub mod ffi {
             sample: &Sample,
             endtime_ns: i64,
         ) -> Result<()>;
+
+        /// Adds a dictionary-backed sample.
+        ///
+        /// Null/default ids in sample represent empty or unknown values. All
+        /// non-null ids in sample must have been produced by the
+        /// ProfilesDictionary used to create this Profile. The sample slices are
+        /// borrowed only for the duration of this call. endtime_ns is an
+        /// optional end timestamp in nanoseconds; pass 0 to record the sample
+        /// without a timestamp.
+        fn add_sample2(self: &mut Profile, sample: &Sample2, endtime_ns: i64) -> Result<()>;
         fn set_custom_sample_type(
             self: &mut Profile,
             slot: SampleType,
@@ -464,6 +629,114 @@ impl<'a> From<&ffi::Location<'a>> for api::Location<'a> {
     }
 }
 
+impl From<profiles::datatypes::StringId2> for ffi::StringId2 {
+    fn from(id: profiles::datatypes::StringId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid StringId2 handle produced by
+/// libdatadog. Null/default handles represent the empty string. For non-null
+/// handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn string_id2_from_cxx(id: &ffi::StringId2) -> profiles::datatypes::StringId2 {
+    unsafe { profiles::datatypes::StringId2::from_raw_ptr(id.handle.cast()) }
+}
+
+impl From<profiles::datatypes::FunctionId2> for ffi::FunctionId2 {
+    fn from(id: profiles::datatypes::FunctionId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid FunctionId2 handle produced by
+/// libdatadog. Null/default handles represent the default/unknown function. For
+/// non-null handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn function_id2_from_cxx(id: &ffi::FunctionId2) -> profiles::datatypes::FunctionId2 {
+    unsafe { profiles::datatypes::FunctionId2::from_raw_ptr(id.handle.cast()) }
+}
+
+impl From<profiles::datatypes::MappingId2> for ffi::MappingId2 {
+    fn from(id: profiles::datatypes::MappingId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid MappingId2 handle produced by
+/// libdatadog. Null/default handles represent an unknown/no mapping. For
+/// non-null handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn mapping_id2_from_cxx(id: &ffi::MappingId2) -> profiles::datatypes::MappingId2 {
+    unsafe { profiles::datatypes::MappingId2::from_raw_ptr(id.handle.cast()) }
+}
+
+/// # Safety
+///
+/// All ids in function must be null/default or valid handles produced by the
+/// same ProfilesDictionary receiving the function insertion. Null/default ids
+/// represent empty strings.
+unsafe fn function2_from_cxx(function: &ffi::Function2) -> profiles::datatypes::Function2 {
+    profiles::datatypes::Function2 {
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // same ProfilesDictionary receiving the insertion. Null/default ids
+        // represent empty strings.
+        name: unsafe { string_id2_from_cxx(&function.name) },
+        system_name: unsafe { string_id2_from_cxx(&function.system_name) },
+        file_name: unsafe { string_id2_from_cxx(&function.file_name) },
+    }
+}
+
+/// # Safety
+///
+/// All ids in mapping must be null/default or valid handles produced by the
+/// same ProfilesDictionary receiving the mapping insertion. Null/default ids
+/// represent empty strings.
+unsafe fn mapping2_from_cxx(mapping: &ffi::Mapping2) -> profiles::datatypes::Mapping2 {
+    profiles::datatypes::Mapping2 {
+        memory_start: mapping.memory_start,
+        memory_limit: mapping.memory_limit,
+        file_offset: mapping.file_offset,
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // same ProfilesDictionary receiving the insertion. Null/default ids
+        // represent empty strings.
+        filename: unsafe { string_id2_from_cxx(&mapping.filename) },
+        build_id: unsafe { string_id2_from_cxx(&mapping.build_id) },
+    }
+}
+
+/// # Safety
+///
+/// All ids in location must be null/default or valid handles produced by the
+/// ProfilesDictionary used to create the receiving Profile. Null/default ids
+/// represent unknown values.
+unsafe fn location2_from_cxx(location: &ffi::Location2) -> api2::Location2 {
+    api2::Location2 {
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // ProfilesDictionary used to create the receiving Profile. Null/default
+        // ids represent unknown values.
+        mapping: unsafe { mapping_id2_from_cxx(&location.mapping) },
+        function: unsafe { function_id2_from_cxx(&location.function) },
+        address: location.address,
+        line: location.line,
+    }
+}
+
 impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
     fn from(label: &ffi::Label<'a>) -> Self {
         api::Label {
@@ -540,6 +813,48 @@ impl CancellationToken {
 // Profile - Wrapper around internal::Profile
 // ============================================================================
 
+pub struct ProfilesDictionary {
+    inner: profiles::collections::Arc<profiles::datatypes::ProfilesDictionary>,
+}
+
+impl ProfilesDictionary {
+    pub fn create() -> anyhow::Result<Box<ProfilesDictionary>> {
+        let dictionary = profiles::datatypes::ProfilesDictionary::try_new()
+            .context("ProfilesDictionary::create failed")?;
+        let inner = profiles::collections::Arc::try_new(dictionary)
+            .map_err(|_| anyhow::anyhow!("failed to allocate ProfilesDictionary"))?;
+
+        Ok(Box::new(ProfilesDictionary { inner }))
+    }
+
+    pub fn insert_string(&self, value: &str) -> anyhow::Result<ffi::StringId2> {
+        self.inner
+            .try_insert_str2(value)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_string failed")
+    }
+
+    pub fn insert_function(&self, function: &ffi::Function2) -> anyhow::Result<ffi::FunctionId2> {
+        // SAFETY: The CXX API contract requires all ids in function to come
+        // from this ProfilesDictionary.
+        let function = unsafe { function2_from_cxx(function) };
+        self.inner
+            .try_insert_function2(function)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_function failed")
+    }
+
+    pub fn insert_mapping(&self, mapping: &ffi::Mapping2) -> anyhow::Result<ffi::MappingId2> {
+        // SAFETY: The CXX API contract requires all ids in mapping to come
+        // from this ProfilesDictionary.
+        let mapping = unsafe { mapping2_from_cxx(mapping) };
+        self.inner
+            .try_insert_mapping2(mapping)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_mapping failed")
+    }
+}
+
 pub struct Profile {
     inner: internal::Profile,
 }
@@ -568,6 +883,26 @@ impl Profile {
             .map(TryInto::try_into)
             .collect::<Result<Vec<_>, _>>()?;
         let inner = internal::Profile::try_new(&types, None)?;
+        Ok(Box::new(Profile { inner }))
+    }
+
+    pub fn create_with_dictionary(
+        sample_types: Vec<ffi::SampleType>,
+        period: &ffi::Period,
+        dictionary: &ProfilesDictionary,
+    ) -> anyhow::Result<Box<Profile>> {
+        let types: Vec<api::SampleType> = sample_types
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        let period_value: api::Period = period.try_into()?;
+        let dictionary = dictionary
+            .inner
+            .try_clone()
+            .context("failed to clone ProfilesDictionary for Profile")?;
+        let inner =
+            internal::Profile::try_new_with_dictionary(&types, Some(period_value), dictionary)
+                .context("Profile::create_with_dictionary failed")?;
         Ok(Box::new(Profile { inner }))
     }
 
@@ -600,6 +935,47 @@ impl Profile {
         self.inner
             .try_add_sample(api_sample, Some(timestamp))
             .context("Profile::add_sample_with_timestamp failed")
+    }
+
+    /// Adds an api2/dictionary-backed sample.
+    ///
+    /// Null/default ids in sample represent empty or unknown values. All
+    /// non-null ids in sample must have been produced by the same
+    /// ProfilesDictionary used to create this Profile. The caller must keep the
+    /// provided slices valid for the duration of this call. An endtime_ns value
+    /// of 0 records the sample without a timestamp.
+    pub fn add_sample2(&mut self, sample: &ffi::Sample2, endtime_ns: i64) -> anyhow::Result<()> {
+        let timestamp = internal::Timestamp::new(endtime_ns);
+        let locations_iter = sample.locations.iter().map(|location| {
+            // SAFETY: The CXX API contract requires all non-null api2 ids in
+            // sample to come from the same ProfilesDictionary used to create
+            // this Profile. Null/default ids represent unknown values.
+            unsafe { location2_from_cxx(location) }
+        });
+        let labels_iter = sample
+            .labels
+            .iter()
+            .map(|label| -> anyhow::Result<api2::Label<'_>> {
+                Ok(api2::Label {
+                    // SAFETY: The CXX API contract requires all non-null api2
+                    // ids in sample to come from the same ProfilesDictionary
+                    // used to create this Profile. Null/default keys represent
+                    // the empty string.
+                    key: unsafe { string_id2_from_cxx(&label.key) },
+                    str: label.str,
+                    num: label.num,
+                    num_unit: label.num_unit,
+                })
+            });
+
+        // SAFETY: The CXX API contract requires all non-null api2 ids in sample
+        // to come from the same ProfilesDictionary used to create this Profile.
+        // Null/default ids represent empty or unknown values.
+        unsafe {
+            self.inner
+                .try_add_sample2(locations_iter, sample.values, labels_iter, timestamp)
+                .context("Profile::add_sample2 failed")
+        }
     }
 
     pub fn set_custom_sample_type(
@@ -1058,6 +1434,63 @@ mod tests {
         Profile::create(vec![ffi::SampleType::WallTime], &period).unwrap()
     }
 
+    fn create_test_dictionary() -> Box<ProfilesDictionary> {
+        ProfilesDictionary::create().unwrap()
+    }
+
+    fn create_test_profile_with_dictionary(dictionary: &ProfilesDictionary) -> Box<Profile> {
+        let wall_time = ffi::SampleType::WallTime;
+        let period = ffi::Period {
+            value_type: wall_time,
+            value: 60,
+        };
+        Profile::create_with_dictionary(vec![ffi::SampleType::WallTime], &period, dictionary)
+            .unwrap()
+    }
+
+    fn create_test_sample2_parts(
+        dictionary: &ProfilesDictionary,
+    ) -> (ffi::Location2, Vec<i64>, Vec<ffi::Label2<'static>>) {
+        let filename_mapping = dictionary.insert_string("/usr/lib/libtest.so").unwrap();
+        let filename_function = dictionary.insert_string("/src/test.cpp").unwrap();
+        let build_id = dictionary.insert_string("abc123").unwrap();
+        let name = dictionary.insert_string("test_function").unwrap();
+        let system_name = dictionary.insert_string("_Z13test_functionv").unwrap();
+        let label_key = dictionary.insert_string("pid").unwrap();
+        let mapping = dictionary
+            .insert_mapping(&ffi::Mapping2 {
+                memory_start: 0x10000000,
+                memory_limit: 0x20000000,
+                file_offset: 0,
+                filename: filename_mapping,
+                build_id,
+            })
+            .unwrap();
+        let function = dictionary
+            .insert_function(&ffi::Function2 {
+                name,
+                system_name,
+                file_name: filename_function,
+            })
+            .unwrap();
+
+        (
+            ffi::Location2 {
+                mapping,
+                function,
+                address: 0x10003000,
+                line: 100,
+            },
+            vec![1000000],
+            vec![ffi::Label2 {
+                key: label_key,
+                str: "",
+                num: 101,
+                num_unit: "",
+            }],
+        )
+    }
+
     fn create_test_location(address: u64, line: i64) -> ffi::Location<'static> {
         ffi::Location {
             mapping: ffi::Mapping {
@@ -1273,6 +1706,198 @@ mod tests {
         timestamps.sort_unstable();
 
         assert_eq!(timestamps, vec![42, 43]);
+    }
+
+    #[test]
+    fn test_profiles_dictionary_operations() {
+        let dictionary = create_test_dictionary();
+        let filename = dictionary.insert_string("example.py").unwrap();
+        let build_id = dictionary.insert_string("build-id").unwrap();
+        let function_name = dictionary.insert_string("function").unwrap();
+        let system_name = dictionary.insert_string("system_function").unwrap();
+
+        let mapping = dictionary
+            .insert_mapping(&ffi::Mapping2 {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename,
+                build_id,
+            })
+            .unwrap();
+        let function = dictionary
+            .insert_function(&ffi::Function2 {
+                name: function_name,
+                system_name,
+                file_name: dictionary.insert_string("example.py").unwrap(),
+            })
+            .unwrap();
+
+        assert!(!mapping.handle.is_null());
+        assert!(!function.handle.is_null());
+    }
+
+    #[test]
+    fn test_profile_add_sample2_serializes() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(
+            serialized.len() > 100,
+            "Serialized api2 profile should be non-trivial"
+        );
+    }
+
+    #[test]
+    fn test_profile_add_sample2_profile_holds_dictionary_alive() {
+        let dictionary = create_test_dictionary();
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        drop(dictionary);
+
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(serialized.len() > 100);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_serializes_dictionary_label_and_timestamp() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+
+        let sample = pprof.samples.first().expect("serialized sample");
+        let pid_label = sample
+            .labels
+            .iter()
+            .find(|label| string_table_fetch(&pprof, label.key) == "pid")
+            .expect("pid label");
+        assert_eq!(pid_label.num, 101);
+
+        let timestamp_label = sample
+            .labels
+            .iter()
+            .find(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .expect("end_timestamp_ns label");
+        assert_eq!(timestamp_label.num, 42);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_identical_timestamped_samples_remain_distinct() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+        profile.add_sample2(&sample, 43).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let mut timestamps = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .map(|label| label.num)
+            .collect::<Vec<_>>();
+
+        timestamps.sort_unstable();
+
+        assert_eq!(timestamps, vec![42, 43]);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_accepts_zero_timestamp_as_none() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 0).unwrap();
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
+        assert_eq!(profile.inner.only_for_testing_num_timestamped_samples(), 0);
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let has_timestamp_label = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .any(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns");
+
+        assert!(!has_timestamp_label);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_rejects_wrong_value_count() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, _values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let values = Vec::new();
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        assert!(profile.add_sample2(&sample, 42).is_err());
+    }
+
+    #[test]
+    fn test_profile_add_sample2_requires_dictionary_profile() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile();
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        let err = profile.add_sample2(&sample, 42).unwrap_err();
+        assert!(format!("{err:#}").contains("profiles dictionary not set"));
     }
 
     #[test]
