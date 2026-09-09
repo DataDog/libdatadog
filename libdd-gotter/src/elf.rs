@@ -60,8 +60,8 @@ unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 }
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
+    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
 };
 
 // ELF dynamic-section tags. The `libc` crate doesn't export these
@@ -284,6 +284,9 @@ impl<'a> DynamicInfo<'a> {
         let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
         let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
 
+        // c_char is unsigned on some targets and signed on others, so this cast
+        // is redundant only on a subset of the supported platforms.
+        #[allow(clippy::unnecessary_cast)]
         let strtab_slice = try_as_slice(strtab as *const u8, strtab_size);
         // u32 -> usize: lossless on 64-bit (crate cfg gate).
         let symtab_slice = try_as_slice(symtab, u32_to_usize(sym_count));
