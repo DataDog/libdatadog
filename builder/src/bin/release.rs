@@ -18,6 +18,7 @@ use builder::utils::project_root;
 struct ReleaseArgs {
     pub out_dir: Option<String>,
     pub target: Option<String>,
+    pub profile: Option<String>,
 }
 
 impl From<pico_args::Arguments> for ReleaseArgs {
@@ -25,6 +26,7 @@ impl From<pico_args::Arguments> for ReleaseArgs {
         let release_args = ReleaseArgs {
             out_dir: args.value_from_str("--out").ok(),
             target: args.value_from_str("--target").ok(),
+            profile: args.value_from_str("--profile").ok(),
         };
 
         args.finish();
@@ -40,7 +42,10 @@ pub fn main() {
         ..
     } = determine_paths();
 
-    let profile = env::var("PROFILE").unwrap();
+    let profile = args
+        .profile
+        .clone()
+        .unwrap_or_else(|| env::var("PROFILE").unwrap());
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let host = env::var("TARGET").unwrap();
     let out_dir = if let Some(out) = args.out_dir {

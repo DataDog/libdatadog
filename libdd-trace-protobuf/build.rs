@@ -10,6 +10,7 @@ use {
 
 // to re-generate protobuf structs, run cargo build --features generate-protobuf
 fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "generate-protobuf")]
     {
         // protoc is required to compile proto files. This uses protobuf_src to compile protoc
@@ -18,10 +19,6 @@ fn main() -> Result<()> {
 
         // compiles the .proto files into rust structs
         generate_protobuf();
-    }
-    #[cfg(not(feature = "generate-protobuf"))]
-    {
-        println!("cargo:rerun-if-changed=build.rs");
     }
 
     Ok(())
@@ -354,6 +351,7 @@ fn generate_protobuf() {
 
     config.include_file("_includes.rs");
 
+    println!("cargo:rerun-if-changed=src/pb");
     config
         .compile_protos(
             &[

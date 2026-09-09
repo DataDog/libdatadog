@@ -23,18 +23,18 @@ reqwest-backend = ["libdd-http-client/reqwest-backend"]
 hyper-backend = ["libdd-http-client/hyper-backend"]
 
 [dependencies]
-bytes = "1.4"
-flate2 = "1"
+bytes = { workspace = true, features = ["std"] }
+flate2.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror = "2"
 tokio = { workspace = true, features = ["rt"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }
-libdd-common = { version = "5.2", path = "../libdd-common", default-features = false }
+libdd-common = { version = "6.0", path = "../libdd-common", default-features = false }
 tracing.workspace = true
 
 [dev-dependencies]
-httpmock = "0.8.0-alpha.1"
+httpmock.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 serial_test = "3.2"
 tokio = { version = "1.23", features = ["rt", "macros"] }

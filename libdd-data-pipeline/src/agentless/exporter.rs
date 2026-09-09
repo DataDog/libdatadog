@@ -6,27 +6,41 @@
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_data_pipeline_core::{
-    send_agentless_traces as send_traces, AgentlessError, AgentlessTraceConfig,
+    send_agentless_traces_with_observer as send_traces, AgentlessError, AgentlessTraceConfig,
 };
-use libdd_trace_utils::send_with_retry::SendWithRetryError;
+use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use libdd_trace_utils::span::TraceData;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 
-pub(crate) async fn send_agentless_traces<T, C>(
+pub(crate) async fn send_agentless_traces_with_observer<T, C, F, S>(
     capabilities: &C,
     traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,
+    observer: F,
+    serialization_error_observer: S,
 ) -> Result<(), TraceExporterError>
 where
     T: TraceData,
     C: HttpClientCapability + SleepCapability,
+    F: FnOnce(&SendWithRetryResult, usize),
+    S: FnOnce(),
 {
-    send_traces(capabilities, traces, metadata, config, client_side_stats)
-        .await
-        .map_err(map_agentless_error)
+    let result = send_traces(
+        capabilities,
+        traces,
+        metadata,
+        config,
+        client_side_stats,
+        observer,
+    )
+    .await;
+    if matches!(&result, Err(AgentlessError::Serialization(_))) {
+        serialization_error_observer();
+    }
+    result.map_err(map_agentless_error)
 }
 
 fn map_agentless_error(error: AgentlessError) -> TraceExporterError {

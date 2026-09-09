@@ -56,7 +56,25 @@ pub type BodySender = Box<dyn StreamingBodySender>;
 pub trait HttpClientCapability: Clone + std::fmt::Debug {
     fn new_client() -> Self;
 
-    /// Construct a client that does not reuse connections.
+    /// Construct a client for periodic one-shot communication (typically regularly flushing to the
+    /// agent or to the backend). Depending on the capabilities of the underlying implementation,
+    /// this constructor either:
+    ///
+    /// - sets the lifetime of pooled connections to a timeout much smaller than 60s (e.g. 5s)
+    /// - disables connection pooling entirely if the timeout isn't configurable
+    /// - does nothing if there's no connection pooling support to begin with
+    ///
+    /// The rationale for having limited connection pooling is that we've experienced races when the
+    /// connection pooling timeout is higher than the keep-alive timeout of the receiving end. It's
+    /// then possible to pick an idle connection and start a request while the connection get
+    /// closed at the same time by the receiver, causing an error.
+    ///
+    /// Connection pooling was initially entirely disabled by this constructor, but it happens that
+    /// we send multiple separate requests in a short span of time (e.g. for telemetry on very
+    /// short-lived apps). In that situation, if we're agentless, making separate HTTPS connections
+    /// is quite costly (can be on the order of magnitude of 0.5sec per connection). Having pooling
+    /// with a short lifetime is a better choice, since we can reuse the same connection for those
+    /// multiple consecutive requests, while avoiding the race condition.
     fn new_without_connection_pooling() -> Self;
 
     fn request(
