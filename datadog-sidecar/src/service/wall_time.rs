@@ -108,22 +108,24 @@ impl WallTimeRegistrations {
     }
 
     pub fn unregister(&self, pid: libc::pid_t) {
-        let removed = self.registrations.lock_or_panic().remove(&pid).is_some();
-        debug!("wall-time profiler unregistered pid={pid} removed={removed}");
+        self.registrations.lock_or_panic().remove(&pid);
     }
 
     pub fn unregister_owned(&self, pid: libc::pid_t, owner: u64) {
         let mut registrations = self.registrations.lock_or_panic();
-        let removed = if registrations
+        let remaining = if registrations
             .get(&pid)
             .is_some_and(|registration| registration.owner == owner)
         {
             registrations.remove(&pid);
-            true
+            Some(registrations.len())
         } else {
-            false
+            None
         };
-        debug!("wall-time profiler connection cleanup pid={pid} owner={owner} removed={removed}");
+        drop(registrations);
+        if let Some(remaining) = remaining {
+            debug!("wall-time profiler unregistered pid={pid} owner={owner} workers={remaining}");
+        }
     }
 
     pub fn notify_remote_config(&self, pid: libc::pid_t) {
@@ -144,7 +146,6 @@ impl WallTimeRegistrations {
         let registrations = self.registrations.clone();
         let scheduler_started = self.scheduler_started.clone();
         tokio::spawn(async move {
-            let mut last_report = tokio::time::Instant::now();
             loop {
                 let count = registrations.lock_or_panic().len();
                 if count == 0 {
@@ -169,15 +170,11 @@ impl WallTimeRegistrations {
                     .iter()
                     .map(|(&pid, registration)| (pid, registration.clone()))
                     .collect();
-                let mut signalled = 0usize;
-                let mut backpressured = 0usize;
-                let mut dead = 0usize;
                 for (pid, registration) in snapshot {
                     if registration.mark_wall_pending() {
                         // The release publication of wall_sample_pending precedes notification.
                         let result = unsafe { libc::kill(pid, libc::SIGVTALRM) };
                         if result != 0 {
-                            dead += 1;
                             let mut registrations = registrations.lock_or_panic();
                             if registrations
                                 .get(&pid)
@@ -185,18 +182,8 @@ impl WallTimeRegistrations {
                             {
                                 registrations.remove(&pid);
                             }
-                        } else {
-                            signalled += 1;
                         }
-                    } else {
-                        backpressured += 1;
                     }
-                }
-                if dead != 0 || last_report.elapsed() >= Duration::from_secs(1) {
-                    debug!(
-                        "wall-time profiler scheduler workers={count} signalled={signalled} backpressured={backpressured} dead={dead}"
-                    );
-                    last_report = tokio::time::Instant::now();
                 }
             }
         });
