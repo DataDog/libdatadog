@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use thread_local::ThreadLocal;
 
-/// When this function returns true, do not add the returned chunk to the queue.
+/// When this function returns true, do not add the returned span batch to the queue.
 ///
 /// Why are we doing this?
 ///
@@ -75,22 +75,26 @@ fn reset_chunk<T: TraceData>(chunk: &mut Vec<Span<T>>) {
     }
 }
 
-/// Max spans per recycled chunk. Larger chunks are split so no thread hoards a big chunk in its
+/// Max spans per recycled batch. Larger chunks are split so no thread hoards a big batch in its
 /// local cache.
-const MAX_CHUNK_SIZE: usize = 20;
+const MAX_BATCH_SIZE: usize = 20;
 
-/// Split a chunk into pieces of at most [`MAX_CHUNK_SIZE`] spans, keeping each piece's spans'
+/// Split a chunk into pieces of at most [`MAX_BATCH_SIZE`] spans, keeping each piece's spans'
 /// buffer capacity for reuse
 fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Span<T>>> {
+    let pieces = (chunk.len() / 20) + 1;
+    let batch_len = chunk.len() / pieces;
     let mut remaining = chunk;
     std::iter::from_fn(move || {
         if remaining.is_empty() {
             return None;
         }
-        if remaining.len() <= MAX_CHUNK_SIZE {
-            return Some(std::mem::take(&mut remaining));
+        if remaining.len() <= MAX_BATCH_SIZE {
+            let mut leftover = std::mem::take(&mut remaining);
+            leftover.shrink_to(MAX_BATCH_SIZE);
+            return Some(leftover);
         }
-        let at = remaining.len() - MAX_CHUNK_SIZE;
+        let at = remaining.len() - batch_len;
         Some(remaining.split_off(at))
     })
 }
@@ -101,27 +105,37 @@ fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Sp
 /// dropping a [`PooledChunks`]) and are handed out by [`SpanPool::get_span`]. Reuse keeps the
 /// pre-allocated `meta`/`metrics`/... buffers alive across flushes, skipping alloc churn.
 ///
-/// Backed by an unbounded crossbeam channel of chunks (one send per chunk, not per span). The
+/// Backed by an unbounded crossbeam channel of batch (one send per batch, not per span). The
 /// capacity (in spans) bounds the channel only. Thread-local caches are not counted, so idle
 /// threads holding cached spans don't reduce the pool's headroom.
 ///
-/// The capacity bound is best-effort: `add_chunks` checks-and-increments `len` with relaxed
-/// atomics, so concurrent producers can briefly exceed `capacity` (the channel itself is
-/// unbounded).
-/// Since there is a single task returning chunks to the queue (the exporter task) the bound is
-/// exact. `get_span` first hits a per-thread
-/// chunk cache ([`ThreadLocal`]) and only when empty does it dequeue a fresh chunk. This keeps
-/// the single-producer path lock-free and gives each thread a local chunk under contention.
+/// `get_span` first hits a per-thread cache ([`ThreadLocal`]) and only when empty does it
+/// dequeue a fresh span batch. This keeps the single-producer path lock-free and gives each thread
+/// a local batch under contention.
 #[derive(Debug, Clone)]
 pub struct SpanPool<T: TraceData> {
     inner: Arc<SpanPoolInner<T>>,
 }
 
+/// A collection of recycled spans
+/// Spans in this collection have been reset, while keeping
+/// the capacity of linked collections
+#[derive(Debug, Default)]
+struct SpanBatch<T: TraceData>(Vec<Span<T>>);
+
+impl<T: TraceData> SpanBatch<T> {
+    /// Takes a list of spans, reset them while keeping the collections capacity
+    fn reset(mut spans: Vec<Span<T>>) -> Self {
+        reset_chunk(&mut spans);
+        Self(spans)
+    }
+}
+
 #[derive(Debug)]
 struct SpanPoolInner<T: TraceData> {
-    queue: crossbeam_channel::Sender<Vec<Span<T>>>,
-    receiver: crossbeam_channel::Receiver<Vec<Span<T>>>,
-    /// Per-thread cache: the last chunk pulled from the channel plus one recycled empty `Vec`.
+    queue: crossbeam_channel::Sender<SpanBatch<T>>,
+    receiver: crossbeam_channel::Receiver<SpanBatch<T>>,
+    /// Per-thread cache: the last batch pulled from the channel plus one recycled empty `Vec`.
     thread_cache: ThreadLocal<RefCell<ThreadCache<T>>>,
     /// Total spans currently held in the global queue (channel); the capacity bound is in spans.
     len: AtomicUsize,
@@ -131,23 +145,18 @@ struct SpanPoolInner<T: TraceData> {
 
 #[derive(Debug, Default)]
 struct ThreadCache<T: TraceData> {
-    /// Last chunk pulled from the channel; spans are popped from it by `get_span`.
-    last_chunk: Option<Vec<Span<T>>>,
-    /// One recycled empty `Vec` kept for `pull_empty_chunk`; never returned to the pool.
+    /// Last cache pulled from the channel. Spans are popped from it by `get_span`.
+    last_cache: Option<SpanBatch<T>>,
+    /// One recycled empty `Vec` kept for `pull_empty_chunk`. Never returned to the pool.
     empty_chunk: Option<Vec<Span<T>>>,
 }
 
 impl<T: TraceData> SpanPool<T> {
-    /// New pool holding at most `pool_capacity` recycled spans.
-    pub fn new(pool_capacity: usize) -> Self {
-        Self::with_capacity(pool_capacity)
-    }
-
     /// New pool holding at most `capacity` recycled spans.
     pub fn with_capacity(capacity: usize) -> Self {
         let (queue, receiver) = crossbeam_channel::unbounded();
-        // Capacity can never be smaller than a chunk
-        let capacity = capacity.max(MAX_CHUNK_SIZE);
+        // Capacity can never be smaller than a batch
+        let capacity = capacity.max(MAX_BATCH_SIZE);
         Self {
             inner: Arc::new(SpanPoolInner {
                 queue,
@@ -170,13 +179,19 @@ impl<T: TraceData> SpanPool<T> {
             reset_chunk(&mut chunk);
             for piece in split_chunk(chunk) {
                 let piece_len = piece.len();
-                // Reserve span-count atomically against the cap; drop the piece if it won't fit.
+                // Reserve span-count against the cap. Drop the piece if it won't fit.
                 let current = self.inner.len.load(Ordering::Relaxed);
                 if current + piece_len > self.inner.capacity {
                     return;
                 }
+                // The capacity bound is best-effort: we checks-and-increments `len` with
+                // relaxed atomics, so concurrent producers can briefly exceed
+                // `capacity` (the channel itself is unbounded).
+                //
+                // Since there is usually a single task returning chunks to the queue (the exporter
+                // task) the bound should be exact.
                 self.inner.len.fetch_add(piece_len, Ordering::Relaxed);
-                if self.inner.queue.send(piece).is_err() {
+                if self.inner.queue.send(SpanBatch::reset(piece)).is_err() {
                     return;
                 }
             }
@@ -184,20 +199,20 @@ impl<T: TraceData> SpanPool<T> {
     }
 
     /// Get a span from the pool, or a fresh default if empty.
-    /// Tries the per-thread cache first (lock-free), dequeues a new chunk only when it's empty.
+    /// Tries the per-thread cache first (lock-free), dequeues a new batch only when it's empty.
     pub fn get_span(&self) -> Span<T> {
         loop {
             let cell = self.inner.thread_cache.get_or_default();
             {
                 let mut slot = cell.borrow_mut();
-                if let Some(chunk) = slot.last_chunk.as_mut() {
-                    if let Some(span) = chunk.pop() {
-                        if chunk.is_empty() {
+                if let Some(cache) = slot.last_cache.as_mut() {
+                    if let Some(span) = cache.0.pop() {
+                        if cache.0.is_empty() {
                             // Recycle the now-empty `Vec` for `pull_empty_chunk`.
-                            let empty = std::mem::take(chunk);
-                            slot.last_chunk = None;
+                            let empty = std::mem::take(cache);
+                            slot.last_cache = None;
                             if slot.empty_chunk.is_none() {
-                                slot.empty_chunk = Some(empty);
+                                slot.empty_chunk = Some(empty.0);
                             }
                         }
                         return span;
@@ -205,13 +220,13 @@ impl<T: TraceData> SpanPool<T> {
                 }
             }
             match self.inner.receiver.try_recv() {
-                Ok(chunk) => {
-                    self.inner.len.fetch_sub(chunk.len(), Ordering::Relaxed);
+                Ok(cache) => {
+                    self.inner.len.fetch_sub(cache.0.len(), Ordering::Relaxed);
                     self.inner
                         .thread_cache
                         .get_or_default()
                         .borrow_mut()
-                        .last_chunk = Some(chunk);
+                        .last_cache = Some(cache);
                 }
                 Err(_) => return Span::default(),
             }
@@ -231,7 +246,7 @@ impl<T: TraceData> SpanPool<T> {
     }
 
     /// Spans currently held in the global queue (channel only, not thread-local caches).
-    /// Decremented by chunk when a chunk is dequeued, so idle threads holding cached spans don't
+    /// Decremented by batch when a batch is dequeued, so idle threads holding cached spans don't
     /// count against the capacity.
     pub fn len(&self) -> usize {
         self.inner.len.load(Ordering::Relaxed)
@@ -408,6 +423,103 @@ mod tests {
     }
 
     #[test]
+    fn split_chunk_empty_produces_nothing() {
+        let pieces: Vec<Vec<SpanBytes>> = split_chunk(Vec::new()).collect();
+        assert!(pieces.is_empty(), "an empty chunk should yield no pieces");
+    }
+
+    #[test]
+    fn split_chunk_single_span_is_one_piece() {
+        let chunk = vec![span("a")];
+        let pieces: Vec<Vec<SpanBytes>> = split_chunk(chunk).collect();
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].len(), 1);
+        assert_eq!(pieces[0][0].name.as_ref(), "a");
+    }
+
+    #[test]
+    fn split_chunk_exactly_max_batch_size_is_one_piece() {
+        let chunk: Vec<SpanBytes> = (0..MAX_BATCH_SIZE)
+            .map(|i| span(&format!("s{i}")))
+            .collect();
+        let pieces: Vec<Vec<SpanBytes>> = split_chunk(chunk).collect();
+        assert_eq!(
+            pieces.len(),
+            1,
+            "a {MAX_BATCH_SIZE}-span chunk should not be split"
+        );
+        assert_eq!(pieces[0].len(), MAX_BATCH_SIZE);
+    }
+
+    #[test]
+    fn split_chunk_just_over_max_batch_size_is_split() {
+        let n = MAX_BATCH_SIZE + 1;
+        let chunk: Vec<SpanBytes> = (0..n).map(|i| span(&format!("s{i}"))).collect();
+        let pieces: Vec<Vec<SpanBytes>> = split_chunk(chunk).collect();
+        assert!(
+            pieces.len() >= 2,
+            "a {}-span chunk should be split into >= 2 pieces, got {}",
+            n,
+            pieces.len()
+        );
+    }
+
+    #[test]
+    fn split_chunk_pieces_never_exceed_max_batch_size() {
+        for &n in &[
+            0usize,
+            1,
+            2,
+            MAX_BATCH_SIZE - 1,
+            MAX_BATCH_SIZE,
+            MAX_BATCH_SIZE + 1,
+            50,
+            100,
+            257,
+        ] {
+            let chunk: Vec<SpanBytes> = (0..n).map(|i| span(&format!("s{i}"))).collect();
+            let pieces: Vec<Vec<SpanBytes>> = split_chunk(chunk).collect();
+            for piece in &pieces {
+                assert!(
+                    piece.len() <= MAX_BATCH_SIZE,
+                    "n={n}: piece of len {} exceeds MAX_BATCH_SIZE={MAX_BATCH_SIZE}",
+                    piece.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn split_chunk_preserves_all_spans_exactly_once() {
+        for &n in &[0usize, 1, MAX_BATCH_SIZE, MAX_BATCH_SIZE + 1, 50, 100, 257] {
+            let chunk: Vec<SpanBytes> = (0..n).map(|i| span(&format!("s{i}"))).collect();
+            let pieces: Vec<Vec<SpanBytes>> = split_chunk(chunk).collect();
+
+            // No spans lost or duplicated.
+            let total: usize = pieces.iter().map(Vec::len).sum();
+            assert_eq!(
+                total, n,
+                "n={n}: total spans across pieces should equal input"
+            );
+
+            // Every original span name appears exactly once across all pieces.
+            let mut names: Vec<&str> = pieces
+                .iter()
+                .flat_map(|piece| piece.iter().map(|s| s.name.as_ref()))
+                .collect();
+            names.sort_unstable();
+            // Names are all distinct (s0, s1, ...), so compare sorted against generated names.
+            let mut expected_names: Vec<String> = (0..n).map(|i| format!("s{i}")).collect();
+            expected_names.sort_unstable();
+            let expected_refs: Vec<&str> = expected_names.iter().map(String::as_str).collect();
+            assert_eq!(
+                names, expected_refs,
+                "n={n}: spans were lost, duplicated, or reordered"
+            );
+        }
+    }
+
+    #[test]
     fn large_chunks_are_split_into_max_size_pieces() {
         // MAX_CHUNK_SIZE=20, so 50 spans => 20 + 20 + 10. Capacity holds all pieces; we want the
         // split, not the bound. Drop policy may drop the whole chunk, so retry until one makes it.
@@ -421,11 +533,11 @@ mod tests {
         }
 
         let mut count = 0;
-        while let Ok(chunk) = pool.inner.receiver.try_recv() {
+        while let Ok(cache) = pool.inner.receiver.try_recv() {
             assert!(
-                chunk.len() <= MAX_CHUNK_SIZE,
+                cache.0.len() <= MAX_BATCH_SIZE,
                 "chunk of {} spans exceeds max",
-                chunk.len()
+                cache.0.len()
             );
             count += 1;
         }
