@@ -1736,6 +1736,148 @@ mod tests {
         );
     }
 
+    /// Stack two hooks on the same symbol (A then B) and verify that LIFO
+    /// removal correctly sequences through the hook chain.
+    ///
+    /// After hooking A: slot -> hook_A, hook_a.slots[*].1 == real_getpid.
+    /// After hooking B: slot -> hook_B, hook_b.slots[*].1 == hook_A (the
+    ///   runtime value at patch time, not the resolved symbol address).
+    /// After unhooking B: slot -> hook_A (restored from hook_b.slots).
+    /// After unhooking A: slot -> real_getpid (restored from hook_a.slots).
+    ///
+    /// This verifies that `slots` captures the actual runtime GOT value
+    /// rather than the resolved symbol address, which is what makes chained
+    /// unhooking correct.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_unhook_stacked_hooks() {
+        unsafe extern "C" fn hook_a() -> libc::pid_t {
+            42
+        }
+        unsafe extern "C" fn hook_b() -> libc::pid_t {
+            99
+        }
+
+        let hook_a_fn = hook_a as *const () as usize;
+        let hook_b_fn = hook_b as *const () as usize;
+
+        // Install A.
+        let hook_a_result = unsafe { hook_symbol(c"getpid", hook_a_fn) };
+        let Ok(hook_a_result) = hook_a_result else {
+            eprintln!("note: getpid not found in dynsym, skipping stacked-hooks test");
+            return;
+        };
+        assert!(hook_a_result.entries_patched > 0);
+        assert_eq!(unsafe { libc::getpid() }, 42, "hook_a should be active");
+
+        // Install B over A. The slot now holds hook_b; hook_b_result.slots
+        // should record hook_a_fn as the original runtime value (not real getpid).
+        let hook_b_result = unsafe { hook_symbol(c"getpid", hook_b_fn) };
+        let Ok(hook_b_result) = hook_b_result else {
+            // Restore A before bailing out.
+            unsafe { unhook_symbol(&hook_a_result, hook_a_fn) };
+            panic!("second hook_symbol failed unexpectedly");
+        };
+        assert!(hook_b_result.entries_patched > 0);
+        assert_eq!(unsafe { libc::getpid() }, 99, "hook_b should be active");
+
+        // Verify that hook_b captured hook_a_fn as the per-slot original value,
+        // not the resolved real getpid address.
+        assert!(
+            hook_b_result
+                .slots
+                .iter()
+                .all(|&(_addr, orig)| orig == hook_a_fn),
+            "hook_b.slots should record hook_a_fn as original, not real getpid"
+        );
+
+        // LIFO removal: unhook B first -> slot restores to hook_a.
+        let unhook_b = unsafe { unhook_symbol(&hook_b_result, hook_b_fn) };
+        assert_eq!(
+            unhook_b.entries_patched, hook_b_result.entries_patched,
+            "unhook_b should restore exactly the entries hook_b patched"
+        );
+        assert_eq!(
+            unsafe { libc::getpid() },
+            42,
+            "hook_a should be active after B removed"
+        );
+
+        // Unhook A -> slot restores to real getpid.
+        let unhook_a = unsafe { unhook_symbol(&hook_a_result, hook_a_fn) };
+        assert_eq!(
+            unhook_a.entries_patched, hook_a_result.entries_patched,
+            "unhook_a should restore exactly the entries hook_a patched"
+        );
+        let pid = unsafe { libc::getpid() };
+        assert!(pid > 0 && pid != 42, "real getpid should be restored");
+    }
+
+    /// Verify that `unhook_symbol` leaves a slot alone when it has been
+    /// independently overwritten after the hook was installed.
+    ///
+    /// After hooking A, we manually overwrite the slot to hook_b_fn (simulating
+    /// a concurrent patcher). Unhooking A must skip that slot (CAS observes
+    /// hook_b_fn != hook_a_fn), leaving hook_b in place.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_unhook_skips_independently_overwritten_slot() {
+        unsafe extern "C" fn hook_a() -> libc::pid_t {
+            42
+        }
+        unsafe extern "C" fn hook_b() -> libc::pid_t {
+            99
+        }
+
+        let hook_a_fn = hook_a as *const () as usize;
+        let hook_b_fn = hook_b as *const () as usize;
+
+        let hook_a_result = unsafe { hook_symbol(c"getpid", hook_a_fn) };
+        let Ok(hook_a_result) = hook_a_result else {
+            eprintln!("note: getpid not found in dynsym, skipping overwrite test");
+            return;
+        };
+        assert!(hook_a_result.entries_patched > 0);
+        assert_eq!(unsafe { libc::getpid() }, 42);
+
+        // Manually overwrite every slot to hook_b_fn, bypassing hook_symbol.
+        // This simulates a concurrent or independent patcher landing after A.
+        {
+            let mut guard = PageProtGuard::new();
+            for &(addr, _) in &hook_a_result.slots {
+                unsafe { guard.override_entry(addr, hook_b_fn) };
+            }
+        }
+        assert_eq!(unsafe { libc::getpid() }, 99, "hook_b should be active");
+
+        // Unhook A: every slot holds hook_b_fn, not hook_a_fn -> CAS fails for
+        // all slots -> nothing is restored.
+        let unhook_a = unsafe { unhook_symbol(&hook_a_result, hook_a_fn) };
+        assert_eq!(
+            unhook_a.entries_patched, 0,
+            "unhook_a should skip all slots that were independently overwritten"
+        );
+        assert_eq!(
+            unsafe { libc::getpid() },
+            99,
+            "hook_b should still be active after unhook_a no-ops"
+        );
+
+        // Clean up: restore the real getpid via the per-slot originals we know
+        // from hook_a_result (the pre-A values).
+        {
+            let mut guard = PageProtGuard::new();
+            for &(addr, original) in &hook_a_result.slots {
+                unsafe { guard.override_entry(addr, original) };
+            }
+        }
+        let pid = unsafe { libc::getpid() };
+        assert!(
+            pid > 0 && pid != 42 && pid != 99,
+            "real getpid should be restored"
+        );
+    }
+
     /// Sanity check against real loaded libraries: the filter should
     /// accept some relocations (GOT entries exist) and reject some
     #[test]
