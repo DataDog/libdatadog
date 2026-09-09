@@ -82,6 +82,13 @@ pub use collector::{
     set_expected_receiver_pid, update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
 };
 
+#[cfg(all(
+    feature = "collector",
+    target_os = "linux",
+    target_pointer_width = "64"
+))]
+pub use {collector::uninstall_hooks, libdd_gotter::UnhookResult};
+
 #[cfg(all(windows, feature = "collector_windows"))]
 pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 

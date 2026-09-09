@@ -18,12 +18,19 @@ use core::sync::atomic::{
 /// Bit N is set if signal number N is monitored. Supports signals 0–63.
 static MONITORED_SIGNALS: AtomicU64 = AtomicU64::new(0);
 
-/// Bit N is set when the hook has fired for signal N
+/// Bit N is set when the hook has fired for signal N.
+/// Atomically swap to zero with [`take_intercepted_signals`] to consume it.
 pub(crate) static INTERCEPTED_SIGNALS: AtomicU64 = AtomicU64::new(0);
 
 /// Resolved address of the original `sigaction`, set once during
-/// [`install_sigaction_hook`].
+/// [`install_sigaction_hook`], cleared by [`uninstall_sigaction_hook`].
 static ORIG_SIGACTION_FN: AtomicUsize = AtomicUsize::new(0);
+
+/// Per-slot `(GOT_address, original_value)` pairs captured at hook time,
+/// needed by [`uninstall_sigaction_hook`] to restore the exact pre-hook
+/// values (including IFUNC-resolved addresses and RELA addends).
+static SIGACTION_HOOK_RESULT: std::sync::Mutex<Option<libdd_gotter::HookResult>> =
+    std::sync::Mutex::new(None);
 
 type SigactionFn =
     unsafe extern "C" fn(libc::c_int, *const libc::sigaction, *mut libc::sigaction) -> libc::c_int;
@@ -85,7 +92,47 @@ pub(crate) fn install_sigaction_hook(monitored_signals: &[i32]) {
         let our_hook = hook_sigaction as *const () as usize;
         if hook.orig_addr != our_hook {
             ORIG_SIGACTION_FN.store(hook.orig_addr, Release);
+            // Store the full HookResult so uninstall_sigaction_hook can
+            // restore each GOT slot to its exact pre-hook value.
+            if let Ok(mut guard) = SIGACTION_HOOK_RESULT.lock() {
+                *guard = Some(hook);
+            }
         }
+    }
+}
+
+/// Remove the `sigaction` GOT hook installed by [`install_sigaction_hook`],
+/// restoring every patched slot to the value it held before hooking.
+///
+/// Safe to call when the hook was never installed (no-op in that case).
+///
+/// Returns an [`UnhookResult`] describing how many slots were restored and
+/// how many failed. If [`UnhookResult::slots_failed`] is non-zero, some GOT
+/// entries still point at `hook_sigaction`; the caller must not unload
+/// libdatadog until all slots are restored.
+///
+/// On partial failure the hook state is left intact so a retry is possible.
+///
+/// [`UnhookResult`]: libdd_gotter::UnhookResult
+pub(crate) fn uninstall_sigaction_hook() -> libdd_gotter::UnhookResult {
+    let mut guard = SIGACTION_HOOK_RESULT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    if let Some(result) = guard.as_ref() {
+        // Restore every GOT entry to the value captured before patching.
+        // SAFETY: all libraries patched at hook time are still loaded
+        // (the crashtracker itself is live, so the process hasn't exited).
+        // The caller must ensure sigaction is not called concurrently.
+        let unhook = unsafe { libdd_gotter::unhook_symbol(result) };
+        if unhook.is_complete() {
+            *guard = None;
+            ORIG_SIGACTION_FN.store(0, Release);
+            MONITORED_SIGNALS.store(0, Release);
+        }
+        unhook
+    } else {
+        libdd_gotter::UnhookResult::default()
     }
 }
 
