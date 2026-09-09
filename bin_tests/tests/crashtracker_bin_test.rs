@@ -196,6 +196,38 @@ fn test_crash_tracking_bin_assert_fail() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that the sigaction GOT hook fires when a dynamically-loaded library
+/// installs a handler for a monitored signal after crashtracker init, and that
+/// crash handling still works correctly afterwards.
+///
+/// libsigaction_caller.so is LD_PRELOAD'd so its GOT entry for sigaction is
+/// patched at init time. The test's post() calls dd_test_sigaction_on_sigsegv()
+/// via dlsym(RTLD_DEFAULT) to trigger the hook, then immediately restores the
+/// crashtracker's handler so the crash report is generated normally.
+#[test]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_sigaction_interception() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::SigactionInterception,
+        CrashType::NullDeref,
+    )
+    .with_env("LD_PRELOAD", env!("SIGACTION_CALLER_SO"));
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload).validate_counters()?;
+        let sig_info = &payload["sig_info"];
+        assert_siginfo_message(sig_info, "null_deref");
+        validate_telemetry(&fixtures.crash_telemetry_path, "null_deref")?;
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via
 /// `report_unhandled_exception`, the crash report contains entries in `error.threads`
 /// for background threads with valid stack traces.
