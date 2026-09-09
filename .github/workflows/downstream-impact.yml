@@ -18,6 +18,7 @@ jobs:
       has_impacted: ${{ steps.impact.outputs.has_impacted }}
       impacted_count: ${{ steps.impact.outputs.impacted_count }}
       matrix: ${{ steps.impact.outputs.matrix }}
+      dd_trace_rs_impacted: ${{ steps.impact.outputs.dd_trace_rs_impacted }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -40,7 +41,11 @@ jobs:
             --json-output downstream-impact.json \
             --markdown-output downstream-impact.md \
             --github-output "$GITHUB_OUTPUT"
-          cat downstream-impact.md >> "$GITHUB_STEP_SUMMARY"
+          jq -r '
+            "dd_trace_rs_impacted="
+            + (any(.impacted[]; .repository == "DataDog/dd-trace-rs") | tostring)
+          ' downstream-impact.json >> "$GITHUB_OUTPUT"
+          cat downstream-impact.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload impact report
         uses: actions/upload-artifact@v4
@@ -49,4 +54,92 @@ jobs:
           path: |
             downstream-impact.json
             downstream-impact.md
+          retention-days: 7
+
+  validate-dd-trace-rs:
+    name: Validate dd-trace-rs (non-blocking)
+    needs: detect
+    if: needs.detect.outputs.dd_trace_rs_impacted == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout libdatadog PR
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: libdatadog
+          persist-credentials: false
+
+      - name: Checkout dd-trace-rs
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: DataDog/dd-trace-rs
+          path: dd-trace-rs
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Compile dd-trace-rs with PR crates
+        id: build
+        continue-on-error: true
+        env:
+          LIBDATADOG_ROOT: ${{ github.workspace }}/libdatadog
+          DD_TRACE_RS_ROOT: ${{ github.workspace }}/dd-trace-rs
+        run: |
+          set -euo pipefail
+          PATCH_ARGS=()
+          while IFS=$'\t' read -r crate manifest_path; do
+            crate_path=$(dirname "$manifest_path")
+            PATCH_ARGS+=(
+              --config
+              "patch.crates-io.${crate}.path=\"${crate_path}\""
+            )
+          done < <(
+            cargo +1.92.0 metadata \
+              --manifest-path "$LIBDATADOG_ROOT/Cargo.toml" \
+              --format-version=1 \
+              --no-deps \
+              | jq -r '
+                  .packages[]
+                  | select(.source == null)
+                  | select(.publish == null or (.publish | type == "array" and length > 0))
+                  | [.name, .manifest_path]
+                  | @tsv
+                '
+          )
+
+          echo "Applying ${#PATCH_ARGS[@]} cargo patch arguments."
+          cd "$DD_TRACE_RS_ROOT"
+          cargo +1.92.0 update "${PATCH_ARGS[@]}"
+          cargo +1.92.0 check \
+            --workspace \
+            --all-features \
+            "${PATCH_ARGS[@]}" \
+            2>&1 | tee "$GITHUB_WORKSPACE/dd-trace-rs-validation.log"
+
+      - name: Report dd-trace-rs compatibility
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          {
+            echo "## dd-trace-rs compatibility"
+            echo
+            if [ "$BUILD_OUTCOME" = "success" ]; then
+              echo "✅ **Compatible:** dd-trace-rs compiles with the libdatadog crates from this PR."
+            else
+              echo "❌ **Failed (non-blocking):** dd-trace-rs did not compile with the libdatadog crates from this PR."
+              echo
+              echo "See the build step and uploaded log for details."
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dd-trace-rs validation log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dd-trace-rs-validation
+          path: dd-trace-rs-validation.log
+          if-no-files-found: ignore
           retention-days: 7
