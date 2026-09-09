@@ -541,7 +541,7 @@ async fn test_export_file() -> anyhow::Result<()> {
     let req = export_full_profile(endpoint, RequestSource::File(file_path.clone())).await?;
 
     // Validate
-    validate_full_export(&req, "/")?;
+    validate_full_export(&req, "/profiling/v1/input")?;
 
     // Cleanup
     let _ = std::fs::remove_file(&file_path);
