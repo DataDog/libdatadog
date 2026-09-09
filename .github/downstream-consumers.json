@@ -150,18 +150,61 @@
     {"repository": "DataDog/dd-trace-php", "tier": "direct", "mode": "rust-source"},
     {"repository": "DataDog/dd-trace-py", "tier": "direct", "mode": "rust-source"},
     {"repository": "DataDog/dd-trace-rb", "tier": "direct", "mode": "native-artifact"},
-    {"repository": "DataDog/dd-trace-rs", "tier": "direct", "mode": "rust-crates"},
+    {
+      "repository": "DataDog/dd-trace-rs",
+      "tier": "direct",
+      "mode": "rust-crates",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "Cargo.toml",
+        "args": ["--workspace", "--all-features"],
+        "patch_sources": ["crates-io"]
+      }
+    },
     {"repository": "DataDog/dd-trace-dotnet", "tier": "direct", "mode": "native-artifact"},
     {"repository": "DataDog/ddprof", "tier": "direct", "mode": "native-artifact"},
     {"repository": "DataDog/dd-win-prof", "tier": "direct", "mode": "native-artifact"},
-    {"repository": "DataDog/datadog-lambda-extension", "tier": "direct", "mode": "rust-crates"},
+    {
+      "repository": "DataDog/datadog-lambda-extension",
+      "tier": "direct",
+      "mode": "rust-crates",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "bottlecap/Cargo.toml",
+        "args": ["--workspace"],
+        "patch_sources": [
+          "crates-io",
+          "https://github.com/DataDog/libdatadog"
+        ]
+      }
+    },
     {"repository": "DataDog/nginx-datadog", "tier": "direct", "mode": "native-artifact"},
     {"repository": "DataDog/libdatadog-dotnet", "tier": "wrapper", "mode": "native-package"},
     {"repository": "DataDog/libdatadog-rb", "tier": "wrapper", "mode": "native-package"},
-    {"repository": "DataDog/libdatadog-nodejs", "tier": "wrapper", "mode": "rust-crates"},
+    {
+      "repository": "DataDog/libdatadog-nodejs",
+      "tier": "wrapper",
+      "mode": "rust-crates",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "Cargo.toml",
+        "args": ["--workspace"],
+        "patch_sources": ["https://github.com/DataDog/libdatadog.git"]
+      }
+    },
     {"repository": "DataDog/dd-trace-dotnet-aws-lambda-layer", "tier": "indirect", "mode": "packaging"},
     {"repository": "DataDog/system-tests", "tier": "indirect", "mode": "contract-tests"},
-    {"repository": "DataDog/serverless-components", "tier": "indirect", "mode": "rust-crates"},
+    {
+      "repository": "DataDog/serverless-components",
+      "tier": "indirect",
+      "mode": "rust-crates",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "Cargo.toml",
+        "args": ["--workspace"],
+        "patch_sources": ["crates-io"]
+      }
+    },
     {"repository": "DataDog/dd-trace-go", "tier": "indirect", "mode": "contract-tests"}
   ]
 }

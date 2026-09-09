@@ -41,10 +41,37 @@ class DownstreamImpactTest(unittest.TestCase):
         self.assertIn("DataDog/ddprof", repositories)
         self.assertIn("DataDog/dd-trace-dotnet", repositories)
         self.assertNotIn("DataDog/dd-trace-go", repositories)
+        self.assertEqual(impact["cargo_validation_count"], 0)
+
+    def test_data_pipeline_change_builds_four_cargo_consumers(self):
+        impact = downstream_impact.calculate_impact(
+            self.config, ["libdd-data-pipeline/src/lib.rs"]
+        )
+        repositories = {
+            item["repository"] for item in impact["cargo_matrix"]["include"]
+        }
+        self.assertEqual(
+            repositories,
+            {
+                "DataDog/dd-trace-rs",
+                "DataDog/datadog-lambda-extension",
+                "DataDog/serverless-components",
+                "DataDog/libdatadog-nodejs",
+            },
+        )
+        self.assertEqual(impact["cargo_validation_count"], 4)
+        by_repository = {
+            item["repository"]: item for item in impact["cargo_matrix"]["include"]
+        }
+        self.assertEqual(
+            by_repository["DataDog/datadog-lambda-extension"]["patch_sources"],
+            ["crates-io", "https://github.com/DataDog/libdatadog"],
+        )
 
     def test_workspace_change_selects_every_consumer(self):
         impact = downstream_impact.calculate_impact(self.config, ["Cargo.toml"])
         self.assertEqual(impact["impacted_count"], 16)
+        self.assertEqual(impact["cargo_validation_count"], 4)
 
     def test_less_common_published_component_fails_safe(self):
         impact = downstream_impact.calculate_impact(

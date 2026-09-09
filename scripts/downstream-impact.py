@@ -44,6 +44,28 @@ def load_config(path: Path) -> dict[str, Any]:
         if unknown:
             raise ValueError(f"component {name!r} has unknown consumers: {sorted(unknown)}")
 
+    for consumer in consumers:
+        validation = consumer.get("validation")
+        if validation is None:
+            continue
+        if validation.get("kind") != "cargo":
+            raise ValueError(
+                f"consumer {consumer['repository']!r} has an unsupported validation kind"
+            )
+        if not validation.get("manifest"):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo validation needs a manifest"
+            )
+        if not isinstance(validation.get("args", []), list):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo validation args must be a list"
+            )
+        patch_sources = validation.get("patch_sources", [])
+        if not patch_sources or not isinstance(patch_sources, list):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo validation needs patch sources"
+            )
+
     return config
 
 
@@ -84,8 +106,7 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
     for repository in sorted(matches_by_repository):
         consumer = consumers_by_repository[repository]
         component_matches = matches_by_repository[repository]
-        impacted.append(
-            {
+        impact_item = {
                 "repository": repository,
                 "tier": consumer["tier"],
                 "mode": consumer["mode"],
@@ -94,7 +115,30 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
                     {path for paths in component_matches.values() for path in paths}
                 ),
             }
-        )
+        if "validation" in consumer:
+            impact_item["validation"] = consumer["validation"]
+        impacted.append(impact_item)
+
+    matrix_entries = [
+        {
+            "repository": item["repository"],
+            "artifact_name": item["repository"].replace("/", "-"),
+            "tier": item["tier"],
+            "mode": item["mode"],
+            "components": ",".join(item["components"]),
+        }
+        for item in impacted
+    ]
+    cargo_matrix_entries = [
+        {
+            **entry,
+            "manifest": item["validation"]["manifest"],
+            "cargo_args": item["validation"].get("args", []),
+            "patch_sources": item["validation"]["patch_sources"],
+        }
+        for entry, item in zip(matrix_entries, impacted)
+        if item.get("validation", {}).get("kind") == "cargo"
+    ]
 
     return {
         "schema_version": 1,
@@ -102,17 +146,9 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
         "impacted_count": len(impacted),
         "total_consumers": len(consumers_by_repository),
         "impacted": impacted,
-        "matrix": {
-            "include": [
-                {
-                    "repository": item["repository"],
-                    "tier": item["tier"],
-                    "mode": item["mode"],
-                    "components": ",".join(item["components"]),
-                }
-                for item in impacted
-            ]
-        },
+        "matrix": {"include": matrix_entries},
+        "cargo_validation_count": len(cargo_matrix_entries),
+        "cargo_matrix": {"include": cargo_matrix_entries},
     }
 
 
@@ -157,6 +193,13 @@ def write_github_outputs(path: Path, impact: dict[str, Any]) -> None:
         output_file.write(f"has_impacted={'true' if impact['impacted'] else 'false'}\n")
         output_file.write(f"impacted_count={impact['impacted_count']}\n")
         output_file.write(f"matrix={json.dumps(impact['matrix'], separators=(',', ':'))}\n")
+        output_file.write(
+            f"has_cargo_validations={'true' if impact['cargo_validation_count'] else 'false'}\n"
+        )
+        output_file.write(f"cargo_validation_count={impact['cargo_validation_count']}\n")
+        output_file.write(
+            f"cargo_matrix={json.dumps(impact['cargo_matrix'], separators=(',', ':'))}\n"
+        )
 
 
 def parse_args() -> argparse.Namespace:
