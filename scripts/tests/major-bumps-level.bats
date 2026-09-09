@@ -24,7 +24,7 @@ row() {
 # Write rows to a file and run the script against it.
 run_major_bumps() {
   printf '%s\n' "$@" | jq -s '.' > "${TEST_TMP}/api-changes.json"
-  run --separate-stderr "${SCRIPTS_DIR}/major-bumps-level.sh" "${TEST_TMP}/api-changes.json"
+  run_tool major-bumps-level "${TEST_TMP}/api-changes.json"
 }
 
 setup() {
@@ -185,36 +185,36 @@ EOF
   fixture_set_dep_req libdd-beta libdd-alpha "2.0"
   run_major_bumps "$(row libdd-beta libdd-beta-v0.5.0)"
   assert_success
-  assert_stderr_contains "libdd-alpha: ^1.2 -> ^2.0"
+  assert_stderr_mentions "libdd-alpha" "^1.2" "^2.0"
 }
 
 @test "fails when the crate manifest is missing from the current tree" {
   run_major_bumps "$(row libdd-nonexistent libdd-beta-v0.5.0)"
-  assert_failure 2
-  assert_stderr_contains "missing manifest libdd-nonexistent/Cargo.toml"
+  assert_failure
+  assert_stderr_mentions "libdd-nonexistent"
 }
 
 @test "fails when the crate manifest is missing at the previous tag" {
   _fixture_crate libdd-epsilon 0.1.0
   sed -i 's|    "other-tool",|    "other-tool",\n    "libdd-epsilon",|' "${FIXTURE_REPO}/Cargo.toml"
   run_major_bumps "$(row libdd-epsilon libdd-beta-v0.5.0)"
-  assert_failure 2
-  assert_stderr_contains "missing manifest"
+  assert_failure
+  assert_stderr_mentions "libdd-epsilon"
 }
 
 @test "rejects a missing or non-file argument" {
-  run --separate-stderr "${SCRIPTS_DIR}/major-bumps-level.sh"
-  assert_failure 2
-  assert_stderr_contains "Usage:"
+  run_tool major-bumps-level
+  assert_failure
+  assert_stderr_mentions
 
-  run --separate-stderr "${SCRIPTS_DIR}/major-bumps-level.sh" "${TEST_TMP}/does-not-exist.json"
-  assert_failure 2
-  assert_stderr_contains "Not a file:"
+  run_tool major-bumps-level "${TEST_TMP}/does-not-exist.json"
+  assert_failure
+  assert_stderr_mentions "does-not-exist.json"
 }
 
 @test "returns an empty array for an empty input list" {
   echo '[]' > "${TEST_TMP}/api-changes.json"
-  run --separate-stderr "${SCRIPTS_DIR}/major-bumps-level.sh" "${TEST_TMP}/api-changes.json"
+  run_tool major-bumps-level "${TEST_TMP}/api-changes.json"
   assert_success
   assert_jq "$output" 'length' "0"
 }

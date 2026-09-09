@@ -18,10 +18,32 @@ Requires [bats-core](https://github.com/bats-core/bats-core) >= 1.5.0, plus `jq`
 `git`, `cargo` and `python3` with PyYAML.
 
 ```bash
-./scripts/tests/run.sh                    # everything (~15s)
+./scripts/tests/run.sh                    # everything (~40s)
 ./scripts/tests/run.sh semver-level       # one suite
 ./scripts/tests/run.sh -f "merge-base"    # tests matching a regex
 ```
+
+## Running against another implementation
+
+Suites never name a script directly — they go through `run_tool NAME`, so the whole
+suite can be pointed somewhere else without touching an assertion:
+
+```bash
+RELEASE_TOOL_CMD='target/release/release-tool {name}' ./scripts/tests/run.sh
+RELEASE_TOOL_CMD='node dist/{name}.js'                ./scripts/tests/run.sh
+```
+
+`{name}` is the script's base name (`publication-order`, `release-version-bumps`, …);
+the template is split on whitespace, so it can carry a subcommand or flags. This is
+what makes the suite usable as a conformance harness if these scripts are ever
+rewritten in another language: run both implementations over it and diff.
+
+One suite opts out. `release-version-bumps.bats` doubles `semver-level.sh` by mirroring
+`scripts/` into a temp directory and swapping that one file, which relies on the script
+resolving siblings relative to how it was invoked. That does not generalise, so those
+tests `skip` with a stated reason under `RELEASE_TOOL_CMD` rather than silently running
+the real `semver-level.sh`. Giving the script a `--semver-level-cmd` option would close
+the gap.
 
 To install bats without root:
 
@@ -88,8 +110,19 @@ means updating the test and reading the reason first. They complement actionlint
 Assert on behaviour the workflow actually depends on, and say which workflow step
 depends on it. Two properties worth preserving:
 
-- Use `run --separate-stderr` so `$output` stays parseable JSON when a script logs
-  progress to stderr; assert diagnostics with `assert_stderr_contains`.
+- Invoke through `run_tool NAME` (or `tool NAME` for a setup step whose output you
+  need), never `${SCRIPTS_DIR}/name.sh`. That is what keeps the suite portable.
+- Both capture stdout and stderr separately, so `$output` stays parseable JSON when a
+  script logs progress. Assert diagnostics with `assert_stderr_mentions`, passing data
+  the test supplied — a crate name, a path, an option — rather than a phrase from the
+  message. Pinning our exact prose turns every reworded diagnostic into a failure, and
+  would force a reimplementation to reproduce the wording instead of the behaviour.
+  `assert_stderr_contains` is for text the test itself controls, such as a stub's
+  output being checked for forwarding.
+- Assert `assert_failure` without a code. The workflow only ever tests zero versus
+  non-zero, so a specific status is this implementation's convention, not a contract.
+  The exceptions are the tests whose *subject* is that a sub-process's own exit code
+  propagates; those name the code deliberately.
 - Prefer asserting invariants over golden output. `assert_topological_order` checks
   that every crate follows its dependencies rather than pinning one exact ordering,
   which would break on an irrelevant tie-breaking change.

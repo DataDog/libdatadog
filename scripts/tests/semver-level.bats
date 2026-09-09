@@ -76,7 +76,7 @@ EOF
 }
 
 run_semver_level() {
-  run --separate-stderr "${SCRIPTS_DIR}/semver-level.sh" libdd-alpha "refs/tags/libdd-alpha-v1.2.3" HEAD
+  run_tool semver-level libdd-alpha "refs/tags/libdd-alpha-v1.2.3" HEAD
 }
 
 @test "no API change at all is a patch release" {
@@ -201,22 +201,22 @@ EOF
   # as a patch release.
   stub_semver_checks 1 "error: could not compile \`libdd-alpha\`"
   run_semver_level
-  assert_failure 1
-  assert_stderr_contains "Error running cargo-semver-checks"
+  assert_failure
+  assert_stderr_mentions "cargo-semver-checks"
 }
 
 @test "fails on an unexpected cargo-semver-checks exit code" {
   stub_semver_checks 101 "thread 'main' panicked"
   run_semver_level
   assert_failure 101
-  assert_stderr_contains "Unexpected exit code from cargo-semver-checks"
+  assert_stderr_mentions "cargo-semver-checks"
 }
 
 @test "fails when cargo-public-api errors out" {
   stub_public_api 1 "error: failed to build rustdoc JSON"
   run_semver_level
-  assert_failure 1
-  assert_stderr_contains "Unexpected error from cargo-public-api"
+  assert_failure
+  assert_stderr_mentions "cargo-public-api"
 }
 
 @test "passes the tag baseline through unprefixed and diffs baseline..current" {
@@ -231,19 +231,19 @@ EOF
 }
 
 @test "prefixes a bare branch baseline with origin/" {
-  run --separate-stderr "${SCRIPTS_DIR}/semver-level.sh" libdd-alpha main HEAD
+  run_tool semver-level libdd-alpha main HEAD
   assert_success
   assert_contains "$(cat "$STUB_CALL_LOG")" "--baseline-rev origin/main"
 }
 
 @test "defaults the current ref to HEAD and requires a crate name" {
-  run --separate-stderr "${SCRIPTS_DIR}/semver-level.sh" libdd-alpha main
+  run_tool semver-level libdd-alpha main
   assert_success
   assert_contains "$(cat "$STUB_CALL_LOG")" "diff origin/main..HEAD"
 
-  run --separate-stderr "${SCRIPTS_DIR}/semver-level.sh"
+  run_tool semver-level
   assert_failure
-  assert_stderr_contains "CRATE is required"
+  assert_stderr_mentions
 }
 
 @test "emits a single JSON object with the fields the workflow reads" {

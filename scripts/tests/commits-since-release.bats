@@ -28,7 +28,7 @@ teardown() {
 }
 
 @test "reports no previous release when the crate has no tag" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "false"
   assert_jq "$output" '.[0].tag' "libdd-beta-v0.5.0"
@@ -37,7 +37,7 @@ teardown() {
 
 @test "reports an empty commit list when nothing changed since the tag" {
   fixture_touch_crate libdd-beta "feat(beta): unrelated"
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag_exists' "true"
   assert_jq "$output" '.[0].commits | length' "0"
@@ -48,14 +48,14 @@ teardown() {
   fixture_touch_crate libdd-beta "feat(beta): not mine"
   fixture_commit_all "chore: empty commit touching nothing"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | length' "1"
   assert_jq "$output" '.[0].commits[0].subject' "feat(alpha): mine"
 }
 
 @test "reports the crate path relative to the workspace root" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].path' "libdd-alpha"
 }
@@ -67,7 +67,7 @@ teardown() {
   fixture_touch_crate libdd-alpha "feat(alpha): middle"
   fixture_touch_crate libdd-alpha "feat(alpha): newest"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' \
     "feat(alpha): newest|feat(alpha): middle|feat(alpha): oldest"
@@ -79,7 +79,7 @@ teardown() {
   fixture_touch_crate libdd-alpha "Merge branch 'main' into topic"
   fixture_touch_crate libdd-alpha "Merge pull request #1 from someone/topic"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' "feat(alpha): keep me"
 }
@@ -89,7 +89,7 @@ teardown() {
   fixture_touch_crate libdd-alpha "feat(alpha): human change"
   fixture_touch_crate libdd-alpha "feat(alpha): bot change" "dd-octo-sts[bot]" "bot@example.com"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' "feat(alpha): human change"
 }
@@ -98,7 +98,7 @@ teardown() {
   fixture_touch_crate libdd-alpha "chore(release): bump"
   fixture_touch_crate libdd-alpha "feat(alpha): bot change" "dd-octo-sts[bot]" "bot@example.com"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" --no-exclude "$ALPHA_INPUT"
+  run_tool commits-since-release --no-exclude "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' "chore(release): bump"
 }
@@ -108,7 +108,7 @@ teardown() {
   fixture_touch_crate libdd-alpha "ci: drop me"
   fixture_touch_crate libdd-alpha "chore(release): also dropped"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" --exclude='^ci:' "$ALPHA_INPUT"
+  run_tool commits-since-release --exclude='^ci:' "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].commits | map(.subject) | join("|")' "feat(alpha): keep me"
 }
@@ -120,7 +120,7 @@ teardown() {
   local nasty='fix(alpha): handle "quoted" \back\slash and — em dash $(whoami) `tick`'
   fixture_touch_crate libdd-alpha "$nasty"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_valid_json "$output"
   assert_jq "$output" '.[0].commits[0].subject' "$nasty"
@@ -133,7 +133,7 @@ teardown() {
   fixture_tag "libdd-beta-v0.5.0" --annotated
   fixture_touch_crate libdd-beta "feat(beta): after the tag"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "true"
   assert_jq "$output" '.[0].tag_ancestor' "true"
@@ -151,7 +151,7 @@ teardown() {
   git tag -f "libdd-alpha-v1.2.3" >/dev/null
   git checkout -q main
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag_ancestor' "$fork_point"
   # The commit that only exists on the side branch must not be attributed to main.
@@ -162,7 +162,7 @@ teardown() {
 
 @test "reports the tagged commit as reachable from a local branch" {
   fixture_touch_crate libdd-alpha "feat(alpha): after the tag"
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag_in_local_branch' "true"
   # A JSON boolean, not the string "true": the workflow compares it as one.
@@ -182,14 +182,14 @@ teardown() {
   git checkout -q main
   git branch -qD throwaway
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag_exists' "true"
   assert_jq "$output" '.[0].tag_in_local_branch' "false"
 }
 
 @test "tag_in_local_branch is false when the crate has no tag" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "false"
   assert_jq "$output" '.[0].tag_in_local_branch' "false"
@@ -207,7 +207,7 @@ teardown() {
   fixture_tag "libdd-alpha-v1.9.0"
   fixture_tag "libdd-alpha-v1.10.0"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   # Version sort, not lexicographic: plain string ordering puts v1.9.0 above v1.10.0.
   assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.10.0"
@@ -218,21 +218,21 @@ teardown() {
   # somewhere else, so the proposal must not re-release the older version.
   fixture_tag "libdd-alpha-v2.0.0"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag' "libdd-alpha-v1.2.3"
   assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v2.0.0"
 }
 
 @test "latest_tag equals tag when the crate is at its most recent release" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.2.3"
   assert_jq "$output" '.[0].tag' "libdd-alpha-v1.2.3"
 }
 
 @test "latest_tag is empty for a crate that was never released" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "false"
   assert_jq "$output" '.[0].latest_tag' ""
@@ -242,7 +242,7 @@ teardown() {
   # Manifest bumped without a release: no libdd-beta-v0.5.0 tag, but older ones exist.
   fixture_tag "libdd-beta-v0.4.0"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "false"
   assert_jq "$output" '.[0].latest_tag' "libdd-beta-v0.4.0"
@@ -252,7 +252,7 @@ teardown() {
   # libdd-alpha and libdd-alpha-ffi share a prefix; the "-v" in the glob keeps them apart.
   fixture_tag "libdd-alpha-ffi-v9.9.9"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].latest_tag' "libdd-alpha-v1.2.3"
 }
@@ -270,7 +270,7 @@ teardown() {
   tag_commit="$(git rev-parse 'libdd-alpha-v1.2.3^{}')"
   head="$(git rev-parse HEAD)"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].tag_commit' "$tag_commit"
   assert_jq "$output" '.[0].range' "${tag_commit}..${head}"
@@ -284,7 +284,7 @@ teardown() {
   tag_commit="$(git rev-parse 'libdd-beta-v0.5.0^{}')"
   head="$(git rev-parse HEAD)"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   # The tag object's own SHA must not leak into the range.
   assert_not_contains "$(jq -r '.[0].range' <<< "$output")" "$(git rev-parse 'refs/tags/libdd-beta-v0.5.0')"
@@ -303,7 +303,7 @@ teardown() {
   local head
   head="$(git rev-parse HEAD)"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_jq "$output" '.[0].range' "${fork_point}..${head}"
 }
@@ -335,7 +335,7 @@ tag_on_unrelated_history() {
 
   tag_on_unrelated_history "libdd-epsilon-v0.1.0"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-epsilon","version":"0.1.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-epsilon","version":"0.1.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_ancestor' "no merge-base"
   assert_jq "$output" '.[0].range' "${range_start}..${head}"
@@ -354,7 +354,7 @@ tag_on_unrelated_history() {
   local tag_commit
   tag_commit="$(git rev-parse 'libdd-alpha-v1.2.3^{}')"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" "$ALPHA_INPUT"
+  run_tool commits-since-release "$ALPHA_INPUT"
   assert_success
   assert_not_contains "$(jq -r '.[0].range' <<< "$output")" "^"
   assert_jq "$output" '.[0].range' "${tag_commit}..${head}"
@@ -363,7 +363,7 @@ tag_on_unrelated_history() {
 @test "leaves the range and tag_commit empty when the crate has no previous release tag" {
   # The workflow treats an empty range on a tagged crate as a hard error, so an
   # untagged crate must be distinguishable: it never reaches that check.
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" '[{"name":"libdd-beta","version":"0.5.0"}]'
+  run_tool commits-since-release '[{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '.[0].tag_exists' "false"
   assert_jq "$output" '.[0].range' ""
@@ -380,7 +380,7 @@ tag_on_unrelated_history() {
   local head
   head="$(git rev-parse HEAD)"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" \
+  run_tool commits-since-release \
     '[{"name":"libdd-alpha","version":"1.2.3"},{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" '[.[].range | split("..")[1]] | unique | join(",")' "$head"
@@ -388,7 +388,8 @@ tag_on_unrelated_history() {
 
 @test "reads the crate list from stdin" {
   fixture_touch_crate libdd-alpha "feat(alpha): via stdin"
-  run --separate-stderr bash -c "printf '%s' '$ALPHA_INPUT' | '${SCRIPTS_DIR}/commits-since-release.sh'"
+  release_tool_argv commits-since-release
+  run --separate-stderr bash -c 'printf "%s" "$1" | "${@:2}"' _ "$ALPHA_INPUT" "${RELEASE_TOOL_ARGV[@]}"
   assert_success
   assert_jq "$output" '.[0].commits[0].subject' "feat(alpha): via stdin"
 }
@@ -398,7 +399,7 @@ tag_on_unrelated_history() {
   fixture_touch_crate libdd-alpha "feat(alpha): a"
   fixture_touch_crate libdd-beta "feat(beta): b"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" \
+  run_tool commits-since-release \
     '[{"name":"libdd-alpha","version":"1.2.3"},{"name":"libdd-beta","version":"0.5.0"}]'
   assert_success
   assert_jq "$output" 'length' "2"
@@ -407,24 +408,24 @@ tag_on_unrelated_history() {
 }
 
 @test "rejects invalid JSON input" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" 'not json'
-  assert_failure 1
-  assert_stderr_contains "Invalid JSON input"
+  run_tool commits-since-release 'not json'
+  assert_failure
+  assert_stderr_mentions "JSON"
 }
 
 @test "rejects an unknown option and an unknown format" {
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" --nope "$ALPHA_INPUT"
-  assert_failure 1
-  assert_stderr_contains "Unknown option: --nope"
+  run_tool commits-since-release --nope "$ALPHA_INPUT"
+  assert_failure
+  assert_stderr_mentions "--nope"
 
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" --format=yaml "$ALPHA_INPUT"
-  assert_failure 1
-  assert_stderr_contains "Unknown format: yaml"
+  run_tool commits-since-release --format=yaml "$ALPHA_INPUT"
+  assert_failure
+  assert_stderr_mentions "yaml"
 }
 
 @test "summary format lists the commits per crate" {
   fixture_touch_crate libdd-alpha "feat(alpha): summarised"
-  run --separate-stderr "${SCRIPTS_DIR}/commits-since-release.sh" --format=summary "$ALPHA_INPUT"
+  run_tool commits-since-release --format=summary "$ALPHA_INPUT"
   assert_success
   assert_contains "$output" "libdd-alpha v1.2.3"
   assert_contains "$output" "feat(alpha): summarised"

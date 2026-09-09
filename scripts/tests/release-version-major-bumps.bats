@@ -61,7 +61,7 @@ row() {
 # run_major_bumps ROW... — feed rows in and run the script over them.
 run_major_bumps() {
   printf '%s\n' "$@" | jq -s '.' > "${TEST_TMP}/api-changes.json"
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+  run_tool release-version-major-bumps \
     --api-changes "${TEST_TMP}/api-changes.json" \
     --out "${TEST_TMP}/api-changes-with-major-bumps.json" \
     --branch proposal
@@ -209,7 +209,7 @@ crate_version() {
   # but the documented interface takes a generic FILE.
   printf '%s\n' "$(row libdd-beta minor 0.5.0 0.6.0)" | jq -s '.' > "${FIXTURE_REPO}/rel-in.json"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+  run_tool release-version-major-bumps \
     --api-changes rel-in.json \
     --out rel-out.json \
     --branch proposal
@@ -226,7 +226,7 @@ crate_version() {
   printf '%s\n' "$(row libdd-beta minor 0.5.0 0.6.0)" | jq -s '.' > "${TEST_TMP}/api-changes.json"
 
   use_failing_stream_jq
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+  run_tool release-version-major-bumps \
     --api-changes "${TEST_TMP}/api-changes.json" \
     --out "${TEST_TMP}/api-changes-with-major-bumps.json" \
     --branch proposal
@@ -238,32 +238,32 @@ crate_version() {
 }
 
 @test "rejects a missing or non-array input" {
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+  run_tool release-version-major-bumps \
     --api-changes "${TEST_TMP}/nope.json" --out "${TEST_TMP}/out.json" --branch proposal
-  assert_failure 1
-  assert_stderr_contains "not a file"
+  assert_failure
+  assert_stderr_mentions "nope.json"
 
   echo '{"not":"an array"}' > "${TEST_TMP}/bad.json"
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" \
+  run_tool release-version-major-bumps \
     --api-changes "${TEST_TMP}/bad.json" --out "${TEST_TMP}/out.json" --branch proposal
-  assert_failure 1
-  assert_stderr_contains "is not a JSON array"
+  assert_failure
+  assert_stderr_mentions "bad.json" "array"
 }
 
 @test "requires its three mandatory options" {
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" --out /dev/null --branch b
-  assert_failure 1
-  assert_stderr_contains "--api-changes is required"
+  run_tool release-version-major-bumps --out /dev/null --branch b
+  assert_failure
+  assert_stderr_mentions "--api-changes"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" --api-changes /dev/null --branch b
-  assert_failure 1
-  assert_stderr_contains "--out is required"
+  run_tool release-version-major-bumps --api-changes /dev/null --branch b
+  assert_failure
+  assert_stderr_mentions "--out"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" --api-changes /dev/null --out /dev/null
-  assert_failure 1
-  assert_stderr_contains "--branch is required"
+  run_tool release-version-major-bumps --api-changes /dev/null --out /dev/null
+  assert_failure
+  assert_stderr_mentions "--branch"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-version-major-bumps.sh" --nope
-  assert_failure 1
-  assert_stderr_contains "Unknown option: --nope"
+  run_tool release-version-major-bumps --nope
+  assert_failure
+  assert_stderr_mentions "--nope"
 }

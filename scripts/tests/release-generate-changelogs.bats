@@ -40,7 +40,7 @@ run_changelogs() {
   local -a flags=()
   while [[ "${1:-}" == --* ]]; do flags+=("$1" "$2"); shift 2; done
   printf '%s\n' "$@" | jq -s '.' > "${TEST_TMP}/api-changes.json"
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" \
+  run_tool release-generate-changelogs \
     --api-changes "${TEST_TMP}/api-changes.json" "${flags[@]}"
 }
 
@@ -238,7 +238,7 @@ MB='[{"dependency":"libdd-core","previous_req":"^1.0","current_req":"^2.0"}]'
     | jq -s '.' > "${TEST_TMP}/api-changes.json"
 
   use_failing_stream_jq
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" \
+  run_tool release-generate-changelogs \
     --api-changes "${TEST_TMP}/api-changes.json"
   assert_failure 5
   assert_stderr_contains "simulated failure on the streaming read"
@@ -246,20 +246,20 @@ MB='[{"dependency":"libdd-core","previous_req":"^1.0","current_req":"^2.0"}]'
 }
 
 @test "rejects a missing, non-file or non-array input" {
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh"
-  assert_failure 1
-  assert_stderr_contains "--api-changes is required"
+  run_tool release-generate-changelogs
+  assert_failure
+  assert_stderr_mentions "--api-changes"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" --api-changes "${TEST_TMP}/nope.json"
-  assert_failure 1
-  assert_stderr_contains "not a file"
+  run_tool release-generate-changelogs --api-changes "${TEST_TMP}/nope.json"
+  assert_failure
+  assert_stderr_mentions "nope.json"
 
   echo '{"not":"an array"}' > "${TEST_TMP}/bad.json"
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" --api-changes "${TEST_TMP}/bad.json"
-  assert_failure 1
-  assert_stderr_contains "is not a JSON array"
+  run_tool release-generate-changelogs --api-changes "${TEST_TMP}/bad.json"
+  assert_failure
+  assert_stderr_mentions "bad.json" "array"
 
-  run --separate-stderr "${SCRIPTS_DIR}/release-generate-changelogs.sh" --nope
-  assert_failure 1
-  assert_stderr_contains "Unknown option: --nope"
+  run_tool release-generate-changelogs --nope
+  assert_failure
+  assert_stderr_mentions "--nope"
 }

@@ -47,11 +47,28 @@ teardown() {
 
 # Copy the script under test next to a semver-level.sh stub. The script resolves that
 # sibling relative to itself, so no test-only hook is needed in the script.
+#
+# This is the one seam that does not generalise: pointing the suite at another
+# implementation via RELEASE_TOOL_CMD cannot work until the script takes the
+# semver-level command as an argument, because "copy the executable next to a fake
+# sibling" assumes sibling resolution. Skip loudly rather than silently running the
+# real semver-level.sh, which would build crates for minutes and then disagree.
 install_release_tool() {
+  if [[ -n "${RELEASE_TOOL_CMD:-}" ]]; then
+    skip "needs a --semver-level-cmd override to run against a non-default implementation"
+  fi
+  # A mirror of scripts/, with semver-level.sh swapped for a stub. Symlinks are enough:
+  # the script resolves its siblings from the directory it was *invoked* through, which
+  # is this one. Mirroring everything keeps the other scripts the suite drives (namely
+  # commits-since-release.sh) reachable through the same directory.
   RELEASE_BIN="${TEST_TMP}/bin"
   export RELEASE_BIN
   mkdir -p "$RELEASE_BIN"
-  install -m 0755 "${SCRIPTS_DIR}/release-version-bumps.sh" "$RELEASE_BIN/"
+  local script
+  for script in "${SCRIPTS_DIR}"/*.sh; do
+    ln -sf "$script" "${RELEASE_BIN}/$(basename "$script")"
+  done
+  rm -f "${RELEASE_BIN}/semver-level.sh"
   cat > "${RELEASE_BIN}/semver-level.sh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$1" >> "${STUB_SEMVER_CALLS:-/dev/null}"
@@ -63,6 +80,9 @@ jq -nc --arg n "$1" --arg l "${STUB_SEMVER_LEVEL:-minor}" \
   '{name: $n, level: $l, reason: "stub", details: ""}'
 STUB
   chmod +x "${RELEASE_BIN}/semver-level.sh"
+  # Point the resolver at the copy, so the tests below read like every other suite.
+  RELEASE_TOOL_CMD="${RELEASE_BIN}/{name}.sh"
+  export RELEASE_TOOL_CMD
   STUB_SEMVER_CALLS="${TEST_TMP}/semver-level-calls"
   export STUB_SEMVER_CALLS
   : > "$STUB_SEMVER_CALLS"
@@ -80,8 +100,8 @@ crates_input() {
 run_bumps() {
   local -a flags=()
   while [[ "${1:-}" == --* ]]; do flags+=("$1"); shift; done
-  "${SCRIPTS_DIR}/commits-since-release.sh" "$1" > "${TEST_TMP}/commits-by-crate.json"
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  tool commits-since-release "$1" > "${TEST_TMP}/commits-by-crate.json"
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/commits-by-crate.json" \
     --out "${TEST_TMP}/api-changes.json" \
     --branch proposal "${flags[@]}"
@@ -203,8 +223,8 @@ crate_version() {
   # A missing tag on a crate that is not brand new means something is wrong with the
   # tags, not that the crate is new; releasing it as 1.0.0 would be wrong.
   run_bumps "$(crates_input libdd-private:0.9.0)"
-  assert_failure 1
-  assert_stderr_contains "libdd-private is not a 0.1.0 release"
+  assert_failure
+  assert_stderr_mentions "libdd-private" "0.1.0"
 }
 
 # --- failure paths ----------------------------------------------------------
@@ -214,19 +234,19 @@ crate_version() {
   # run aborted with nothing in the log.
   STUB_SEMVER_RC=3 run_bumps "$(crates_input libdd-alpha:1.2.3)"
   assert_failure
-  assert_stderr_contains "semver-level.sh failed for libdd-alpha"
+  assert_stderr_mentions "libdd-alpha"
   assert_stderr_contains "cargo semver-checks blew up"
 }
 
 @test "fails when a tagged crate has no usable range" {
   # tag_commit/range empty means commits-since-release.sh could not resolve the tag.
-  "${SCRIPTS_DIR}/commits-since-release.sh" "$(crates_input libdd-alpha:1.2.3)" \
+  tool commits-since-release "$(crates_input libdd-alpha:1.2.3)" \
     | jq '[.[] | .range = "" | .tag_commit = ""]' > "${TEST_TMP}/commits-by-crate.json"
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/commits-by-crate.json" \
     --out "${TEST_TMP}/api-changes.json" --branch proposal
-  assert_failure 1
-  assert_stderr_contains "Could not dereference tag libdd-alpha-v1.2.3 to a commit"
+  assert_failure
+  assert_stderr_mentions "libdd-alpha-v1.2.3"
 }
 
 @test "fails when the jq that streams the rows fails" {
@@ -234,11 +254,11 @@ crate_version() {
   # substitution's exit status is reported by neither set -e nor pipefail, so a jq
   # that died mid-stream left the loop with no input and the script exited 0 having
   # released nothing at all.
-  "${SCRIPTS_DIR}/commits-since-release.sh" "$(crates_input libdd-alpha:1.2.3)" \
+  tool commits-since-release "$(crates_input libdd-alpha:1.2.3)" \
     > "${TEST_TMP}/commits-by-crate.json"
 
   use_failing_stream_jq
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/commits-by-crate.json" \
     --out "${TEST_TMP}/api-changes.json" \
     --branch proposal
@@ -249,34 +269,34 @@ crate_version() {
 }
 
 @test "rejects a missing, unreadable or non-array input" {
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/nope.json" --out "${TEST_TMP}/out.json" --branch proposal
-  assert_failure 1
-  assert_stderr_contains "not a file"
+  assert_failure
+  assert_stderr_mentions "nope.json"
 
   echo '{"not":"an array"}' > "${TEST_TMP}/bad.json"
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/bad.json" --out "${TEST_TMP}/out.json" --branch proposal
-  assert_failure 1
-  assert_stderr_contains "is not a JSON array"
+  assert_failure
+  assert_stderr_mentions "bad.json" "array"
 }
 
 @test "requires its three mandatory options" {
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" --out /dev/null --branch b
-  assert_failure 1
-  assert_stderr_contains "--commits-by-crate is required"
+  run_tool release-version-bumps --out /dev/null --branch b
+  assert_failure
+  assert_stderr_mentions "--commits-by-crate"
 
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" --commits-by-crate /dev/null --branch b
-  assert_failure 1
-  assert_stderr_contains "--out is required"
+  run_tool release-version-bumps --commits-by-crate /dev/null --branch b
+  assert_failure
+  assert_stderr_mentions "--out"
 
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" --commits-by-crate /dev/null --out /dev/null
-  assert_failure 1
-  assert_stderr_contains "--branch is required"
+  run_tool release-version-bumps --commits-by-crate /dev/null --out /dev/null
+  assert_failure
+  assert_stderr_mentions "--branch"
 
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" --nope
-  assert_failure 1
-  assert_stderr_contains "Unknown option: --nope"
+  run_tool release-version-bumps --nope
+  assert_failure
+  assert_stderr_mentions "--nope"
 }
 
 # --- several crates at once -------------------------------------------------
@@ -296,7 +316,7 @@ crate_version() {
 
 @test "writes an empty array when there are no candidates" {
   echo '[]' > "${TEST_TMP}/commits-by-crate.json"
-  run --separate-stderr "${RELEASE_BIN}/release-version-bumps.sh" \
+  run_tool release-version-bumps \
     --commits-by-crate "${TEST_TMP}/commits-by-crate.json" \
     --out "${TEST_TMP}/api-changes.json" --branch proposal
   assert_success
