@@ -431,9 +431,9 @@ fn map_span<T: TraceData>(
         start_time_unix_nano: span.start.max(0) as u64,
         end_time_unix_nano: (span.start + span.duration).max(0) as u64,
         attributes,
-        dropped_attributes_count: dropped_attributes_count as u32,
+        dropped_attributes_count: u32::try_from(dropped_attributes_count).unwrap_or(u32::MAX),
         events,
-        dropped_events_count: dropped_events_count as u32,
+        dropped_events_count: u32::try_from(dropped_events_count).unwrap_or(u32::MAX),
         links,
         // The mapper enforces no link cap, so dropped links is always 0.
         dropped_links_count: 0,
@@ -449,14 +449,7 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
     ProtoLink {
         trace_id: trace_id_128.to_be_bytes().to_vec(),
         span_id: link.span_id.to_be_bytes().to_vec(),
-        trace_state: {
-            let ts = link.tracestate.borrow();
-            if ts.is_empty() {
-                String::new()
-            } else {
-                ts.to_string()
-            }
-        },
+        trace_state: link.tracestate.borrow().to_string(),
         attributes: link
             .attributes
             .iter()

@@ -4,10 +4,8 @@
 //! v1-native analog of [`super::mapper::map_traces_to_otlp`]: maps `v1::TraceChunk`/`v1::Span`
 //! directly to the prost OTLP IR.
 //!
-//! Unlike the v0.4 mapper, this needs no hex/decimal round trip *and* no meta/metrics flatten:
-//! v1's `trace_id: [u8; 16]` is already the full 128-bit id, `span_kind: SpanKind` already carries
-//! the OTLP span kind, sampling priority lives on the chunk, and `AttributeValue` maps onto OTLP's
-//! `AnyValue` losslessly (string/bool/int/double/bytes/array/kvlist), so attributes are converted
+//! Unlike the v0.4 mapper, this needs no hex/decimal round trip and no meta/metrics flatten:
+//! `AttributeValue` maps onto OTLP's `AnyValue` losslessly, so attributes are converted
 //! recursively with no flattening or type coercion.
 
 use super::mapper::{build_resource, proto_kv, MAX_ATTRIBUTES_PER_SPAN};
@@ -30,7 +28,7 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
 use super::mapper::status_code;
 
 /// Meta keys promoted to a dedicated OTLP location (Status message), so they're excluded from
-/// the emitted attributes under OTel-semantics — mirrors the v0.4 mapper's `error.msg`/
+/// the emitted attributes under OTel-semantics. Mirrors the v0.4 mapper's `error.msg`/
 /// `error.message` handling.
 const ERROR_MESSAGE_KEYS: [&str; 2] = ["error.msg", "error.message"];
 
@@ -62,29 +60,55 @@ fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
     }
 }
 
+/// Ordered, deduplicated chunk+span attribute list produced by [`merged_attrs_v1`].
+type MergedAttrs<'a, T> = Vec<(&'a str, &'a AttributeValue<T>)>;
+/// Key to position index into a [`MergedAttrs`] list, for O(1) lookup of one specific key.
+type MergedAttrsIndex<'a> = std::collections::HashMap<&'a str, usize>;
+
 /// Merge chunk-level and span-level attributes into one ordered, deduplicated key/value list,
-/// span wins on key collision. Both `VecMap`s are deduplicated first (last value wins).
+/// span wins on key collision. Neither input `VecMap` is assumed pre-deduplicated: a key repeated
+/// within the same map is resolved here too (last value wins). Span attributes are ordered first:
+/// besides value precedence, this also protects them from being truncated ahead of shared chunk
+/// attributes when the merged list is capped at `MAX_ATTRIBUTES_PER_SPAN`.
+///
+/// The key to position index built to do the merge is returned alongside the list, so callers that
+/// need to look up one specific key (e.g. `tracestate`) can do so in O(1) instead of scanning the
+/// list again.
 fn merged_attrs_v1<'a, T: TraceData>(
     chunk: &'a TraceChunk<T>,
     span: &'a Span<T>,
-) -> Vec<(&'a str, &'a AttributeValue<T>)> {
-    let mut order: Vec<&'a str> =
+) -> (MergedAttrs<'a, T>, MergedAttrsIndex<'a>) {
+    let mut merged: MergedAttrs<'a, T> =
         Vec::with_capacity(chunk.attributes.len() + span.attributes.len());
-    let mut merged: std::collections::HashMap<&'a str, &'a AttributeValue<T>> =
-        std::collections::HashMap::with_capacity(order.capacity());
-    for (k, v) in chunk.attributes.iter() {
-        let key = (*k).borrow();
-        if merged.insert(key, v).is_none() {
-            order.push(key);
-        }
-    }
+    let mut index: MergedAttrsIndex<'a> =
+        std::collections::HashMap::with_capacity(merged.capacity());
+
     for (k, v) in span.attributes.iter() {
         let key = (*k).borrow();
-        if merged.insert(key, v).is_none() {
-            order.push(key);
+        match index.get(key) {
+            Some(&i) => merged[i].1 = v,
+            None => {
+                index.insert(key, merged.len());
+                merged.push((key, v));
+            }
         }
     }
-    order.into_iter().map(|k| (k, merged[k])).collect()
+    // Everything up to here was claimed by the span and always wins; a chunk attribute below is
+    // dropped if it repeats one of those keys, and only updated in place (last value wins) when
+    // it repeats an earlier *chunk* key.
+    let span_claimed = merged.len();
+    for (k, v) in chunk.attributes.iter() {
+        let key = (*k).borrow();
+        match index.get(key) {
+            Some(&i) if i < span_claimed => {}
+            Some(&i) => merged[i].1 = v,
+            None => {
+                index.insert(key, merged.len());
+                merged.push((key, v));
+            }
+        }
+    }
+    (merged, index)
 }
 
 /// OTLP status (code, optional message) for a span: ERROR with the error message when
@@ -93,13 +117,14 @@ fn merged_attrs_v1<'a, T: TraceData>(
 fn span_status_v1<T: TraceData>(
     span: &Span<T>,
     merged: &[(&str, &AttributeValue<T>)],
+    index: &MergedAttrsIndex,
 ) -> (i32, Option<String>) {
     if !span.error {
         return (status_code::UNSET, None);
     }
     let message = ERROR_MESSAGE_KEYS.iter().find_map(|key| {
-        merged.iter().find(|(k, _)| k == key).and_then(|(_, v)| {
-            if let AttributeValue::String(s) = v {
+        index.get(key).and_then(|&i| {
+            if let AttributeValue::String(s) = merged[i].1 {
                 Some(s.borrow().to_string())
             } else {
                 None
@@ -115,64 +140,63 @@ fn span_status_v1<T: TraceData>(
 /// capped at `MAX_ATTRIBUTES_PER_SPAN`.
 fn collect_span_attributes_v1<T: TraceData>(
     span: &Span<T>,
+    chunk: &TraceChunk<T>,
     merged: &[(&str, &AttributeValue<T>)],
     resource_service: &str,
+    effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
-    // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
-    // attrs plus every merged chunk+span attribute, clamped to the per-span cap.
-    let capacity = (4 + merged.len()).min(MAX_ATTRIBUTES_PER_SPAN);
-    let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(capacity);
     // With OTel-semantics enabled the DD-specific attributes are omitted: the four promoted tags
     // below, and the `error.msg`/`error.message` compat tags (that information lives in the OTLP
     // Status field instead).
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
-    if has_per_span_service && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "service.name".to_string(),
-            ProtoValue::StringValue(span_service.to_string()),
-        ));
-    }
     let operation_name = span.name.borrow();
     let has_operation_name = !operation_name.is_empty();
-    if has_operation_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "operation.name".to_string(),
-            ProtoValue::StringValue(operation_name.to_string()),
-        ));
-    }
     let span_type = span.r#type.borrow();
     let has_span_type = !span_type.is_empty();
-    if has_span_type && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "span.type".to_string(),
-            ProtoValue::StringValue(span_type.to_string()),
-        ));
-    }
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
-    if has_resource_name && !otel_trace_semantics_enabled {
-        attrs.push(proto_kv(
-            "resource.name".to_string(),
-            ProtoValue::StringValue(resource_name.to_string()),
-        ));
-    }
-    let mut excluded_compat_tags = 0usize;
-    for (key, value) in merged {
-        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
-            break;
-        }
-        if otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(key) {
-            excluded_compat_tags += 1;
-            continue;
-        }
-        attrs.push(proto_kv(key.to_string(), attr_value_to_proto(value)));
-    }
-    // Dropped-count accounting must mirror what was actually emitted: with OTel-semantics on, the
-    // promoted tags aren't added and the excluded `error.msg`/`error.message` tags drop out of
-    // the merged total.
-    let promoted = if otel_trace_semantics_enabled {
+    // env/version/component are dedicated span fields (not synthetic compat tags), so unlike the
+    // four attrs above they're always emitted, matching the v0.4 downgrade mapping
+    // (`msgpack_encoder::v04::span_v1`) which the existing OTLP mapper preserves.
+    let env = span.env.borrow();
+    let has_env = !env.is_empty();
+    let version = span.version.borrow();
+    let has_version = !version.is_empty();
+    let component = span.component.borrow();
+    let has_component = !component.is_empty();
+    let origin = chunk.origin.borrow();
+    let has_origin = !origin.is_empty();
+    let has_sampling_mechanism = chunk.sampling_mechanism.is_some();
+    let has_sampling_priority = effective_priority.is_some();
+
+    // A `merged` entry is eligible for generic emission unless its key collides with one of the
+    // dedicated attributes emitted below (a `merged` key merely named e.g. "env" is fine to emit
+    // when the span's dedicated `env` field is empty, since nothing was promoted under that key),
+    // or (under OTel-semantics) duplicates the error-message compat tags that are promoted to the
+    // Status message instead.
+    let is_eligible = |key: &&str| {
+        let promoted_and_set = match *key {
+            "service.name" => has_per_span_service && !otel_trace_semantics_enabled,
+            "operation.name" => has_operation_name && !otel_trace_semantics_enabled,
+            "span.type" => has_span_type && !otel_trace_semantics_enabled,
+            "resource.name" => has_resource_name && !otel_trace_semantics_enabled,
+            "env" => has_env,
+            "version" => has_version,
+            "component" => has_component,
+            "_dd.origin" => has_origin,
+            "_dd.p.dm" => has_sampling_mechanism,
+            "_sampling_priority_v1" => has_sampling_priority,
+            _ => false,
+        };
+        !(promoted_and_set || (otel_trace_semantics_enabled && ERROR_MESSAGE_KEYS.contains(key)))
+    };
+    // Counted over the full `merged` slice so a cap-truncated span still reports an accurate
+    // dropped count.
+    let eligible_count = merged.iter().filter(|(k, _)| is_eligible(k)).count();
+
+    let promoted_compat = if otel_trace_semantics_enabled {
         0
     } else {
         (has_per_span_service as usize)
@@ -180,23 +204,103 @@ fn collect_span_attributes_v1<T: TraceData>(
             + (has_span_type as usize)
             + (has_resource_name as usize)
     };
-    let total = promoted + merged.len() - excluded_compat_tags;
+    let promoted_dedicated = (has_env as usize)
+        + (has_version as usize)
+        + (has_component as usize)
+        + (has_origin as usize)
+        + (has_sampling_mechanism as usize)
+        + (has_sampling_priority as usize);
+    let total = promoted_compat + promoted_dedicated + eligible_count;
+
+    let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(total.min(MAX_ATTRIBUTES_PER_SPAN));
+    if has_per_span_service && !otel_trace_semantics_enabled {
+        attrs.push(proto_kv(
+            "service.name".to_string(),
+            ProtoValue::StringValue(span_service.to_string()),
+        ));
+    }
+    if has_operation_name && !otel_trace_semantics_enabled {
+        attrs.push(proto_kv(
+            "operation.name".to_string(),
+            ProtoValue::StringValue(operation_name.to_string()),
+        ));
+    }
+    if has_span_type && !otel_trace_semantics_enabled {
+        attrs.push(proto_kv(
+            "span.type".to_string(),
+            ProtoValue::StringValue(span_type.to_string()),
+        ));
+    }
+    if has_resource_name && !otel_trace_semantics_enabled {
+        attrs.push(proto_kv(
+            "resource.name".to_string(),
+            ProtoValue::StringValue(resource_name.to_string()),
+        ));
+    }
+    if has_env {
+        attrs.push(proto_kv(
+            "env".to_string(),
+            ProtoValue::StringValue(env.to_string()),
+        ));
+    }
+    if has_version {
+        attrs.push(proto_kv(
+            "version".to_string(),
+            ProtoValue::StringValue(version.to_string()),
+        ));
+    }
+    if has_component {
+        attrs.push(proto_kv(
+            "component".to_string(),
+            ProtoValue::StringValue(component.to_string()),
+        ));
+    }
+    if has_origin {
+        attrs.push(proto_kv(
+            "_dd.origin".to_string(),
+            ProtoValue::StringValue(origin.to_string()),
+        ));
+    }
+    if let Some(mechanism) = chunk.sampling_mechanism {
+        attrs.push(proto_kv(
+            "_dd.p.dm".to_string(),
+            ProtoValue::StringValue(format!("-{mechanism}")),
+        ));
+    }
+    if let Some(priority) = effective_priority {
+        // i32 -> i64 is a lossless widening conversion.
+        attrs.push(proto_kv(
+            "_sampling_priority_v1".to_string(),
+            ProtoValue::IntValue(priority as i64),
+        ));
+    }
+    attrs.extend(
+        merged
+            .iter()
+            .filter(|(k, _)| is_eligible(k))
+            .take(MAX_ATTRIBUTES_PER_SPAN.saturating_sub(attrs.len()))
+            .map(|(key, value)| proto_kv(key.to_string(), attr_value_to_proto(value))),
+    );
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
+}
+
+/// Resolves the chunk's effective sampling priority, honoring `dropped_trace`: mirrors
+/// `msgpack_encoder::v04::mod::encode_payload_from_v1`, forcing a negative (rejected) priority
+/// when the chunk was dropped, unless it already carries one.
+fn effective_priority_v1<T: TraceData>(chunk: &TraceChunk<T>) -> Option<i32> {
+    if chunk.dropped_trace {
+        Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
+    } else {
+        chunk.priority
+    }
 }
 
 fn map_span_link_v1<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
     ProtoLink {
         trace_id: link.trace_id.to_vec(),
         span_id: link.span_id.to_be_bytes().to_vec(),
-        trace_state: {
-            let ts = link.tracestate.borrow();
-            if ts.is_empty() {
-                String::new()
-            } else {
-                ts.to_string()
-            }
-        },
+        trace_state: link.tracestate.borrow().to_string(),
         attributes: link
             .attributes
             .defensive_dedup()
@@ -212,9 +316,10 @@ fn map_span_link_v1<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
 
 fn map_span_events_v1<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<ProtoEvent>, usize) {
     const MAX_EVENTS_PER_SPAN: usize = 128;
-    let mut out = Vec::with_capacity(events.len().min(MAX_EVENTS_PER_SPAN));
-    for ev in events.iter().take(MAX_EVENTS_PER_SPAN) {
-        out.push(ProtoEvent {
+    let out: Vec<ProtoEvent> = events
+        .iter()
+        .take(MAX_EVENTS_PER_SPAN)
+        .map(|ev| ProtoEvent {
             time_unix_nano: ev.time_unix_nano,
             name: ev.name.borrow().to_string(),
             attributes: ev
@@ -224,8 +329,8 @@ fn map_span_events_v1<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<ProtoEvent>
                 .map(|(k, v)| proto_kv(k.borrow().to_string(), attr_value_to_proto(v)))
                 .collect(),
             dropped_attributes_count: 0,
-        });
-    }
+        })
+        .collect();
     let dropped = events.len().saturating_sub(out.len());
     (out, dropped)
 }
@@ -235,6 +340,7 @@ fn map_span_v1<T: TraceData>(
     chunk: &TraceChunk<T>,
     resource_service: &str,
     flags: u32,
+    effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoSpan {
     let parent_span_id = if span.parent_id != 0 {
@@ -242,19 +348,20 @@ fn map_span_v1<T: TraceData>(
     } else {
         Vec::new()
     };
-    let merged = merged_attrs_v1(chunk, span);
+    let (merged, index) = merged_attrs_v1(chunk, span);
     let (attributes, dropped_attributes_count) = collect_span_attributes_v1(
         span,
+        chunk,
         &merged,
         resource_service,
+        effective_priority,
         otel_trace_semantics_enabled,
     );
-    let (code, message) = span_status_v1(span, &merged);
-    let trace_state = merged
-        .iter()
-        .find(|(k, _)| *k == "tracestate")
-        .and_then(|(_, v)| {
-            if let AttributeValue::String(s) = v {
+    let (code, message) = span_status_v1(span, &merged, &index);
+    let trace_state = index
+        .get("tracestate")
+        .and_then(|&i| {
+            if let AttributeValue::String(s) = merged[i].1 {
                 Some(s.borrow().to_string())
             } else {
                 None
@@ -274,13 +381,14 @@ fn map_span_v1<T: TraceData>(
         // Consumer=5) already match the OTLP SpanKind enum, so no meta lookup/fallback is
         // needed like the v0.4 mapper's `span_kind()`/`tag_to_otlp_kind`/`dd_type_to_otlp_kind`.
         kind: span.span_kind as i32,
-        // OTLP timestamps are unsigned; clamp negatives to 0 so the `as u64` cast can't wrap.
-        start_time_unix_nano: span.start.max(0) as u64,
-        end_time_unix_nano: span.start.saturating_add(span.duration).max(0) as u64,
+        // OTLP timestamps are unsigned; a negative value has no valid representation, so fall
+        // back to 0 rather than wrapping.
+        start_time_unix_nano: u64::try_from(span.start).unwrap_or(0),
+        end_time_unix_nano: u64::try_from(span.start.saturating_add(span.duration)).unwrap_or(0),
         attributes,
-        dropped_attributes_count: dropped_attributes_count as u32,
+        dropped_attributes_count: u32::try_from(dropped_attributes_count).unwrap_or(u32::MAX),
         events,
-        dropped_events_count: dropped_events_count as u32,
+        dropped_events_count: u32::try_from(dropped_events_count).unwrap_or(u32::MAX),
         links,
         // The mapper enforces no link cap, so dropped links is always 0.
         dropped_links_count: 0,
@@ -310,13 +418,17 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
     for chunk in trace_chunks {
         // Resolve the chunk-level sampling priority once per chunk and apply it to every span's
         // flags (see the module/function doc for why this differs from v0.4's per-span metric).
-        let flags = chunk.priority.map(|p| (p >= 1) as u32).unwrap_or(0);
+        // `effective_priority_v1` folds in `dropped_trace`, matching the v0.4 downgrade encoder's
+        // `encode_payload_from_v1` so a rejected trace can't be reported as sampled.
+        let effective_priority = effective_priority_v1(chunk);
+        let flags = effective_priority.map(|p| (p >= 1) as u32).unwrap_or(0);
         for span in &chunk.spans {
             all_spans.push(map_span_v1(
                 span,
                 chunk,
                 &resource_info.service,
                 flags,
+                effective_priority,
                 otel_trace_semantics_enabled,
             ));
         }
@@ -477,6 +589,37 @@ mod tests_v1 {
             Some(PV::StringValue(ref v)) => assert_eq!(v, "prod"),
             ref other => panic!("expected string, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn dedicated_fields_are_promoted_to_otlp_attributes() {
+        let mut span = minimal_span();
+        span.env = bs("prod");
+        span.version = bs("1.2.3");
+        span.component = bs("pg");
+        let mut chunk = minimal_chunk([1; 16], span);
+        chunk.origin = bs("lambda");
+        chunk.sampling_mechanism = Some(4);
+        chunk.priority = Some(1);
+        let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        let get = |k: &str| {
+            s.attributes
+                .iter()
+                .find(|a| a.key == k)
+                .unwrap_or_else(|| panic!("missing attribute {k}"))
+                .value
+                .as_ref()
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert!(matches!(get("env"), Some(PV::StringValue(ref v)) if v == "prod"));
+        assert!(matches!(get("version"), Some(PV::StringValue(ref v)) if v == "1.2.3"));
+        assert!(matches!(get("component"), Some(PV::StringValue(ref v)) if v == "pg"));
+        assert!(matches!(get("_dd.origin"), Some(PV::StringValue(ref v)) if v == "lambda"));
+        assert!(matches!(get("_dd.p.dm"), Some(PV::StringValue(ref v)) if v == "-4"));
+        assert!(matches!(get("_sampling_priority_v1"), Some(PV::IntValue(1))));
     }
 
     #[test]
