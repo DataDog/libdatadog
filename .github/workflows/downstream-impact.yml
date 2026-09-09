@@ -261,6 +261,21 @@ jobs:
             done
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      - name: Classify regression from compatible base
+        if: >-
+          always() &&
+          steps.validate.outputs.base_result == 'success' &&
+          steps.validate.outputs.head_result == 'failure'
+        run: echo "The PR breaks a downstream build that passes against its base."
+
+      - name: Classify additional regression on failing base
+        if: >-
+          always() &&
+          steps.validate.outputs.base_result == 'failure' &&
+          steps.validate.outputs.head_result == 'failure' &&
+          steps.validate.outputs.new_error_count != '0'
+        run: echo "The PR adds compiler or Cargo errors to an already failing baseline."
+
       - name: Upload downstream validation log
         if: always()
         uses: actions/upload-artifact@v4
