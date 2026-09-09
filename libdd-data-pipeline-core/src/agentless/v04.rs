@@ -8,7 +8,9 @@ use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_stats::stats_exporter::AgentlessStatsExporter;
 #[cfg(feature = "stats-obfuscation")]
-use libdd_trace_stats::stats_exporter::{AgentlessStatsTarget, StatsMetadata};
+use libdd_trace_stats::stats_exporter::{
+    AgentlessStatsExporterError, AgentlessStatsTarget, StatsMetadata,
+};
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
@@ -104,7 +106,7 @@ where
             traces,
             &self.metadata,
             &self.trace_config,
-            self.stats.is_some(),
+            self.metadata.client_computed_stats,
         )
         .await?;
         Ok(())
@@ -149,9 +151,6 @@ where
     let Some(config) = stats_config else {
         return Ok(None);
     };
-    if config.bucket_size.is_zero() {
-        return Err(AgentlessV04Error::InvalidStatsInterval);
-    }
     let url = libdd_common::parse_uri(&config.endpoint_url)
         .map_err(|error| AgentlessV04Error::InvalidStatsEndpoint(error.to_string()))?;
     if !matches!(url.scheme_str(), Some("http" | "https")) || url.host().is_none() {
@@ -171,14 +170,18 @@ where
     stats_metadata
         .container_id
         .clone_from(&metadata.container_id);
-    Ok(Some(AgentlessStatsExporter::new(
+    AgentlessStatsExporter::new(
         config.bucket_size,
         stats_metadata,
         target,
         capabilities,
         config.peer_tags,
         config.additional_metric_tag_keys,
-    )))
+    )
+    .map(Some)
+    .map_err(|AgentlessStatsExporterError::InvalidBucketSize| {
+        AgentlessV04Error::InvalidStatsInterval
+    })
 }
 
 /// Build the `StatsPayload.agent_version` value for an agentless tracer.
@@ -373,6 +376,39 @@ mod tests {
         assert!(!requests[0]
             .headers()
             .contains_key("datadog-client-computed-stats"));
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn preserves_precomputed_stats_without_local_stats() {
+        let capabilities = TestCapabilities::default();
+        let mut metadata = metadata();
+        metadata.client_computed_stats = true;
+        metadata.client_computed_top_level = true;
+        let exporter =
+            AgentlessV04Exporter::new(capabilities.clone(), metadata, trace_config(), None)
+                .unwrap();
+
+        futures::executor::block_on(exporter.send_v04(&payload())).unwrap();
+
+        let requests = capabilities.requests.lock().unwrap();
+        #[cfg(feature = "compression")]
+        let body = zstd::decode_all(requests[0].body().as_ref()).unwrap();
+        #[cfg(not(feature = "compression"))]
+        let body = requests[0].body().to_vec();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(body["traces"][0]["spans"][0]["meta"]
+            .get("_dd.compute_stats")
+            .is_none());
+        assert_eq!(body["traces"][0]["spans"][0]["name"], "operation");
+        assert_eq!(
+            requests[0].headers()["datadog-client-computed-stats"],
+            "true"
+        );
+        assert_eq!(
+            requests[0].headers()["datadog-client-computed-top-level"],
+            "true"
+        );
     }
 
     #[cfg(not(feature = "stats-obfuscation"))]

@@ -69,7 +69,8 @@ exporter.send(false).await?;
 aggregation, payload encoding, and intake delivery. Its caller supplies the flush
 schedule and calls `send(true)` before shutdown or reconfiguration. Enable the
 `stats-obfuscation` feature to construct it because no Agent can obfuscate direct
-intake payloads.
+intake payloads. Construction requires a non-zero bucket size and returns
+`AgentlessStatsExporterError::InvalidBucketSize` otherwise.
 
 The default `worker-exporter` feature adds the `SharedRuntime` worker implementation.
 Runtimes that supply their own flush triggers can disable that feature.

@@ -48,11 +48,7 @@ pub struct StatsRequest {
 #[derive(Debug)]
 pub enum StatsDestination {
     /// Send `ClientStatsPayload` as msgpack to the Agent's `/v0.6/stats`.
-    Agent {
-        endpoint: Endpoint,
-        #[cfg(feature = "stats-obfuscation")]
-        supported_obfuscation_version: &'static str,
-    },
+    Agent { endpoint: Endpoint },
     /// Send the top-level `StatsPayload` as zstd-compressed msgpack directly to
     /// the intake (`/api/v0.2/stats`), authenticated.
     Agentless(AgentlessStatsTarget),
@@ -138,8 +134,31 @@ pub struct AgentlessStatsExporter<Cap: HttpClientCapability + SleepCapability> {
     sender: StatsSender<Cap, AgentlessStatsTarget>,
 }
 
+/// Errors returned when constructing an [`AgentlessStatsExporter`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentlessStatsExporterError {
+    /// The stats bucket size must be greater than zero.
+    InvalidBucketSize,
+}
+
+impl std::fmt::Display for AgentlessStatsExporterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidBucketSize => {
+                formatter.write_str("stats bucket size must be greater than zero")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AgentlessStatsExporterError {}
+
 impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
     /// Create an agentless stats exporter with client-side resource obfuscation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentlessStatsExporterError::InvalidBucketSize`] when `bucket_size` is zero.
     #[cfg(feature = "stats-obfuscation")]
     pub fn new(
         bucket_size: time::Duration,
@@ -148,7 +167,10 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
         capabilities: Cap,
         peer_tags: Vec<String>,
         additional_metric_tag_keys: Vec<String>,
-    ) -> Self {
+    ) -> Result<Self, AgentlessStatsExporterError> {
+        if bucket_size.is_zero() {
+            return Err(AgentlessStatsExporterError::InvalidBucketSize);
+        }
         let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
             .map(String::from)
             .to_vec();
@@ -158,7 +180,7 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
                 ..Default::default()
             },
         )));
-        Self {
+        Ok(Self {
             concentrator: Mutex::new(SpanConcentrator::new(
                 bucket_size,
                 web_time::SystemTime::now(),
@@ -168,8 +190,14 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
                 additional_metric_tag_keys,
                 obfuscation_config,
             )),
-            sender: StatsSender::new(target, meta, capabilities),
-        }
+            sender: StatsSender::new(
+                target,
+                meta,
+                capabilities,
+                #[cfg(feature = "stats-obfuscation")]
+                "",
+            ),
+        })
     }
 
     /// Add decoded v0.4 traces to the stats concentrator.
@@ -199,6 +227,8 @@ struct StatsSender<Cap: HttpClientCapability + SleepCapability, Destination> {
     meta: StatsMetadata,
     sequence_id: AtomicU64,
     capabilities: Cap,
+    #[cfg(feature = "stats-obfuscation")]
+    supported_obfuscation_version: &'static str,
 }
 
 impl<Cap, Destination> StatsSender<Cap, Destination>
@@ -206,12 +236,19 @@ where
     Cap: HttpClientCapability + SleepCapability,
     Destination: StatsPayloadDestination<Cap>,
 {
-    fn new(destination: Destination, meta: StatsMetadata, capabilities: Cap) -> Self {
+    fn new(
+        destination: Destination,
+        meta: StatsMetadata,
+        capabilities: Cap,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+    ) -> Self {
         Self {
             destination,
             meta,
             sequence_id: AtomicU64::new(0),
             capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
         }
     }
 
@@ -265,6 +302,8 @@ where
                 &self.sequence_id,
                 buckets,
                 obfuscated,
+                #[cfg(feature = "stats-obfuscation")]
+                self.supported_obfuscation_version,
             )
             .await
     }
@@ -278,6 +317,7 @@ trait StatsPayloadDestination<Cap: HttpClientCapability + SleepCapability> {
         sequence_id: &AtomicU64,
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
     ) -> anyhow::Result<()>;
 }
 
@@ -292,6 +332,7 @@ impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
         sequence_id: &AtomicU64,
         buckets: Vec<pb::ClientStatsBucket>,
         _obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] _supported_obfuscation_version: &'static str,
     ) -> anyhow::Result<()> {
         send_agentless_payloads(capabilities, meta, self, sequence_id, buckets).await
     }
@@ -308,16 +349,13 @@ impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
         sequence_id: &AtomicU64,
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
     ) -> anyhow::Result<()> {
         match self {
             StatsDestination::Agentless(target) => {
                 send_agentless_payloads(capabilities, meta, target, sequence_id, buckets).await
             }
-            StatsDestination::Agent {
-                endpoint,
-                #[cfg(feature = "stats-obfuscation")]
-                supported_obfuscation_version,
-            } => {
+            StatsDestination::Agent { endpoint } => {
                 send_agent_payloads(
                     capabilities,
                     meta,
@@ -387,12 +425,10 @@ impl<
             flush_interval,
             concentrator,
             meta,
-            StatsDestination::Agent {
-                endpoint,
-                #[cfg(feature = "stats-obfuscation")]
-                supported_obfuscation_version,
-            },
+            StatsDestination::Agent { endpoint },
             capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "dogstatsd")]
@@ -424,6 +460,8 @@ impl<
             meta,
             StatsDestination::Agentless(target),
             capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            "",
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "dogstatsd")]
@@ -439,6 +477,7 @@ impl<
         meta: StatsMetadata,
         destination: StatsDestination,
         capabilities: Cap,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
         #[cfg(feature = "telemetry")] telemetry: Option<
             libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         >,
@@ -461,7 +500,13 @@ impl<
             #[cfg(feature = "worker-exporter")]
             flush_interval,
             concentrator,
-            sender: StatsSender::new(destination, meta, capabilities),
+            sender: StatsSender::new(
+                destination,
+                meta,
+                capabilities,
+                #[cfg(feature = "stats-obfuscation")]
+                supported_obfuscation_version,
+            ),
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "dogstatsd")]
@@ -810,6 +855,47 @@ mod tests {
     fn test_stats_exporter_sync_send() {
         let _ = is_send::<StatsExporter<NativeCapabilities>>;
         let _ = is_sync::<StatsExporter<NativeCapabilities>>;
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_agent_destination_requires_only_an_endpoint() {
+        let destination = StatsDestination::Agent {
+            endpoint: Endpoint::default(),
+        };
+
+        assert!(matches!(destination, StatsDestination::Agent { .. }));
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_agentless_stats_exporter_rejects_zero_bucket_size() {
+        let target = || AgentlessStatsTarget {
+            endpoint: Endpoint::default(),
+            version: String::new(),
+        };
+        let exporter = AgentlessStatsExporter::new(
+            Duration::ZERO,
+            get_test_metadata(),
+            target(),
+            NativeCapabilities::new_client(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            exporter,
+            Err(AgentlessStatsExporterError::InvalidBucketSize)
+        ));
+        assert!(AgentlessStatsExporter::new(
+            Duration::from_nanos(1),
+            get_test_metadata(),
+            target(),
+            NativeCapabilities::new_client(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_ok());
     }
 
     fn get_test_metadata() -> StatsMetadata {
