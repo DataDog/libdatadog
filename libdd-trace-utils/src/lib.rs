@@ -9,6 +9,7 @@
 
 pub mod agentless_encoder;
 pub mod config_utils;
+mod hex;
 pub mod json_log_encoder;
 pub mod msgpack_decoder;
 pub mod msgpack_encoder;
