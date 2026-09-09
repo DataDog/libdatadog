@@ -1,19 +1,20 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::{
     json::JsonObfuscator,
     replacer::{self, ReplaceRule},
-    sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct MemcachedConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
 }
 
@@ -28,8 +29,7 @@ impl Default for MemcachedConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
@@ -50,8 +50,7 @@ impl Default for CreditCardConfig {
 
 pub type JsonStringTransformer = fn(&str) -> String;
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
@@ -98,10 +97,12 @@ impl JsonObfuscatorConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct RedisConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "RemoveAllArgs")]
     pub remove_all_args: bool,
 }
 
@@ -117,24 +118,22 @@ impl Default for RedisConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct HttpConfig {
-    // pub enabled: bool,
     pub remove_query_string: bool,
-    pub remove_paths_with_digits: bool,
+    pub remove_path_digits: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
 pub struct ObfuscationConfig {
+    #[serde(default)]
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
     pub http: HttpConfig,
     pub memcached: MemcachedConfig,
     pub redis: RedisConfig,
     pub valkey: RedisConfig,
     pub credit_cards: CreditCardConfig,
-    pub sql: SqlObfuscateConfig,
+    pub sql: SqlConfig,
     pub elasticsearch: JsonObfuscator,
     pub opensearch: JsonObfuscator,
     pub mongodb: JsonObfuscator,
@@ -187,7 +186,7 @@ impl ObfuscationConfig {
             tag_replace_rules,
             http: HttpConfig {
                 remove_query_string: http_remove_query_string,
-                remove_paths_with_digits: http_remove_path_digits,
+                remove_path_digits: http_remove_path_digits,
             },
             memcached: MemcachedConfig {
                 enabled: obfuscate_memcached,
@@ -205,4 +204,69 @@ impl ObfuscationConfig {
             ..Default::default()
         })
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DbmsKind {
+    #[default]
+    Generic,
+    Mssql,
+    Mysql,
+    Postgresql,
+    Oracle,
+}
+
+/// See `DbmsKind` for the list of supported DBMS.
+pub struct UnknownDBMSError;
+
+impl TryFrom<&str> for DbmsKind {
+    type Error = UnknownDBMSError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let res = match value.to_lowercase().as_str() {
+            "" => Self::Generic,
+            "mssql" => Self::Mssql,
+            "mysql" => Self::Mysql,
+            "postgresql" => Self::Postgresql,
+            "oracle" => Self::Oracle,
+            _ => return Err(UnknownDBMSError),
+        };
+        Ok(res)
+    }
+}
+
+#[allow(deprecated)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SqlObfuscationMode {
+    #[default]
+    #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[serde(alias = "")]
+    Unspecified,
+    NormalizeOnly,
+    ObfuscateOnly,
+    ObfuscateAndNormalize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "public config schema, should not be refactored"
+)]
+pub struct SqlConfig {
+    pub replace_digits: bool,
+    pub keep_sql_alias: bool,
+    pub dollar_quoted_func: bool,
+    pub keep_null: bool,
+    pub keep_boolean: bool,
+    pub keep_positional_parameter: bool,
+    pub keep_trailing_semicolon: bool,
+    pub keep_identifier_quotation: bool,
+    pub replace_bind_parameter: bool,
+    pub remove_space_between_parentheses: bool,
+    pub keep_json_path: bool,
+    pub obfuscation_mode: SqlObfuscationMode,
 }

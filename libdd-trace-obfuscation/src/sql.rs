@@ -1,73 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum DbmsKind {
-    #[default]
-    Generic,
-    Mssql,
-    Mysql,
-    Postgresql,
-    Oracle,
-}
-
-/// See `DbmsKind` for the list of supported DBMS.
-pub struct UnknownDBMSError;
-
-impl TryFrom<&str> for DbmsKind {
-    type Error = UnknownDBMSError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let res = match value.to_lowercase().as_str() {
-            "" => Self::Generic,
-            "mssql" => Self::Mssql,
-            "mysql" => Self::Mysql,
-            "postgresql" => Self::Postgresql,
-            "oracle" => Self::Oracle,
-            _ => return Err(UnknownDBMSError),
-        };
-        Ok(res)
-    }
-}
-
-#[allow(deprecated)]
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum SqlObfuscationMode {
-    #[default]
-    #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
-    #[serde(alias = "")]
-    Unspecified,
-    NormalizeOnly,
-    ObfuscateOnly,
-    ObfuscateAndNormalize,
-}
-
-/// Configuration for SQL obfuscation
-#[derive(Debug, Default, Clone, Deserialize)]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "public config schema, should not be refactored"
-)]
-pub struct SqlObfuscateConfig {
-    pub replace_digits: bool,
-    pub keep_sql_alias: bool,
-    pub dollar_quoted_func: bool,
-    pub keep_null: bool,
-    pub keep_boolean: bool,
-    pub keep_positional_parameter: bool,
-    pub keep_trailing_semicolon: bool,
-    pub keep_identifier_quotation: bool,
-    pub replace_bind_parameter: bool,
-    pub remove_space_between_parentheses: bool,
-    pub keep_json_path: bool,
-    pub obfuscation_mode: SqlObfuscationMode,
-}
+use crate::obfuscation_config::{DbmsKind, SqlConfig, SqlObfuscationMode};
 
 const fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
@@ -212,7 +146,7 @@ struct Tokenizer<'a> {
     pos: usize,
     result: String,
     dbms: DbmsKind,
-    config: &'a SqlObfuscateConfig,
+    config: &'a SqlConfig,
     // For alias stripping: length of result before we emitted the most recent ' AS' segment
     before_as_len: Option<usize>,
     // After SAVEPOINT keyword, next token should become ?
@@ -228,7 +162,7 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(s: &'a str, config: &'a SqlObfuscateConfig, dbms: DbmsKind) -> Self {
+    fn new(s: &'a str, config: &'a SqlConfig, dbms: DbmsKind) -> Self {
         Self {
             s,
             bytes: s.as_bytes(),
@@ -2187,7 +2121,7 @@ fn collapse_limit_two_args(s: &str) -> String {
 
 /// Obfuscates a SQL string using a proper tokenizer.
 #[must_use]
-pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
+pub fn obfuscate_sql(s: &str, config: &SqlConfig, dbms: DbmsKind) -> String {
     if s.is_empty() {
         return String::new();
     }
@@ -2213,7 +2147,7 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> St
 /// Non-empty SQL is always obfuscated and mirrored into `sql.query` by callers, so empty input is
 /// the only case skipped.
 #[must_use]
-pub fn obfuscate_sql_opt(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> Option<String> {
+pub fn obfuscate_sql_opt(s: &str, config: &SqlConfig, dbms: DbmsKind) -> Option<String> {
     if s.is_empty() {
         return None;
     }
@@ -2223,7 +2157,7 @@ pub fn obfuscate_sql_opt(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -
 /// Obfuscates a SQL string with default configuration.
 #[must_use]
 pub fn obfuscate_sql_string(s: &str) -> String {
-    obfuscate_sql(s, &SqlObfuscateConfig::default(), DbmsKind::Generic)
+    obfuscate_sql(s, &SqlConfig::default(), DbmsKind::Generic)
 }
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
@@ -2287,7 +2221,7 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
+    use super::{DbmsKind, SqlConfig, SqlObfuscationMode};
     use core::fmt::Write;
 
     #[test]
@@ -2373,7 +2307,7 @@ mod tests {
 
     #[test]
     fn test_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_identifier_quotation: true,
             ..Default::default()
         };
@@ -2389,7 +2323,7 @@ mod tests {
 
     #[test]
     fn test_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             remove_space_between_parentheses: true,
             ..Default::default()
         };
@@ -2409,7 +2343,7 @@ mod tests {
     #[test]
     fn test_keep_positional_parameter() {
         // When keep_positional_parameter=true, $1/$2 should be kept as-is
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_positional_parameter: true,
             ..Default::default()
         };
@@ -2748,7 +2682,7 @@ mod tests {
 
     #[test]
     fn test_normalize_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -2794,7 +2728,7 @@ mod tests {
 
     #[test]
     fn test_normalize_only_keep_trailing_semi() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_trailing_semicolon: true,
             ..Default::default()
@@ -2813,7 +2747,7 @@ mod tests {
 
     #[test]
     fn test_normalize_only_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_identifier_quotation: true,
             ..Default::default()
@@ -2833,7 +2767,7 @@ mod tests {
     #[test]
     fn test_with_cte_stripping() {
         // In legacy mode (obfuscation_mode=""), WITH T1 AS (SELECT...) → WITH T1 SELECT...
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases = &[
             // Single CTE - strip AS and opening paren, keep closing )
             (
@@ -2855,7 +2789,7 @@ mod tests {
     #[test]
     fn test_double_quoted_string_value_quantize() {
         // Double-quoted strings in value context (after =) should be quantized
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases = &[
             // After = in SET clause
             (
@@ -2882,7 +2816,7 @@ mod tests {
     #[test]
     fn test_normalize_only_dollar_func() {
         // In normalize_only mode, dollar-quoted strings are normalized (not quantized)
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -2898,7 +2832,7 @@ mod tests {
     #[test]
     fn test_dollar_quoted_func_trivial_collapse() {
         // When dollar_quoted_func=true and inner content obfuscates to a single ?, collapse to ?
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             dollar_quoted_func: true,
             replace_digits: true,
             ..Default::default()
@@ -2918,7 +2852,7 @@ mod tests {
     #[test]
     fn test_obfuscate_only_keeps_quotes_and_semi() {
         // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             ..Default::default()
         };
@@ -2934,7 +2868,7 @@ mod tests {
     #[test]
     fn test_obfuscate_only_dollar_quoted_func_no_collapse() {
         // In obfuscate_only+dollar_quoted_func: VALUES inside func are NOT collapsed
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             ..Default::default()
@@ -2953,7 +2887,7 @@ mod tests {
 
     #[test]
     fn test_normalize_only_procedure() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -2969,7 +2903,7 @@ mod tests {
 
     #[test]
     fn test_q41() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
         let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic);
@@ -2988,7 +2922,7 @@ mod tests {
         // JSONB ? operator followed by string literal — both should be kept as ?
         let got = super::obfuscate_sql(
             "select * from users where user.custom ? 'foo'",
-            &SqlObfuscateConfig::default(),
+            &SqlConfig::default(),
             DbmsKind::Postgresql,
         );
         let expected = "select * from users where user.custom ? ?";
@@ -2998,7 +2932,7 @@ mod tests {
     #[test]
     fn test_quantizer_90() {
         // Inline comment /*!obfuscation*/ should be stripped; consecutive literals after = reset
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let got = super::obfuscate_sql(
             "SELECT * FROM dbo.Items WHERE id = 1 or /*!obfuscation*/ 1 = 1",
             &config,
@@ -3011,7 +2945,7 @@ mod tests {
     #[test]
     fn test_cassandra_nested_dates() {
         // Consecutive ? placeholders inside nested function calls should be suppressed
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let got = super::obfuscate_sql(
             "SELECT TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) FROM t",
             &config,
@@ -3024,7 +2958,7 @@ mod tests {
     #[test]
     fn test_cassandra_pipe_concat() {
         // || concatenation — Go tokenizes as two separate | tokens with spaces
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let got = super::obfuscate_sql("SELECT a ||?|| b FROM t", &config, DbmsKind::Generic);
         let expected = "SELECT a | | ? | | b FROM t";
         assert_eq!(got, expected, "cassandra_pipe: {got:?}");
@@ -3334,7 +3268,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             ..Default::default()
         };
@@ -3362,7 +3296,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             dollar_quoted_func: true,
             ..Default::default()
         };
@@ -3390,7 +3324,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             dollar_quoted_func: true,
             ..Default::default()
@@ -3416,7 +3350,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             replace_digits: true,
             ..Default::default()
         };
@@ -3512,7 +3446,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_all_flags() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             dollar_quoted_func: true,
             keep_null: true,
@@ -3563,7 +3497,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_mssql() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases: &[(&str, &str)] = &[
             // sql_single_dollar_identifier_merge
             ("\n\tMERGE INTO Employees AS target\n\tUSING EmployeeUpdates AS source\n\tON (target.EmployeeID = source.EmployeeID)\n\tWHEN MATCHED THEN\n\t\tUPDATE SET\n\t\t\ttarget.Name = source.Name\n\tWHEN NOT MATCHED BY TARGET THEN\n\t\tINSERT (EmployeeID, Name)\n\t\tVALUES (source.EmployeeID, source.Name)\n\tWHEN NOT MATCHED BY SOURCE THEN\n\t\tDELETE\n\tOUTPUT $action, inserted.*, deleted.*;\n\t", "MERGE INTO Employees USING EmployeeUpdates ON ( target.EmployeeID = source.EmployeeID ) WHEN MATCHED THEN UPDATE SET target.Name = source.Name WHEN NOT MATCHED BY TARGET THEN INSERT ( EmployeeID, Name ) VALUES ( source.EmployeeID, source.Name ) WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT $action, inserted.*, deleted.*"),
@@ -3591,7 +3525,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_postgresql() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases: &[(&str, &str)] = &[
             // sql_pg_json_operators_0
             (
@@ -3660,7 +3594,7 @@ mod tests {
     // {'mode': 'normalize_only'}
     #[test]
     fn test_suite_normalize_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -3694,7 +3628,7 @@ mod tests {
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
     #[test]
     fn test_suite_normalize_only_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_sql_alias: true,
             ..Default::default()
@@ -3719,7 +3653,7 @@ mod tests {
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
     #[test]
     fn test_suite_normalize_only_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             remove_space_between_parentheses: true,
             ..Default::default()
@@ -3747,7 +3681,7 @@ mod tests {
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
     #[test]
     fn test_suite_normalize_only_keep_trailing_semicolon() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_trailing_semicolon: true,
             ..Default::default()
@@ -3775,7 +3709,7 @@ mod tests {
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
     #[test]
     fn test_suite_normalize_only_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_identifier_quotation: true,
             ..Default::default()
@@ -3803,7 +3737,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize'}
     #[test]
     fn test_suite_obfuscate_and_normalize() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             ..Default::default()
         };
@@ -3845,7 +3779,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             replace_digits: true,
             ..Default::default()
@@ -3873,7 +3807,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_sql_alias: true,
             ..Default::default()
@@ -3898,7 +3832,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             dollar_quoted_func: true,
             ..Default::default()
@@ -3926,7 +3860,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             dollar_quoted_func: true,
             replace_digits: true,
@@ -3955,7 +3889,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             remove_space_between_parentheses: true,
             ..Default::default()
@@ -3983,7 +3917,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_null() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_null: true,
             ..Default::default()
@@ -4011,7 +3945,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_boolean() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_boolean: true,
             ..Default::default()
@@ -4039,7 +3973,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_positional_parameter() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_positional_parameter: true,
             ..Default::default()
@@ -4067,7 +4001,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_trailing_semicolon() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_trailing_semicolon: true,
             ..Default::default()
@@ -4095,7 +4029,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_identifier_quotation: true,
             ..Default::default()
@@ -4123,7 +4057,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_bind_parameter() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             replace_bind_parameter: true,
             ..Default::default()
@@ -4151,7 +4085,7 @@ mod tests {
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_json_path() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_json_path: true,
             ..Default::default()
@@ -4184,7 +4118,7 @@ mod tests {
     // {'mode': 'obfuscate_only'}
     #[test]
     fn test_suite_obfuscate_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             ..Default::default()
         };
@@ -4214,7 +4148,7 @@ mod tests {
     // {'mode': 'obfuscate_only', 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_only_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             replace_digits: true,
             ..Default::default()
@@ -4242,7 +4176,7 @@ mod tests {
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             ..Default::default()
@@ -4270,7 +4204,7 @@ mod tests {
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             replace_digits: true,
@@ -4302,7 +4236,7 @@ mod tests {
     #[test]
     fn test_collapse_limit_case_insensitive() {
         #[allow(deprecated)]
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::Unspecified,
             ..Default::default()
         };

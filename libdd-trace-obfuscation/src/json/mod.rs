@@ -4,7 +4,7 @@
 use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
 mod scanner;
 use scanner::{Op, Scanner};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value belongs to a
 /// key listed in `keep_keys`, in which case it is left verbatim.
@@ -14,7 +14,7 @@ use serde::Deserialize;
 ///
 /// Multiple concatenated JSON objects in the input are each obfuscated independently.
 /// On a parse error the output so far is returned with `"..."` appended.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct JsonObfuscator {
     config: JsonObfuscatorConfig,
