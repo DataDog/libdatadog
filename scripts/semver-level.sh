@@ -159,6 +159,115 @@ crate_target_kinds_at_rev() {
     echo "$kinds"
 }
 
+# Echo one tab-separated row per manifest fact about crate $1 at revision $2, read once
+# per revision for both manifest passes below:
+#
+#   dep      <name> <alias> <kind> <target> <req>   one per dependency a consumer resolves
+#   feature  <name> default|optional                one per declared feature
+#
+# Read via `cargo metadata` rather than the crate's own Cargo.toml, which would see
+# neither the version behind a `{ workspace = true }` inheritance marker nor the implicit
+# feature an `optional = true` dependency creates.
+#
+# <alias> is `.rename`, defaulting to the package name. It is in the row because a crate
+# may alias two versions of one package (`foo1`/`foo2` both `package = "foo"`), for which
+# cargo metadata reports an identical name, kind and target; keyed without it, the second
+# alias matches the first's baseline requirement and an unchanged pair reads as a raise.
+crate_manifest_facts_at_rev() {
+    local crate=$1 rev=$2
+    local tree meta cargo_status
+    tree=$(mktemp -d) || return 1
+    if ! git archive "$rev" | tar -x -C "$tree"; then
+        echo "Error: could not extract $rev to read the manifest for $crate" >&2
+        rm -rf "$tree"
+        return 1
+    fi
+    # Captured before jq: without pipefail a failing cargo would surface as jq's clean
+    # exit over empty input, and a broken manifest would read as "declares nothing".
+    meta=$(cargo metadata --format-version=1 --no-deps --manifest-path "$tree/Cargo.toml" 2>/dev/null)
+    cargo_status=$?
+    rm -rf "$tree"
+    if [[ $cargo_status -ne 0 || -z "$meta" ]]; then
+        echo "Error: could not read the manifest for $crate at $rev" >&2
+        return 1
+    fi
+    jq -r --arg crate "$crate" '
+        .packages[]
+        | select(.name == $crate)
+        | . as $p
+        | (
+            ( $p.dependencies[]
+              | select((.kind // "normal") != "dev")
+              | ["dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req] ),
+            ( ($p.features // {}) as $f
+              | ($f.default // []) as $d
+              | ($f | keys[]) as $n
+              | select($n != "default")
+              | ["feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
+          )
+        | @tsv' <<< "$meta"
+}
+
+# version_gt A B — true when the dotted numeric tuple A is strictly greater than B.
+# Four components: req_min appends an exclusivity flag to the X.Y.Z triple.
+# Compared in the shell rather than with `sort -V`, a GNU extension.
+version_gt() {
+    local -a a=() b=()
+    local i x y
+    IFS='.' read -r -a a <<< "$1"
+    IFS='.' read -r -a b <<< "$2"
+    for i in 0 1 2 3; do
+        x=${a[i]:-0}
+        y=${b[i]:-0}
+        if (( 10#$x > 10#$y )); then
+            return 0
+        elif (( 10#$x < 10#$y )); then
+            return 1
+        fi
+    done
+    return 1
+}
+
+# Echo the lowest version requirement $1 admits, as `X.Y.Z.E` with E=1 when the bound
+# EXCLUDES that version. `>1.2.3` and `>=1.2.3` are different floors, so without E the
+# two compare equal and narrowing one into the other passes as a patch. E is an ordering
+# device only; the report quotes requirements verbatim.
+#
+# Echo nothing when there is no lower bound (`*`, `<2`) or it cannot be parsed: callers
+# treat that as "no opinion", so an exotic requirement can never invent a bump. A
+# pre-release bound is compared as its release version (`1.0.0-rc.1` -> `1.0.0`), which
+# can only understate a raise.
+req_min() {
+    local req=$1
+    local -a parts=() v=()
+    local part bound best="" exclusive
+    read -r -a parts <<< "${req//,/ }"
+    for part in "${parts[@]}"; do
+        exclusive=0
+        case "$part" in
+            ''|'*'|'<'*|'!='*) continue ;;
+            '>='*)  bound=${part#>=} ;;
+            '>'*)   bound=${part#>}; exclusive=1 ;;
+            '^'*)   bound=${part#^} ;;
+            '~'*)   bound=${part#\~} ;;
+            '='*)   bound=${part#=} ;;
+            [0-9]*) bound=$part ;;
+            *)      continue ;;
+        esac
+        bound=${bound%%[-+]*}   # drop pre-release and build metadata
+        bound=${bound//\*/0}    # `1.*` admits 1.0.0
+        [[ "$bound" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
+        IFS='.' read -r -a v <<< "$bound"
+        bound="${v[0]:-0}.${v[1]:-0}.${v[2]:-0}.${exclusive}"
+        if [[ -z "$best" ]] || version_gt "$bound" "$best"; then
+            best=$bound
+        fi
+    done
+    if [[ -n "$best" ]]; then
+        printf '%s\n' "$best"
+    fi
+}
+
 compute_semver_results() {
     local crate=$1
     local baseline=$2
@@ -437,15 +546,175 @@ compute_semver_results() {
     fi
 
     # ----------------------------------------------------------------
-    # 3) Combine signals: take the higher of cargo-semver-checks and cargo-public-api.
+    # 2b) Dependency requirement floors
+    #
+    # Neither tool above reads a manifest. Raising the lowest version a requirement
+    # admits (`http = "1"` -> `"1.1"`) leaves every rustdoc signature byte-identical, so
+    # both report nothing and the level comes out patch — yet a consumer pinned to the
+    # old version can no longer resolve this crate, conventionally a minor.
+    #
+    # Deliberately NOT scored: dev-dependencies (not part of what a consumer resolves);
+    # a widened requirement; a dependency added or removed outright. Nor a raised MAJOR
+    # floor, capped at minor here on purpose — whether that forces the dependent to
+    # major is release-version-major-bumps.sh's call, made with the dependency graph
+    # this script cannot see, and max_level() lets it win from there.
+    # ----------------------------------------------------------------
+    local dep_level="none"
+    local dep_reason=""
+    local dep_details=""
+    local feature_level="none"
+    local feature_reason=""
+    local feature_details=""
+
+    # The passes have different ceilings, so they stop at different points: (2b) can
+    # only report minor, so minor ends it; (2c) can report major, so it runs on until
+    # major. They share one extraction per revision, gated by (2c)'s wider ceiling.
+    #
+    # Stopping (2c) at minor too would save that extraction, since (1)'s
+    # `feature_missing` / `feature_not_enabled_by_default` cover its major findings —
+    # but only while those lints exist, and the failure mode is silent. Second opinion
+    # kept on purpose.
+    local level_so_far
+    level_so_far=$(max_level "$semver_level" "$public_api_level")
+
+    local base_facts="" now_facts="" manifest_compared=false
+    if $crate_is_new; then
+        log_verbose "Skipping manifest diff: new crate (no baseline)"
+    elif [[ "$level_so_far" == "major" ]]; then
+        log_verbose "Skipping manifest diff: already at major"
+    else
+        if ! base_facts=$(crate_manifest_facts_at_rev "$crate" "$baseline"); then
+            exit 1
+        fi
+        if ! now_facts=$(crate_manifest_facts_at_rev "$crate" "$current"); then
+            exit 1
+        fi
+        manifest_compared=true
+    fi
+
+    if $manifest_compared && [[ "$level_so_far" == "minor" ]]; then
+        log_verbose "Skipping dependency requirement diff: already at minor, which is this pass's ceiling"
+    elif $manifest_compared; then
+        local base_reqs now_reqs raised=""
+        base_reqs=$(awk -F'\t' '$1 == "dep" { print substr($0, index($0, "\t") + 1) }' <<< "$base_facts")
+        now_reqs=$(awk -F'\t' '$1 == "dep" { print substr($0, index($0, "\t") + 1) }' <<< "$now_facts")
+
+        local dep_name dep_alias dep_kind dep_target dep_req dep_label old_req old_min new_min
+        while IFS=$'\t' read -r dep_name dep_alias dep_kind dep_target dep_req; do
+            [[ -z "$dep_name" ]] && continue
+            # Name, alias, kind and target together: see crate_manifest_facts_at_rev for
+            # why the alias belongs in the key.
+            old_req=$(awk -F'\t' -v n="$dep_name" -v a="$dep_alias" -v k="$dep_kind" -v t="$dep_target" \
+                '$1 == n && $2 == a && $3 == k && $4 == t { print $5; exit }' <<< "$base_reqs")
+            # Absent from the baseline: a dependency newly added, or one whose alias
+            # changed. Either way not a raised floor.
+            [[ -z "$old_req" ]] && continue
+            [[ "$old_req" == "$dep_req" ]] && continue
+
+            dep_label="$dep_name"
+            [[ "$dep_alias" != "$dep_name" ]] && dep_label="$dep_name as $dep_alias"
+
+            old_min=$(req_min "$old_req")
+            new_min=$(req_min "$dep_req")
+            if [[ -z "$old_min" || -z "$new_min" ]]; then
+                log_verbose "Not judging $dep_label: unparsed requirement ($old_req -> $dep_req)"
+                continue
+            fi
+            if version_gt "$new_min" "$old_min"; then
+                raised+="$dep_label ($dep_kind): $old_req -> $dep_req"$'\n'
+                log_verbose "$dep_label floor raised: $old_req -> $dep_req"
+            fi
+        done <<< "$now_reqs"
+
+        if [[ -n "$raised" ]]; then
+            dep_level="minor"
+            dep_reason="Dependency requirement floor raised"
+            dep_details=$(truncate_details 50 <<< "${raised%$'\n'}")
+        fi
+    fi
+
+    # ----------------------------------------------------------------
+    # 2c) Cargo feature surface
+    #
+    # Features are public API — downstream writes `features = ["x"]` — so adding one is
+    # a minor and removing one, or dropping it from the default set, breaks consumers
+    # that named it.
+    #
+    # An ADDED feature is the gap: cargo-semver-checks has no lint for it (0.47/0.48
+    # offer feature_missing, feature_not_enabled_by_default and the two
+    # *_enables_feature lints, nothing for an addition) and it adds no rustdoc item
+    # unless it gates one, so it used to come out patch.
+    #
+    # The removal cases are a backstop. For a library crate feature_missing and
+    # feature_not_enabled_by_default get there first (verified to fail the run, not
+    # merely warn) and this block is skipped once a pass said major; it earns its keep
+    # on a crate with no library target, where (1) is skipped entirely.
+    #
+    # Not scored: a change to what a feature *enables* — the two *_enables_feature
+    # lints' job, and judging it needs the feature graph rather than a name set.
+    # ----------------------------------------------------------------
+    if $manifest_compared; then
+        local base_features now_features
+        local feat_name feat_default removed="" added="" undefaulted=""
+        base_features=$(awk -F'\t' '$1 == "feature" { print $2 "\t" $3 }' <<< "$base_facts")
+        now_features=$(awk -F'\t' '$1 == "feature" { print $2 "\t" $3 }' <<< "$now_facts")
+
+        while IFS=$'\t' read -r feat_name feat_default; do
+            [[ -z "$feat_name" ]] && continue
+            if ! awk -F'\t' -v n="$feat_name" '$1 == n { found = 1 } END { exit !found }' <<< "$now_features"; then
+                removed+="$feat_name"$'\n'
+                continue
+            fi
+            # Still declared, but no longer reached by `default`.
+            if [[ "$feat_default" == "default" ]] \
+               && ! awk -F'\t' -v n="$feat_name" '$1 == n && $2 == "default" { found = 1 } END { exit !found }' <<< "$now_features"; then
+                undefaulted+="$feat_name"$'\n'
+            fi
+        done <<< "$base_features"
+
+        while IFS=$'\t' read -r feat_name feat_default; do
+            [[ -z "$feat_name" ]] && continue
+            if ! awk -F'\t' -v n="$feat_name" '$1 == n { found = 1 } END { exit !found }' <<< "$base_features"; then
+                added+="$feat_name"$'\n'
+            fi
+        done <<< "$now_features"
+
+        if [[ -n "$removed" || -n "$undefaulted" ]]; then
+            feature_level="major"
+            feature_reason="Cargo feature removed or no longer enabled by default"
+            feature_details=$(truncate_details 50 <<< "$(
+                [[ -n "$removed" ]] && printf 'removed: %s\n' "${removed//$'\n'/ }"
+                [[ -n "$undefaulted" ]] && printf 'no longer default: %s\n' "${undefaulted//$'\n'/ }"
+            )")
+            log_verbose "features removed: ${removed//$'\n'/ } undefaulted: ${undefaulted//$'\n'/ }"
+        elif [[ -n "$added" ]]; then
+            feature_level="minor"
+            feature_reason="Cargo feature added"
+            feature_details=$(truncate_details 50 <<< "added: ${added//$'\n'/ }")
+            log_verbose "features added: ${added//$'\n'/ }"
+        fi
+    fi
+
+    # ----------------------------------------------------------------
+    # 3) Combine: the highest level any pass reported. The reason comes from the pass
+    # that decided it, and on a tie from the one that describes the change most
+    # concretely — a removed item says more than "a dependency floor moved".
     # ----------------------------------------------------------------
     LEVEL=$(max_level "$semver_level" "$public_api_level")
-    if [[ "$LEVEL" == "$public_api_level" && "$public_api_level" != "$semver_level" ]]; then
-        REASON="$public_api_reason"
-        DETAILS="$public_api_details"
-    else
+    LEVEL=$(max_level "$LEVEL" "$feature_level")
+    LEVEL=$(max_level "$LEVEL" "$dep_level")
+    if [[ "$semver_level" == "$LEVEL" ]]; then
         REASON="$semver_reason"
         DETAILS="$semver_details"
+    elif [[ "$public_api_level" == "$LEVEL" ]]; then
+        REASON="$public_api_reason"
+        DETAILS="$public_api_details"
+    elif [[ "$feature_level" == "$LEVEL" ]]; then
+        REASON="$feature_reason"
+        DETAILS="$feature_details"
+    else
+        REASON="$dep_reason"
+        DETAILS="$dep_details"
     fi
 
     if [[ "$LEVEL" == "none" ]]; then
