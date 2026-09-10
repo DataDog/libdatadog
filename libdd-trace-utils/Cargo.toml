@@ -75,7 +75,7 @@ zstd = {workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-zrip = { version = "=0.6.0", default-features = false, features = ["frame"], optional = true }
+zrip = { version = "=0.8.7", default-features = false, features = ["frame"], optional = true }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }

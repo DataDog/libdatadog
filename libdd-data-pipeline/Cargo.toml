@@ -103,7 +103,7 @@ h2 = ">=0.4.19, <0.5"
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-zrip = { version = "=0.6.0", default-features = false, features = ["alloc"] }
+zrip = { version = "=0.8.7", default-features = false, features = ["alloc"] }
 
 [[test]]
 name = "test_agentless_stats"

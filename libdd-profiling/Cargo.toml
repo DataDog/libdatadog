@@ -72,7 +72,7 @@ rustls = { workspace = true, features = ["ring"] }
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-zrip = { version = "=0.6.0", default-features = false, features = ["frame"] }
+zrip = { version = "=0.8.7", default-features = false, features = ["frame"] }
 
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
