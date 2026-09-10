@@ -289,17 +289,24 @@ jobs:
           if [ "$HEAD_STATUS" -eq 0 ]; then HEAD_RESULT=success; else HEAD_RESULT=failure; fi
           echo "base_result=$BASE_RESULT" >> "$GITHUB_OUTPUT"
           echo "head_result=$HEAD_RESULT" >> "$GITHUB_OUTPUT"
-          python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
-            --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
-            --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
-            --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
-            --head-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.log" \
-            --base-normalize-path "$LIBDATADOG_BASE_ROOT" \
-            --head-normalize-path "$LIBDATADOG_HEAD_ROOT" \
-            --base-normalize-path "$GITHUB_WORKSPACE/target-base" \
-            --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
-            --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
-            --github-output "$GITHUB_OUTPUT"
+          if [ "$HEAD_STATUS" -eq 0 ]; then
+            # Successful product builds may contain diagnostics from optional
+            # compiler probes. They are not downstream compatibility failures.
+            echo '[]' > "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
+            echo "new_error_count=0" >> "$GITHUB_OUTPUT"
+          else
+            python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
+              --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
+              --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
+              --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
+              --head-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.log" \
+              --base-normalize-path "$LIBDATADOG_BASE_ROOT" \
+              --head-normalize-path "$LIBDATADOG_HEAD_ROOT" \
+              --base-normalize-path "$GITHUB_WORKSPACE/target-base" \
+              --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
+              --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
 
       - name: Report downstream compatibility
         if: always()
