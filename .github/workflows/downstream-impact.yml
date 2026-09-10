@@ -249,6 +249,7 @@ jobs:
                     --manifest-path "$wasm_manifest" \
                     --target wasm32-unknown-unknown \
                     --release \
+                    --jobs 1 \
                     -Z build-std=std \
                     --message-format=json \
                     2> >(tee -a "$log_path" >&2) \
