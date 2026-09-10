@@ -5,8 +5,8 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number;
 use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_hashmap};
-use crate::span::v04::SpanLink;
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::v04::SpanLink;
 use std::borrow::Borrow;
 use std::str::FromStr;
 

@@ -17,7 +17,7 @@ use crate::{catch_panic, gen_error};
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::{Bytes, BytesString};
-use libdd_trace_utils::span::v04::{
+use libdd_trace_types::span::v04::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
 use std::collections::HashMap;

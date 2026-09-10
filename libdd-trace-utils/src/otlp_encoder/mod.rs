@@ -49,10 +49,10 @@ pub struct OtlpResourceInfo {
 #[cfg(test)]
 mod encode_tests {
     use super::*;
-    use crate::span::v04::Span;
-    use crate::span::BytesData;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as ProtoValue;
+    use libdd_trace_types::span::v04::Span;
+    use libdd_trace_types::span::BytesData;
     use prost::Message;
 
     fn sample_native() -> (Vec<Vec<Span<BytesData>>>, OtlpResourceInfo) {

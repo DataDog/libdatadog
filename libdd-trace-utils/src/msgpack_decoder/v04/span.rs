@@ -10,7 +10,8 @@ use crate::msgpack_decoder::decode::string::{
     read_nullable_str_map_to_strings, read_nullable_string,
 };
 use crate::msgpack_decoder::decode::{meta_struct::read_meta_struct, metrics::read_metrics};
-use crate::span::{v04::Span, v04::SpanKey, DeserializableTraceData};
+use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::v04::{Span, SpanKey};
 use std::borrow::Borrow;
 
 /// Decodes a slice of bytes into a `Span` object.
@@ -86,7 +87,7 @@ fn fill_span<T: DeserializableTraceData>(
 #[cfg(test)]
 mod tests {
     use super::SpanKey;
-    use crate::span::SpanKeyParseError;
+    use libdd_trace_types::span::SpanKeyParseError;
     use std::str::FromStr;
 
     #[test]

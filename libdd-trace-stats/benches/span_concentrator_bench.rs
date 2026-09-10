@@ -4,7 +4,8 @@ use std::time::{self, Duration, SystemTime};
 
 use criterion::{criterion_group, Criterion};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
-use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
+use libdd_trace_types::span::v04::SpanBytes;
+use libdd_trace_types::span::vec_map::VecMap;
 
 fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
     let start = now.duration_since(time::UNIX_EPOCH).unwrap() + Duration::from_secs(10 * n);

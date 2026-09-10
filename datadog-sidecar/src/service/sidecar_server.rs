@@ -15,8 +15,8 @@ use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_types::span::BytesData;
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
-use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use libdd_trace_utils::tracer_payload::TraceChunks;
@@ -1846,8 +1846,8 @@ mod tests {
 
     fn sample_v1_trace_payload_bytes() -> Vec<u8> {
         use libdd_tinybytes::BytesString;
+        use libdd_trace_types::span::v1::{Span as V1Span, TraceChunkBytes, TracerPayloadBytes};
         use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
-        use libdd_trace_utils::span::v1::{Span as V1Span, TraceChunkBytes, TracerPayloadBytes};
 
         fn bs(s: &str) -> BytesString {
             BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")

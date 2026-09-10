@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload;
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
-use crate::span::BytesData;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_types::span::v04::{
+    AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink,
+};
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_types::span::BytesData;
 use serde_json::Value;
 use std::collections::HashMap;
 

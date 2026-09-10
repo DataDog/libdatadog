@@ -1,0 +1,29 @@
+# Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-trace-types"
+version = "1.0.0"
+description = "Representation-independent trace data types for Datadog APM"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-types"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-types"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive", "std"] }
+libdd-tinybytes = { version = "1.1.3", path = "../libdd-tinybytes", features = [
+    "bytes_string",
+    "serialization",
+] }
+indexmap = "2.11"
+thin-vec = "0.2"
+tracing = { workspace = true }
+
+[dev-dependencies]
+rmp-serde = "1.3.0"
+serde_json = { workspace = true, features = ["std"] }
+
+[features]
+test-utils = []

@@ -7,7 +7,8 @@ use criterion::{black_box, criterion_group, Criterion};
 use libdd_tinybytes::BytesString;
 use libdd_trace_obfuscation::replacer;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::v04::{self, VecMap};
+use libdd_trace_types::span::v04;
+use libdd_trace_types::span::vec_map::VecMap;
 
 #[allow(clippy::unwrap_used)]
 fn criterion_benchmark(c: &mut Criterion) {

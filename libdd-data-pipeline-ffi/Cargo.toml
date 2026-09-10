@@ -42,6 +42,7 @@ libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-types = { version = "1.0.0", path = "../libdd-trace-types" }
 rmp = { version = "0.8.14", default-features = false }
 tokio-util = "0.7.11"
 tracing.workspace = true

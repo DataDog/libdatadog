@@ -5,8 +5,10 @@ pub(super) mod span;
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::v1::{
+    TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice,
+};
 use rmp::decode;
 use std::borrow::Borrow;
 
@@ -434,13 +436,13 @@ where
 mod tests {
     use super::*;
     use crate::msgpack_encoder::v1::to_vec_from_v1;
-    use crate::span::v1::{
+    use bolero::check;
+    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::v1::{
         AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
         TracerPayloadBytes,
     };
-    use crate::span::vec_map::VecMap;
-    use bolero::check;
-    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::vec_map::VecMap;
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")

@@ -14,7 +14,7 @@
 //! ```
 //! use libdd_sampling::v04_span::{V04AttributeFactory, V04SamplingData, V04SamplingTag};
 //! use libdd_sampling::DatadogSampler;
-//! use libdd_trace_utils::span::{v04::Span, SliceData};
+//! use libdd_trace_types::span::{v04::Span, SliceData};
 //! use std::borrow::Cow::*;
 //!
 //! let mut span = Span::<SliceData<'_>>::default();
@@ -47,7 +47,7 @@
 
 use std::borrow::{Borrow, Cow};
 
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_types::span::{v04::Span, TraceData};
 
 use crate::types::{AttributeFactory, AttributeLike, SamplingData, SpanProperties, ValueLike};
 
@@ -241,7 +241,7 @@ impl AttributeFactory for V04AttributeFactory {
 
 #[cfg(test)]
 mod tests {
-    use libdd_trace_utils::span::{v04::Span, SliceData};
+    use libdd_trace_types::span::{v04::Span, SliceData};
 
     use super::*;
     use crate::{priority, DatadogSampler};

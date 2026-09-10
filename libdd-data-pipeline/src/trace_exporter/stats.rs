@@ -305,9 +305,9 @@ pub(crate) async fn handle_stats_enabled(
 ///
 /// # Panic
 /// Will panic if another thread panicked while holding the lock on `stats_concentrator`
-fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
+fn add_spans_to_stats<T: libdd_trace_types::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
+    traces: &[Vec<libdd_trace_types::span::v04::Span<T>>],
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
@@ -324,14 +324,14 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 ///
 /// Returns true if stats were computed for the traces passed
 pub(crate) fn process_traces_for_stats<
-    T: libdd_trace_utils::span::TraceData,
+    T: libdd_trace_types::span::TraceData,
     #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
         + libdd_capabilities::SleepCapability
         + libdd_capabilities::MaybeSend
         + Sync
         + 'static,
 >(
-    traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: &mut Vec<Vec<libdd_trace_types::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
@@ -381,16 +381,16 @@ pub(crate) fn process_traces_for_stats<
 }
 
 /// V1 counterpart of [`add_spans_to_stats`], operating on
-/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+/// [`libdd_trace_types::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
 ///
 /// # Panic
 /// Will panic if another thread panicked while holding the lock on `stats_concentrator`
 // Not yet called from the live pipeline; will be wired in once the exporter's public API is
 // swapped to v1 native structs.
 #[allow(dead_code)]
-fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
+fn add_spans_to_stats_v1<T: libdd_trace_types::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
+    traces: &[libdd_trace_types::span::v1::TraceChunk<T>],
 ) {
     let mut stats_concentrator = stats_concentrator.lock_or_panic();
 
@@ -404,19 +404,19 @@ fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
 }
 
 /// V1 counterpart of [`process_traces_for_stats`], operating on
-/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+/// [`libdd_trace_types::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
 // Not yet called from the live pipeline; will be wired in once the exporter's public API is
 // swapped to v1 native structs.
 #[allow(dead_code)]
 pub(crate) fn process_traces_for_stats_v1<
-    T: libdd_trace_utils::span::TraceData,
+    T: libdd_trace_types::span::TraceData,
     #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
         + libdd_capabilities::SleepCapability
         + libdd_capabilities::MaybeSend
         + Sync
         + 'static,
 >(
-    traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
+    traces: &mut Vec<libdd_trace_types::span::v1::TraceChunk<T>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
@@ -533,7 +533,7 @@ mod tests {
 
     mod v1 {
         use super::super::*;
-        use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
+        use libdd_trace_types::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
         use libdd_trace_utils::trace_utils::TracerHeaderTags;
         use web_time::SystemTime;
 
@@ -678,7 +678,7 @@ mod tests {
                 spans: vec![SpanBytes {
                     span_id: 1,
                     duration: 10,
-                    span_kind: libdd_trace_utils::span::v1::SpanKind::Client,
+                    span_kind: libdd_trace_types::span::v1::SpanKind::Client,
                     ..Default::default()
                 }],
                 ..Default::default()

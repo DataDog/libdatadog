@@ -6,7 +6,7 @@ mod otlp_export_tests {
     use libdd_data_pipeline::trace_exporter::{
         TraceExporterBuilder, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
-    use libdd_trace_utils::span::v05::dict::SharedDict;
+    use libdd_trace_types::span::v05::dict::SharedDict;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
     use std::sync::atomic::{AtomicBool, Ordering};

@@ -4,11 +4,11 @@
 mod span_v04;
 mod span_v1;
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
-use crate::span::TraceData;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_common::ResultInfallibleExt;
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::v1::TracerPayload;
+use libdd_trace_types::span::TraceData;
 use rmp::encode::{
     write_array_len, write_bin, write_map_len, write_sint, write_str, write_uint, write_uint8,
     ByteBuf, RmpWrite, ValueWriteError,
@@ -589,7 +589,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 /// Encodes one V1 chunk (a group of spans sharing a trace ID).
 fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    chunk: &crate::span::v1::TraceChunk<T>,
+    chunk: &libdd_trace_types::span::v1::TraceChunk<T>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
@@ -655,8 +655,8 @@ fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v1::TracerPayloadSlice;
 /// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
-/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
@@ -684,8 +684,8 @@ pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v1::TracerPayloadSlice;
 /// use libdd_trace_utils::msgpack_encoder::v1::to_vec_with_capacity_from_v1;
-/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
@@ -725,8 +725,8 @@ pub fn to_vec_with_capacity_from_v1<T: TraceData>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v1::TracerPayloadSlice;
 /// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice_from_v1;
-/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let mut buffer = vec![0u8; 1024];
 /// let payload = TracerPayloadSlice {
@@ -759,8 +759,8 @@ pub fn write_to_slice_from_v1<T: TraceData>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v1::TracerPayloadSlice;
 /// use libdd_trace_utils::msgpack_encoder::v1::to_encoded_byte_len_from_v1;
-/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
@@ -779,8 +779,8 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v04::SpanBytes;
 
     fn make_span(
         service: &str,
@@ -1228,16 +1228,16 @@ mod v1_payload_tests {
     //! Unit tests for the v1::Span encoder (`encode_payload_from_v1`).
     //!
     //! Verifies the encoder produces a valid V1 payload from the canonical
-    //! [`crate::span::v1::TracerPayload`] data model and that core invariants (interning, byte
-    //! length, optional fields) hold.
+    //! [`libdd_trace_types::span::v1::TracerPayload`] data model and that core invariants
+    //! (interning, byte length, optional fields) hold.
 
     use super::*;
-    use crate::span::v1::{
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v1::{
         AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
         TracerPayloadBytes,
     };
-    use crate::span::vec_map::VecMap;
-    use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::vec_map::VecMap;
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")

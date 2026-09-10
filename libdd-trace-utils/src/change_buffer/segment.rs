@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::vec_map::VecMap;
+use libdd_trace_types::span::vec_map::VecMap;
 
 /// Per-segment state for a trace chunk.
 ///

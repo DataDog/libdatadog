@@ -17,7 +17,8 @@ use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
+use libdd_trace_types::span::v04::SpanBytes;
+use libdd_trace_types::span::vec_map::VecMap;
 use std::time::Duration;
 use tokio::task;
 

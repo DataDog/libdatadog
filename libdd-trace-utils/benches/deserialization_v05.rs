@@ -22,11 +22,12 @@ use std::alloc::System;
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
 use libdd_common::bench_utils::{memory_allocated_criterion, AllocatedBytesMeasurement};
 use libdd_tinybytes::BytesString;
+use libdd_trace_types::span::v04::SpanBytes;
+use libdd_trace_types::span::v05::dict::SharedDictBytes;
+use libdd_trace_types::span::v05::Span as SpanV05;
+use libdd_trace_types::span::vec_map::VecMap;
 use libdd_trace_utils::msgpack_decoder;
-use libdd_trace_utils::span::v04::SpanBytes;
-use libdd_trace_utils::span::v05::{self, from_v04_span};
-use libdd_trace_utils::span::vec_map::VecMap;
-use libdd_trace_utils::span::SharedDictBytes;
+use libdd_trace_utils::span::v05::from_v04_span;
 
 /// Number of meta tags per span. Picked to resemble a typical instrumented span (service/runtime
 /// metadata, a couple of resource attributes, thread info, etc.).
@@ -146,7 +147,7 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
 
     // Intern every string into the shared dictionary via the production V05 conversion path.
     let mut dict = SharedDictBytes::default();
-    let v05_traces: Vec<Vec<v05::Span>> = traces
+    let v05_traces: Vec<Vec<SpanV05>> = traces
         .into_iter()
         .map(|trace| {
             trace

@@ -3,8 +3,7 @@
 
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
-use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, TraceData};
+use crate::span::v05;
 pub use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
@@ -15,6 +14,9 @@ use http_body_util::BodyExt;
 use libdd_common::azure_app_services;
 use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
+use libdd_trace_types::span::v05::dict::SharedDict;
+use libdd_trace_types::span::v05::Span as SpanV05;
+use libdd_trace_types::span::TraceData;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;
 use rmpv::{Integer, Value};
@@ -598,10 +600,10 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
 /// Returns `Err` if any span fails to convert (e.g. unsupported field value); the partial
 /// dictionary built so far is discarded.
 pub fn convert_trace_chunks_v04_to_v05<T: TraceData>(
-    traces: Vec<Vec<crate::span::v04::Span<T>>>,
+    traces: Vec<Vec<libdd_trace_types::span::v04::Span<T>>>,
 ) -> anyhow::Result<TraceChunks<T>> {
     let mut shared_dict = SharedDict::default();
-    let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+    let mut v05_traces: Vec<Vec<SpanV05>> = Vec::with_capacity(traces.len());
     for trace in traces {
         let v05_trace = trace
             .into_iter()
@@ -715,12 +717,10 @@ pub fn is_partial_snapshot(span: &pb::Span) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        span::SharedDictBytes,
-        test_utils::{create_test_no_alloc_span, create_test_span},
-    };
+    use crate::test_utils::{create_test_no_alloc_span, create_test_span};
     use http::Request;
     use libdd_common::{http_common, Endpoint};
+    use libdd_trace_types::span::v05::dict::SharedDictBytes;
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {

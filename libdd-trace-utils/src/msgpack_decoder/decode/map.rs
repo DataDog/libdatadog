@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
-use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::vec_map::VecMap;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::collections::HashMap;
 

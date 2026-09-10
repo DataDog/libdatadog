@@ -25,14 +25,14 @@ pub trait BufferSize {
     fn byte_size(&self) -> usize;
 }
 
-impl<T> BufferSize for libdd_trace_utils::span::v04::Span<T>
+impl<T> BufferSize for libdd_trace_types::span::v04::Span<T>
 where
-    T: libdd_trace_utils::span::TraceData,
+    T: libdd_trace_types::span::TraceData,
     T::Text: AsRef<str>,
     T::Bytes: AsRef<[u8]>,
 {
     fn byte_size(&self) -> usize {
-        use libdd_trace_utils::span::v04::AttributeAnyValue;
+        use libdd_trace_types::span::v04::AttributeAnyValue;
 
         // trace_id(16) + span_id(8) + parent_id(8) + start(8) + duration(8) + error(4)
         let mut size: usize = 52;
@@ -76,12 +76,12 @@ where
     }
 }
 
-fn span_attr_size<T>(v: &libdd_trace_utils::span::v04::AttributeArrayValue<T>) -> usize
+fn span_attr_size<T>(v: &libdd_trace_types::span::v04::AttributeArrayValue<T>) -> usize
 where
-    T: libdd_trace_utils::span::TraceData,
+    T: libdd_trace_types::span::TraceData,
     T::Text: AsRef<str>,
 {
-    use libdd_trace_utils::span::v04::AttributeArrayValue;
+    use libdd_trace_types::span::v04::AttributeArrayValue;
     match v {
         AttributeArrayValue::String(s) => s.as_ref().len(),
         AttributeArrayValue::Boolean(_) => 1,
@@ -819,14 +819,14 @@ where
     }
 }
 
-impl<C, R> Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C, R>
+impl<C, R> Export<libdd_trace_types::span::v04::SpanBytes> for DefaultExport<C, R>
 where
     C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     fn export_trace_chunks(
         &mut self,
-        trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
+        trace_chunks: Vec<TraceChunk<libdd_trace_types::span::v04::SpanBytes>>,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,

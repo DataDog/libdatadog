@@ -3,10 +3,10 @@
 
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_tinybytes::{Bytes, BytesString};
-use libdd_trace_utils::span::v04::{
+use libdd_trace_types::span::v04::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
-    VecMap,
 };
+use libdd_trace_types::span::vec_map::VecMap;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::{c_char, CString};

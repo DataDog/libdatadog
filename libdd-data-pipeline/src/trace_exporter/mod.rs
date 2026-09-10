@@ -55,11 +55,11 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
+use libdd_trace_types::span::{v04::Span, TraceData};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -1268,8 +1268,8 @@ mod tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v04::SpanBytes;
     use libdd_trace_utils::msgpack_encoder;
-    use libdd_trace_utils::span::v04::SpanBytes;
     use std::net;
 
     #[test]
@@ -2618,8 +2618,9 @@ mod telemetry_metrics_tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::v05::Span as SpanV05;
     use libdd_trace_utils::msgpack_encoder;
-    use libdd_trace_utils::span::{v04::SpanBytes, v05};
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -2715,7 +2716,7 @@ mod telemetry_metrics_tests {
             true,
         );
 
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let v5: (Vec<BytesString>, Vec<Vec<SpanV05>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
@@ -2800,8 +2801,8 @@ mod single_threaded_tests {
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
+    use libdd_trace_types::span::v04::SpanBytes;
     use libdd_trace_utils::msgpack_encoder;
-    use libdd_trace_utils::span::v04::SpanBytes;
 
     #[cfg_attr(miri, ignore)]
     #[test]

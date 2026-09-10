@@ -6,8 +6,8 @@ pub(crate) mod span;
 use self::span::decode_span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::v04::{Span, SpanBytes, SpanSlice};
 
 /// Decodes a Bytes buffer into a `Vec<Vec<SpanBytes>>` object, also represented as a vector of
 /// `TracerPayloadV04` objects.
@@ -158,10 +158,93 @@ mod tests {
     use crate::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use bolero::check;
     use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::v04::{
+        AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink,
+    };
+    use libdd_trace_types::span::SliceData;
     use rmp_serde;
     use rmp_serde::to_vec_named;
     use serde_json::json;
+    use std::borrow::Cow;
     use std::collections::HashMap;
+
+    #[test]
+    fn serialize_deserialize_test() {
+        let span: Span<SliceData<'_>> = Span {
+            name: Cow::Borrowed("tracing.operation"),
+            resource: Cow::Borrowed("MyEndpoint"),
+            span_links: vec![SpanLink {
+                trace_id: 42,
+                attributes: HashMap::from([(Cow::Borrowed("span"), Cow::Borrowed("link"))]),
+                tracestate: Cow::Borrowed("running"),
+                ..Default::default()
+            }],
+            span_events: vec![SpanEvent {
+                time_unix_nano: 1727211691770716000,
+                name: Cow::Borrowed("exception"),
+                attributes: HashMap::from([
+                    (
+                        Cow::Borrowed("exception.message"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
+                            "Cannot divide by zero",
+                        ))),
+                    ),
+                    (
+                        Cow::Borrowed("exception.type"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
+                            "RuntimeError",
+                        ))),
+                    ),
+                    (
+                        Cow::Borrowed("exception.escaped"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
+                    ),
+                    (
+                        Cow::Borrowed("exception.count"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
+                    ),
+                    (
+                        Cow::Borrowed("exception.lines"),
+                        AttributeAnyValue::Array(vec![
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in <module>",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in divide",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "RuntimeError: Cannot divide by zero",
+                            )),
+                        ]),
+                    ),
+                ]),
+            }],
+            ..Default::default()
+        };
+
+        let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
+        let mut serialized_slice = Buffer::<SliceData<'_>>::new(serialized.as_ref());
+        let deserialized = decode_span(&mut serialized_slice).unwrap();
+
+        assert_eq!(span.name, deserialized.name);
+        assert_eq!(span.resource, deserialized.resource);
+        assert_eq!(
+            span.span_links[0].trace_id,
+            deserialized.span_links[0].trace_id
+        );
+        assert_eq!(
+            span.span_links[0].tracestate,
+            deserialized.span_links[0].tracestate
+        );
+        assert_eq!(span.span_events[0].name, deserialized.span_events[0].name);
+        assert_eq!(
+            span.span_events[0].time_unix_nano,
+            deserialized.span_events[0].time_unix_nano
+        );
+        for attribute in &deserialized.span_events[0].attributes {
+            assert!(span.span_events[0].attributes.contains_key(attribute.0));
+        }
+    }
 
     #[test]
     fn test_empty_array() {

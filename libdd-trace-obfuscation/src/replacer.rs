@@ -3,7 +3,7 @@
 
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{v04, SpanText, TraceData};
+use libdd_trace_types::span::{v04, SpanText, TraceData};
 use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
 
 #[derive(Deserialize)]

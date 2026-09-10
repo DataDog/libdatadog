@@ -8,9 +8,11 @@ use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
-use crate::span::v1::{AttributeValue, SpanKind, TraceChunk};
-use crate::span::vec_map::VecMap;
-use crate::span::{self, trace_utils::get_root_span_index, trace_utils_v1, TraceData};
+use crate::span::{trace_utils::get_root_span_index, trace_utils_v1};
+use libdd_trace_types::span::v1::{AttributeValue, SpanKind, TraceChunk};
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_types::span::TraceData;
+use libdd_trace_types::span::{v04, v1};
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -80,7 +82,7 @@ impl TagFilter for TagRegexFilter {
     }
 }
 
-impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
+impl<'a, T: TraceData> Span<'a> for v04::Span<T> {
     fn resource_normalized(&'a self) -> &'a str {
         // Normalization
         let span_resource = self.resource.borrow();
@@ -101,7 +103,7 @@ impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
     }
 }
 
-impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
+impl<'a, T: TraceData> Span<'a> for v1::Span<T> {
     fn resource_normalized(&'a self) -> &'a str {
         // Normalization
         let span_resource = self.resource.borrow();
@@ -142,7 +144,7 @@ impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
 /// the root span falls back to the chunk's attributes whenever the span doesn't have its own
 /// value for a given key.
 struct ChunkSpanView<'a, T: TraceData> {
-    span: &'a span::v1::Span<T>,
+    span: &'a v1::Span<T>,
     chunk_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
 }
 
@@ -274,7 +276,7 @@ impl TraceFilterer {
     }
 
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
-    pub fn filter_traces(&self, traces: &mut Vec<Vec<span::v04::Span<impl TraceData>>>) -> usize {
+    pub fn filter_traces(&self, traces: &mut Vec<Vec<v04::Span<impl TraceData>>>) -> usize {
         let traces_count_before = traces.len();
         traces.retain(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
@@ -401,10 +403,11 @@ impl TraceFilterer {
 #[cfg(test)]
 mod tests {
     use super::TraceFilterer;
-    use crate::span::v04::{SpanBytes, VecMap};
-    use crate::span::v1::{
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::v1::{
         AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
     };
+    use libdd_trace_types::span::vec_map::VecMap;
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -430,7 +433,7 @@ mod tests {
     fn v1_chunk_with(
         resource: &'static str,
         meta: &[(&'static str, &'static str)],
-    ) -> TraceChunk<crate::span::BytesData> {
+    ) -> TraceChunk<libdd_trace_types::span::BytesData> {
         TraceChunk {
             spans: vec![SpanBytesV1 {
                 service: "svc".into(),
@@ -451,7 +454,7 @@ mod tests {
     fn v1_chunk_with_chunk_attributes(
         resource: &'static str,
         chunk_attributes: &[(&'static str, &'static str)],
-    ) -> TraceChunk<crate::span::BytesData> {
+    ) -> TraceChunk<libdd_trace_types::span::BytesData> {
         TraceChunk {
             spans: vec![SpanBytesV1 {
                 service: "svc".into(),
@@ -852,7 +855,7 @@ mod tests {
                 env: "prod".into(),
                 version: "1.2.3".into(),
                 component: "http".into(),
-                span_kind: crate::span::v1::SpanKind::Client,
+                span_kind: libdd_trace_types::span::v1::SpanKind::Client,
                 ..Default::default()
             }],
             ..Default::default()

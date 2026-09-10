@@ -1,10 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
+use libdd_trace_types::span::v05::dict::SharedDictBytes;
+use libdd_trace_types::span::{v04, v05, v1, BytesData, TraceData};
 use std::cmp::Ordering;
 use std::iter::Iterator;
 use tracing::warn;
@@ -321,10 +322,11 @@ fn metadata_matches_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
     use crate::test_utils::create_test_no_alloc_span;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::pb;
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::vec_map::VecMap;
     use serde_json::json;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {

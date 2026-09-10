@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::SpanText;
+use indexmap::map::RawEntryApiV1;
+use libdd_tinybytes::BytesString;
 
 /// This struct represents the shared dictionary used for interning all the strings belonging to a
 /// v05 trace chunk.
@@ -50,6 +52,21 @@ impl<T: SpanText> SharedDict<T> {
         self.map.keys()
     }
 }
+
+impl SharedDict<BytesString> {
+    /// Gets the index of borrowed span text, inserting an owned copy only when it is absent.
+    pub fn get_or_insert_span_text<T: SpanText>(
+        &mut self,
+        value: &T,
+    ) -> Result<u32, std::num::TryFromIntError> {
+        let entry = self.map.raw_entry_mut_v1().from_key(value.borrow());
+        let index = entry.index();
+        entry.or_insert_with(|| (value.to_bytes_string(), ()));
+        index.try_into()
+    }
+}
+
+pub type SharedDictBytes = SharedDict<BytesString>;
 
 impl<T: SpanText> Default for SharedDict<T> {
     fn default() -> Self {

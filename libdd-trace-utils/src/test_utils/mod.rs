@@ -15,14 +15,16 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span::v04::{SpanBytes, VecMap};
-use crate::span::{v05, SharedDictBytes};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use httpmock::Mock;
 use libdd_common::Endpoint;
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
+use libdd_trace_types::span::v04::SpanBytes;
+use libdd_trace_types::span::v05;
+use libdd_trace_types::span::v05::dict::SharedDictBytes;
+use libdd_trace_types::span::vec_map::VecMap;
 use serde_json::json;
 use tokio::time::sleep;
 

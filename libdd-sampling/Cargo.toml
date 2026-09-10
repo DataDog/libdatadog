@@ -33,10 +33,10 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 lru = "0.16.3"
 libdd-common = { path = "../libdd-common", version = "6.0.0", default-features = false }
-libdd-trace-utils = { path = "../libdd-trace-utils", version = "12.0.0", optional = true }
+libdd-trace-types = { path = "../libdd-trace-types", version = "1.0.0", optional = true }
 
 [features]
-v04_span = ["dep:libdd-trace-utils"]
+v04_span = ["dep:libdd-trace-types"]
 # Exposes internal modules (e.g. `glob_matcher`) for benchmarks. Not intended for downstream
 # consumers — enable only when running benches in this crate.
 bench-internals = []

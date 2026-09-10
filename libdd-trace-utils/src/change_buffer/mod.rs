@@ -83,9 +83,9 @@ use operation::*;
 mod buffer;
 pub use buffer::*;
 
-use crate::span::v04::Span;
-use crate::span::vec_map::VecMap;
-use crate::span::{SpanText, TraceData};
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_types::span::{SpanText, TraceData};
 use rustc_hash::FxHashMap;
 use std::ptr::NonNull;
 
@@ -737,7 +737,7 @@ where
 #[cfg(test)]
 mod segment_isolation_tests {
     use super::*;
-    use crate::span::SliceData;
+    use libdd_trace_types::span::SliceData;
     use std::borrow::Cow;
 
     // -----------------------------------------------------------------------

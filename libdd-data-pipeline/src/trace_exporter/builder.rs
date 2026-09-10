@@ -1597,7 +1597,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_otlp_stats_receive_obfuscation_flag() {
-        use libdd_trace_utils::span::v04::SpanBytes;
+        use libdd_trace_types::span::v04::SpanBytes;
 
         fn aggregated_resource(opt_in: bool) -> String {
             let mut builder = TraceExporterBuilder::default();

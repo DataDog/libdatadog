@@ -1415,6 +1415,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-tinybytes",
  "libdd-trace-stats",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "manual_future",
  "memory-stats",
@@ -1462,6 +1463,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "paste",
  "rmp-serde",
@@ -2957,6 +2959,7 @@ dependencies = [
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "prost",
  "rand 0.8.8",
@@ -2987,6 +2990,7 @@ dependencies = [
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "serde_json",
  "thiserror 1.0.68",
@@ -3005,6 +3009,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-tinybytes",
  "libdd-trace-obfuscation",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "rmp",
  "rmp-serde",
@@ -3466,7 +3471,7 @@ version = "6.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
- "libdd-trace-utils",
+ "libdd-trace-types",
  "lru",
  "serde",
  "serde_json",
@@ -3583,6 +3588,7 @@ dependencies = [
  "libdd-common",
  "libdd-tinybytes",
  "libdd-trace-protobuf",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "log",
  "percent-encoding",
@@ -3625,6 +3631,7 @@ dependencies = [
  "libdd-telemetry",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "rand 0.8.8",
  "rmp-serde",
@@ -3633,6 +3640,19 @@ dependencies = [
  "tokio-util",
  "tracing",
  "web-time",
+]
+
+[[package]]
+name = "libdd-trace-types"
+version = "1.0.0"
+dependencies = [
+ "indexmap 2.12.1",
+ "libdd-tinybytes",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "thin-vec",
+ "tracing",
 ]
 
 [[package]]
@@ -3655,7 +3675,6 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "hyper",
- "indexmap 2.12.1",
  "itoa 1.0.11",
  "libdd-capabilities",
  "libdd-capabilities-impl",
@@ -3663,6 +3682,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-normalization",
  "libdd-trace-protobuf",
+ "libdd-trace-types",
  "libdd-trace-utils",
  "prost",
  "rand 0.8.8",

@@ -12,9 +12,9 @@ use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
 use libdd_common::header::{
     APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
+use libdd_trace_types::span::{v04::Span, TraceData};
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
-use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use libdd_trace_utils::tracer_payload::{self};
@@ -170,7 +170,7 @@ mod tests {
     use http::header::CONTENT_TYPE;
     use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_trace_types::span::v04::SpanBytes;
     use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
     fn create_test_span() -> SpanBytes {

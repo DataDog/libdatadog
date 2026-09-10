@@ -11,8 +11,8 @@ mod tracing_integration_tests {
     use libdd_common::connector::uds::socket_path_to_uri;
     use libdd_common::{http_common, Endpoint};
     use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::vec_map::VecMap;
     use libdd_trace_utils::send_data::SendData;
-    use libdd_trace_utils::span::vec_map::VecMap;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -447,8 +447,8 @@ mod tracing_integration_tests {
     /// APMSP-3479 - TODO: `AttributeValue::List` and `AttributeValue::KeyValue` are deliberately
     /// omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once test-agent V1
     /// support catches up, add them here too.
-    fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
-        use libdd_trace_utils::span::v1::{
+    fn make_v1_payload(name_prefix: &str) -> libdd_trace_types::span::v1::TracerPayloadBytes {
+        use libdd_trace_types::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
             SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
         };
@@ -557,11 +557,11 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v04, to_vec_from_v1};
-        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
-        use libdd_trace_utils::span::v1::{
+        use libdd_trace_types::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_types::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
+        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v04, to_vec_from_v1};
         use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
@@ -638,8 +638,8 @@ mod tracing_integration_tests {
     /// `AttributeValue::KeyValue` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
     /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
     /// Add them here once test-agent V1 support catches up.
-    fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
-        use libdd_trace_utils::span::v1::{
+    fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_types::span::v1::TracerPayloadBytes {
+        use libdd_trace_types::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
             SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
         };
@@ -767,12 +767,12 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
-        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;
-        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
-        use libdd_trace_utils::span::v1::{
+        use libdd_trace_types::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_types::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_v04_native_and_v1_to_v04_encoders_snapshot_test";

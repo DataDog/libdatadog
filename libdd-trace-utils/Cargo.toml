@@ -49,11 +49,11 @@ libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 libdd-trace-normalization = { version = "4.0.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-types = { version = "1.0.0", path = "../libdd-trace-types" }
 libdd-tinybytes = { version = "1.1.3", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
-indexmap = "2.11"
 thin-vec = "0.2"
 
 # Compression feature
@@ -80,6 +80,7 @@ libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-imp
 libdd-common = { path = "../libdd-common", default-features = false, features = [
     "bench-utils",
 ] }
+libdd-trace-types = { version = "1.0.0", path = "../libdd-trace-types", features = ["test-utils"] }
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 httpmock.workspace = true

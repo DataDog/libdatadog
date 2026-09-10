@@ -34,6 +34,7 @@ members = [
   "libdd-trace-normalization",
   "libdd-trace-obfuscation",
   "libdd-trace-protobuf",
+  "libdd-trace-types",
   "libdd-trace-utils",
   "libdd-trace-stats",
   "libdd-tracer-flare",

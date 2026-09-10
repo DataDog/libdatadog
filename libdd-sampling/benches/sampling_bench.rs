@@ -9,7 +9,7 @@ use libdd_common::bench_utils::{
     memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
 use libdd_sampling::{v04_span::V04SamplingData, DatadogSampler, SamplingRule};
-use libdd_trace_utils::span::{v04::Span, SliceData};
+use libdd_trace_types::span::{v04::Span, SliceData};
 use std::borrow::Cow;
 
 #[global_allocator]

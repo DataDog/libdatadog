@@ -20,7 +20,8 @@ use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
-use libdd_trace_utils::span::v04::{SpanBytes, SpanEvent, SpanLink, VecMap};
+use libdd_trace_types::span::v04::{SpanBytes, SpanEvent, SpanLink};
+use libdd_trace_types::span::vec_map::VecMap;
 use rand::random;
 use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
 

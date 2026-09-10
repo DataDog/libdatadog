@@ -7,11 +7,12 @@ use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_trace_types::span::TraceData;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
     SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -43,7 +44,7 @@ pub enum AgentlessError {
 /// does not double-count the same traces.
 pub async fn send_agentless_traces<C, T>(
     capabilities: &C,
-    traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: Vec<Vec<libdd_trace_types::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,
@@ -68,7 +69,7 @@ where
 /// The observer is invoked once after the retry loop with the post-compression payload size.
 pub async fn send_agentless_traces_with_observer<C, T, F>(
     capabilities: &C,
-    mut traces: Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    mut traces: Vec<Vec<libdd_trace_types::span::v04::Span<T>>>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,
@@ -186,7 +187,7 @@ mod tests {
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
     use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_trace_types::span::v04::SpanBytes;
     use std::{
         sync::{Arc, Mutex},
         time::Duration,

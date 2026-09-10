@@ -15,8 +15,9 @@
 //! trait bound) rather than the whole `T`, so the encoder does not require a
 //! `T: Serialize` bound — keeping the public exporter API free of that bound.
 
-use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
+use libdd_trace_types::span::v04::{Span, SpanEvent, SpanLink};
+use libdd_trace_types::span::TraceData;
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;

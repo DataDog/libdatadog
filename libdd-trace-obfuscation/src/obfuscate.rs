@@ -7,7 +7,7 @@ use libdd_trace_protobuf::pb::{
     self, attribute_any_value::AttributeAnyValueType,
     attribute_array_value::AttributeArrayValueType,
 };
-use libdd_trace_utils::span::{
+use libdd_trace_types::span::{
     v04::{self, AttributeAnyValue, AttributeArrayValue},
     SpanText, TraceData,
 };
@@ -620,7 +620,7 @@ mod v04_tests {
     };
     use crate::replacer;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::{
+    use libdd_trace_types::span::v04::{
         AttributeAnyValue, AttributeArrayValue, SpanBytes, SpanEventBytes,
     };
     use std::collections::HashMap;

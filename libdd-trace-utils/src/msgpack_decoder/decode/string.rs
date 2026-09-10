@@ -3,8 +3,8 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::vec_map::VecMap;
 use rmp::decode;
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
