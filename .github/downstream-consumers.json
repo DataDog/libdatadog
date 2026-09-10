@@ -152,10 +152,10 @@
       "tier": "direct",
       "mode": "rust-source",
       "validation": {
-        "kind": "cargo",
+        "kind": "php-sidecar",
         "manifest": "Cargo.toml",
-        "args": ["--workspace", "--all-features"],
-        "source_path": "libdatadog"
+        "source_path": "libdatadog",
+        "install_protoc": true
       }
     },
     {
@@ -163,10 +163,10 @@
       "tier": "direct",
       "mode": "rust-source",
       "validation": {
-        "kind": "cargo",
+        "kind": "python-extension",
         "manifest": "src/native/Cargo.toml",
-        "args": ["--all-features"],
-        "patch_sources": ["https://github.com/DataDog/libdatadog"]
+        "patch_sources": ["https://github.com/DataDog/libdatadog"],
+        "install_protoc": true
       }
     },
     {"repository": "DataDog/dd-trace-rb", "tier": "direct", "mode": "native-artifact"},
@@ -175,9 +175,9 @@
       "tier": "direct",
       "mode": "rust-crates",
       "validation": {
-        "kind": "cargo",
+        "kind": "cargo-build",
         "manifest": "Cargo.toml",
-        "args": ["--workspace", "--all-features"],
+        "args": ["--workspace"],
         "patch_sources": ["crates-io"]
       }
     },
@@ -189,13 +189,14 @@
       "tier": "direct",
       "mode": "rust-crates",
       "validation": {
-        "kind": "cargo",
+        "kind": "cargo-build",
         "manifest": "bottlecap/Cargo.toml",
-        "args": ["--workspace"],
+        "args": ["--all"],
         "patch_sources": [
           "crates-io",
           "https://github.com/DataDog/libdatadog"
-        ]
+        ],
+        "install_protoc": true
       }
     },
     {"repository": "DataDog/nginx-datadog", "tier": "direct", "mode": "native-artifact"},
@@ -206,9 +207,8 @@
       "tier": "wrapper",
       "mode": "rust-crates",
       "validation": {
-        "kind": "cargo",
+        "kind": "node-wasm",
         "manifest": "Cargo.toml",
-        "args": ["--workspace"],
         "patch_sources": ["https://github.com/DataDog/libdatadog.git"]
       }
     },
@@ -219,10 +219,11 @@
       "tier": "indirect",
       "mode": "rust-crates",
       "validation": {
-        "kind": "cargo",
+        "kind": "cargo-build",
         "manifest": "Cargo.toml",
-        "args": ["--workspace"],
-        "patch_sources": ["crates-io"]
+        "args": ["--all"],
+        "patch_sources": ["crates-io"],
+        "install_protoc": true
       }
     },
     {"repository": "DataDog/dd-trace-go", "tier": "indirect", "mode": "contract-tests"}

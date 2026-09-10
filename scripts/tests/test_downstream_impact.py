@@ -42,14 +42,14 @@ class DownstreamImpactTest(unittest.TestCase):
         self.assertIn("DataDog/ddprof", repositories)
         self.assertIn("DataDog/dd-trace-dotnet", repositories)
         self.assertNotIn("DataDog/dd-trace-go", repositories)
-        self.assertEqual(impact["cargo_validation_count"], 0)
+        self.assertEqual(impact["validation_count"], 0)
 
-    def test_data_pipeline_change_builds_six_cargo_consumers(self):
+    def test_data_pipeline_change_builds_six_consumers(self):
         impact = downstream_impact.calculate_impact(
             self.config, ["libdd-data-pipeline/src/lib.rs"]
         )
         repositories = {
-            item["repository"] for item in impact["cargo_matrix"]["include"]
+            item["repository"] for item in impact["validation_matrix"]["include"]
         }
         self.assertEqual(
             repositories,
@@ -62,9 +62,9 @@ class DownstreamImpactTest(unittest.TestCase):
                 "DataDog/libdatadog-nodejs",
             },
         )
-        self.assertEqual(impact["cargo_validation_count"], 6)
+        self.assertEqual(impact["validation_count"], 6)
         by_repository = {
-            item["repository"]: item for item in impact["cargo_matrix"]["include"]
+            item["repository"]: item for item in impact["validation_matrix"]["include"]
         }
         self.assertEqual(
             by_repository["DataDog/datadog-lambda-extension"]["patch_sources"],
@@ -77,11 +77,36 @@ class DownstreamImpactTest(unittest.TestCase):
             by_repository["DataDog/dd-trace-py"]["patch_sources"],
             ["https://github.com/DataDog/libdatadog"],
         )
+        self.assertEqual(
+            by_repository["DataDog/dd-trace-py"]["build_kind"],
+            "python-extension",
+        )
+        self.assertEqual(
+            by_repository["DataDog/libdatadog-nodejs"]["build_kind"],
+            "node-wasm",
+        )
 
     def test_workspace_change_selects_every_consumer(self):
         impact = downstream_impact.calculate_impact(self.config, ["Cargo.toml"])
         self.assertEqual(impact["impacted_count"], 16)
-        self.assertEqual(impact["cargo_validation_count"], 6)
+        self.assertEqual(impact["validation_count"], 6)
+
+    def test_github_outputs_expose_product_build_matrix(self):
+        impact = downstream_impact.calculate_impact(
+            self.config, ["libdd-data-pipeline/src/lib.rs"]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output"
+            downstream_impact.write_github_outputs(output, impact)
+            values = dict(
+                line.split("=", 1)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            )
+        self.assertEqual(values["has_validations"], "true")
+        self.assertEqual(values["validation_count"], "6")
+        matrix = json.loads(values["validation_matrix"])
+        self.assertEqual(len(matrix["include"]), 6)
+        self.assertNotIn("cargo_matrix", values)
 
     def test_less_common_published_component_fails_safe(self):
         impact = downstream_impact.calculate_impact(

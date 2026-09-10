@@ -48,38 +48,48 @@ def load_config(path: Path) -> dict[str, Any]:
         validation = consumer.get("validation")
         if validation is None:
             continue
-        if validation.get("kind") != "cargo":
+        supported_kinds = {
+            "cargo-build",
+            "node-wasm",
+            "php-sidecar",
+            "python-extension",
+        }
+        if validation.get("kind") not in supported_kinds:
             raise ValueError(
                 f"consumer {consumer['repository']!r} has an unsupported validation kind"
             )
         if not validation.get("manifest"):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo validation needs a manifest"
+                f"consumer {consumer['repository']!r} validation needs a manifest"
             )
         if not isinstance(validation.get("args", []), list):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo validation args must be a list"
+                f"consumer {consumer['repository']!r} validation args must be a list"
             )
         patch_sources = validation.get("patch_sources", [])
         source_path = validation.get("source_path", "")
         if not isinstance(patch_sources, list):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo patch sources must be a list"
+                f"consumer {consumer['repository']!r} patch sources must be a list"
             )
         if source_path and not isinstance(source_path, str):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo source path must be a string"
+                f"consumer {consumer['repository']!r} source path must be a string"
             )
         if bool(patch_sources) == bool(source_path):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo validation needs exactly one "
+                f"consumer {consumer['repository']!r} validation needs exactly one "
                 "of patch_sources or source_path"
             )
         if source_path and (
             source_path.startswith("/") or ".." in Path(source_path).parts
         ):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo source path must stay in the checkout"
+                f"consumer {consumer['repository']!r} source path must stay in the checkout"
+            )
+        if not isinstance(validation.get("install_protoc", False), bool):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} install_protoc must be boolean"
             )
 
     return config
@@ -145,16 +155,18 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
         }
         for item in impacted
     ]
-    cargo_matrix_entries = [
+    validation_matrix_entries = [
         {
             **entry,
+            "build_kind": item["validation"]["kind"],
             "manifest": item["validation"]["manifest"],
             "cargo_args": item["validation"].get("args", []),
             "patch_sources": item["validation"].get("patch_sources", []),
             "source_path": item["validation"].get("source_path", ""),
+            "install_protoc": item["validation"].get("install_protoc", False),
         }
         for entry, item in zip(matrix_entries, impacted)
-        if item.get("validation", {}).get("kind") == "cargo"
+        if "validation" in item
     ]
 
     return {
@@ -164,8 +176,8 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
         "total_consumers": len(consumers_by_repository),
         "impacted": impacted,
         "matrix": {"include": matrix_entries},
-        "cargo_validation_count": len(cargo_matrix_entries),
-        "cargo_matrix": {"include": cargo_matrix_entries},
+        "validation_count": len(validation_matrix_entries),
+        "validation_matrix": {"include": validation_matrix_entries},
     }
 
 
@@ -211,11 +223,11 @@ def write_github_outputs(path: Path, impact: dict[str, Any]) -> None:
         output_file.write(f"impacted_count={impact['impacted_count']}\n")
         output_file.write(f"matrix={json.dumps(impact['matrix'], separators=(',', ':'))}\n")
         output_file.write(
-            f"has_cargo_validations={'true' if impact['cargo_validation_count'] else 'false'}\n"
+            f"has_validations={'true' if impact['validation_count'] else 'false'}\n"
         )
-        output_file.write(f"cargo_validation_count={impact['cargo_validation_count']}\n")
+        output_file.write(f"validation_count={impact['validation_count']}\n")
         output_file.write(
-            f"cargo_matrix={json.dumps(impact['cargo_matrix'], separators=(',', ':'))}\n"
+            f"validation_matrix={json.dumps(impact['validation_matrix'], separators=(',', ':'))}\n"
         )
 
 
