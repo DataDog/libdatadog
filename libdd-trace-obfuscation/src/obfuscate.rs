@@ -370,11 +370,13 @@ fn obfuscate_v04_sql_resource<T: TraceData>(
         .map(as_str)
         .and_then(|dbms| TryInto::try_into(dbms).ok())
         .unwrap_or_default();
-    let query = match sql_cache {
-        Some(cache) => cache.obfuscate(&mut span.resource, dbms),
-        None => obfuscate_sql(as_str(&span.resource), &config.sql, dbms),
+    let query = if let Some(cache) = sql_cache {
+        cache.obfuscate(&mut span.resource, dbms)
+    } else {
+        let query = obfuscate_sql(as_str(&span.resource), &config.sql, dbms);
+        span.resource = T::Text::from_owned(query.clone());
+        query
     };
-    span.resource = T::Text::from_owned(query.clone());
     span.meta.insert(
         T::Text::from_static_str(TAG_SQLQUERY),
         T::Text::from_owned(query),

@@ -28,18 +28,21 @@ impl<'a, S: SpanText> Cache<'a, S> {
     pub fn obfuscate(&mut self, resource: &mut S, dbms: DbmsKind) -> String {
         let input = <S as Borrow<str>>::borrow(resource);
         let cached = self.last.as_ref().filter(|cached| {
-            mem::discriminant(&cached.dbms) == mem::discriminant(&dbms)
-                && <S as Borrow<str>>::borrow(&cached.resource) == input
+            cached.dbms == dbms && <S as Borrow<str>>::borrow(&cached.resource) == input
         });
         if let Some(obfuscated) = cached.and_then(|cached| cached.obfuscated.as_ref()) {
-            return obfuscated.clone();
+            let obfuscated = obfuscated.clone();
+            *resource = S::from_owned(obfuscated.clone());
+            return obfuscated;
         }
 
         let cache_hit = cached.is_some();
         let obfuscated = obfuscate_sql(input, self.config, dbms);
+        let mut cached_resource = S::from_owned(obfuscated.clone());
+        mem::swap(resource, &mut cached_resource);
         self.last = Some(Entry {
             dbms,
-            resource: mem::take(resource),
+            resource: cached_resource,
             obfuscated: cache_hit.then(|| obfuscated.clone()),
         });
         obfuscated
@@ -58,7 +61,9 @@ mod tests {
         dbms: DbmsKind,
     ) -> String {
         let mut resource = Cow::Borrowed(resource);
-        cache.obfuscate(&mut resource, dbms)
+        let obfuscated = cache.obfuscate(&mut resource, dbms);
+        assert_eq!(resource.as_ref(), obfuscated);
+        obfuscated
     }
 
     #[test]
