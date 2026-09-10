@@ -45,7 +45,7 @@ bytes = { workspace = true, features = ["std"] }
 rmpv.workspace = true
 rmp.workspace = true
 rustc-hash = { workspace = true, default-features = true }
-crossbeam-channel.workspace = true
+crossbeam-channel = { workspace = true, features = ["std"] }
 thread_local.workspace = true 
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
