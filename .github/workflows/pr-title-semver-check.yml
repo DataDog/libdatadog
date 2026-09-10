@@ -257,15 +257,19 @@ jobs:
           VALIDATION_FAILED="false"
           FAILURE_REASONS=()
 
-          # Rule: ci/docs/style/test/build cannot change the public API
+          # Rule: ci/docs/style/test cannot change what a consumer sees
+          #
+          # 'build' is deliberately NOT in this list. Conventional Commits defines it as
+          # changes to the build system *or external dependencies*, and semver-level.sh
+          # scores a raised dependency floor as a minor
           case "$TYPE" in
-            ci|docs|style|test|build)
+            ci|docs|style|test)
               if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
                 VALIDATION_FAILED="true"
-                FAILURE_REASONS+=("'$TYPE' cannot have major or minor API changes. Use a different PR type, or avoid public API changes.")
+                FAILURE_REASONS+=("'$TYPE' cannot change the public API, a dependency requirement floor, or the cargo feature surface. Use a different PR type ('build' for a dependency change), or leave those alone.")
               fi
               ;;
-            feat|fix|refactor|chore|perf|revert)
+            feat|fix|refactor|chore|perf|revert|build)
               # These can be any semver level (subject to breaking change rules below)
               ;;
             *)
@@ -306,9 +310,11 @@ jobs:
             echo "--------------------------------------------"
             echo "VALID COMBINATIONS:"
             echo "--------------------------------------------"
-            echo "  ci/docs/style/test/build -> patch or none only (no public API changes)"
-            echo "  all other types          -> any level allowed"
-            echo "  major changes            -> must have '!' or 'BREAKING CHANGE:' footer"
+            echo "  ci/docs/style/test -> patch or none only (no change to the public API,"
+            echo "                        a dependency requirement floor, or the feature surface)"
+            echo "  all other types    -> any level allowed ('build' included: it is the"
+            echo "                        conventional type for a dependency change)"
+            echo "  major changes      -> must have '!' or 'BREAKING CHANGE:' footer"
             echo ""
             exit 1
           else
