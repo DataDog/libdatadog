@@ -119,8 +119,8 @@ Windows:
 **Key features:**
 - `ProfilesDictionary` creation and dictionary string insertion
 - Dictionary-backed `Mapping2`, `Function2`, `Location2`, `Label2`, and `Sample2`
-- `Profile::create_with_dictionary`
-- `Profile::add_sample2`
+- `Profile::create_with_dictionary_or_throw`
+- `Status` / typed-result hot-path calls such as `ProfilesDictionary::insert_string` and `Profile::add_sample2`
 - Timestamped samples via nonzero `endtime_ns`
 - Non-timestamped samples via `endtime_ns == 0`
 - Pprof serialization to `profile_api2.pprof`
