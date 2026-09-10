@@ -43,11 +43,6 @@ jobs:
             --json-output downstream-impact.json \
             --markdown-output downstream-impact.md \
             --github-output "$GITHUB_OUTPUT"
-          # Temporary smoke-test scope: keep the diagnostic rerun focused on Node.
-          echo "validation_count=1" >> "$GITHUB_OUTPUT"
-          echo "validation_matrix=$(jq -c \
-            '{include: [.validation_matrix.include[] | select(.repository == "DataDog/libdatadog-nodejs")]}' \
-            downstream-impact.json)" >> "$GITHUB_OUTPUT"
           cat downstream-impact.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload impact report
@@ -240,6 +235,31 @@ jobs:
                 return "${PIPESTATUS[0]}"
                 ;;
               node-wasm)
+                # wasm-pack consumes Cargo's JSON internally and only renders text.
+                # Run the same WASM crates through Cargo first so differential
+                # failures remain stable when the baseline already fails.
+                local wasm_toolchain
+                local wasm_status
+                wasm_toolchain=$(cat wasm-rust-toolchain)
+                for wasm_manifest in \
+                  crates/libdatadog-wasm/Cargo.toml \
+                  crates/remote_config/Cargo.toml
+                do
+                  cargo +"$wasm_toolchain" build \
+                    --manifest-path "$wasm_manifest" \
+                    --target wasm32-unknown-unknown \
+                    --release \
+                    -Z build-std=std \
+                    --message-format=json \
+                    2> >(tee -a "$log_path" >&2) \
+                    | tee -a "$messages_path" \
+                    | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
+                    | tee -a "$log_path"
+                  wasm_status=${PIPESTATUS[0]}
+                  if [ "$wasm_status" -ne 0 ]; then
+                    return "$wasm_status"
+                  fi
+                done
                 (
                   npm ci --prefix packages/libdatadog
                   npm run build --prefix packages/libdatadog
@@ -291,15 +311,6 @@ jobs:
             --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
             --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
             --github-output "$GITHUB_OUTPUT"
-          # Temporary diagnostic token: artifact names are visible through the
-          # Actions API even when job-summary and artifact contents are not.
-          ERROR_TOKEN=$(jq -c '.[0] // {}' \
-            "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
-            | gzip -cn \
-            | base64 -w0 \
-            | tr '+/' '-_' \
-            | tr -d '=')
-          echo "new_error_token=${ERROR_TOKEN:0:180}" >> "$GITHUB_OUTPUT"
 
       - name: Report downstream compatibility
         if: always()
@@ -388,7 +399,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-validation-${{ steps.validate.outputs.new_error_token }}
+          name: ${{ matrix.artifact_name }}-validation
           path: |
             ${{ matrix.artifact_name }}-base.log
             ${{ matrix.artifact_name }}-head.log
