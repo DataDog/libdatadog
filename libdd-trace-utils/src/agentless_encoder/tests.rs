@@ -133,6 +133,42 @@ fn keeps_existing_dd_p_tid_in_meta() {
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
+fn ids_preserve_fixed_width_lowercase_wire_format_at_numeric_edges() {
+    let link = SpanLink::<BytesData> {
+        trace_id: 0,
+        trace_id_high: u64::MAX,
+        span_id: 0,
+        ..Default::default()
+    };
+    let span: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        trace_id: u128::MAX,
+        span_id: u64::MAX,
+        parent_id: 0x0123_4567_89ab_cdef,
+        start: 0,
+        duration: 1,
+        span_links: vec![link],
+        ..Default::default()
+    };
+
+    let bytes = encode_payload(&[vec![span]], &base_metadata(), false).unwrap();
+    let encoded = std::str::from_utf8(&bytes).unwrap();
+    assert!(encoded.contains(
+        r#""trace_id":"ffffffffffffffff","span_id":"ffffffffffffffff","parent_id":"0123456789abcdef""#
+    ));
+
+    let payload = json_from_bytes(&bytes);
+    let meta = &payload["traces"][0]["spans"][0]["meta"];
+    assert_eq!(meta["_dd.p.tid"], "ffffffffffffffff");
+    assert_eq!(
+        meta["_dd.span_links"],
+        r#"[{"trace_id":"ffffffffffffffff0000000000000000","span_id":"0000000000000000"}]"#
+    );
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
 fn span_links_serialised_into_meta_as_json_string() {
     // Span links are JSON-stringified and stored in meta["_dd.span_links"];
     // no top-level `span_links` field is emitted.
