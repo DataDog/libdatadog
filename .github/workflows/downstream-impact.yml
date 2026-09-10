@@ -219,13 +219,16 @@ jobs:
             cd "$DOWNSTREAM_ROOT"
             export CARGO_HOME="$cargo_home"
             export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
-            cargo +1.92.0 update \
-              --manifest-path "$MANIFEST_PATH" \
-              --config "$patch_config" \
-              2>&1 | tee "$log_path"
-            local update_status=${PIPESTATUS[0]}
-            if [ "$update_status" -ne 0 ]; then
-              return "$update_status"
+            export CARGO_TERM_COLOR=never
+            if [ "${#PATCH_SOURCES[@]}" -gt 0 ]; then
+              cargo +1.92.0 update \
+                --manifest-path "$MANIFEST_PATH" \
+                --config "$patch_config" \
+                2>&1 | tee "$log_path"
+              local update_status=${PIPESTATUS[0]}
+              if [ "$update_status" -ne 0 ]; then
+                return "$update_status"
+              fi
             fi
 
             case "$BUILD_KIND" in
