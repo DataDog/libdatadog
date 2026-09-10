@@ -139,11 +139,13 @@ jobs:
           BUILD_KIND: ${{ matrix.build_kind }}
           CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
           PATCH_SOURCES_JSON: ${{ toJSON(matrix.patch_sources) }}
+          SUBMODULES_JSON: ${{ toJSON(matrix.submodules) }}
           SOURCE_PATH: ${{ matrix.source_path }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
         run: |
           set -euo pipefail
           mapfile -t PATCH_SOURCES < <(jq -r '.[]' <<< "$PATCH_SOURCES_JSON")
+          mapfile -t SUBMODULES < <(jq -r '.[]' <<< "$SUBMODULES_JSON")
           mapfile -t CARGO_ARGS < <(jq -r '.[]' <<< "$CARGO_ARGS_JSON")
           MANIFEST_PATH="$DOWNSTREAM_ROOT/$DOWNSTREAM_MANIFEST"
 
@@ -193,6 +195,10 @@ jobs:
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
             git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
             git -C "$DOWNSTREAM_ROOT" clean -ffdx
+            for submodule in "${SUBMODULES[@]}"; do
+              git -C "$DOWNSTREAM_ROOT" submodule update --init --recursive "$submodule"
+              git -C "$DOWNSTREAM_ROOT/$submodule" rev-parse --verify HEAD
+            done
             if [ -n "$SOURCE_PATH" ]; then
               source_target="$DOWNSTREAM_ROOT/$SOURCE_PATH"
               if [ -d "$source_target" ] && [ ! -L "$source_target" ]; then
@@ -235,33 +241,8 @@ jobs:
                 return "${PIPESTATUS[0]}"
                 ;;
               node-wasm)
-                # wasm-pack consumes Cargo's JSON internally and only renders text.
-                # Run the same WASM crates through Cargo first so differential
-                # failures remain stable when the baseline already fails.
-                local wasm_toolchain
-                local wasm_status
-                wasm_toolchain=$(cat wasm-rust-toolchain)
-                for wasm_manifest in \
-                  crates/libdatadog-wasm/Cargo.toml \
-                  crates/remote_config/Cargo.toml
-                do
-                  cargo +"$wasm_toolchain" build \
-                    --manifest-path "$wasm_manifest" \
-                    --target wasm32-unknown-unknown \
-                    --release \
-                    --jobs 1 \
-                    -Z build-std=std \
-                    --message-format=json \
-                    2> >(tee -a "$log_path" >&2) \
-                    | tee -a "$messages_path" \
-                    | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
-                    | tee -a "$log_path"
-                  wasm_status=${PIPESTATUS[0]}
-                  if [ "$wasm_status" -ne 0 ]; then
-                    return "$wasm_status"
-                  fi
-                done
                 (
+                  export CARGO_BUILD_JOBS=1
                   npm ci --prefix packages/libdatadog
                   npm run build --prefix packages/libdatadog
                   test -s packages/libdatadog/wasm/dist/libdatadog_wasm_bg.wasm

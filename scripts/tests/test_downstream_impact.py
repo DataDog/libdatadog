@@ -74,6 +74,10 @@ class DownstreamImpactTest(unittest.TestCase):
             by_repository["DataDog/dd-trace-php"]["source_path"], "libdatadog"
         )
         self.assertEqual(
+            by_repository["DataDog/dd-trace-php"]["submodules"],
+            ["appsec/third_party/libddwaf-rust"],
+        )
+        self.assertEqual(
             by_repository["DataDog/dd-trace-py"]["patch_sources"],
             ["https://github.com/DataDog/libdatadog"],
         )
@@ -168,6 +172,15 @@ class DownstreamImpactTest(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(invalid), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "stay in the checkout"):
+                downstream_impact.load_config(path)
+
+    def test_validation_rejects_submodule_path_traversal(self):
+        invalid = copy.deepcopy(self.config)
+        invalid["consumers"][0]["validation"]["submodules"] = ["../libddwaf-rust"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "safe relative paths"):
                 downstream_impact.load_config(path)
 
 

@@ -91,6 +91,17 @@ def load_config(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"consumer {consumer['repository']!r} install_protoc must be boolean"
             )
+        submodules = validation.get("submodules", [])
+        if not isinstance(submodules, list) or any(
+            not isinstance(path, str)
+            or not path
+            or path.startswith("/")
+            or ".." in Path(path).parts
+            for path in submodules
+        ):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} submodules must be safe relative paths"
+            )
 
     return config
 
@@ -163,6 +174,7 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
             "cargo_args": item["validation"].get("args", []),
             "patch_sources": item["validation"].get("patch_sources", []),
             "source_path": item["validation"].get("source_path", ""),
+            "submodules": item["validation"].get("submodules", []),
             "install_protoc": item["validation"].get("install_protoc", False),
         }
         for entry, item in zip(matrix_entries, impacted)

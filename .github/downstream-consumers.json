@@ -155,6 +155,7 @@
         "kind": "php-sidecar",
         "manifest": "Cargo.toml",
         "source_path": "libdatadog",
+        "submodules": ["appsec/third_party/libddwaf-rust"],
         "install_protoc": true
       }
     },
