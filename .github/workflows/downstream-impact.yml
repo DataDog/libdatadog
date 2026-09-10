@@ -98,6 +98,8 @@ jobs:
           CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
           PATCH_SOURCES_JSON: ${{ toJSON(matrix.patch_sources) }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          # Temporary smoke test: inject a Cargo error in the head build only.
+          INJECT_DOWNSTREAM_FAILURE: "true"
         run: |
           set -euo pipefail
           mapfile -t PATCH_SOURCES < <(jq -r '.[]' <<< "$PATCH_SOURCES_JSON")
@@ -153,6 +155,9 @@ jobs:
 
             cd "$DOWNSTREAM_ROOT"
             export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
+            if [ "$label" = "head" ] && [ "$INJECT_DOWNSTREAM_FAILURE" = "true" ]; then
+              printf '\n[DOWNSTREAM_IMPACT_SUMMARY_SMOKE_TEST\n' >> "$MANIFEST_PATH"
+            fi
             cargo +1.92.0 update \
               --manifest-path "$MANIFEST_PATH" \
               --config "$patch_config" \
