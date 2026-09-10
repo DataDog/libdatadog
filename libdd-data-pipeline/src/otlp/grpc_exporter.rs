@@ -736,32 +736,41 @@ mod integration_tests {
         let (socket, _) = listener.accept().await.unwrap();
         let mut conn = server::handshake(socket).await.unwrap();
         let (req, mut respond) = conn.accept().await.unwrap().unwrap();
-        let mut body = req.into_body();
-        let mut buf = Vec::new();
-        while let Some(chunk) = body.data().await {
-            let chunk = chunk.unwrap();
-            buf.extend_from_slice(&chunk);
-            body.flow_control().release_capacity(chunk.len()).unwrap();
-        }
-        let decoded = ExportTraceServiceRequest::decode(&buf[5..]).unwrap();
+        // `respond`/`body` only touch h2's in-memory state: the connection itself has to keep
+        // being polled for request DATA to be read and for the response to reach the socket.
+        // Handle the stream on a separate task so the accept loop below can drive it.
+        let handler = tokio::spawn(async move {
+            let mut body = req.into_body();
+            let mut buf = Vec::new();
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                buf.extend_from_slice(&chunk);
+                body.flow_control().release_capacity(chunk.len()).unwrap();
+            }
+            let decoded = ExportTraceServiceRequest::decode(&buf[5..]).unwrap();
 
-        let resp = http::Response::builder()
-            .status(200)
-            .header("content-type", "application/grpc")
-            .body(())
-            .unwrap();
-        let mut send = respond.send_response(resp, false).unwrap();
-        let msg = ExportTraceServiceResponse::default();
-        let mut framed = vec![0u8; 5];
-        msg.encode(&mut framed).unwrap();
-        let len = u32::try_from(framed.len() - 5).expect("response exceeds gRPC frame length");
-        framed[1..5].copy_from_slice(&len.to_be_bytes());
-        send.send_data(Bytes::from(framed), false).unwrap();
-        let mut trailers = http::HeaderMap::new();
-        trailers.insert("grpc-status", "0".parse().unwrap());
-        send.send_trailers(trailers).unwrap();
-        let _ = tokio::time::timeout(Duration::from_secs(2), conn.accept()).await;
-        decoded
+            let resp = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let mut send = respond.send_response(resp, false).unwrap();
+            let msg = ExportTraceServiceResponse::default();
+            let mut framed = vec![0u8; 5];
+            msg.encode(&mut framed).unwrap();
+            let len = u32::try_from(framed.len() - 5).expect("response exceeds gRPC frame length");
+            framed[1..5].copy_from_slice(&len.to_be_bytes());
+            send.send_data(Bytes::from(framed), false).unwrap();
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", "0".parse().unwrap());
+            send.send_trailers(trailers).unwrap();
+            decoded
+        });
+        let _ = tokio::time::timeout(Duration::from_secs(2), async {
+            while conn.accept().await.is_some() {}
+        })
+        .await;
+        handler.await.unwrap()
     }
 
     #[cfg_attr(miri, ignore)]
@@ -792,28 +801,40 @@ mod integration_tests {
             let (socket, _) = listener.accept().await.unwrap();
             let mut conn = server::handshake(socket).await.unwrap();
             let (req, mut respond) = conn.accept().await.unwrap().unwrap();
-            let mut body = req.into_body();
-            while let Some(chunk) = body.data().await {
-                let chunk = chunk.unwrap();
-                body.flow_control().release_capacity(chunk.len()).unwrap();
-            }
+            // The connection has to stay polled while the stream is served, otherwise the
+            // request DATA frame may never be read off the socket. See the comment in
+            // `run_one_shot_grpc_server`.
+            let handler = tokio::spawn(async move {
+                let mut body = req.into_body();
+                while let Some(chunk) = body.data().await {
+                    let chunk = chunk.unwrap();
+                    body.flow_control().release_capacity(chunk.len()).unwrap();
+                }
 
-            let response = http::Response::builder()
-                .status(200)
-                .header("content-type", "application/grpc")
-                .body(())
-                .unwrap();
-            let mut send = respond.send_response(response, false).unwrap();
-            send.send_data(Bytes::from_static(&[0, 0, 0, 0, 0]), false)
-                .unwrap();
-            let mut trailers = http::HeaderMap::new();
-            trailers.insert("grpc-status", "0".parse().unwrap());
-            send.send_trailers(trailers).unwrap();
+                let response = http::Response::builder()
+                    .status(200)
+                    .header("content-type", "application/grpc")
+                    .body(())
+                    .unwrap();
+                let mut send = respond.send_response(response, false).unwrap();
+                send.send_data(Bytes::from_static(&[0, 0, 0, 0, 0]), false)
+                    .unwrap();
+                let mut trailers = http::HeaderMap::new();
+                trailers.insert("grpc-status", "0".parse().unwrap());
+                send.send_trailers(trailers).unwrap();
+            });
+            tokio::pin!(handler);
+            // Drive the connection until the whole response has been queued...
+            tokio::select! {
+                res = &mut handler => res.unwrap(),
+                _ = async { while conn.accept().await.is_some() {} } => {}
+            }
+            // ...then give those frames a window to reach the socket before tearing down.
             let flush_deadline = tokio::time::sleep(Duration::from_millis(25));
             tokio::pin!(flush_deadline);
             tokio::select! {
                 _ = &mut flush_deadline => {}
-                _ = conn.accept() => {}
+                _ = async { while conn.accept().await.is_some() {} } => {}
             }
             conn.abrupt_shutdown(h2::Reason::INTERNAL_ERROR);
             while conn.accept().await.is_some() {}
