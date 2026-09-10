@@ -15,6 +15,6 @@ default = ["compression"]
 compression = []
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-http = "1"
-wasm-bindgen-test = "=0.3.50"
-zrip = { version = "=0.6.0", default-features = false, features = ["frame"] }
+http = { workspace = true, default-features = true }
+wasm-bindgen-test = { workspace = true, default-features = true }
+zrip = { workspace = true, features = ["frame"] }

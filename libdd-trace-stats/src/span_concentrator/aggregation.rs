@@ -674,7 +674,7 @@ impl StatsBucket {
                     return;
                 }
                 // Within the max entry limit, admit key as a new distinct entry.
-                e.insert(GroupedStats::default())
+                e.insert_with_key(OwnedAggregationKey::from(&key), GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
             }
         }

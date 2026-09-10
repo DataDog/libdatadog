@@ -15,14 +15,14 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
-arbitrary = { version = "1.3", features = ["derive"], optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [features]
 fuzzing = ["arbitrary"]
 
 [dev-dependencies]
-rand = "0.8.5"
-duplicate = "0.4.1"
+rand = { workspace = true, default-features = true }
+duplicate = { workspace = true, default-features = true }
 criterion.workspace = true
 
 [[bench]]

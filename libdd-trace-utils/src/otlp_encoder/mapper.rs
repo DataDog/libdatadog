@@ -318,7 +318,7 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 /// We resolve it once per chunk and apply it to every span so OTLP receivers see the full 128-bit
 /// trace_id on every span in the trace.
 pub fn map_traces_to_otlp<T: TraceData>(
-    trace_chunks: Vec<Vec<Span<T>>>,
+    trace_chunks: &[Vec<Span<T>>],
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
@@ -326,7 +326,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
     // Pre-size to the total span count so the per-span push loop never reallocates.
     let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
     let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
-    for chunk in &trace_chunks {
+    for chunk in trace_chunks {
         // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
         // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
         // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
@@ -538,7 +538,7 @@ mod tests {
         );
         span.metrics
             .insert(libdd_tinybytes::BytesString::from_static("count"), 42.0);
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_id, 0xD269B633813FC60C_u128.to_be_bytes().to_vec());
         assert_eq!(s.span_id, 0xEEE19B7EC3C1B174u64.to_be_bytes().to_vec());
@@ -576,7 +576,7 @@ mod tests {
             ..Default::default()
         };
 
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let scope = req.resource_spans[0].scope_spans[0].scope.as_ref().unwrap();
         assert_eq!(scope.name, "dd-trace-js");
         assert_eq!(scope.version, "7.0.0-pre");
@@ -599,7 +599,7 @@ mod tests {
             duration: 1000000000,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.trace_id,
@@ -634,7 +634,7 @@ mod tests {
             duration: 0,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.start_time_unix_nano, 0,
@@ -662,7 +662,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("error.msg"),
             libdd_tinybytes::BytesString::from_static("something broke"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let status = s.status.as_ref().unwrap();
         assert_eq!(status.code, status_code::ERROR);
@@ -687,7 +687,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("rate"),
             std::f64::consts::PI,
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let count = s.attributes.iter().find(|a| a.key == "count").unwrap();
         assert!(matches!(
@@ -718,7 +718,7 @@ mod tests {
             "_dd.p.tid".into(),
             libdd_tinybytes::BytesString::from_static("5b8efff798038103"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.trace_id,
@@ -753,7 +753,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![root, child]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         let expected = full.to_be_bytes().to_vec();
         assert_eq!(spans[0].trace_id, expected);
@@ -773,7 +773,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_id, 0xD269B633813FC60C_u128.to_be_bytes().to_vec());
     }
@@ -815,7 +815,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![root, child_a, child_b]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![root, child_a, child_b]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert_eq!(spans.len(), 3);
         let expected = 0x5b8efff798038103_d269b633813fc60c_u128
@@ -876,7 +876,7 @@ mod tests {
             ..Default::default()
         };
         let req = map_traces_to_otlp(
-            vec![vec![root_a, child_a], vec![root_b, child_b]],
+            &[vec![root_a, child_a], vec![root_b, child_b]],
             &resource_info,
             false,
         );
@@ -936,7 +936,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("dddddddddddddddd"),
         );
         let req = map_traces_to_otlp(
-            vec![vec![root, child_no_tag, child_valid]],
+            &[vec![root, child_no_tag, child_valid]],
             &resource_info,
             false,
         );
@@ -965,7 +965,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         let kv = resource_attrs
             .iter()
@@ -992,7 +992,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         assert!(
             !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
@@ -1018,7 +1018,7 @@ mod tests {
             flags: 1,
             ..Default::default()
         });
-        let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default(), false);
+        let req = map_traces_to_otlp(&[vec![span]], &OtlpResourceInfo::default(), false);
         let link = &req.resource_spans[0].scope_spans[0].spans[0].links[0];
         assert_eq!(
             link.flags, 1,
@@ -1046,7 +1046,7 @@ mod tests {
                 flags,
                 ..Default::default()
             });
-            let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default(), false);
+            let req = map_traces_to_otlp(&[vec![span]], &OtlpResourceInfo::default(), false);
             req.resource_spans[0].scope_spans[0].spans[0].links[0].flags
         }
 
@@ -1090,7 +1090,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("http.method"),
             libdd_tinybytes::BytesString::from_static("GET"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, true);
         let attrs = &req.resource_spans[0].scope_spans[0].spans[0].attributes;
         let keys: Vec<&str> = attrs.iter().map(|kv| kv.key.as_str()).collect();
         for omitted in [
@@ -1130,7 +1130,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("error.message"),
             libdd_tinybytes::BytesString::from_static("boom"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, true);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
         let status = otlp_span
             .status
@@ -1155,7 +1155,7 @@ mod tests {
         // Defensive: an empty chunk should produce no spans and not panic.
         let resource_info = OtlpResourceInfo::default();
         let empty: Vec<Vec<Span<BytesData>>> = vec![vec![]];
-        let req = map_traces_to_otlp(empty, &resource_info, false);
+        let req = map_traces_to_otlp(&empty, &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.is_empty());
     }
@@ -1175,7 +1175,7 @@ mod tests {
             "tracestate".into(),
             libdd_tinybytes::BytesString::from_static("vendor1=abc,rojo=00f067"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_state, "vendor1=abc,rojo=00f067");
     }
@@ -1195,7 +1195,7 @@ mod tests {
         };
         span.meta_struct
             .insert("my_key".into(), Bytes::from(vec![1u8, 2, 3]));
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1203,7 +1203,7 @@ mod tests {
             .find(|a| a.key == "my_key")
             .expect("my_key attribute not found");
         match kv.value.as_ref().unwrap().value {
-            Some(PV::BytesValue(ref b)) => assert_eq!(b, &vec![1u8, 2, 3]),
+            Some(PV::BytesValue(ref b)) => assert_eq!(b, &[1u8, 2, 3]),
             ref other => panic!("expected bytes, got {other:?}"),
         }
     }
@@ -1220,7 +1220,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1246,7 +1246,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1272,7 +1272,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         // resource maps to the OTLP span name
         assert_eq!(s.name, "GET /api/users");
@@ -1301,7 +1301,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert!(
             !s.attributes.iter().any(|a| a.key == "resource.name"),
@@ -1327,7 +1327,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1353,7 +1353,7 @@ mod tests {
             ..Default::default()
         };
         span.metrics.insert("_sampling_priority_v1".into(), 0.0);
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.flags, 0);
     }
@@ -1379,7 +1379,7 @@ mod tests {
             ..Default::default()
         };
 
-        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![root, child]], &resource_info, true);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.iter().all(|span| span.flags == 0));
     }
@@ -1405,7 +1405,7 @@ mod tests {
             ..Default::default()
         };
         child.metrics.insert("_sampling_priority_v1".into(), 1.0);
-        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![root, child]], &resource_info, true);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.iter().all(|span| span.flags == 1));
     }
@@ -1433,7 +1433,7 @@ mod tests {
         };
         child.metrics.insert("_sampling_priority_v1".into(), 1.0);
 
-        let req = map_traces_to_otlp(vec![vec![child, root]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![child, root]], &resource_info, true);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.iter().all(|span| span.flags == 1));
     }
@@ -1461,7 +1461,7 @@ mod tests {
         };
         second.metrics.insert("_sampling_priority_v1".into(), 1.0);
 
-        let req = map_traces_to_otlp(vec![vec![first, second]], &resource_info, true);
+        let req = map_traces_to_otlp(&[vec![first, second]], &resource_info, true);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.iter().all(|span| span.flags == 0));
     }
@@ -1500,7 +1500,7 @@ mod tests {
             .metrics
             .insert("_sampling_priority_v1".into(), 0.5);
 
-        let req = map_traces_to_otlp(vec![vec![root, child, fractional]], &resource_info, false);
+        let req = map_traces_to_otlp(&[vec![root, child, fractional]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert_eq!(spans[0].flags, 0);
         assert_eq!(spans[1].flags, 1);

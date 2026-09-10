@@ -217,14 +217,14 @@ fn get_or_insert(
 /// dictionary always owns its strings ([`SharedDictBytes`]). Borrowed input text is copied into
 /// the dictionary; owned text is reference-counted.
 pub fn from_v04_span<T: TraceData>(
-    span: crate::span::v04::Span<T>,
+    span: &crate::span::v04::Span<T>,
     dict: &mut SharedDictBytes,
 ) -> Result<Span> {
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
 
-    // Serialize span links / span events before `span` is consumed below. v0.5 has no
-    // dedicated slots for them, so they are flattened into `meta` as JSON strings.
+    // Serialize span links / span events
+    // v0.5 has no dedicated slots for them, so they are flattened into `meta` as JSON strings.
     let serialized_span_links = if span.span_links.is_empty() {
         None
     } else {
@@ -248,10 +248,10 @@ pub fn from_v04_span<T: TraceData>(
     let service = get_or_insert(dict, &span.service)?;
     let name = get_or_insert(dict, &span.name)?;
     let resource = get_or_insert(dict, &span.resource)?;
-    let mut meta = span.meta.into_iter().try_fold(
+    let mut meta = span.meta.iter().try_fold(
         HashMap::with_capacity(meta_len + extra_meta),
         |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-            meta.insert(get_or_insert(dict, &k)?, get_or_insert(dict, &v)?);
+            meta.insert(get_or_insert(dict, k)?, get_or_insert(dict, v)?);
             Ok(meta)
         },
     )?;
@@ -267,10 +267,10 @@ pub fn from_v04_span<T: TraceData>(
         meta.insert(key, value);
     }
 
-    let metrics = span.metrics.into_iter().try_fold(
+    let metrics = span.metrics.iter().try_fold(
         HashMap::with_capacity(metrics_len),
         |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-            metrics.insert(get_or_insert(dict, &k)?, v);
+            metrics.insert(get_or_insert(dict, k)?, *v);
             Ok(metrics)
         },
     )?;
@@ -332,7 +332,7 @@ mod tests {
         };
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
 
         let get_index_from_str = |str: &str| -> u32 {
             dict.iter()
@@ -420,7 +420,7 @@ mod tests {
         }];
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
 
         let links_json = meta_json(&dict, &v05_span, "_dd.span_links").unwrap();
         assert_eq!(
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn from_v04_span_empty_links_events_no_meta_keys_test() {
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(base_span(), &mut dict).unwrap();
+        let v05_span = from_v04_span(&base_span(), &mut dict).unwrap();
         assert_eq!(v05_span.meta.len(), 1);
         assert!(meta_json(&dict, &v05_span, "_dd.span_links").is_none());
         assert!(meta_json(&dict, &v05_span, "events").is_none());
@@ -459,7 +459,7 @@ mod tests {
         .into();
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
         assert_eq!(v05_span.meta.len(), 1);
         assert!(meta_json(&dict, &v05_span, "appsec").is_none());
         assert!(meta_json(&dict, &v05_span, "meta_struct").is_none());

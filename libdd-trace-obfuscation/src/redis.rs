@@ -371,127 +371,31 @@ mod tests {
     use super::{obfuscate_redis_string, quantize_redis_string, remove_all_redis_args};
 
     #[duplicate_item(
-        [
-            test_name   [test_quantize_redis_string_client]
-            input       ["CLIENT"]
-            expected    ["CLIENT"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_client_list]
-            input       ["CLIENT LIST"]
-            expected    ["CLIENT LIST"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_client_truncated]
-            input       ["CLIENT ..."]
-            expected    ["..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_get_lowercase]
-            input       ["get my_key"]
-            expected    ["GET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_set]
-            input       ["SET le_key le_value"]
-            expected    ["SET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_set_with_newlines]
-            input       ["\n\n  \nSET foo bar  \n  \n\n  "]
-            expected    ["SET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_config_set]
-            input       ["CONFIG SET parameter value"]
-            expected    ["CONFIG SET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_two_cmds]
-            input       ["SET toto tata \n \n  EXPIRE toto 15  "]
-            expected    ["SET EXPIRE"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_mset]
-            input       ["MSET toto tata toto tata toto tata \n "]
-            expected    ["MSET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_max_cmds]
-            input       ["MULTI\nSET k1 v1\nSET k2 v2\nSET k3 v3\nSET k4 v4\nDEL to_del\nEXEC"]
-            expected    ["MULTI SET SET ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_first]
-            input       ["GET..."]
-            expected    ["..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_arg]
-            input       ["GET k..."]
-            expected    ["GET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_third]
-            input       ["GET k1\nGET k2\nG..."]
-            expected    ["GET GET ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_after_max]
-            input       ["GET k1\nGET k2\nDEL k3\nGET k..."]
-            expected    ["GET GET DEL ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_hdel]
-            input       ["GET k1\nGET k2\nHDEL k3 a\nG..."]
-            expected    ["GET GET HDEL ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_mid]
-            input       ["GET k...\nDEL k2\nMS..."]
-            expected    ["GET DEL ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_early]
-            input       ["GET k...\nDE...\nMS..."]
-            expected    ["GET ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_then_cmd]
-            input       ["GET k1\nDE...\nGET k2"]
-            expected    ["GET GET"];
-        ]
-        [
-            test_name   [test_quantize_redis_string_truncation_complex]
-            input       ["GET k1\nDE...\nGET k2\nHDEL k3 a\nGET k4\nDEL k5"]
-            expected    ["GET GET HDEL ..."];
-        ]
-        [
-            test_name   [test_quantize_redis_string_unknown]
-            input       ["UNKNOWN 123"]
-            expected    ["UNKNOWN"];
-        ]
-        [
-            test_name   [fuzzing_3286489773]
-            input       ["ꭺ"]
-            expected    ["Ꭺ"];
-        ]
-        [
-            test_name   [fuzzing_2812552373]
-            input       ["\t"]
-            expected    ["\t"];
-        ]
-        [
-            test_name   [fuzzing_crlf]
-            input       ["\r\n"]
-            // Split on \n specifically, not newlines, to copy agent's behaviour
-            expected    ["\r"];
-        ]
-        [
-            test_name   [fuzzing_box_char]
-            input       ["𖺻"]
-            expected    ["𖺻"];
-        ]
+    test_name input expected;
+    [test_quantize_redis_string_client] ["CLIENT"] ["CLIENT"];
+    [test_quantize_redis_string_client_list] ["CLIENT LIST"] ["CLIENT LIST"];
+    [test_quantize_redis_string_client_truncated] ["CLIENT ..."] ["..."];
+    [test_quantize_redis_string_get_lowercase] ["get my_key"] ["GET"];
+    [test_quantize_redis_string_set] ["SET le_key le_value"] ["SET"];
+    [test_quantize_redis_string_set_with_newlines] ["\n\n  \nSET foo bar  \n  \n\n  "] ["SET"];
+    [test_quantize_redis_string_config_set] ["CONFIG SET parameter value"] ["CONFIG SET"];
+    [test_quantize_redis_string_two_cmds] ["SET toto tata \n \n  EXPIRE toto 15  "] ["SET EXPIRE"];
+    [test_quantize_redis_string_mset] ["MSET toto tata toto tata toto tata \n "] ["MSET"];
+    [test_quantize_redis_string_max_cmds] ["MULTI\nSET k1 v1\nSET k2 v2\nSET k3 v3\nSET k4 v4\nDEL to_del\nEXEC"] ["MULTI SET SET ..."];
+    [test_quantize_redis_string_truncation_first] ["GET..."] ["..."];
+    [test_quantize_redis_string_truncation_arg] ["GET k..."] ["GET"];
+    [test_quantize_redis_string_truncation_third] ["GET k1\nGET k2\nG..."] ["GET GET ..."];
+    [test_quantize_redis_string_truncation_after_max] ["GET k1\nGET k2\nDEL k3\nGET k..."] ["GET GET DEL ..."];
+    [test_quantize_redis_string_truncation_hdel] ["GET k1\nGET k2\nHDEL k3 a\nG..."] ["GET GET HDEL ..."];
+    [test_quantize_redis_string_truncation_mid] ["GET k...\nDEL k2\nMS..."] ["GET DEL ..."];
+    [test_quantize_redis_string_truncation_early] ["GET k...\nDE...\nMS..."] ["GET ..."];
+    [test_quantize_redis_string_truncation_then_cmd] ["GET k1\nDE...\nGET k2"] ["GET GET"];
+    [test_quantize_redis_string_truncation_complex] ["GET k1\nDE...\nGET k2\nHDEL k3 a\nGET k4\nDEL k5"] ["GET GET HDEL ..."];
+    [test_quantize_redis_string_unknown] ["UNKNOWN 123"] ["UNKNOWN"];
+    [fuzzing_3286489773] ["ꭺ"] ["Ꭺ"];
+    [fuzzing_2812552373] ["\t"] ["\t"];
+    [fuzzing_crlf] ["\r\n"] ["\r"];
+    [fuzzing_box_char] ["𖺻"] ["𖺻"];
     )]
     #[test]
     fn test_name() {
@@ -500,425 +404,94 @@ mod tests {
     }
 
     #[duplicate_item(
-        [
-            test_name   [test_obfuscate_redis_string_1]
-            input       ["AUTH my-secret-password"]
-            expected    ["AUTH ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_2]
-            input       ["AUTH james my-secret-password"]
-            expected    ["AUTH ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_3]
-            input       ["AUTH"]
-            expected    ["AUTH"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_migrate_basic]
-            input       ["MIGRATE host port key destination-db timeout"]
-            expected    ["MIGRATE ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_migrate_with_flags]
-            input       ["MIGRATE host port key destination-db timeout COPY REPLACE"]
-            expected    ["MIGRATE ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_migrate_with_keys]
-            input       [r#"MIGRATE host port "" destination-db timeout KEYS key1 key2 key3"#]
-            expected    ["MIGRATE ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_migrate_no_args]
-            input       ["MIGRATE"]
-            expected    ["MIGRATE"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_hello_version]
-            input       ["HELLO 3"]
-            expected    ["HELLO ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_hello_auth]
-            input       ["HELLO 3 AUTH username password"]
-            expected    ["HELLO ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_hello_auth_setname]
-            input       ["HELLO 3 AUTH username password SETNAME clientname"]
-            expected    ["HELLO ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_hello_no_args]
-            input       ["HELLO"]
-            expected    ["HELLO"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_setuser]
-            input       ["ACL SETUSER alice on >password ~* &* +@all"]
-            expected    ["ACL SETUSER ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_setuser_complex]
-            input       ["ACL SETUSER bob on >mysecretpassword ~keys:* resetchannels &channel:* +@all -@dangerous"]
-            expected    ["ACL SETUSER ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_getuser]
-            input       ["ACL GETUSER alice"]
-            expected    ["ACL GETUSER ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_deluser]
-            input       ["ACL DELUSER alice"]
-            expected    ["ACL DELUSER ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_deluser_multi]
-            input       ["ACL DELUSER alice bob charlie"]
-            expected    ["ACL DELUSER ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_list]
-            input       ["ACL LIST"]
-            expected    ["ACL LIST"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_whoami]
-            input       ["ACL WHOAMI"]
-            expected    ["ACL WHOAMI"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_acl_no_args]
-            input       ["ACL"]
-            expected    ["ACL"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_4]
-            input       ["APPEND key value"]
-            expected    ["APPEND key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_5]
-            input       ["GETSET key value"]
-            expected    ["GETSET key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_6]
-            input       ["LPUSHX key value"]
-            expected    ["LPUSHX key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_7]
-            input       ["GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]"]
-            expected    ["GEORADIUSBYMEMBER key ? radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_8]
-            input       ["RPUSHX key value"]
-            expected    ["RPUSHX key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_9]
-            input       ["SET key value"]
-            expected    ["SET key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_10]
-            input       ["SET key value [expiration EX seconds|PX milliseconds] [NX|XX]"]
-            expected    ["SET key ? [expiration EX seconds|PX milliseconds] [NX|XX]"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_11]
-            input       ["SETNX key value"]
-            expected    ["SETNX key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_12]
-            input       ["SISMEMBER key member"]
-            expected    ["SISMEMBER key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_13]
-            input       ["ZRANK key member"]
-            expected    ["ZRANK key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_14]
-            input       ["ZREVRANK key member"]
-            expected    ["ZREVRANK key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_15]
-            input       ["ZSCORE key member"]
-            expected    ["ZSCORE key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_16]
-            input       ["BITFIELD key GET type offset SET type offset value INCRBY type"]
-            expected    ["BITFIELD key GET type offset SET type offset ? INCRBY type"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_17]
-            input       ["BITFIELD key SET type offset value INCRBY type"]
-            expected    ["BITFIELD key SET type offset ? INCRBY type"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_18]
-            input       ["BITFIELD key GET type offset INCRBY type"]
-            expected    ["BITFIELD key GET type offset INCRBY type"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_19]
-            input       ["BITFIELD key SET type offset"]
-            expected    ["BITFIELD key SET type offset"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_20]
-            input       ["CONFIG SET parameter value"]
-            expected    ["CONFIG SET parameter ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_21]
-            input       ["CONFIG foo bar baz"]
-            expected    ["CONFIG foo bar baz"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_22]
-            input       ["GEOADD key longitude latitude member longitude latitude member longitude latitude member"]
-            expected    ["GEOADD key longitude latitude ? longitude latitude ? longitude latitude ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_23]
-            input       ["GEOADD key longitude latitude member longitude latitude member"]
-            expected    ["GEOADD key longitude latitude ? longitude latitude ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_24]
-            input       ["GEOADD key longitude latitude member"]
-            expected    ["GEOADD key longitude latitude ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_25]
-            input       ["GEOADD key longitude latitude"]
-            expected    ["GEOADD key longitude latitude"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_26]
-            input       ["GEOADD key"]
-            expected    ["GEOADD key"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_27]
-            input       ["GEOHASH key\nGEOPOS key\n GEODIST key"]
-            expected    ["GEOHASH key\nGEOPOS key\nGEODIST key"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_28]
-            input       ["GEOHASH key member\nGEOPOS key member\nGEODIST key member\n"]
-            expected    ["GEOHASH key ?\nGEOPOS key ?\nGEODIST key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_29]
-            input       ["GEOHASH key member member member\nGEOPOS key member member \n  GEODIST key member member member"]
-            expected    ["GEOHASH key ?\nGEOPOS key ?\nGEODIST key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_30]
-            input       ["GEOPOS key member [member ...]"]
-            expected    ["GEOPOS key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_31]
-            input       ["SREM key member [member ...]"]
-            expected    ["SREM key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_32]
-            input       ["ZREM key member [member ...]"]
-            expected    ["ZREM key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_33]
-            input       ["SADD key member [member ...]"]
-            expected    ["SADD key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_34]
-            input       ["GEODIST key member1 member2 [unit]"]
-            expected    ["GEODIST key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_35]
-            input       ["LPUSH key value [value ...]"]
-            expected    ["LPUSH key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_36]
-            input       ["RPUSH key value [value ...]"]
-            expected    ["RPUSH key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_37]
-            input       ["HSET key field value \nHSETNX key field value\nBLAH"]
-            expected    ["HSET key field ?\nHSETNX key field ?\nBLAH"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_38]
-            input       ["HSET key field value"]
-            expected    ["HSET key field ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_39]
-            input       ["HSETNX key field value"]
-            expected    ["HSETNX key field ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_40]
-            input       ["LREM key count value"]
-            expected    ["LREM key count ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_41]
-            input       ["LSET key index value"]
-            expected    ["LSET key index ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_42]
-            input       ["SETBIT key offset value"]
-            expected    ["SETBIT key offset ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_43]
-            input       ["SETRANGE key offset value"]
-            expected    ["SETRANGE key offset ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_44]
-            input       ["SETEX key seconds value"]
-            expected    ["SETEX key seconds ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_45]
-            input       ["PSETEX key milliseconds value"]
-            expected    ["PSETEX key milliseconds ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_46]
-            input       ["ZINCRBY key increment member"]
-            expected    ["ZINCRBY key increment ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_47]
-            input       ["SMOVE source destination member"]
-            expected    ["SMOVE source destination ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_48]
-            input       ["RESTORE key ttl serialized-value [REPLACE]"]
-            expected    ["RESTORE key ttl ? [REPLACE]"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_49]
-            input       ["LINSERT key BEFORE pivot value"]
-            expected    ["LINSERT key BEFORE pivot ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_50]
-            input       ["LINSERT key AFTER pivot value"]
-            expected    ["LINSERT key AFTER pivot ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_51]
-            input       ["HMSET key field value field value"]
-            expected    ["HMSET key field ? field ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_52]
-            input       ["HMSET key field value \n HMSET key field value\n\n "]
-            expected    ["HMSET key field ?\nHMSET key field ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_53]
-            input       ["HMSET key field"]
-            expected    ["HMSET key field"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_54]
-            input       ["MSET key value key value"]
-            expected    ["MSET key ? key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_55]
-            input       ["HMSET key field"]
-            expected    ["HMSET key field"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_56]
-            input       ["MSET\nMSET key value"]
-            expected    ["MSET\nMSET key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_57]
-            input       ["MSET key value"]
-            expected    ["MSET key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_58]
-            input       ["MSETNX key value key value"]
-            expected    ["MSETNX key ? key ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_59]
-            input       ["ZADD key score member score member"]
-            expected    ["ZADD key score ? score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_60]
-            input       ["ZADD key NX score member score member"]
-            expected    ["ZADD key NX score ? score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_61]
-            input       ["ZADD key NX CH score member score member"]
-            expected    ["ZADD key NX CH score ? score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_62]
-            input       ["ZADD key NX CH INCR score member score member"]
-            expected    ["ZADD key NX CH INCR score ? score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_63]
-            input       ["ZADD key XX INCR score member score member"]
-            expected    ["ZADD key XX INCR score ? score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_64]
-            input       ["ZADD key XX INCR score member"]
-            expected    ["ZADD key XX INCR score ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_65]
-            input       ["ZADD key XX INCR score"]
-            expected    ["ZADD key XX INCR score"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_66]
-            input       [r"
+    test_name input expected;
+    [test_obfuscate_redis_string_1] ["AUTH my-secret-password"] ["AUTH ?"];
+    [test_obfuscate_redis_string_2] ["AUTH james my-secret-password"] ["AUTH ?"];
+    [test_obfuscate_redis_string_3] ["AUTH"] ["AUTH"];
+    [test_obfuscate_redis_string_migrate_basic] ["MIGRATE host port key destination-db timeout"] ["MIGRATE ?"];
+    [test_obfuscate_redis_string_migrate_with_flags] ["MIGRATE host port key destination-db timeout COPY REPLACE"] ["MIGRATE ?"];
+    [test_obfuscate_redis_string_migrate_with_keys] [r#"MIGRATE host port "" destination-db timeout KEYS key1 key2 key3"#] ["MIGRATE ?"];
+    [test_obfuscate_redis_string_migrate_no_args] ["MIGRATE"] ["MIGRATE"];
+    [test_obfuscate_redis_string_hello_version] ["HELLO 3"] ["HELLO ?"];
+    [test_obfuscate_redis_string_hello_auth] ["HELLO 3 AUTH username password"] ["HELLO ?"];
+    [test_obfuscate_redis_string_hello_auth_setname] ["HELLO 3 AUTH username password SETNAME clientname"] ["HELLO ?"];
+    [test_obfuscate_redis_string_hello_no_args] ["HELLO"] ["HELLO"];
+    [test_obfuscate_redis_string_acl_setuser] ["ACL SETUSER alice on >password ~* &* +@all"] ["ACL SETUSER ?"];
+    [test_obfuscate_redis_string_acl_setuser_complex] ["ACL SETUSER bob on >mysecretpassword ~keys:* resetchannels &channel:* +@all -@dangerous"] ["ACL SETUSER ?"];
+    [test_obfuscate_redis_string_acl_getuser] ["ACL GETUSER alice"] ["ACL GETUSER ?"];
+    [test_obfuscate_redis_string_acl_deluser] ["ACL DELUSER alice"] ["ACL DELUSER ?"];
+    [test_obfuscate_redis_string_acl_deluser_multi] ["ACL DELUSER alice bob charlie"] ["ACL DELUSER ?"];
+    [test_obfuscate_redis_string_acl_list] ["ACL LIST"] ["ACL LIST"];
+    [test_obfuscate_redis_string_acl_whoami] ["ACL WHOAMI"] ["ACL WHOAMI"];
+    [test_obfuscate_redis_string_acl_no_args] ["ACL"] ["ACL"];
+    [test_obfuscate_redis_string_4] ["APPEND key value"] ["APPEND key ?"];
+    [test_obfuscate_redis_string_5] ["GETSET key value"] ["GETSET key ?"];
+    [test_obfuscate_redis_string_6] ["LPUSHX key value"] ["LPUSHX key ?"];
+    [test_obfuscate_redis_string_7] ["GEORADIUSBYMEMBER key member radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]"] ["GEORADIUSBYMEMBER key ? radius m|km|ft|mi [WITHCOORD] [WITHDIST] [WITHHASH] [COUNT count] [ASC|DESC] [STORE key] [STOREDIST key]"];
+    [test_obfuscate_redis_string_8] ["RPUSHX key value"] ["RPUSHX key ?"];
+    [test_obfuscate_redis_string_9] ["SET key value"] ["SET key ?"];
+    [test_obfuscate_redis_string_10] ["SET key value [expiration EX seconds|PX milliseconds] [NX|XX]"] ["SET key ? [expiration EX seconds|PX milliseconds] [NX|XX]"];
+    [test_obfuscate_redis_string_11] ["SETNX key value"] ["SETNX key ?"];
+    [test_obfuscate_redis_string_12] ["SISMEMBER key member"] ["SISMEMBER key ?"];
+    [test_obfuscate_redis_string_13] ["ZRANK key member"] ["ZRANK key ?"];
+    [test_obfuscate_redis_string_14] ["ZREVRANK key member"] ["ZREVRANK key ?"];
+    [test_obfuscate_redis_string_15] ["ZSCORE key member"] ["ZSCORE key ?"];
+    [test_obfuscate_redis_string_16] ["BITFIELD key GET type offset SET type offset value INCRBY type"] ["BITFIELD key GET type offset SET type offset ? INCRBY type"];
+    [test_obfuscate_redis_string_17] ["BITFIELD key SET type offset value INCRBY type"] ["BITFIELD key SET type offset ? INCRBY type"];
+    [test_obfuscate_redis_string_18] ["BITFIELD key GET type offset INCRBY type"] ["BITFIELD key GET type offset INCRBY type"];
+    [test_obfuscate_redis_string_19] ["BITFIELD key SET type offset"] ["BITFIELD key SET type offset"];
+    [test_obfuscate_redis_string_20] ["CONFIG SET parameter value"] ["CONFIG SET parameter ?"];
+    [test_obfuscate_redis_string_21] ["CONFIG foo bar baz"] ["CONFIG foo bar baz"];
+    [test_obfuscate_redis_string_22] ["GEOADD key longitude latitude member longitude latitude member longitude latitude member"] ["GEOADD key longitude latitude ? longitude latitude ? longitude latitude ?"];
+    [test_obfuscate_redis_string_23] ["GEOADD key longitude latitude member longitude latitude member"] ["GEOADD key longitude latitude ? longitude latitude ?"];
+    [test_obfuscate_redis_string_24] ["GEOADD key longitude latitude member"] ["GEOADD key longitude latitude ?"];
+    [test_obfuscate_redis_string_25] ["GEOADD key longitude latitude"] ["GEOADD key longitude latitude"];
+    [test_obfuscate_redis_string_26] ["GEOADD key"] ["GEOADD key"];
+    [test_obfuscate_redis_string_27] ["GEOHASH key\nGEOPOS key\n GEODIST key"] ["GEOHASH key\nGEOPOS key\nGEODIST key"];
+    [test_obfuscate_redis_string_28] ["GEOHASH key member\nGEOPOS key member\nGEODIST key member\n"] ["GEOHASH key ?\nGEOPOS key ?\nGEODIST key ?"];
+    [test_obfuscate_redis_string_29] ["GEOHASH key member member member\nGEOPOS key member member \n  GEODIST key member member member"] ["GEOHASH key ?\nGEOPOS key ?\nGEODIST key ?"];
+    [test_obfuscate_redis_string_30] ["GEOPOS key member [member ...]"] ["GEOPOS key ?"];
+    [test_obfuscate_redis_string_31] ["SREM key member [member ...]"] ["SREM key ?"];
+    [test_obfuscate_redis_string_32] ["ZREM key member [member ...]"] ["ZREM key ?"];
+    [test_obfuscate_redis_string_33] ["SADD key member [member ...]"] ["SADD key ?"];
+    [test_obfuscate_redis_string_34] ["GEODIST key member1 member2 [unit]"] ["GEODIST key ?"];
+    [test_obfuscate_redis_string_35] ["LPUSH key value [value ...]"] ["LPUSH key ?"];
+    [test_obfuscate_redis_string_36] ["RPUSH key value [value ...]"] ["RPUSH key ?"];
+    [test_obfuscate_redis_string_37] ["HSET key field value \nHSETNX key field value\nBLAH"] ["HSET key field ?\nHSETNX key field ?\nBLAH"];
+    [test_obfuscate_redis_string_38] ["HSET key field value"] ["HSET key field ?"];
+    [test_obfuscate_redis_string_39] ["HSETNX key field value"] ["HSETNX key field ?"];
+    [test_obfuscate_redis_string_40] ["LREM key count value"] ["LREM key count ?"];
+    [test_obfuscate_redis_string_41] ["LSET key index value"] ["LSET key index ?"];
+    [test_obfuscate_redis_string_42] ["SETBIT key offset value"] ["SETBIT key offset ?"];
+    [test_obfuscate_redis_string_43] ["SETRANGE key offset value"] ["SETRANGE key offset ?"];
+    [test_obfuscate_redis_string_44] ["SETEX key seconds value"] ["SETEX key seconds ?"];
+    [test_obfuscate_redis_string_45] ["PSETEX key milliseconds value"] ["PSETEX key milliseconds ?"];
+    [test_obfuscate_redis_string_46] ["ZINCRBY key increment member"] ["ZINCRBY key increment ?"];
+    [test_obfuscate_redis_string_47] ["SMOVE source destination member"] ["SMOVE source destination ?"];
+    [test_obfuscate_redis_string_48] ["RESTORE key ttl serialized-value [REPLACE]"] ["RESTORE key ttl ? [REPLACE]"];
+    [test_obfuscate_redis_string_49] ["LINSERT key BEFORE pivot value"] ["LINSERT key BEFORE pivot ?"];
+    [test_obfuscate_redis_string_50] ["LINSERT key AFTER pivot value"] ["LINSERT key AFTER pivot ?"];
+    [test_obfuscate_redis_string_51] ["HMSET key field value field value"] ["HMSET key field ? field ?"];
+    [test_obfuscate_redis_string_52] ["HMSET key field value \n HMSET key field value\n\n "] ["HMSET key field ?\nHMSET key field ?"];
+    [test_obfuscate_redis_string_53] ["HMSET key field"] ["HMSET key field"];
+    [test_obfuscate_redis_string_54] ["MSET key value key value"] ["MSET key ? key ?"];
+    [test_obfuscate_redis_string_55] ["HMSET key field"] ["HMSET key field"];
+    [test_obfuscate_redis_string_56] ["MSET\nMSET key value"] ["MSET\nMSET key ?"];
+    [test_obfuscate_redis_string_57] ["MSET key value"] ["MSET key ?"];
+    [test_obfuscate_redis_string_58] ["MSETNX key value key value"] ["MSETNX key ? key ?"];
+    [test_obfuscate_redis_string_59] ["ZADD key score member score member"] ["ZADD key score ? score ?"];
+    [test_obfuscate_redis_string_60] ["ZADD key NX score member score member"] ["ZADD key NX score ? score ?"];
+    [test_obfuscate_redis_string_61] ["ZADD key NX CH score member score member"] ["ZADD key NX CH score ? score ?"];
+    [test_obfuscate_redis_string_62] ["ZADD key NX CH INCR score member score member"] ["ZADD key NX CH INCR score ? score ?"];
+    [test_obfuscate_redis_string_63] ["ZADD key XX INCR score member score member"] ["ZADD key XX INCR score ? score ?"];
+    [test_obfuscate_redis_string_64] ["ZADD key XX INCR score member"] ["ZADD key XX INCR score ?"];
+    [test_obfuscate_redis_string_65] ["ZADD key XX INCR score"] ["ZADD key XX INCR score"];
+    [test_obfuscate_redis_string_66] [r"
 CONFIG command
 SET k v
-                        "]
-            expected    [r"CONFIG command
+                        "] [r"CONFIG command
 SET k ?"];
-        ]
-        [
-            test_name   [test_obfuscate_redis_string_67]
-            input       ["HSET key field value field value"]
-            expected    ["HSET key field ? field ?"];
-        ]
+    [test_obfuscate_redis_string_67] ["HSET key field value field value"] ["HSET key field ? field ?"];
     )]
     #[test]
     fn test_name() {
@@ -927,101 +500,26 @@ SET k ?"];
     }
 
     #[duplicate_item(
-        [
-            test_name   [test_obfuscate_all_redis_args_1]
-            input       [""]
-            expected    [""];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_2]
-            input       ["SET key value"]
-            expected    ["SET ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_3]
-            input       ["GET k"]
-            expected    ["GET ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_4]
-            input       ["FAKECMD key value hash"]
-            expected    ["FAKECMD ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_5]
-            input       ["AUTH password"]
-            expected    ["AUTH ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_6]
-            input       ["GET"]
-            expected    ["GET"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_7]
-            input       ["CONFIG SET key value"]
-            expected    ["CONFIG SET ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_8]
-            input       ["CONFIG GET key"]
-            expected    ["CONFIG GET ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_9]
-            input       ["CONFIG key"]
-            expected    ["CONFIG ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_10]
-            input       ["BITFIELD key SET key value GET key"]
-            expected    ["BITFIELD ? SET ? GET ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_11]
-            input       ["BITFIELD key INCRBY value"]
-            expected    ["BITFIELD ? INCRBY ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_12]
-            input       ["BITFIELD secret key"]
-            expected    ["BITFIELD ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_13]
-            input       ["set key value"]
-            expected    ["set ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_14]
-            input       ["Get key"]
-            expected    ["Get ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_15]
-            input       ["config key"]
-            expected    ["config ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_16]
-            input       ["CONFIG get key"]
-            expected    ["CONFIG get ?"];
-        ]
-        [
-            test_name   [test_obfuscate_all_redis_args_17]
-            input       ["bitfield key SET key value incrby 3"]
-            expected    ["bitfield ? SET ? incrby ?"];
-        ]
-        [
-            test_name   [test_obfuscate_fuzzing_unicode]
-            input       ["\u{00b}ჸ"]
-            expected    ["ჸ"];
-        ]
-        [
-            test_name   [test_obfuscate_fuzzing_whitespaces]
-            input       ["ჸ\n\tჸ"]
-            expected    ["ჸ ?"];
-        ]
+    test_name input expected;
+    [test_obfuscate_all_redis_args_1] [""] [""];
+    [test_obfuscate_all_redis_args_2] ["SET key value"] ["SET ?"];
+    [test_obfuscate_all_redis_args_3] ["GET k"] ["GET ?"];
+    [test_obfuscate_all_redis_args_4] ["FAKECMD key value hash"] ["FAKECMD ?"];
+    [test_obfuscate_all_redis_args_5] ["AUTH password"] ["AUTH ?"];
+    [test_obfuscate_all_redis_args_6] ["GET"] ["GET"];
+    [test_obfuscate_all_redis_args_7] ["CONFIG SET key value"] ["CONFIG SET ?"];
+    [test_obfuscate_all_redis_args_8] ["CONFIG GET key"] ["CONFIG GET ?"];
+    [test_obfuscate_all_redis_args_9] ["CONFIG key"] ["CONFIG ?"];
+    [test_obfuscate_all_redis_args_10] ["BITFIELD key SET key value GET key"] ["BITFIELD ? SET ? GET ?"];
+    [test_obfuscate_all_redis_args_11] ["BITFIELD key INCRBY value"] ["BITFIELD ? INCRBY ?"];
+    [test_obfuscate_all_redis_args_12] ["BITFIELD secret key"] ["BITFIELD ?"];
+    [test_obfuscate_all_redis_args_13] ["set key value"] ["set ?"];
+    [test_obfuscate_all_redis_args_14] ["Get key"] ["Get ?"];
+    [test_obfuscate_all_redis_args_15] ["config key"] ["config ?"];
+    [test_obfuscate_all_redis_args_16] ["CONFIG get key"] ["CONFIG get ?"];
+    [test_obfuscate_all_redis_args_17] ["bitfield key SET key value incrby 3"] ["bitfield ? SET ? incrby ?"];
+    [test_obfuscate_fuzzing_unicode] ["\u{00b}ჸ"] ["ჸ"];
+    [test_obfuscate_fuzzing_whitespaces] ["ჸ\n\tჸ"] ["ჸ ?"];
     )]
     #[test]
     fn test_name() {

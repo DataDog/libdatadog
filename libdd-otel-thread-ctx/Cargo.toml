@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-otel-thread-ctx"
-version = "1.0.0"
+version = "1.1.0"
 description = "OTel thread-level context publisher for Datadog profiling (OTEP #4947)"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
@@ -18,7 +18,7 @@ bench = false
 [dependencies]
 anyhow = { workspace = true, optional = true }
 elf = { workspace = true, features = ["std"], optional = true }
-object = { version = "0.36", default-features = false, features = ["archive", "read_core"], optional = true }
+object = { workspace = true, features = ["archive", "read_core"], optional = true }
 
 [features]
 sanity-check = ["dep:elf", "dep:anyhow"]

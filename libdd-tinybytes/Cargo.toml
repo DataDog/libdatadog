@@ -1,6 +1,6 @@
 [package]
 name = "libdd-tinybytes"
-version= "1.1.2"
+version= "1.1.3"
 description = "Tiny implementation of a bytes::Bytes like type that supports AsRef<[u8]>"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tinybytes"
@@ -12,13 +12,13 @@ license.workspace = true
 bench = false
 
 [dev-dependencies]
-once_cell = "1.8"
-pretty_assertions = "1.3"
-proptest = {version = "1.5", features = ["std"], default-features = false}
-test-case = "2.2"
+once_cell = { workspace = true, features = ["std"] }
+pretty_assertions = { workspace = true, default-features = true }
+proptest = { workspace = true, default-features = true }
+test-case.workspace = true
 serde_json.workspace = true
 libdd-tinybytes = { path = ".", features = ["bytes_string", "serialization"] }
-rmp-serde = "1.3.0"
+rmp-serde.workspace = true
 
 [dependencies]
 serde = { workspace = true, optional = true }
