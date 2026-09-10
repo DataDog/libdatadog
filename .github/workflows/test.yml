@@ -150,13 +150,14 @@ jobs:
         run: |
           if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | \
             grep -Eq "libdd-(common|dogstatsd-client|http-client|trace-utils)"; then
-            cargo check -p libdd-dogstatsd-client --no-default-features
+            cargo check -p libdd-dogstatsd-client --no-default-features \
+              --features regex-unicode
             cargo check -p libdd-http-client --no-default-features \
-              --features hyper-backend
+              --features hyper-backend,regex-unicode
             cargo check -p libdd-trace-utils --no-default-features \
-              --features mini_agent
+              --features mini_agent,regex-unicode
             cargo check -p libdd-trace-utils --no-default-features \
-              --features test-utils
+              --features regex-unicode,test-utils
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
@@ -167,14 +168,18 @@ jobs:
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
-            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+            cargo nextest run -p libdd-http-client --no-default-features \
+              --features hyper-backend,hyper-proxy,https,regex-unicode \
+              --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
-              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client --no-default-features \
+                --features hyper-backend,hyper-proxy,https,regex-unicode \
+                --profile ci --verbose
             fi
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
@@ -182,10 +187,25 @@ jobs:
         shell: bash
         run: |
           if echo "$PACKAGES" | grep -q "libdd-common"; then
-            cargo nextest run -p libdd-common --no-default-features --features fips --profile ci --verbose
+            cargo nextest run -p libdd-common --no-default-features \
+              --features fips,regex-unicode --profile ci --verbose
           fi
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] reject missing regex mode"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -q "libdd-common"; then
+            if output=$(cargo check -p libdd-common --no-default-features 2>&1); then
+              echo "::error::libdd-common compiled without a regex mode"
+              exit 1
+            fi
+            if ! grep -Fq "enable one regex engine feature" <<< "$output"; then
+              echo "$output"
+              exit 1
+            fi
+          fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (ASCII full regex)"
         if: runner.os == 'Linux'
         shell: bash
@@ -510,7 +530,7 @@ jobs:
       - name: Install wasm-bindgen test runner
         run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
-        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features --features regex-ascii
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
       - name: Run WASM tests
@@ -518,7 +538,7 @@ jobs:
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
       - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
-        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
+        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless,regex-unicode
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
           # ring compiles C for wasm32, which the runner's default `cc` (gcc) cannot target.

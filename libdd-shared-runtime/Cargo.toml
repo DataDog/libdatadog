@@ -26,10 +26,11 @@ libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 https = ["libdd-capabilities-impl/https"]
 fips = ["libdd-capabilities-impl/fips"]
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "5.0.0", default-features = false }

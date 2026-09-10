@@ -23,9 +23,10 @@ tokio = { version = "1.23", features = ["sync"], optional = true }
 async-trait = { version = "0.1", optional = true }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 https = ["libdd-common/https"]
 fips = ["libdd-common/fips"]
+regex-unicode = ["libdd-common/regex-unicode"]
 shared-runtime = ["dep:libdd-shared-runtime", "dep:tokio", "dep:async-trait"]
 
 [dev-dependencies]

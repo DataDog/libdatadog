@@ -310,7 +310,10 @@ mod tests {
         assert!(payload_size > 0);
     }
 
-    #[cfg(feature = "regex-unicode")]
+    #[cfg(all(
+        feature = "regex-unicode",
+        any(not(feature = "regex-lite"), feature = "regex-ascii")
+    ))]
     #[test]
     fn applies_unicode_replacement_rules() {
         let capabilities = TestCapabilities::default();

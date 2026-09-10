@@ -11,10 +11,19 @@
 //! Enable the **`regex-lite`** feature to switch to [`regex_lite`] instead,
 //! which trades advanced features (Unicode classes, look-around, etc.) for
 //! smaller binary size and faster compile times.
+//! Builds without default features must select `regex-unicode`, `regex-ascii`,
+//! or `regex-lite` explicitly.
 //!
 //! The **`regex-ascii`** and **`require-regex-full`** features force the full
 //! `regex` crate even when `regex-lite` is enabled. The latter also enables
 //! Unicode support for consumers that evaluate user-provided patterns.
+
+#[cfg(not(any(
+    feature = "regex-ascii",
+    feature = "regex-lite",
+    feature = "regex-unicode"
+)))]
+compile_error!("enable one regex engine feature: regex-unicode, regex-ascii, or regex-lite");
 
 #[cfg(all(
     feature = "regex-lite",

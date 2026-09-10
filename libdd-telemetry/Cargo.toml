@@ -12,10 +12,11 @@ license.workspace = true
 bench = false
 
 [features]
-default = ["tracing"]
+default = ["regex-unicode", "tracing"]
 tracing = ["tracing/std"]
 https = ["libdd-common/https", "libdd-shared-runtime/https"]
 fips = ["libdd-common/fips", "libdd-shared-runtime/fips"]
+regex-unicode = ["libdd-common/regex-unicode"]
 
 [dependencies]
 anyhow.workspace = true
