@@ -643,7 +643,7 @@ mod integration_tests {
     fn cfg() -> OtlpGrpcTraceConfig {
         OtlpGrpcTraceConfig {
             headers: vec![],
-            timeout: Duration::from_secs(2),
+            timeout: crate::otlp::config::DEFAULT_OTLP_TIMEOUT,
             otel_trace_semantics_enabled: false,
         }
     }
