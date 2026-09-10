@@ -17,6 +17,7 @@ use crate::{catch_panic, gen_error};
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v04::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
@@ -776,7 +777,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     };
 
     catch_panic!(
-        match exporter.send_trace_chunks(chunks.0, cancel) {
+        match exporter.send_trace_chunks(PooledChunks::unpooled(chunks.0), cancel) {
             Ok(resp) => {
                 if let Some(out) = response_out {
                     out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
