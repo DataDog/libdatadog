@@ -83,24 +83,19 @@ pub struct Config {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
 pub struct ObfuscationConfig {
     // Old format from the agent, now present under sql->obfuscation_mode directly
-    #[serde(default)]
     pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
-    #[cfg(feature = "stats-obfuscation")]
     pub remove_stack_traces: bool,
     pub sql: Option<obfuscation_config::SqlConfig>,
     pub http: obfuscation_config::HttpConfig,
     pub redis: obfuscation_config::RedisConfig,
     pub valkey: obfuscation_config::RedisConfig,
-    #[serde(default)]
     pub credit_cards: obfuscation_config::CreditCardConfig,
     pub memcached: obfuscation_config::MemcachedConfig,
-    #[serde(default)]
     pub elasticsearch: libdd_trace_obfuscation::json::JsonObfuscator,
-    #[serde(default)]
     pub opensearch: libdd_trace_obfuscation::json::JsonObfuscator,
-    #[serde(default)]
     pub mongodb: libdd_trace_obfuscation::json::JsonObfuscator,
     pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
