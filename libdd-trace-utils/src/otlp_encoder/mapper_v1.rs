@@ -13,6 +13,7 @@ use super::OtlpResourceInfo;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use std::borrow::Borrow;
+use std::collections::hash_map::Entry;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
@@ -85,10 +86,10 @@ fn merged_attrs_v1<'a, T: TraceData>(
 
     for (k, v) in span.attributes.iter() {
         let key = (*k).borrow();
-        match index.get(key) {
-            Some(&i) => merged[i].1 = v,
-            None => {
-                index.insert(key, merged.len());
+        match index.entry(key) {
+            Entry::Occupied(e) => merged[*e.get()].1 = v,
+            Entry::Vacant(e) => {
+                e.insert(merged.len());
                 merged.push((key, v));
             }
         }
@@ -99,11 +100,11 @@ fn merged_attrs_v1<'a, T: TraceData>(
     let span_claimed = merged.len();
     for (k, v) in chunk.attributes.iter() {
         let key = (*k).borrow();
-        match index.get(key) {
-            Some(&i) if i < span_claimed => {}
-            Some(&i) => merged[i].1 = v,
-            None => {
-                index.insert(key, merged.len());
+        match index.entry(key) {
+            Entry::Occupied(e) if *e.get() < span_claimed => {}
+            Entry::Occupied(e) => merged[*e.get()].1 = v,
+            Entry::Vacant(e) => {
+                e.insert(merged.len());
                 merged.push((key, v));
             }
         }
