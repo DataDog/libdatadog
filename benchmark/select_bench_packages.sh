@@ -21,23 +21,20 @@ set -eu
 node_index="${1:-1}"
 node_total="${2:-1}"
 
-# Approximate per-crate benchmark cost (~30 s of criterion time per pass) used to balance the shards.
-# Measured 2026-09-04 from main pipeline 8134078c4, with the allocation benchmarks discounted to
-# their cost once their sampling settings are no longer overridden. The three crates that fall
-# through to the default are ~1 unit (ipc ~35 s, trace-normalization ~30 s, trace-stats ~25 s).
-# Retune as benchmarks are added/removed; unknown crates default to 1.
+# Per-crate benchmark cost used to balance the parallel shards. Weights live in
+# benchmark/bench-weights.json (approximate per-crate benchmark-execution seconds); only relative
+WEIGHTS_FILE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)/bench-weights.json"
+_default_weight="$(jq -r '.default_weight // 1' "$WEIGHTS_FILE" 2>/dev/null || echo 1)"
+case "$_default_weight" in ''|*[!0-9]*) _default_weight=1 ;; esac
+
 crate_weight() {
-  case "$1" in
-    libdd-trace-utils) echo 15 ;;
-    libdd-profiling-heap-allocator) echo 7 ;;
-    libdd-sampling) echo 6 ;;
-    libdd-ddsketch) echo 5 ;;
-    libdd-data-pipeline) echo 5 ;;
-    libdd-ffe-test-suite) echo 4 ;;
-    libdd-crashtracker) echo 2 ;;
-    libdd-profiling) echo 2 ;;
-    libdd-trace-obfuscation) echo 2 ;;
-    *) echo 1 ;;
+  local w=""
+  if [ -f "$WEIGHTS_FILE" ]; then
+    w="$(jq -r --arg c "$1" '.weights[$c] // empty' "$WEIGHTS_FILE" 2>/dev/null || echo "")"
+  fi
+  case "$w" in
+    ''|*[!0-9]*) echo "$_default_weight" ;;
+    *) echo "$w" ;;
   esac
 }
 

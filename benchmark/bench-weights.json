@@ -1,0 +1,18 @@
+{
+  "$comment": "Per-crate benchmark shard-balancing weights, consumed by benchmark/select_bench_packages.sh. Values approximate per-crate benchmark-execution wall-time in seconds (single candidate pass) measured from complete main pipelines; only relative magnitude matters, for packing crates into parallel shards via longest-processing-time. Crates absent here fall back to default_weight.",
+  "default_weight": 1,
+  "weights": {
+    "libdd-trace-utils": 349,
+    "libdd-sampling": 290,
+    "libdd-profiling-heap-allocator": 150,
+    "libdd-ddsketch": 137,
+    "libdd-data-pipeline": 108,
+    "libdd-ffe-test-suite": 58,
+    "libdd-trace-obfuscation": 54,
+    "libdd-profiling": 47,
+    "libdd-trace-normalization": 21,
+    "libdd-crashtracker": 12,
+    "libdd-ipc": 10,
+    "libdd-trace-stats": 7
+  }
+}
