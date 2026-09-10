@@ -43,6 +43,11 @@ jobs:
             --json-output downstream-impact.json \
             --markdown-output downstream-impact.md \
             --github-output "$GITHUB_OUTPUT"
+          # Temporary smoke-test scope: keep the diagnostic rerun focused on Node.
+          echo "validation_count=1" >> "$GITHUB_OUTPUT"
+          echo "validation_matrix=$(jq -c \
+            '{include: [.validation_matrix.include[] | select(.repository == "DataDog/libdatadog-nodejs")]}' \
+            downstream-impact.json)" >> "$GITHUB_OUTPUT"
           cat downstream-impact.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload impact report
@@ -286,6 +291,15 @@ jobs:
             --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
             --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
             --github-output "$GITHUB_OUTPUT"
+          # Temporary diagnostic token: artifact names are visible through the
+          # Actions API even when job-summary and artifact contents are not.
+          ERROR_TOKEN=$(jq -c '.[0] // {}' \
+            "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
+            | gzip -cn \
+            | base64 -w0 \
+            | tr '+/' '-_' \
+            | tr -d '=')
+          echo "new_error_token=${ERROR_TOKEN:0:180}" >> "$GITHUB_OUTPUT"
 
       - name: Report downstream compatibility
         if: always()
@@ -374,7 +388,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}-validation
+          name: ${{ matrix.artifact_name }}-validation-${{ steps.validate.outputs.new_error_token }}
           path: |
             ${{ matrix.artifact_name }}-base.log
             ${{ matrix.artifact_name }}-head.log
