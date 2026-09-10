@@ -52,7 +52,7 @@ rand = ">=0.8.6, <0.9"
 tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util", "time"], default-features = false }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 stats-obfuscation = []
 # Enable zstd compression for the agentless intake stats sender.
 compression = ["libdd-trace-utils/compression"]
@@ -60,3 +60,4 @@ telemetry = ["libdd-telemetry"]
 dogstatsd = ["libdd-dogstatsd-client"]
 https = ["libdd-common/https", "libdd-capabilities-impl/https", "libdd-shared-runtime/https","libdd-telemetry?/https","libdd-dogstatsd-client?/https" ]
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips", "libdd-shared-runtime/fips", "libdd-telemetry?/fips", "libdd-dogstatsd-client?/fips"]
+regex-unicode = ["libdd-common/regex-unicode"]

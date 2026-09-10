@@ -10,7 +10,7 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-remote-confi
 description = "Datadog Remote Configuration client and config parsers"
 
 [features]
-default = ["client", "https"]
+default = ["client", "https", "regex-unicode"]
 agentless = [
     "dep:ring",
     "dep:tuf",
@@ -39,6 +39,7 @@ client = [
 ]
 
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]
 # Enable HTTPS support in the fetcher (rustls + ring via libdd-common).
 https = ["libdd-common/https", "libdd-capabilities-impl/https"]
 # FIPS-compliant crypto provider (aws-lc-rs via libdd-common). Unix only.

@@ -15,11 +15,11 @@ const UUID_SOURCE: &str =
 /// Distinct from `UUID_SOURCE` (8-4-4-4-12) because the last group is 4 hex.
 const PCF_UUID_SOURCE: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
 const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
-const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
+const TASK_SOURCE: &str = r"[0-9a-f]{32}-[0-9]+";
 
 pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)]
-    Regex::new(r"^\d+:[^:]*:(.+)$").unwrap()
+    Regex::new(r"^[0-9]+:[^:]*:(.+)$").unwrap()
 });
 
 pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {

@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use crate::regex_engine::Regex;
 
-    static IN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in-\d+").unwrap());
+    static IN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in-[0-9]+").unwrap());
     static CI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap()
     });

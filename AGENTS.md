@@ -57,7 +57,7 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   # Default (reqwest) backend — covered by the workspace test run
   cargo nextest run -p libdd-http-client
   # Hyper backend
-  cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https
+  cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https,regex-unicode
   ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 

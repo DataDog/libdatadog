@@ -13,7 +13,7 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
 bench = false
 
 [features]
-default = ["https", "reqwest-backend"]
+default = ["https", "regex-unicode", "reqwest-backend"]
 # Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
 # installed explicitly by libdd-common's connector init.
 https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
@@ -28,6 +28,7 @@ hyper-backend = [
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
 hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
 fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
+regex-unicode = ["libdd-common?/regex-unicode"]
 
 [dependencies]
 bytes = { workspace = true, features = ["std"] }

@@ -31,6 +31,7 @@ tempfile.workspace = true
 tokio = { version = "1", features = ["fs", "macros", "rt", "time"] }
 
 [features]
-default = ["https"]
+default = ["https", "regex-unicode"]
 https = ["libdd-common/https"]
 fips = ["libdd-common/fips"]
+regex-unicode = ["libdd-common/regex-unicode"]

@@ -20,6 +20,7 @@ default = [
   "ddsketch",
   "ffe",
   "shared-runtime",
+  "regex-unicode",
   "catch_panic",
 ]
 crashtracker = []
@@ -40,6 +41,7 @@ shared-runtime = []
 otel-thread-ctx = []
 catch_panic = []
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]
 
 [lib]
 bench = false

@@ -17,8 +17,9 @@ publish = false
 bench = false
 
 [features]
-default = ["https", "reqwest-backend"]
+default = ["https", "regex-unicode", "reqwest-backend"]
 https = ["libdd-http-client/https"]
+regex-unicode = ["libdd-common/regex-unicode"]
 reqwest-backend = ["libdd-http-client/reqwest-backend"]
 hyper-backend = ["libdd-http-client/hyper-backend"]
 

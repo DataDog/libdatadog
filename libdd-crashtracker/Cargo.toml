@@ -91,7 +91,11 @@ cxx-build = { workspace = true, optional = true }
 # in the build-script context. The build script only needs cc_utils, which has no TLS dependency.
 # Without this, aws-lc-sys gets compiled twice: once for the normal dep graph and once for the
 # build-script dep graph (Cargo resolver v2 keeps these contexts separate).
-libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
+[build-dependencies.libdd-common]
+version = "6.0.0"
+path = "../libdd-common"
+default-features = false
+features = ["regex-ascii"]
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

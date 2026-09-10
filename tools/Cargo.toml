@@ -25,7 +25,9 @@ toml = "0.8"
 wait-timeout = "0.2"
 
 [features]
+default = ["regex-unicode"]
 regex-lite = ["libdd-common/regex-lite"]
+regex-unicode = ["libdd-common/regex-unicode"]
 
 [[bin]]
 name = "dedup_headers"
