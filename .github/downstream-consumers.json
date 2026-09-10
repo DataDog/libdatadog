@@ -147,8 +147,28 @@
     }
   ],
   "consumers": [
-    {"repository": "DataDog/dd-trace-php", "tier": "direct", "mode": "rust-source"},
-    {"repository": "DataDog/dd-trace-py", "tier": "direct", "mode": "rust-source"},
+    {
+      "repository": "DataDog/dd-trace-php",
+      "tier": "direct",
+      "mode": "rust-source",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "Cargo.toml",
+        "args": ["--workspace", "--all-features"],
+        "source_path": "libdatadog"
+      }
+    },
+    {
+      "repository": "DataDog/dd-trace-py",
+      "tier": "direct",
+      "mode": "rust-source",
+      "validation": {
+        "kind": "cargo",
+        "manifest": "src/native/Cargo.toml",
+        "args": ["--all-features"],
+        "patch_sources": ["https://github.com/DataDog/libdatadog"]
+      }
+    },
     {"repository": "DataDog/dd-trace-rb", "tier": "direct", "mode": "native-artifact"},
     {
       "repository": "DataDog/dd-trace-rs",

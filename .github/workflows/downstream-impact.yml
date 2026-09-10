@@ -97,6 +97,7 @@ jobs:
           DOWNSTREAM_MANIFEST: ${{ matrix.manifest }}
           CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
           PATCH_SOURCES_JSON: ${{ toJSON(matrix.patch_sources) }}
+          SOURCE_PATH: ${{ matrix.source_path }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
         run: |
           set -euo pipefail
@@ -144,10 +145,23 @@ jobs:
             local packages="$GITHUB_WORKSPACE/libdatadog-$label-packages.tsv"
             local log_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log"
             local messages_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.jsonl"
+            local source_target
 
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
             git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
             git -C "$DOWNSTREAM_ROOT" clean -fd
+            if [ -n "$SOURCE_PATH" ]; then
+              source_target="$DOWNSTREAM_ROOT/$SOURCE_PATH"
+              if [ -d "$source_target" ] && [ ! -L "$source_target" ]; then
+                if ! rmdir "$source_target"; then
+                  echo "Cannot replace non-empty source path: $SOURCE_PATH" >&2
+                  return 86
+                fi
+              elif [ -e "$source_target" ] || [ -L "$source_target" ]; then
+                unlink "$source_target" || return 86
+              fi
+              ln -s "$libdatadog_root" "$source_target" || return 86
+            fi
             : > "$log_path"
             : > "$messages_path"
 

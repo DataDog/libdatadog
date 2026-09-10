@@ -61,9 +61,25 @@ def load_config(path: Path) -> dict[str, Any]:
                 f"consumer {consumer['repository']!r} cargo validation args must be a list"
             )
         patch_sources = validation.get("patch_sources", [])
-        if not patch_sources or not isinstance(patch_sources, list):
+        source_path = validation.get("source_path", "")
+        if not isinstance(patch_sources, list):
             raise ValueError(
-                f"consumer {consumer['repository']!r} cargo validation needs patch sources"
+                f"consumer {consumer['repository']!r} cargo patch sources must be a list"
+            )
+        if source_path and not isinstance(source_path, str):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo source path must be a string"
+            )
+        if bool(patch_sources) == bool(source_path):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo validation needs exactly one "
+                "of patch_sources or source_path"
+            )
+        if source_path and (
+            source_path.startswith("/") or ".." in Path(source_path).parts
+        ):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} cargo source path must stay in the checkout"
             )
 
     return config
@@ -134,7 +150,8 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
             **entry,
             "manifest": item["validation"]["manifest"],
             "cargo_args": item["validation"].get("args", []),
-            "patch_sources": item["validation"]["patch_sources"],
+            "patch_sources": item["validation"].get("patch_sources", []),
+            "source_path": item["validation"].get("source_path", ""),
         }
         for entry, item in zip(matrix_entries, impacted)
         if item.get("validation", {}).get("kind") == "cargo"

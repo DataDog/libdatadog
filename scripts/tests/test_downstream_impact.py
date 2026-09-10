@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.util
+import copy
 import json
 import tempfile
 import unittest
@@ -43,7 +44,7 @@ class DownstreamImpactTest(unittest.TestCase):
         self.assertNotIn("DataDog/dd-trace-go", repositories)
         self.assertEqual(impact["cargo_validation_count"], 0)
 
-    def test_data_pipeline_change_builds_four_cargo_consumers(self):
+    def test_data_pipeline_change_builds_six_cargo_consumers(self):
         impact = downstream_impact.calculate_impact(
             self.config, ["libdd-data-pipeline/src/lib.rs"]
         )
@@ -54,12 +55,14 @@ class DownstreamImpactTest(unittest.TestCase):
             repositories,
             {
                 "DataDog/dd-trace-rs",
+                "DataDog/dd-trace-php",
+                "DataDog/dd-trace-py",
                 "DataDog/datadog-lambda-extension",
                 "DataDog/serverless-components",
                 "DataDog/libdatadog-nodejs",
             },
         )
-        self.assertEqual(impact["cargo_validation_count"], 4)
+        self.assertEqual(impact["cargo_validation_count"], 6)
         by_repository = {
             item["repository"]: item for item in impact["cargo_matrix"]["include"]
         }
@@ -67,11 +70,18 @@ class DownstreamImpactTest(unittest.TestCase):
             by_repository["DataDog/datadog-lambda-extension"]["patch_sources"],
             ["crates-io", "https://github.com/DataDog/libdatadog"],
         )
+        self.assertEqual(
+            by_repository["DataDog/dd-trace-php"]["source_path"], "libdatadog"
+        )
+        self.assertEqual(
+            by_repository["DataDog/dd-trace-py"]["patch_sources"],
+            ["https://github.com/DataDog/libdatadog"],
+        )
 
     def test_workspace_change_selects_every_consumer(self):
         impact = downstream_impact.calculate_impact(self.config, ["Cargo.toml"])
         self.assertEqual(impact["impacted_count"], 16)
-        self.assertEqual(impact["cargo_validation_count"], 4)
+        self.assertEqual(impact["cargo_validation_count"], 6)
 
     def test_less_common_published_component_fails_safe(self):
         impact = downstream_impact.calculate_impact(
@@ -114,6 +124,25 @@ class DownstreamImpactTest(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text(json.dumps(invalid), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "unknown consumers"):
+                downstream_impact.load_config(path)
+
+    def test_cargo_validation_rejects_two_source_strategies(self):
+        invalid = copy.deepcopy(self.config)
+        validation = invalid["consumers"][0]["validation"]
+        validation["patch_sources"] = ["crates-io"]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "exactly one"):
+                downstream_impact.load_config(path)
+
+    def test_cargo_validation_rejects_source_path_traversal(self):
+        invalid = copy.deepcopy(self.config)
+        invalid["consumers"][0]["validation"]["source_path"] = "../libdatadog"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps(invalid), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "stay in the checkout"):
                 downstream_impact.load_config(path)
 
 
