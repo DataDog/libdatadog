@@ -27,6 +27,7 @@ struct ParamInfo {
 }
 
 struct MethodInfo {
+    attrs: Vec<syn::Attribute>,
     name: Ident,
     variant: Ident,
     is_blocking: bool,
@@ -46,6 +47,12 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         let name = func.sig.ident.clone();
         let variant = Ident::new(&name.to_string().to_pascal_case(), Span::mixed_site());
         let is_blocking = has_attr(&func.attrs, "blocking");
+        let attrs = func
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("cfg"))
+            .cloned()
+            .collect();
 
         let return_type = match &func.sig.output {
             ReturnType::Default => None,
@@ -103,6 +110,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         }
 
         methods.push(MethodInfo {
+            attrs,
             name,
             variant,
             is_blocking,
@@ -128,6 +136,7 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
     let variants: Vec<_> = methods
         .iter()
         .map(|m| {
+            let attrs = &m.attrs;
             let variant = &m.variant;
             let fields: Vec<_> = m
                 .params
@@ -142,7 +151,7 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
                     quote! { #(#attrs)* #name: #server_ty }
                 })
                 .collect();
-            quote! { #variant { #(#fields),* } }
+            quote! { #(#attrs)* #variant { #(#fields),* } }
         })
         .collect();
 
@@ -158,6 +167,7 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
     let variants: Vec<_> = methods
         .iter()
         .map(|method| {
+            let attrs = &method.attrs;
             let variant = &method.variant;
             let fields: Vec<_> = method
                 .params
@@ -173,7 +183,7 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
                     quote! { #(#attrs)* #name: #ty }
                 })
                 .collect();
-            quote! { #variant { #(#fields),* } }
+            quote! { #(#attrs)* #variant { #(#fields),* } }
         })
         .collect();
 
@@ -196,6 +206,7 @@ fn gen_transfer_handles(
         .iter()
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
+            let attrs = &m.attrs;
             let variant = &m.variant;
             let handle_names: Vec<_> = m
                 .handle_param_indices
@@ -209,6 +220,7 @@ fn gen_transfer_handles(
                 .map(|hn| quote! { __transport.copy_handle(#hn.clone().into())?; })
                 .collect();
             quote! {
+                #(#attrs)*
                 #enum_name::#variant { #(#handle_names,)* .. } => {
                     #(#stmts)*
                     Ok(())
@@ -221,6 +233,7 @@ fn gen_transfer_handles(
         .iter()
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
+            let attrs = &m.attrs;
             let variant = &m.variant;
             let handle_names: Vec<_> = m
                 .handle_param_indices
@@ -232,6 +245,7 @@ fn gen_transfer_handles(
                 .map(|hn| quote! { #hn.receive_handles(__transport)?; })
                 .collect();
             quote! {
+                #(#attrs)*
                 #enum_name::#variant { #(#handle_names,)* .. } => {
                     #(#stmts)*
                     Ok(())
@@ -275,6 +289,7 @@ fn gen_handler_trait(
     let handler_methods: Vec<_> = methods
         .iter()
         .map(|m| {
+            let attrs = &m.attrs;
             let name = &m.name;
             let params: Vec<_> = m
                 .params
@@ -294,6 +309,7 @@ fn gen_handler_trait(
                 Some(ty) => quote! { #ty },
             };
             quote! {
+                #(#attrs)*
                 fn #name(
                     &self,
                     #(#params),*
@@ -327,6 +343,7 @@ fn gen_serve_fn(
     let match_arms: Vec<_> = methods
         .iter()
         .map(|m| {
+            let attrs = &m.attrs;
             let variant = &m.variant;
             let name = &m.name;
             // field_names: includes leading #[cfg(...)] attrs for conditional params.
@@ -378,6 +395,7 @@ fn gen_serve_fn(
             };
 
             quote! {
+                #(#attrs)*
                 #enum_name::#variant { #(#field_names),* } => {
                     #response_code
                 }
@@ -453,6 +471,7 @@ fn gen_channel(
     let channel_methods: Vec<_> = methods
         .iter()
         .map(|m| {
+            let attrs = &m.attrs;
             let name = &m.name;
             let params: Vec<_> = m
                 .params
@@ -498,6 +517,7 @@ fn gen_channel(
             if m.return_type.is_none() && !m.is_blocking {
                 let method_name = format_ident!("try_send_{}", name);
                 quote! {
+                    #(#attrs)*
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
                         self.0.try_send(&mut __data, &__fds)
@@ -506,6 +526,7 @@ fn gen_channel(
             } else if m.return_type.is_none() {
                 let method_name = format_ident!("call_{}", name);
                 quote! {
+                    #(#attrs)*
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
                         #build_req_and_fds
                         self.0.call(&mut __data, &__fds)?;
@@ -516,6 +537,7 @@ fn gen_channel(
                 let method_name = format_ident!("call_{}", name);
                 let ret_ty = m.return_type.as_ref().unwrap();
                 quote! {
+                    #(#attrs)*
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
                         #build_req_and_fds
                         let (__resp, _) = self.0.call(&mut __data, &__fds)
@@ -618,6 +640,8 @@ fn gen_channel(
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
 /// - `#[SerializedHandle]` on a parameter — the value carries an fd via SCM_RIGHTS
 /// - `#[ClientType(Type)]` on a parameter — use `Type` in the serialize-only client request
+///
+/// Method-level `#[cfg(...)]` attributes are copied to every generated item for that method.
 #[proc_macro_attribute]
 pub fn service(_attr: TokenStream, input: TokenStream) -> TokenStream {
     let item: ItemTrait = syn::parse(input).unwrap();
@@ -659,4 +683,44 @@ pub fn service(_attr: TokenStream, input: TokenStream) -> TokenStream {
         #serve_fn
         #channel
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::format_ident;
+    use syn::parse_quote;
+
+    fn assert_cfg_is_preserved(tokens: proc_macro2::TokenStream) {
+        assert!(
+            tokens.to_string().contains("# [cfg (unix)]"),
+            "generated tokens did not preserve method cfg: {tokens}"
+        );
+    }
+
+    #[test]
+    fn method_cfg_is_preserved_in_all_generated_code() {
+        let item: ItemTrait = parse_quote! {
+            pub trait TestService {
+                #[cfg(unix)]
+                async fn unix_only(#[SerializedHandle] handle: ShmHandle) -> bool;
+            }
+        };
+        let methods = collect_methods(&item);
+        let enum_name = format_ident!("TestServiceRequest");
+        let client_enum_name = format_ident!("TestServiceClientRequest");
+
+        assert_cfg_is_preserved(gen_request_enum(&enum_name, &methods));
+        assert_cfg_is_preserved(gen_client_request_enum(&client_enum_name, &methods));
+        assert_cfg_is_preserved(gen_transfer_handles(&enum_name, &methods, false));
+        assert_cfg_is_preserved(gen_handler_trait(&item.ident, &item.vis, &methods));
+        assert_cfg_is_preserved(gen_serve_fn(&item.ident, &enum_name, &methods));
+        assert_cfg_is_preserved(gen_channel(
+            &item.ident,
+            &item.vis,
+            &enum_name,
+            None,
+            &methods,
+        ));
+    }
 }
