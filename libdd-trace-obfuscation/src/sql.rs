@@ -2333,6 +2333,7 @@ mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
     use core::fmt::Write;
 
+    #[cfg_attr(miri, ignore)] // huge nested input, prohibitively slow under Miri
     #[test]
     fn test_dollar_quote_nesting_does_not_overflow_stack() {
         const NESTING: usize = 20_000;
