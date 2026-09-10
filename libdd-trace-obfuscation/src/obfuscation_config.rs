@@ -50,7 +50,7 @@ impl Default for CreditCardConfig {
 
 pub type JsonStringTransformer = fn(&str) -> String;
 
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
@@ -72,6 +72,16 @@ pub struct JsonObfuscatorConfig {
 impl Default for JsonObfuscatorConfig {
     fn default() -> Self {
         Self::enabled()
+    }
+}
+
+impl PartialEq for JsonObfuscatorConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.enabled == other.enabled
+            && self.keep_keys == other.keep_keys
+            && self.transform_keys == other.transform_keys
+            && self.transformer.is_none()
+            && other.transformer.is_none()
     }
 }
 

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Multiple concatenated JSON objects in the input are each obfuscated independently.
 /// On a parse error the output so far is returned with `"..."` appended.
-#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 #[serde(transparent)]
 pub struct JsonObfuscator {
     config: JsonObfuscatorConfig,
