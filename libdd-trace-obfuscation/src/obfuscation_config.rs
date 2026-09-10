@@ -10,6 +10,7 @@ use crate::{
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct MemcachedConfig {
     // Agent sent pascal case fields here in versions <7.79.0
     #[serde(alias = "Enabled")]
@@ -30,6 +31,7 @@ impl Default for MemcachedConfig {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
@@ -51,6 +53,7 @@ impl Default for CreditCardConfig {
 pub type JsonStringTransformer = fn(&str) -> String;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(default)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
@@ -108,6 +111,7 @@ impl JsonObfuscatorConfig {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct RedisConfig {
     // Agent sent pascal case fields here in versions <7.79.0
     #[serde(alias = "Enabled")]
@@ -129,6 +133,7 @@ impl Default for RedisConfig {
 }
 
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct HttpConfig {
     pub remove_query_string: bool,
     pub remove_path_digits: bool,
@@ -266,6 +271,7 @@ pub enum SqlObfuscationMode {
     clippy::struct_excessive_bools,
     reason = "public config schema, should not be refactored"
 )]
+#[serde(default)]
 pub struct SqlConfig {
     pub replace_digits: bool,
     pub keep_sql_alias: bool,
