@@ -277,13 +277,13 @@ mod tests {
         }
     }
 
-    fn repeated_sql_traces() -> Vec<Vec<SpanBytes>> {
+    fn repeated_sql_traces() -> PooledChunks<'static, BytesData> {
         let resource = "SELECT * FROM users WHERE id = 42";
-        vec![vec![
+        PooledChunks::unpooled(vec![vec![
             sql_span(resource, 2, 0),
             sql_span(resource, 3, 2),
             sql_span(resource, 4, 2),
-        ]]
+        ]])
     }
 
     fn request_body(request: &http::Request<Bytes>) -> Vec<u8> {
