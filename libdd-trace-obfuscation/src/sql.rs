@@ -3,8 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) mod cache;
-
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]

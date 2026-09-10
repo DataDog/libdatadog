@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::borrow::Borrow;
+use core::{borrow::Borrow, mem};
 
 use libdd_trace_protobuf::pb::{
     self, attribute_any_value::AttributeAnyValueType,
@@ -21,8 +21,9 @@ use crate::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
     },
+    repeat_cache::RepeatCache,
     replacer::{replace_span_tags, replace_span_tags_v04},
-    sql::{cache::Cache as SqlCache, obfuscate_sql, DbmsKind, SqlObfuscationMode},
+    sql::{obfuscate_sql, DbmsKind, SqlObfuscationMode},
 };
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
@@ -236,12 +237,14 @@ fn apply<S: SpanText>(field: &mut S, f: impl FnOnce(&str) -> Option<String>) {
     }
 }
 
+type SqlCache<S> = RepeatCache<(DbmsKind, S), String>;
+
 /// Obfuscates v0.4 spans and reuses the most recent SQL result.
 ///
 /// Keep one instance for a batch of spans. A new instance starts with an empty cache.
 pub struct V04Obfuscator<'a, T: TraceData> {
     config: &'a ObfuscationConfig,
-    sql_cache: SqlCache<'a, T::Text>,
+    sql_cache: SqlCache<T::Text>,
 }
 
 impl<'a, T: TraceData> V04Obfuscator<'a, T> {
@@ -250,7 +253,7 @@ impl<'a, T: TraceData> V04Obfuscator<'a, T> {
     pub const fn new(config: &'a ObfuscationConfig) -> Self {
         Self {
             config,
-            sql_cache: SqlCache::new(&config.sql),
+            sql_cache: SqlCache::new(),
         }
     }
 
@@ -273,7 +276,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
 fn obfuscate_v04_span_inner<T: TraceData>(
     span: &mut v04::Span<T>,
     config: &ObfuscationConfig,
-    sql_cache: Option<&mut SqlCache<'_, T::Text>>,
+    sql_cache: Option<&mut SqlCache<T::Text>>,
 ) {
     for span_event in &mut span.span_events {
         obfuscate_v04_span_event(span_event, config);
@@ -362,7 +365,7 @@ fn obfuscate_v04_span_inner<T: TraceData>(
 fn obfuscate_v04_sql_resource<T: TraceData>(
     span: &mut v04::Span<T>,
     config: &ObfuscationConfig,
-    sql_cache: Option<&mut SqlCache<'_, T::Text>>,
+    sql_cache: Option<&mut SqlCache<T::Text>>,
 ) {
     let dbms: DbmsKind = span
         .meta
@@ -371,7 +374,12 @@ fn obfuscate_v04_sql_resource<T: TraceData>(
         .and_then(|dbms| TryInto::try_into(dbms).ok())
         .unwrap_or_default();
     let query = if let Some(cache) = sql_cache {
-        cache.obfuscate(&mut span.resource, dbms)
+        let resource = mem::take(&mut span.resource);
+        let query = cache.resolve_with((dbms, resource), |(dbms, resource)| {
+            obfuscate_sql(as_str(resource), &config.sql, *dbms)
+        });
+        span.resource = T::Text::from_owned(query.clone());
+        query
     } else {
         let query = obfuscate_sql(as_str(&span.resource), &config.sql, dbms);
         span.resource = T::Text::from_owned(query.clone());
