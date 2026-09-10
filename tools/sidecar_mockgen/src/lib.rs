@@ -206,7 +206,7 @@ fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Re
         // `-ffat-lto-objects` embeds a second, independent copy of every symbol's binding in
         // `.gnu.lto_*` sections. The linker then recompiles from that IR instead of object data
         // directly. Stripping the LTO sections to force the linker to use the object sections.
-        let header = elf.raw_header();
+        let header = elf.elf_header();
         let endian = elf.endian();
         let sh_off = header.e_shoff(endian) as usize;
         let sh_entsize = header.e_shentsize(endian) as usize;

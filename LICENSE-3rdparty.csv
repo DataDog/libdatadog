@@ -174,7 +174,6 @@ hdrhistogram,https://github.com/HdrHistogram/HdrHistogram_rust,MIT OR Apache-2.0
 headers,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
 headers-core,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
 heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,The heck Authors
-heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,Without Boats <woboats@gmail.com>
 hermit-abi,https://github.com/hermit-os/hermit-rs,MIT OR Apache-2.0,Stefan Lankes
 hex,https://github.com/KokaKiwi/rust-hex,MIT OR Apache-2.0,KokaKiwi <kokakiwi@kokakiwi.net>
 hickory-proto,https://github.com/hickory-dns/hickory-dns,MIT OR Apache-2.0,The contributors to Hickory DNS
@@ -257,7 +256,6 @@ multimap,https://github.com/havarnov/multimap,MIT OR Apache-2.0,Håvar Nøvik <h
 nix,https://github.com/nix-rust/nix,MIT,The nix-rust Project Developers
 nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
 ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
-nu-ansi-term,https://github.com/nushell/nu-ansi-term,MIT,"ogham@bsago.me, Ryan Scheel (Havvy) <ryan.havvy@gmail.com>, Josh Triplett <josh@joshtriplett.org>, The Nushell Project Developers"
 num-conv,https://github.com/jhpratt/num-conv,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
 num-derive,https://github.com/rust-num/num-derive,MIT OR Apache-2.0,The Rust Project Developers
 num-traits,https://github.com/rust-num/num-traits,MIT OR Apache-2.0,The Rust Project Developers
@@ -537,7 +535,6 @@ winver,https://github.com/rhysd/winver,MIT,rhysd <lin90162@yahoo.co.jp>
 wit-bindgen-rt,https://github.com/bytecodealliance/wit-bindgen,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,The wit-bindgen-rt Authors
 write16,https://github.com/hsivonen/write16,Apache-2.0 OR MIT,The write16 Authors
 writeable,https://github.com/unicode-org/icu4x,Unicode-3.0,The ICU4X Project Developers
-xattr,https://github.com/Stebalien/xattr,MIT OR Apache-2.0,Steven Allen <steven@stebalien.com>
 yansi,https://github.com/SergioBenitez/yansi,MIT OR Apache-2.0,Sergio Benitez <sb@sergio.bz>
 yoke,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>
 yoke-derive,https://github.com/unicode-org/icu4x,Unicode-3.0,Manish Goregaokar <manishsmail@gmail.com>

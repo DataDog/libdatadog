@@ -11,7 +11,7 @@ license.workspace = true
 [dependencies]
 http.workspace = true
 serde_json.workspace = true
-thiserror = "1.0"
+thiserror = { workspace = true, default-features = true }
 libdd-capabilities = { version = "3.0.1", path = "../libdd-capabilities" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils", default-features = false }

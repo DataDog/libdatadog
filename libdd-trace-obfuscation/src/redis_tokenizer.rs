@@ -144,113 +144,63 @@ mod tests {
     use super::RedisTokenizer;
 
     #[duplicate_item(
-        [
-            test_name   [test_redis_tokenizer_1]
-            input       [""]
-            expected    [[r#"{ token: "", token_type: RedisTokenCommand, done: true }"#]];
-        ]
-        [
-            test_name   [test_redis_tokenizer_2]
-            input       ["BAD\"\"INPUT\" \"boo\n  Weird13\\Stuff"]
-            expected    [
+    test_name input expected;
+    [test_redis_tokenizer_1] [""] [[r#"{ token: "", token_type: RedisTokenCommand, done: true }"#]];
+    [test_redis_tokenizer_2] ["BAD\"\"INPUT\" \"boo\n  Weird13\\Stuff"] [
                 [
                     r#"{ token: "BAD\"\"INPUT\"", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"boo\n  Weird13\\Stuff", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_3]
-            input       ["CMD"]
-            expected    [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
-        ]
-        [
-            test_name   [test_redis_tokenizer_4]
-            input       ["\n  \nCMD\n  \n"]
-            expected    [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
-        ]
-        [
-            test_name   [test_redis_tokenizer_5]
-            input       ["  CMD  "]
-            expected    [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
-        ]
-        [
-            test_name   [test_redis_tokenizer_6]
-            input       ["CMD1\nCMD2"]
-            expected    [
+    [test_redis_tokenizer_3] ["CMD"] [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
+    [test_redis_tokenizer_4] ["\n  \nCMD\n  \n"] [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
+    [test_redis_tokenizer_5] ["  CMD  "] [[r#"{ token: "CMD", token_type: RedisTokenCommand, done: true }"#]];
+    [test_redis_tokenizer_6] ["CMD1\nCMD2"] [
                 [
                     r#"{ token: "CMD1", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "CMD2", token_type: RedisTokenCommand, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_7]
-            input       ["  CMD1  \n  CMD2  "]
-            expected    [
+    [test_redis_tokenizer_7] ["  CMD1  \n  CMD2  "] [
                 [
                     r#"{ token: "CMD1", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "CMD2", token_type: RedisTokenCommand, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_8]
-            input       ["CMD1\nCMD2\nCMD3"]
-            expected    [
+    [test_redis_tokenizer_8] ["CMD1\nCMD2\nCMD3"] [
                 [
                     r#"{ token: "CMD1", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "CMD2", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "CMD3", token_type: RedisTokenCommand, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_9]
-            input       ["CMD arg"]
-            expected    [
+    [test_redis_tokenizer_9] ["CMD arg"] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_10]
-            input       ["  CMD  arg  "]
-            expected    [
+    [test_redis_tokenizer_10] ["  CMD  arg  "] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_11]
-            input       ["CMD arg1 arg2"]
-            expected    [
+    [test_redis_tokenizer_11] ["CMD arg1 arg2"] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg1", token_type: RedisTokenArgument, done: false }"#,
                     r#"{ token: "arg2", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_12]
-            input       [" 	 CMD   arg1 	  arg2 "]
-            expected    [
+    [test_redis_tokenizer_12] [" 	 CMD   arg1 	  arg2 "] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg1", token_type: RedisTokenArgument, done: false }"#,
                     r#"{ token: "arg2", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_13]
-            input       ["CMD arg1\nCMD2 arg2"]
-            expected    [
+    [test_redis_tokenizer_13] ["CMD arg1\nCMD2 arg2"] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg1", token_type: RedisTokenArgument, done: false }"#,
@@ -258,11 +208,7 @@ mod tests {
                     r#"{ token: "arg2", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_14]
-            input       ["CMD arg1 arg2\nCMD2 arg3\nCMD3\nCMD4 arg4 arg5 arg6"]
-            expected    [
+    [test_redis_tokenizer_14] ["CMD arg1 arg2\nCMD2 arg3\nCMD3\nCMD4 arg4 arg5 arg6"] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg1", token_type: RedisTokenArgument, done: false }"#,
@@ -276,11 +222,7 @@ mod tests {
                     r#"{ token: "arg6", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_15]
-            input       ["CMD arg1   arg2  \n CMD2  arg3 \n CMD3 \n  CMD4 arg4 arg5 arg6\nCMD5 "]
-            expected    [
+    [test_redis_tokenizer_15] ["CMD arg1   arg2  \n CMD2  arg3 \n CMD3 \n  CMD4 arg4 arg5 arg6\nCMD5 "] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "arg1", token_type: RedisTokenArgument, done: false }"#,
@@ -295,42 +237,26 @@ mod tests {
                     r#"{ token: "CMD5", token_type: RedisTokenCommand, done: true }"#,
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_16]
-            input       [r#"CMD """#]
-            expected    [
+    [test_redis_tokenizer_16] [r#"CMD """#] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"\"", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_17]
-            input       [r#"CMD "foo bar""#]
-            expected    [
+    [test_redis_tokenizer_17] [r#"CMD "foo bar""#] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo bar\"", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_18]
-            input       [r#"CMD "foo bar\ " baz"#]
-            expected    [
+    [test_redis_tokenizer_18] [r#"CMD "foo bar\ " baz"#] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo bar\\ \"", token_type: RedisTokenArgument, done: false }"#,
                     r#"{ token: "baz", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_19]
-            input       ["CMD \"foo \n bar\" \"\"  baz "]
-            expected    [
+    [test_redis_tokenizer_19] ["CMD \"foo \n bar\" \"\"  baz "] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo \n bar\"", token_type: RedisTokenArgument, done: false }"#,
@@ -338,33 +264,21 @@ mod tests {
                     r#"{ token: "baz", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_20]
-            input       ["CMD \"foo \\\" bar\" baz"]
-            expected    [
+    [test_redis_tokenizer_20] ["CMD \"foo \\\" bar\" baz"] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo \\\" bar\"", token_type: RedisTokenArgument, done: false }"#,
                     r#"{ token: "baz", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_21]
-            input       [r#"CMD "foo bar" baz"#]
-            expected    [
+    [test_redis_tokenizer_21] [r#"CMD "foo bar" baz"#] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo bar\"", token_type: RedisTokenArgument, done: false }"#,
                     r#"{ token: "baz", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_22]
-            input       ["CMD \"foo bar\" baz\nCMD2 \"baz\\\\bar\""]
-            expected    [
+    [test_redis_tokenizer_22] ["CMD \"foo bar\" baz\nCMD2 \"baz\\\\bar\""] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo bar\"", token_type: RedisTokenArgument, done: false }"#,
@@ -373,11 +287,7 @@ mod tests {
                     r#"{ token: "\"baz\\\\bar\"", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
-        [
-            test_name   [test_redis_tokenizer_23]
-            input       [" CMD  \"foo bar\"  baz \n CMD2  \"baz\\\\bar\"  "]
-            expected    [
+    [test_redis_tokenizer_23] [" CMD  \"foo bar\"  baz \n CMD2  \"baz\\\\bar\"  "] [
                 [
                     r#"{ token: "CMD", token_type: RedisTokenCommand, done: false }"#,
                     r#"{ token: "\"foo bar\"", token_type: RedisTokenArgument, done: false }"#,
@@ -386,7 +296,6 @@ mod tests {
                     r#"{ token: "\"baz\\\\bar\"", token_type: RedisTokenArgument, done: true }"#
                 ]
             ];
-        ]
     )]
     #[test]
     fn test_name() {

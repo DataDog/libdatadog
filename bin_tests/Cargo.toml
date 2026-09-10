@@ -12,22 +12,20 @@ build = "build.rs"
 
 [dependencies]
 once_cell = { workspace = true, features = ["std"] }
-anyhow = "1.0"
-current_platform = "0.2.0"
+anyhow = { workspace = true, default-features = true }
+current_platform.workspace = true
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 tempfile.workspace = true
 serde_json.workspace = true
-strum = { version = "0.26.2", features = ["derive"] }
 libc.workspace = true
-errno = "0.3"
-nix = { version = "0.29", features = ["signal", "socket"] }
-hex = "0.4"
-os_info = "3.14.0"
+errno = { workspace = true, default-features = true }
+nix = { workspace = true, features = ["signal", "socket"] }
+os_info.workspace = true
 
 [dev-dependencies]
-serial_test = "3.2"
+serial_test.workspace = true
 
 [features]
 regex-lite = ["libdd-common/regex-lite"]

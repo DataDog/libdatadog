@@ -21,16 +21,16 @@ libdd-telemetry = { version = "8.0.0", path = "../libdd-telemetry", default-feat
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-obfuscation = { version = "8.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils", default-features = false }
-hashbrown = { version = "0.15" }
+hashbrown = { workspace = true, default-features = true }
 http = { workspace = true, features = ["std"] }
-rmp-serde = "1.3.0"
+rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "time"] }
-tokio-util = "0.7.11"
+tokio-util.workspace = true
 tracing.workspace = true
-async-trait = "0.1.85"
+async-trait.workspace = true
 # Cross-platform `SystemTime`; `std::time::SystemTime::now()` panics on wasm32.
-web-time = "1"
+web-time.workspace = true
 futures = { workspace = true, features = ["alloc"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -48,8 +48,8 @@ path = "benches/main.rs"
 criterion.workspace = true
 httpmock.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-rand = ">=0.8.6, <0.9"
-tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util", "time"], default-features = false }
+rand = { workspace = true, default-features = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util", "time"] }
 
 [features]
 default = ["https"]

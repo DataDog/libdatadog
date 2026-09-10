@@ -28,7 +28,7 @@ http-body-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio = { version = "1", features = ["fs", "macros", "rt", "time"] }
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
 
 [features]
 default = ["https"]
