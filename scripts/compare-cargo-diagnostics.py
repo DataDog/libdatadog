@@ -15,6 +15,12 @@ from typing import Any
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+TEXT_ERROR = re.compile(r"^error(?:\[([A-Z0-9]+)\])?:\s*(.*)$")
+SECONDARY_ERROR_PREFIXES = (
+    "aborting due to ",
+    "build failed",
+    "could not compile ",
+)
 
 
 def normalize_message(message: str, paths: list[Path]) -> str:
@@ -50,18 +56,26 @@ def error_fingerprints(
             )
             fingerprints.add((target, code, message))
 
-    # Dependency resolution and manifest failures happen before rustc emits JSON.
-    # Use only their leading Cargo error lines, and only when no compiler
-    # diagnostic exists, to avoid duplicating rendered rustc messages.
+    # Dependency resolution and nested builds can fail without leaving Cargo JSON
+    # in our output file. Parse their human-readable diagnostic headers, while
+    # excluding Cargo/rustc's order-dependent "could not compile" summaries.
     if not fingerprints and log_path:
         with log_path.open(encoding="utf-8") as log:
             for line in log:
                 normalized = ANSI_ESCAPE.sub("", line).strip()
-                if normalized.startswith("error:"):
-                    message = normalized.removeprefix("error:").strip()
-                    fingerprints.add(
-                        ("cargo", "", normalize_message(message, normalize_paths))
+                match = TEXT_ERROR.match(normalized)
+                if not match:
+                    continue
+                code, message = match.groups()
+                if message.startswith(SECONDARY_ERROR_PREFIXES):
+                    continue
+                fingerprints.add(
+                    (
+                        "cargo",
+                        code or "",
+                        normalize_message(message, normalize_paths),
                     )
+                )
     return fingerprints
 
 

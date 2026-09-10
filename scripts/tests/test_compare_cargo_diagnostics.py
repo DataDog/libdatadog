@@ -98,6 +98,22 @@ class CompareCargoDiagnosticsTest(unittest.TestCase):
             [{"target": "cargo", "code": "", "message": "invalid table header"}],
         )
 
+    def test_human_readable_rustc_error_is_detected(self):
+        errors = self.compare([], [], head_log="error[E0308]: mismatched types\n")
+        self.assertEqual(
+            errors,
+            [{"target": "cargo", "code": "E0308", "message": "mismatched types"}],
+        )
+
+    def test_order_dependent_compile_summary_is_ignored(self):
+        errors = self.compare(
+            [],
+            [],
+            base_log="error: could not compile `first` due to 1 previous error\n",
+            head_log="error: could not compile `second` due to 1 previous error\n",
+        )
+        self.assertEqual(errors, [])
+
     def test_text_log_is_ignored_when_compiler_diagnostics_exist(self):
         compiler_error = compiler_message("consumer", "new compiler error", "E0425")
         errors = self.compare(
