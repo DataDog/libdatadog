@@ -167,9 +167,7 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
         _ => {}
     }
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags(span, tag_replace_rules, &mut String::new());
-    }
+    replace_span_tags(span, &config.tag_replace_rules, &mut String::new());
 }
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
@@ -334,9 +332,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
         _ => {}
     }
 
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags_v04(span, tag_replace_rules);
-    }
+    replace_span_tags_v04(span, &config.tag_replace_rules);
 }
 
 /// Obfuscates credit-card numbers inside the attributes of a [`v04::SpanEvent`].
@@ -519,7 +515,7 @@ mod tests {
         )
         .unwrap();
         let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 
@@ -669,7 +665,7 @@ mod v04_tests {
         )
         .unwrap();
         let obf_config = ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 

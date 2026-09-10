@@ -125,9 +125,9 @@ pub struct HttpConfig {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct ObfuscationConfig {
-    #[serde(default)]
-    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
+    pub tag_replace_rules: Vec<ReplaceRule>,
     pub http: HttpConfig,
     pub memcached: MemcachedConfig,
     pub redis: RedisConfig,
@@ -157,18 +157,18 @@ impl ObfuscationConfig {
         use log::{debug, error};
         use std::env;
 
-        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
+        let tag_replace_rules: Vec<ReplaceRule> = match env::var("DD_APM_REPLACE_TAGS") {
             Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
                 Ok(res) => {
                     debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
-                    Some(res)
+                    res
                 }
                 Err(e) => {
                     error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-                    None
+                    Vec::new()
                 }
             },
-            Err(_) => None,
+            Err(_) => Vec::new(),
         };
         let http_remove_query_string =
             parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
