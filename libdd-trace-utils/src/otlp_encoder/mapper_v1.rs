@@ -65,8 +65,8 @@ type MergedAttrs<'a, T> = Vec<(&'a str, &'a AttributeValue<T>)>;
 /// Key to position index into a [`MergedAttrs`] list, for O(1) lookup of one specific key.
 type MergedAttrsIndex<'a> = std::collections::HashMap<&'a str, usize>;
 
-/// Merge chunk-level and span-level attributes into one ordered, deduplicated key/value list,
-/// span wins on key collision. Neither input `VecMap` is assumed pre-deduplicated: a key repeated
+/// Merge chunk-level and span-level attributes into one ordered, deduplicated key/value list.
+/// Span wins on key collision. Neither input `VecMap` is assumed pre-deduplicated: a key repeated
 /// within the same map is resolved here too (last value wins). Span attributes are ordered first:
 /// besides value precedence, this also protects them from being truncated ahead of shared chunk
 /// attributes when the merged list is capped at `MAX_ATTRIBUTES_PER_SPAN`.
