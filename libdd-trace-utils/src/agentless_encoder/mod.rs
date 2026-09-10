@@ -26,14 +26,13 @@
 //!
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
+use crate::hex::{hex_low_u64, hex_u128, hex_u64};
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::v1;
 use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use crate::tracer_metadata::TracerMetadata;
-use serde::{
-    ser::{SerializeMap, SerializeSeq},
-    Serializer,
-};
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::Serializer;
 use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -42,7 +41,6 @@ use std::fmt::Write as _;
 const MAX_META_VALUE_LEN: usize = 25_000;
 /// Suffix appended when a `meta` value is truncated.
 const TRUNCATION_SUFFIX: &str = "...";
-
 /// # Why are we doing this?
 ///
 /// The JSON agentless format is different from the in-memory model of v04 spans (and to v03/v04/v05
@@ -175,25 +173,9 @@ fn encode_span<T: TraceData, S: Serializer>(
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
 
-    let trace_id = span.trace_id;
-    map.serialize_entry(
-        "trace_id",
-        &ser_fn!(|ser, trace_id: u128| {
-            ser.collect_str(&format_args!("{:016x}", trace_id as u64))
-        }),
-    )?;
-    let span_id = span.span_id;
-    map.serialize_entry(
-        "span_id",
-        &ser_fn!(|ser, span_id: u64| { ser.collect_str(&format_args!("{:016x}", span_id as u64)) }),
-    )?;
-    let parent_id = span.parent_id;
-    map.serialize_entry(
-        "parent_id",
-        &ser_fn!(|ser, parent_id: u64| {
-            ser.collect_str(&format_args!("{:016x}", parent_id as u64))
-        }),
-    )?;
+    map.serialize_entry("trace_id", &hex_low_u64(span.trace_id))?;
+    map.serialize_entry("span_id", &hex_u64(span.span_id))?;
+    map.serialize_entry("parent_id", &hex_u64(span.parent_id))?;
 
     // Resource defaults to name when empty.
     let name_str: &str = span.name.borrow();
@@ -241,12 +223,7 @@ fn encode_span<T: TraceData, S: Serializer>(
                 meta.serialize_entry(key, val)?;
             }
             if !p_tid_seen && upper_bits != 0 {
-                meta.serialize_entry(
-                    "_dd.p.tid",
-                    &ser_fn!(|ser, upper_bits: u64| {
-                        ser.collect_str(&format_args!("{:016x}", upper_bits as u64))
-                    }),
-                )?;
+                meta.serialize_entry("_dd.p.tid", &hex_u64(upper_bits))?;
             }
             if !span_links_seen && !span.span_links.is_empty() {
                 if let Some(s) = serialize_span_links(&span.span_links) {
@@ -335,9 +312,9 @@ fn encode_span_link<T: TraceData, S: Serializer>(
     link: &SpanLink<T>,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
-    let trace_id_128: u128 = ((link.trace_id_high as u128) << 64) | (link.trace_id as u128);
-    map.serialize_entry("trace_id", &format!("{:032x}", trace_id_128))?;
-    map.serialize_entry("span_id", &format!("{:016x}", link.span_id))?;
+    let trace_id_128 = (u128::from(link.trace_id_high) << 64) | u128::from(link.trace_id);
+    map.serialize_entry("trace_id", &hex_u128(trace_id_128))?;
+    map.serialize_entry("span_id", &hex_u64(link.span_id))?;
     if !link.attributes.is_empty() {
         map.serialize_entry(
             "attributes",
@@ -717,22 +694,9 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     trace_id_high_bytes.copy_from_slice(&chunk.trace_id[0..8]);
     let trace_id_low = u64::from_be_bytes(trace_id_low_bytes);
     let trace_id_high = u64::from_be_bytes(trace_id_high_bytes);
-    map.serialize_entry(
-        "trace_id",
-        &ser_fn!(|ser, trace_id_low: u64| {
-            ser.collect_str(&format_args!("{trace_id_low:016x}"))
-        }),
-    )?;
-    let span_id = span.span_id;
-    map.serialize_entry(
-        "span_id",
-        &ser_fn!(|ser, span_id: u64| { ser.collect_str(&format_args!("{span_id:016x}")) }),
-    )?;
-    let parent_id = span.parent_id;
-    map.serialize_entry(
-        "parent_id",
-        &ser_fn!(|ser, parent_id: u64| { ser.collect_str(&format_args!("{parent_id:016x}")) }),
-    )?;
+    map.serialize_entry("trace_id", &hex_u64(trace_id_low))?;
+    map.serialize_entry("span_id", &hex_u64(span.span_id))?;
+    map.serialize_entry("parent_id", &hex_u64(span.parent_id))?;
 
     // Resource defaults to name when empty.
     let name_str: &str = span.name.borrow();
@@ -815,12 +779,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
                 meta.serialize_entry(key, val)?;
             }
             if !p_tid_seen && trace_id_high != 0 {
-                meta.serialize_entry(
-                    "_dd.p.tid",
-                    &ser_fn!(|ser, trace_id_high: u64| {
-                        ser.collect_str(&format_args!("{trace_id_high:016x}"))
-                    }),
-                )?;
+                meta.serialize_entry("_dd.p.tid", &hex_u64(trace_id_high))?;
             }
             if !span_links_seen && !span.span_links.is_empty() {
                 if let Some(s) = serialize_span_links_v1(&span.span_links) {
@@ -910,8 +869,8 @@ fn encode_span_link_v1<T: TraceData, S: Serializer>(
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
     let trace_id_128 = u128::from_be_bytes(link.trace_id);
-    map.serialize_entry("trace_id", &format!("{trace_id_128:032x}"))?;
-    map.serialize_entry("span_id", &format!("{:016x}", link.span_id))?;
+    map.serialize_entry("trace_id", &hex_u128(trace_id_128))?;
+    map.serialize_entry("span_id", &hex_u64(link.span_id))?;
     let attrs_dd = link.attributes.defensive_dedup();
     let attrs_dd = &attrs_dd;
     let has_attributes = attrs_dd.iter().any(|(_, v)| {
