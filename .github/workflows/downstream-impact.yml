@@ -64,9 +64,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect.outputs.validation_matrix) }}
     steps:
-      - name: Checkout libdatadog PR head
+      - name: Checkout proposed libdatadog merge
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          ref: ${{ github.sha }}
           path: libdatadog-head
           persist-credentials: false
 
@@ -248,7 +249,10 @@ jobs:
                   export CARGO_BUILD_JOBS=1
                   npm ci --prefix packages/libdatadog
                   npm run build --prefix packages/libdatadog
-                  test -s packages/libdatadog/wasm/dist/libdatadog_wasm_bg.wasm
+                  test -s packages/libdatadog/wasm/dist/libdatadog_wasm.js
+                  test -s packages/libdatadog/wasm/dist/remote-config/remote_config.js
+                  test ! -e packages/libdatadog/wasm/dist/libdatadog_wasm_bg.wasm
+                  test ! -e packages/libdatadog/wasm/dist/remote-config/remote_config_bg.wasm
                 ) 2>&1 | tee -a "$log_path"
                 return "${PIPESTATUS[0]}"
                 ;;
