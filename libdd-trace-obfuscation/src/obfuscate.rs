@@ -16,13 +16,13 @@ use crate::{
     credit_cards::{is_card_number, obfuscate_card_number},
     http::{obfuscate_url, obfuscate_url_string},
     memcached::{obfuscate_memcached, obfuscate_memcached_string},
-    obfuscation_config::ObfuscationConfig,
+    obfuscation_config::{DbmsKind, ObfuscationConfig, SqlConfig, SqlObfuscationMode},
     redis::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
     },
     replacer::{replace_span_tags, replace_span_tags_v04},
-    sql::{obfuscate_sql_opt, DbmsKind, SqlObfuscationMode},
+    sql::obfuscate_sql_opt,
 };
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
@@ -63,11 +63,11 @@ pub fn obfuscate_resource_for_stats(
             let dbms: DbmsKind = dbms_hint
                 .and_then(|d| d.try_into().ok())
                 .unwrap_or_default();
-            let config = &crate::sql::SqlObfuscateConfig {
+            let config = SqlConfig {
                 obfuscation_mode: sql_obfuscation_mode,
                 ..Default::default()
             };
-            Some(crate::sql::obfuscate_sql(resource, config, dbms))
+            Some(crate::sql::obfuscate_sql(resource, &config, dbms))
         }
         "redis" | "valkey" => Some(quantize_redis_string(resource)),
         _ => None,
@@ -97,7 +97,7 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 *url = obfuscate_url_string(
                     url,
                     config.http.remove_query_string,
-                    config.http.remove_paths_with_digits,
+                    config.http.remove_path_digits,
                 );
             }
         }
@@ -167,9 +167,7 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
         _ => {}
     }
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags(span, tag_replace_rules, &mut String::new());
-    }
+    replace_span_tags(span, &config.tag_replace_rules, &mut String::new());
 }
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
@@ -265,7 +263,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
                     obfuscate_url(
                         u,
                         config.http.remove_query_string,
-                        config.http.remove_paths_with_digits,
+                        config.http.remove_path_digits,
                     )
                 });
             }
@@ -334,9 +332,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
         _ => {}
     }
 
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags_v04(span, tag_replace_rules);
-    }
+    replace_span_tags_v04(span, &config.tag_replace_rules);
 }
 
 /// Obfuscates credit-card numbers inside the attributes of a [`v04::SpanEvent`].
@@ -436,17 +432,15 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{obfuscate_pb_span, obfuscate_resource_for_stats};
-    use crate::{obfuscation_config, replacer};
+    use crate::{
+        obfuscation_config::{self, SqlObfuscationMode},
+        replacer,
+    };
     use libdd_trace_utils::test_utils;
 
     // test helper with default params
     fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
-        obfuscate_resource_for_stats(
-            span_type,
-            resource,
-            None,
-            crate::sql::SqlObfuscationMode::default(),
-        )
+        obfuscate_resource_for_stats(span_type, resource, None, SqlObfuscationMode::default())
     }
 
     #[test]
@@ -498,7 +492,7 @@ mod tests {
         let obf_config = obfuscation_config::ObfuscationConfig {
             http: obfuscation_config::HttpConfig {
                 remove_query_string: true,
-                remove_paths_with_digits: true,
+                remove_path_digits: true,
             },
             ..Default::default()
         };
@@ -521,7 +515,7 @@ mod tests {
         )
         .unwrap();
         let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 
@@ -649,7 +643,7 @@ mod v04_tests {
         let obf_config = ObfuscationConfig {
             http: HttpConfig {
                 remove_query_string: true,
-                remove_paths_with_digits: true,
+                remove_path_digits: true,
             },
             ..Default::default()
         };
@@ -671,7 +665,7 @@ mod v04_tests {
         )
         .unwrap();
         let obf_config = ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 
