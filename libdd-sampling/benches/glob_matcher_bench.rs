@@ -102,9 +102,7 @@ fn bench_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
         let matcher = GlobMatcher::new(case.pattern);
         c.bench_function(
             &format!("glob_matcher/{}/allocated_bytes", case.name),
-            |b| {
-                b.iter(|| black_box(matcher.matches(black_box(case.subject))))
-            },
+            |b| b.iter(|| black_box(matcher.matches(black_box(case.subject)))),
         );
     }
 }
