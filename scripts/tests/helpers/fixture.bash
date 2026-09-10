@@ -133,10 +133,73 @@ fixture_touch_crate() {
   fixture_commit_all "$message" "$author" "$email"
 }
 
-# fixture_set_dep_req CRATE DEP REQ — rewrite a dependency's version requirement.
+# fixture_set_dep_req CRATE DEP REQ — rewrite a dependency's version requirement. DEP is
+# the key as written in the manifest, which for an aliased dependency is the alias.
 fixture_set_dep_req() {
   local crate="$1" dep="$2" req="$3"
-  sed -i -E "s|^(${dep} = \{ path = \"[^\"]*\", version = )\"[^\"]*\"|\1\"${req}\"|" \
+  sed -i -E "s|^(${dep} = \{ (package = \"[^\"]*\", )?path = \"[^\"]*\", version = )\"[^\"]*\"|\1\"${req}\"|" \
+    "${FIXTURE_REPO}/${crate}/Cargo.toml"
+}
+
+# fixture_alias_dep CRATE DEP ALIAS — re-declare CRATE's dependency on DEP under the local
+# name ALIAS, via `package = "DEP"`. cargo metadata then reports DEP in .name and ALIAS in
+# .rename, which is the only thing separating two aliases of one package.
+fixture_alias_dep() {
+  local crate="$1" dep="$2" alias="$3"
+  sed -i -E "s|^${dep} = \{ path = (\"[^\"]*\"), version = (\"[^\"]*\") \}|${alias} = { package = \"${dep}\", path = \1, version = \2 }|" \
+    "${FIXTURE_REPO}/${crate}/Cargo.toml"
+}
+
+# fixture_publish_tag TAG — tag HEAD and push it to origin. semver-level.sh runs
+# `git fetch origin <baseline>` before resolving a baseline, so a tag created after
+# fixture_add_origin has to be published for it to be usable as one.
+fixture_publish_tag() {
+  fixture_tag "$1"
+  git push -q origin "refs/tags/$1"
+}
+
+# fixture_set_features CRATE ENTRY... — replace CRATE's [features] table with ENTRYs,
+# each a raw TOML line: fixture_set_features libdd-beta 'default = ["std"]' 'std = []'
+#
+# Only this helper ever writes a [features] table and it always appends, so the table
+# is last in the manifest and deleting to end-of-file is a safe way to replace it.
+fixture_set_features() {
+  local crate="$1"
+  shift
+  local manifest="${FIXTURE_REPO}/${crate}/Cargo.toml"
+  sed -i '/^\[features\]$/,$d' "$manifest"
+  {
+    printf '\n[features]\n'
+    printf '%s\n' "$@"
+  } >> "$manifest"
+}
+
+# fixture_set_dep_optional CRATE DEP — mark CRATE's dependency on DEP optional. Cargo
+# then derives an implicit feature of the same name, which is part of the package's
+# feature surface while appearing nowhere in its [features] table.
+fixture_set_dep_optional() {
+  local crate="$1" dep="$2"
+  sed -i -E "s|^(${dep} = \{ path = \"[^\"]*\", version = \"[^\"]*\")( \})|\1, optional = true\2|" \
+    "${FIXTURE_REPO}/${crate}/Cargo.toml"
+}
+
+# fixture_use_workspace_dep CRATE DEP REQ — move CRATE's dependency on DEP into
+# [workspace.dependencies] at REQ, leaving the crate manifest carrying only
+# `{ workspace = true }`.
+#
+# Reproduces the shape of a "migrate deps to workspace level" refactor: the crate's own
+# manifest diff no longer mentions a version at all, so anything reading Cargo.toml
+# directly sees no version change while the resolved requirement has moved.
+#
+# Appends the table, so call it at most once per fixture.
+fixture_use_workspace_dep() {
+  local crate="$1" dep="$2" req="$3"
+  cat >> "${FIXTURE_REPO}/Cargo.toml" <<EOF
+
+[workspace.dependencies]
+${dep} = { path = "${dep}", version = "${req}" }
+EOF
+  sed -i -E "s|^(${dep}) = \{ path = \"[^\"]*\", version = \"[^\"]*\" \}|\1 = { workspace = true }|" \
     "${FIXTURE_REPO}/${crate}/Cargo.toml"
 }
 

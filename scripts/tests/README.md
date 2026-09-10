@@ -64,7 +64,7 @@ CI runs the same suite plus `shellcheck` over `scripts/*.sh`
 | `release-version-bumps.bats` | each crate's fate — released at a level, deferred, skipped, or a hard failure — and the version cargo-release actually lands on |
 | `release-version-major-bumps.bats` | which crates get forced to major by a dependency that went major in the same proposal, and which no-commit candidates are pulled back in or dropped |
 | `release-generate-changelogs.bats` | the CHANGELOG entry each crate gets — rendered by git-cliff, minimal, or none — and that only the crate's own commits reach it |
-| `semver-level.bats` | the bump level fed to `cargo release version -x`, parsed out of cargo-semver-checks and cargo-public-api output |
+| `semver-level.bats` | the bump level fed to `cargo release version -x`: parsed out of cargo-semver-checks and cargo-public-api output, plus the two manifest facts neither tool reads — dependency requirement floors and the package's cargo feature surface |
 | `major-bumps-level.bats` | whether a direct `libdd-*` dependency going major forces a dependent to major |
 | `release-proposal-workflow.bats` | job-level `if:` gating, untrusted-`main_start_ref` defenses, branch prefixes, push path, PR contract |
 
@@ -80,7 +80,9 @@ scripts have to discriminate. Nothing touches the libdatadog checkout.
 `cargo public-api` cost minutes per call and are precisely the tools whose *output
 parsing* `semver-level.sh` gets wrong when it regresses. The shim replays recorded
 output for those two subcommands and forwards everything else to the real cargo, so
-the script under test runs unmodified.
+the script under test runs unmodified. `cargo metadata` is deliberately among the
+forwarded calls: the dependency-floor pass is judged on requirements a real cargo
+resolved, which is the only way `{ workspace = true }` inheritance gets exercised.
 
 **Real cargo-release** — the two `release-version-*` suites run `cargo release` against
 the fixture workspace rather than stubbing it, so the versions they assert are the ones
