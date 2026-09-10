@@ -280,6 +280,10 @@ jobs:
             --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
             --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
             --head-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.log" \
+            --base-normalize-path "$LIBDATADOG_BASE_ROOT" \
+            --head-normalize-path "$LIBDATADOG_HEAD_ROOT" \
+            --base-normalize-path "$GITHUB_WORKSPACE/target-base" \
+            --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
             --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
             --github-output "$GITHUB_OUTPUT"
 

@@ -17,11 +17,21 @@ from typing import Any
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
+def normalize_message(message: str, paths: list[Path]) -> str:
+    """Replace candidate-specific absolute paths with stable placeholders."""
+    for index, path in enumerate(paths):
+        message = message.replace(str(path), f"<candidate-path-{index}>")
+    return message
+
+
 def error_fingerprints(
-    messages_path: Path, log_path: Path | None = None
+    messages_path: Path,
+    log_path: Path | None = None,
+    normalize_paths: list[Path] | None = None,
 ) -> set[tuple[str, str, str]]:
     """Return stable fingerprints for error-level Cargo compiler messages."""
     fingerprints: set[tuple[str, str, str]] = set()
+    normalize_paths = normalize_paths or []
     with messages_path.open(encoding="utf-8") as messages:
         for line in messages:
             try:
@@ -35,7 +45,9 @@ def error_fingerprints(
                 continue
             target = cargo_message.get("target", {}).get("name", "unknown-target")
             code = (diagnostic.get("code") or {}).get("code", "")
-            message = diagnostic.get("message", "unknown compiler error")
+            message = normalize_message(
+                diagnostic.get("message", "unknown compiler error"), normalize_paths
+            )
             fingerprints.add((target, code, message))
 
     # Dependency resolution and manifest failures happen before rustc emits JSON.
@@ -46,7 +58,10 @@ def error_fingerprints(
             for line in log:
                 normalized = ANSI_ESCAPE.sub("", line).strip()
                 if normalized.startswith("error:"):
-                    fingerprints.add(("cargo", "", normalized.removeprefix("error:").strip()))
+                    message = normalized.removeprefix("error:").strip()
+                    fingerprints.add(
+                        ("cargo", "", normalize_message(message, normalize_paths))
+                    )
     return fingerprints
 
 
@@ -55,9 +70,11 @@ def new_errors(
     head_path: Path,
     base_log: Path | None = None,
     head_log: Path | None = None,
+    base_normalize_paths: list[Path] | None = None,
+    head_normalize_paths: list[Path] | None = None,
 ) -> list[dict[str, str]]:
-    base = error_fingerprints(base_path, base_log)
-    head = error_fingerprints(head_path, head_log)
+    base = error_fingerprints(base_path, base_log, base_normalize_paths)
+    head = error_fingerprints(head_path, head_log, head_normalize_paths)
     return [
         {"target": target, "code": code, "message": message}
         for target, code, message in sorted(head - base)
@@ -70,6 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--head", type=Path, required=True)
     parser.add_argument("--base-log", type=Path)
     parser.add_argument("--head-log", type=Path)
+    parser.add_argument("--base-normalize-path", action="append", type=Path, default=[])
+    parser.add_argument("--head-normalize-path", action="append", type=Path, default=[])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--github-output", type=Path)
     return parser.parse_args()
@@ -77,7 +96,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    additional_errors = new_errors(args.base, args.head, args.base_log, args.head_log)
+    if len(args.base_normalize_path) != len(args.head_normalize_path):
+        raise ValueError(
+            "--base-normalize-path and --head-normalize-path must be paired"
+        )
+    additional_errors = new_errors(
+        args.base,
+        args.head,
+        args.base_log,
+        args.head_log,
+        args.base_normalize_path,
+        args.head_normalize_path,
+    )
     args.output.write_text(json.dumps(additional_errors, indent=2) + "\n", encoding="utf-8")
     if args.github_output:
         with args.github_output.open("a", encoding="utf-8") as output:

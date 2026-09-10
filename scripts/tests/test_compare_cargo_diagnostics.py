@@ -37,6 +37,8 @@ class CompareCargoDiagnosticsTest(unittest.TestCase):
         head_lines: list[str],
         base_log: str = "",
         head_log: str = "",
+        base_normalize_paths: list[Path] | None = None,
+        head_normalize_paths: list[Path] | None = None,
     ):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory) / "base.jsonl"
@@ -47,7 +49,14 @@ class CompareCargoDiagnosticsTest(unittest.TestCase):
             head_log_path = Path(directory) / "head.log"
             base_log_path.write_text(base_log, encoding="utf-8")
             head_log_path.write_text(head_log, encoding="utf-8")
-            return compare.new_errors(base, head, base_log_path, head_log_path)
+            return compare.new_errors(
+                base,
+                head,
+                base_log_path,
+                head_log_path,
+                base_normalize_paths,
+                head_normalize_paths,
+            )
 
     def test_same_baseline_error_is_not_new(self):
         error = compiler_message("consumer", "old failure", "E0308")
@@ -98,6 +107,19 @@ class CompareCargoDiagnosticsTest(unittest.TestCase):
         )
         self.assertEqual(len(errors), 1)
         self.assertEqual(errors[0]["message"], "new compiler error")
+
+    def test_candidate_specific_paths_do_not_look_like_new_errors(self):
+        base_root = Path("/work/libdatadog-base")
+        head_root = Path("/work/libdatadog-head")
+        errors = self.compare(
+            [],
+            [],
+            base_log=f"error: failed to load {base_root}/libdd-common/Cargo.toml\n",
+            head_log=f"error: failed to load {head_root}/libdd-common/Cargo.toml\n",
+            base_normalize_paths=[base_root],
+            head_normalize_paths=[head_root],
+        )
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":
