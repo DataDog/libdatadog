@@ -202,7 +202,16 @@
     },
     {"repository": "DataDog/nginx-datadog", "tier": "direct", "mode": "native-artifact"},
     {"repository": "DataDog/libdatadog-dotnet", "tier": "wrapper", "mode": "native-package"},
-    {"repository": "DataDog/libdatadog-rb", "tier": "wrapper", "mode": "native-package"},
+    {
+      "repository": "DataDog/libdatadog-rb",
+      "tier": "wrapper",
+      "mode": "native-package",
+      "validation": {
+        "kind": "ruby-package",
+        "manifest": "Gemfile",
+        "source_path": "libdatadog"
+      }
+    },
     {
       "repository": "DataDog/libdatadog-nodejs",
       "tier": "wrapper",

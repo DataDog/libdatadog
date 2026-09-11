@@ -42,7 +42,11 @@ class DownstreamImpactTest(unittest.TestCase):
         self.assertIn("DataDog/ddprof", repositories)
         self.assertIn("DataDog/dd-trace-dotnet", repositories)
         self.assertNotIn("DataDog/dd-trace-go", repositories)
-        self.assertEqual(impact["validation_count"], 0)
+        self.assertEqual(impact["validation_count"], 1)
+        validation = impact["validation_matrix"]["include"][0]
+        self.assertEqual(validation["repository"], "DataDog/libdatadog-rb")
+        self.assertEqual(validation["build_kind"], "ruby-package")
+        self.assertEqual(validation["source_path"], "libdatadog")
 
     def test_data_pipeline_change_builds_six_consumers(self):
         impact = downstream_impact.calculate_impact(
@@ -93,7 +97,7 @@ class DownstreamImpactTest(unittest.TestCase):
     def test_workspace_change_selects_every_consumer(self):
         impact = downstream_impact.calculate_impact(self.config, ["Cargo.toml"])
         self.assertEqual(impact["impacted_count"], 16)
-        self.assertEqual(impact["validation_count"], 6)
+        self.assertEqual(impact["validation_count"], 7)
 
     def test_github_outputs_expose_product_build_matrix(self):
         impact = downstream_impact.calculate_impact(

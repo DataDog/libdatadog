@@ -53,6 +53,7 @@ def load_config(path: Path) -> dict[str, Any]:
             "node-wasm",
             "php-sidecar",
             "python-extension",
+            "ruby-package",
         }
         if validation.get("kind") not in supported_kinds:
             raise ValueError(

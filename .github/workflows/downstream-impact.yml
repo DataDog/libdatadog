@@ -113,6 +113,18 @@ jobs:
         with:
           node-version: 24
 
+      - name: Set up Ruby
+        if: matrix.build_kind == 'ruby-package'
+        uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
+        with:
+          ruby-version: "4.0"
+
+      - name: Install Ruby native build dependencies
+        if: matrix.build_kind == 'ruby-package'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake libtool
+
       - name: Install WASM build tools
         if: matrix.build_kind == 'node-wasm'
         env:
@@ -181,6 +193,9 @@ jobs:
               ;;
             php-sidecar)
               VALIDATION_COMMAND="SHARED=1 PROFILE=tracer-release host_os=linux-gnu ./compile_rust.sh"
+              ;;
+            ruby-package)
+              VALIDATION_COMMAND="LIBDATADOG_SOURCE=<libdatadog> bundle exec rake libdatadog:build"
               ;;
             *)
               VALIDATION_COMMAND="unsupported build kind: $BUILD_KIND"
@@ -343,6 +358,20 @@ jobs:
                   SHARED=1 PROFILE=tracer-release host_os=linux-gnu ./compile_rust.sh
                   test -s "$CARGO_TARGET_DIR/tracer-release/libdatadog_php.a"
                   test -s "$CARGO_TARGET_DIR/tracer-release/libdatadog_php.so"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              ruby-package)
+                (
+                  export RUSTUP_TOOLCHAIN=1.92.0
+                  bundle config set --local path "$GITHUB_WORKSPACE/downstream-bundle"
+                  bundle install --jobs 4 --retry 3
+                  LIBDATADOG_SOURCE="$source_target" \
+                    bundle exec rake libdatadog:build
+                  test -n "$(find vendor -type f -name 'libdatadog_profiling.a' -print -quit)"
+                  test -n "$(find vendor -type f -name 'libdatadog_profiling.so' -print -quit)"
+                  test -n "$(find vendor -type f -name 'libdatadog-crashtracking-receiver' -print -quit)"
+                  test -n "$(find vendor -type f -name 'datadog_profiling.pc' -print -quit)"
                 ) 2>&1 | tee -a "$log_path"
                 return "${PIPESTATUS[0]}"
                 ;;
