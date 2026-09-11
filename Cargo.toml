@@ -87,10 +87,22 @@ license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
 [workspace.dependencies]
-# Workspace dependencies are declared version-only with default features
-# disabled. Feature selection (including default features) is left to each leaf
-# crate so that present and future crates opt into exactly what they use,
-# reducing unintentional bloat. Exceptions must be justified.
+# Every external dependency of a workspace member is declared here and
+# inherited with `workspace = true`. Entries are version-only with default
+# features disabled: feature selection (including default features) is left to
+# each leaf crate so that present and future crates opt into exactly what they
+# use, reducing unintentional bloat.
+#
+# Both halves of the policy are enforced by the "Workspace dependency
+# declarations" CI job (`.github/actions/workspace-deps-lint`):
+#   - a member that cannot inherit needs a
+#     `# allow(workspace-deps): <justification>` comment above its dependency;
+#   - an entry below that enables a feature for everyone needs a comment above
+#     it explaining why every member needs that feature.
+#
+# The blank line below matters: it separates this note from the first entry, so
+# the note is not read as a justification for that entry.
+
 allocator-api2 = { version = "0.2.21", default-features = false }
 anyhow = { version = "1.0", default-features = false }
 arbitrary = { version = "1.3", default-features = false }
@@ -103,12 +115,14 @@ bincode = { version = "1.3.3", default-features = false }
 bindgen = { version = "0.71", default-features = false }
 bitmaps = { version = "3.2.0", default-features = false }
 blazesym = { version = "=0.2.3", default-features = false }
+blazesym-c = { version = "=0.1.7", default-features = false }
 bolero = { version = "0.13.4", default-features = false }
 byteorder = { version = "1.5", default-features = false }
 bytes = { version = "1.11", default-features = false }
 cadence = { version = "1.3.0", default-features = false }
 cargo-platform = { version = "=0.1.7", default-features = false }
 cargo_metadata = { version = "0.18.1", default-features = false }
+cbindgen = { version = "0.29", default-features = false }
 cc = { version = "1.1.31", default-features = false }
 chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.3.21", default-features = false }
@@ -166,6 +180,7 @@ hyper-util = { version = "0.1.10", default-features = false }
 indexmap = { version = "2.11", default-features = false }
 io-lifetimes = { version = "1.0", default-features = false }
 itoa = { version = "1.0", default-features = false }
+kernel32-sys = { version = "0.2.2", default-features = false }
 # libc's only default feature is `std`, which is needed by virtually every
 # consumer (libc itself says that not using this feature to link libc in a
 # `no-std` environment is not the recommended way, and that this possibility
@@ -278,6 +293,9 @@ walkdir = { version = "2.4", default-features = false }
 wasm-bindgen-futures = { version = "0.4", default-features = false }
 wasm-bindgen-test = { version = "=0.3.50", default-features = false }
 web-time = { version = "1", default-features = false }
+winapi = { version = "0.3.9", default-features = false }
+windows = { version = "0.59.0", default-features = false }
+windows-sys = { version = "0.52", default-features = false }
 winver = { version = "1.0.0", default-features = false }
 zip = { version = "4.0.0", default-features = false }
 zrip = { version = "=0.6.0", default-features = false }

@@ -18,7 +18,7 @@ allocator-api2.workspace = true
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies.windows-sys]
-version = "0.52"
+workspace = true
 features = [
     "Win32_Foundation",
     "Win32_System_Memory",

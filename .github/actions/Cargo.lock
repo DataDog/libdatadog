@@ -3048,6 +3048,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace-deps-lint"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "clap",
+ "toml_edit",
+]
+
+[[package]]
 name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
