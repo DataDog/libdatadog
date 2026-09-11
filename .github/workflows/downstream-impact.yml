@@ -117,8 +117,9 @@ jobs:
         if: matrix.build_kind == 'ruby-package'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes autoconf automake libtool ruby ruby-dev
-          gem install bundler
+          sudo apt-get install --yes autoconf automake libtool
+          ruby --version
+          bundle --version
 
       - name: Install WASM build tools
         if: matrix.build_kind == 'node-wasm'
