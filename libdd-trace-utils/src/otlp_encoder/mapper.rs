@@ -152,7 +152,7 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
 
 /// Wrap a prost attribute value as a `KeyValue`. `key_ref` is a profiling-signal field, set to
 /// its zero default explicitly (no `..Default::default()`).
-fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
+pub(super) fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
     ProtoKeyValue {
         key,
         value: Some(ProtoAnyValue { value: Some(value) }),
@@ -363,7 +363,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
     }
 }
 
-fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
+pub(super) fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
     fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
         if !v.is_empty() {
             attrs.push(proto_kv(
@@ -451,9 +451,9 @@ fn map_span<T: TraceData>(
         start_time_unix_nano: span.start.max(0) as u64,
         end_time_unix_nano: (span.start + span.duration).max(0) as u64,
         attributes,
-        dropped_attributes_count: dropped_attributes_count as u32,
+        dropped_attributes_count: u32::try_from(dropped_attributes_count).unwrap_or(u32::MAX),
         events,
-        dropped_events_count: dropped_events_count as u32,
+        dropped_events_count: u32::try_from(dropped_events_count).unwrap_or(u32::MAX),
         links,
         // The mapper enforces no link cap, so dropped links is always 0.
         dropped_links_count: 0,
@@ -469,14 +469,7 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
     ProtoLink {
         trace_id: trace_id_128.to_be_bytes().to_vec(),
         span_id: link.span_id.to_be_bytes().to_vec(),
-        trace_state: {
-            let ts = link.tracestate.borrow();
-            if ts.is_empty() {
-                String::new()
-            } else {
-                ts.to_string()
-            }
-        },
+        trace_state: link.tracestate.borrow().to_string(),
         attributes: link
             .attributes
             .iter()
