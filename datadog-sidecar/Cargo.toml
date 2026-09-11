@@ -65,7 +65,6 @@ libc.workspace = true
 # watchdog and self telemetry
 memory-stats = { workspace = true, features = ["always_use_statm"] }
 
-
 # unstable-only feature
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies]
 tokio = { workspace = true, features = ["taskdump"] }
@@ -83,7 +82,7 @@ nix = { workspace = true, features = ["socket", "mman"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
+winapi = { workspace = true, features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
 
 
 [dev-dependencies]
