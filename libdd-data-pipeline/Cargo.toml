@@ -60,7 +60,6 @@ hyper-util = { workspace = true, features = ["tokio"] }
 rand.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { workspace = true, features = ["js"] }
 uuid = { workspace = true, features = ["js", "std"] }
 
 [lib]

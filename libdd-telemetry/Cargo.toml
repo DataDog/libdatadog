@@ -44,7 +44,6 @@ web-time.workspace = true
 sys-info.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { workspace = true, features = ["js"] }
 uuid = { workspace = true, features = ["js", "std"] }
 
 [target."cfg(unix)".dependencies]
