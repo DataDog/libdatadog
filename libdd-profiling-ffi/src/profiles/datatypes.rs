@@ -174,7 +174,7 @@ pub struct Mapping<'a> {
 
     /// The object this entry is loaded from.  This can be a filename on
     /// disk for the main binary and shared libraries, or virtual
-    /// abstractions like "[vdso]".
+    /// abstractions like "\[vdso\]".
     pub filename: CharSlice<'a>,
     pub filename_id: ManagedStringId,
 
@@ -188,7 +188,7 @@ pub struct Mapping<'a> {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Sample<'a> {
-    /// The leaf is at locations[0].
+    /// The leaf is at locations\[0\].
     pub locations: Slice<'a, Location<'a>>,
 
     /// The type and unit of each value is defined by the corresponding
@@ -226,7 +226,7 @@ pub struct Label2<'a> {
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Sample2<'a> {
-    /// The leaf is at locations[0].
+    /// The leaf is at locations\[0\].
     pub locations: Slice<'a, api2::Location2>,
 
     /// The type and unit of each value is defined by the corresponding

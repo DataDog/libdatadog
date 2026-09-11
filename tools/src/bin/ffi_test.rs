@@ -4,7 +4,7 @@
 //! FFI Test Runner
 //!
 //! Builds and runs FFI examples to verify they compile and work correctly.
-//! Usage: cargo ffi-test [--skip-build] [--filter <pattern>] [--keep-artifacts]
+//! Usage: cargo ffi-test [--skip-build] [--filter `<pattern>`] [--keep-artifacts]
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;

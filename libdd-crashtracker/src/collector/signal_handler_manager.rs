@@ -135,7 +135,7 @@ pub(crate) unsafe fn chain_signal_handler(
 }
 
 /// Allocates a signal altstack, and puts a guard page at the end.
-/// Inspired by https://github.com/rust-lang/rust/pull/69969/files
+/// Inspired by <https://github.com/rust-lang/rust/pull/69969/files>
 unsafe fn create_alt_stack() -> anyhow::Result<()> {
     // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
     // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is

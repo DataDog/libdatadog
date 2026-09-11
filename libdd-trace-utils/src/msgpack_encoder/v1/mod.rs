@@ -83,7 +83,7 @@ pub(super) enum SpanEventKey {
 }
 
 /// Type discriminants for attribute values.
-/// An attribute value is encoded as [type_uint8][actual_value].
+/// An attribute value is encoded as `[type_uint8][actual_value]`.
 #[repr(u8)]
 pub(super) enum AnyValueKey {
     String = 1,

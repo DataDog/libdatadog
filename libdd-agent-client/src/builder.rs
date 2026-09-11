@@ -71,7 +71,7 @@ impl Default for AgentTransport {
 /// # Required fields
 ///
 /// - Transport: one of [`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
-///   [`AgentClientBuilder::unix_socket`], [`AgentClientBuilder::windows_named_pipe`],
+///   [`AgentClientBuilder::unix_socket`], `AgentClientBuilder::windows_named_pipe`,
 ///   [`AgentClientBuilder::transport`].
 /// - [`AgentClientBuilder::language_metadata`].
 ///
@@ -141,7 +141,7 @@ impl AgentClientBuilder {
 
     /// Set the request timeout.
     ///
-    /// Defaults to [`DEFAULT_TIMEOUT_MS`] (2 000 ms) when not set.
+    /// Defaults to `DEFAULT_TIMEOUT_MS` (2 000 ms) when not set.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self

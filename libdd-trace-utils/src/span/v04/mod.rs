@@ -65,7 +65,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 ///
 /// `T` is the type used to represent strings in the span, it can be either owned (e.g. BytesString)
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
-/// [`SpanValue`] trait:
+/// [`TraceData`] trait:
 /// ```
 /// use libdd_trace_utils::span::{v04::Span, TraceData};
 /// fn foo<T: TraceData>(span: Span<T>) {

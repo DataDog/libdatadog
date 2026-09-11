@@ -53,7 +53,7 @@ impl DogStatsDClient {
         })
     }
 
-    /// Create a [`Client`] backed by a [`MetricSinkWorker`] running on the
+    /// Create a [`DogStatsDClient`] backed by a `MetricSinkWorker` running on the
     /// provided [`SharedRuntime`].
     ///
     /// Returns the client and a [`WorkerHandle`] that can be used to stop the

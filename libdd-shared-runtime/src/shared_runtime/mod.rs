@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! [`SharedRuntime`] trait and its implementations: [`ForkSafeRuntime`], [`BasicRuntime`],
-//! and [`LocalRuntime`].
+//! and `LocalRuntime`.
 
 pub(crate) mod pausable_worker;
 
@@ -45,7 +45,7 @@ pub(crate) struct WorkerEntry {
 /// |-----------|---------|
 /// | Native, host process may call `fork(2)` | [`ForkSafeRuntime`] |
 /// | Native, caller owns a tokio runtime and wants to share it | [`BasicRuntime`] |
-/// | Wasm / single-threaded JS event loop | [`LocalRuntime`] |
+/// | Wasm / single-threaded JS event loop | `LocalRuntime` |
 ///
 /// Sync entry points (e.g. a blocking `build` or `send`) additionally require
 /// `R: `[`BlockingRuntime`], which only the native implementations satisfy.
@@ -61,7 +61,7 @@ pub trait SharedRuntime {
 
     /// Spawns a worker. `restart_on_fork = true` causes `ForkSafeRuntime::after_fork_child`
     /// to reset and restart it; `false` drops it without calling shutdown. [`BasicRuntime`]
-    /// and [`LocalRuntime`] ignore this flag — they do not implement a fork protocol.
+    /// and `LocalRuntime` ignore this flag — they do not implement a fork protocol.
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,

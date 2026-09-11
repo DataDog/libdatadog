@@ -12,7 +12,7 @@ use tracing_subscriber::fmt::MakeWriter;
 
 /// A custom file appender that handles optional size-based rotation
 /// tokio doesn't support file rotation, so we need to implement it ourselves.
-/// https://github.com/tokio-rs/tracing/pull/2497
+/// <https://github.com/tokio-rs/tracing/pull/2497>
 struct CustomFileAppender {
     path: PathBuf,
     current_size: u64,
