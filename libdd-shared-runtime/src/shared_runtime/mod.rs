@@ -259,6 +259,45 @@ impl WorkerHandle {
     }
 }
 
+/// Operations used when a restored runtime must discard inherited identity-bound state.
+pub mod runtime_identity_refresh {
+    use super::{WorkerEntry, WorkerHandle, WorkerHandleError};
+    use libdd_common::MutexExt;
+
+    /// Stop a worker and clear restartable state without executing shutdown flushing.
+    ///
+    /// This is intended for runtime identity refreshes, such as a MicroVM `/run` hook replacing
+    /// an exporter after snapshot restore. Normal shutdown and fork paths should keep using
+    /// [`WorkerHandle::stop`] and the fork APIs so they preserve their existing behavior.
+    /// Keep this out of `WorkerHandle`'s general API so regular callers do not accidentally
+    /// choose discard semantics when they meant ordinary shutdown.
+    ///
+    /// # Errors
+    /// Returns an error if the worker has already been stopped.
+    ///
+    /// # Cancel safety
+    /// This function is *NOT* cancel safe and should not be called from
+    /// [`Worker::trigger`](crate::worker::Worker::trigger). If cancelled, the discarded worker can
+    /// end up in an invalid state.
+    pub async fn discard_worker_without_flush(
+        handle: WorkerHandle,
+    ) -> Result<(), WorkerHandleError> {
+        let mut worker = {
+            let mut workers_lock = handle.workers.lock_or_panic();
+            let Some(position) = workers_lock
+                .iter()
+                .position(|entry| entry.id == handle.worker_id)
+            else {
+                return Err(WorkerHandleError::AlreadyStopped);
+            };
+            let WorkerEntry { worker, .. } = workers_lock.swap_remove(position);
+            worker
+        };
+        worker.discard().await?;
+        Ok(())
+    }
+}
+
 /// Errors that can occur when using a `SharedRuntime` implementation.
 #[derive(Debug)]
 pub enum SharedRuntimeError {

@@ -46,7 +46,15 @@ pub(super) fn tokio_spawn_fn<T: Send + 'static>(
 pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     Running {
         handle: WorkerJoinHandle<T>,
+        /// Cancelled by [`Self::pause`]. Only guards `trigger`/`initial_trigger`, never
+        /// `Worker::run`, so a normal pause (before a fork, or on ordinary shutdown) always lets
+        /// an in-flight `run` finish.
         stop_token: CancellationToken,
+        /// Cancelled by [`Self::discard`]. Unlike `stop_token`, this one also guards `Worker::run`
+        /// itself, so a runtime identity refresh can cut off an in-flight run instead of waiting
+        /// for it. Kept as a separate token so `discard`'s stronger cancellation never affects
+        /// `pause`.
+        discard_token: CancellationToken,
     },
     Paused {
         worker: T,
@@ -115,7 +123,13 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 };
 
                 let stop_token = CancellationToken::new();
+                // Runtime identity refresh needs a stronger cancellation path than normal pause:
+                // it must discard in-flight work inherited from a process snapshot. Keep this
+                // separate from `stop_token` so normal pause/fork behavior still waits for
+                // `Worker::run` to finish.
+                let discard_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
+                let cloned_discard_token = discard_token.clone();
                 let future = Box::pin(async move {
                     // First iteration using initial_trigger.
                     //
@@ -125,24 +139,42 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     // not keep the runtime scheduler alive after this task is dropped.
                     select! {
                         biased;
+                        _ = cloned_discard_token.cancelled() => {
+                            return worker;
+                        }
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
                         _ = WeakWakerFuture::new(worker.initial_trigger()) => {
-                            worker.run().await;
                         }
+                    }
+                    select! {
+                        biased;
+                        _ = cloned_discard_token.cancelled() => {
+                            return worker;
+                        }
+                        _ = worker.run() => {}
                     }
 
                     // Regular iterations
                     loop {
                         select! {
                             biased;
+                            _ = cloned_discard_token.cancelled() => {
+                                break;
+                            }
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
                             _ = WeakWakerFuture::new(worker.trigger()) => {
-                                worker.run().await;
                             }
+                        }
+                        select! {
+                            biased;
+                            _ = cloned_discard_token.cancelled() => {
+                                break;
+                            }
+                            _ = worker.run() => {}
                         }
                     }
                     worker
@@ -150,7 +182,11 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 
                 let handle = spawn_fn(future);
 
-                *self = PausableWorker::Running { handle, stop_token };
+                *self = PausableWorker::Running {
+                    handle,
+                    stop_token,
+                    discard_token,
+                };
                 Ok(())
             }
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
@@ -165,8 +201,9 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
         match self {
             PausableWorker::Running { .. } => {
                 debug!("Waiting for worker to pause");
-                let PausableWorker::Running { handle, stop_token } =
-                    std::mem::replace(self, PausableWorker::InvalidState)
+                let PausableWorker::Running {
+                    handle, stop_token, ..
+                } = std::mem::replace(self, PausableWorker::InvalidState)
                 else {
                     // Unreachable
                     return Ok(());
@@ -186,6 +223,49 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 }
             }
             PausableWorker::Paused { .. } => Ok(()),
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
+        }
+    }
+
+    /// Stop the worker for a runtime identity refresh and discard its inherited state, without
+    /// running the ordinary shutdown flush path.
+    ///
+    /// Calls [`Worker::discard`] rather than [`Worker::reset`]: this worker instance is never run
+    /// again, whereas `reset` is written for a worker that keeps running afterward (e.g. a forked
+    /// child). Using `reset` here would incorrectly reopen resources (e.g. a channel) that a
+    /// permanently discarded worker should instead close.
+    pub(super) async fn discard(&mut self) -> Result<(), PausableWorkerError> {
+        match self {
+            PausableWorker::Running { .. } => {
+                debug!("Waiting for worker to discard");
+                let PausableWorker::Running {
+                    handle,
+                    discard_token,
+                    ..
+                } = std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
+
+                if !discard_token.is_cancelled() {
+                    discard_token.cancel();
+                }
+
+                if let Ok(mut worker) = handle.await {
+                    worker.discard();
+                    debug!(?worker, "Worker discarded successfully");
+                    *self = PausableWorker::Paused { worker };
+                    Ok(())
+                } else {
+                    *self = PausableWorker::InvalidState;
+                    Err(PausableWorkerError::TaskAborted)
+                }
+            }
+            PausableWorker::Paused { worker } => {
+                worker.discard();
+                Ok(())
+            }
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
         }
     }
@@ -235,6 +315,42 @@ mod tests {
         }
     }
 
+    /// A worker whose `run` can be held "in flight" for a controlled duration, used to test
+    /// `pause`/`discard` racing against an active `run` call.
+    ///
+    /// `TestWorker` above can't exercise that race: its `run` returns immediately, so there is
+    /// no window in which `pause`/`discard` can observe it as in-flight. Each lifecycle method
+    /// reports itself on `sender` so a test can assert both whether `run` was allowed to finish
+    /// and the order lifecycle methods ran in.
+    #[derive(Debug)]
+    struct TestInFlightWorker {
+        sender: Sender<&'static str>,
+        run_duration: Duration,
+    }
+
+    #[async_trait]
+    impl Worker for TestInFlightWorker {
+        async fn run(&mut self) {
+            let _ = self.sender.send("run-started");
+            sleep(self.run_duration).await;
+            let _ = self.sender.send("run-finished");
+        }
+
+        async fn trigger(&mut self) {
+            std::future::pending::<()>().await;
+        }
+
+        async fn initial_trigger(&mut self) {}
+
+        fn reset(&mut self) {
+            let _ = self.sender.send("reset");
+        }
+
+        async fn shutdown(&mut self) {
+            let _ = self.sender.send("shutdown");
+        }
+    }
+
     #[test]
     fn test_restart() {
         let (sender, receiver) = channel::<u32>();
@@ -255,5 +371,65 @@ mod tests {
         }
         pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
+    }
+
+    #[test]
+    fn test_pause_waits_for_in_flight_run() {
+        let (sender, receiver) = channel::<&'static str>();
+        let worker = TestInFlightWorker {
+            sender,
+            run_duration: Duration::from_millis(100),
+        };
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        let handle = runtime.handle().clone();
+        let mut pausable_worker: PausableWorker<Box<dyn Worker + Sync>> =
+            PausableWorker::new(Box::new(worker));
+
+        pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "run-started"
+        );
+
+        runtime.block_on(async { pausable_worker.pause().await.unwrap() });
+
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "run-finished"
+        );
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "pause must not reset or shutdown the worker"
+        );
+    }
+
+    #[test]
+    fn test_discard_cancels_in_flight_run_and_resets() {
+        let (sender, receiver) = channel::<&'static str>();
+        let worker = TestInFlightWorker {
+            sender,
+            run_duration: Duration::from_secs(60),
+        };
+        let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
+        let handle = runtime.handle().clone();
+        let mut pausable_worker: PausableWorker<Box<dyn Worker + Sync>> =
+            PausableWorker::new(Box::new(worker));
+
+        pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "run-started"
+        );
+
+        runtime.block_on(async { pausable_worker.discard().await.unwrap() });
+
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap(),
+            "reset"
+        );
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "discard must cancel the in-flight run and must not shutdown the worker"
+        );
     }
 }
