@@ -2795,6 +2795,7 @@ dependencies = [
  "regex-lite",
  "reqwest",
  "rustls",
+ "rustls-native-certs",
  "rustls-platform-verifier",
  "rustls-webpki",
  "serde",
