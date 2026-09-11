@@ -27,10 +27,7 @@ http = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 # Uses semver::Version::parse in runtime code; parse is available without std (alloc fallback).
 semver.workspace = true
-serde-bool.workspace = true
-serde_with = { workspace = true, features = ["base64", "hex", "macros"] }
 thiserror.workspace = true
-url = { workspace = true, features = ["std"] }
 lru = { workspace = true, default-features = true, optional = true }
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf", optional = true }
 # Hand-written generated-style code uses #[derive(::prost::Message)] and ::prost::alloc types.

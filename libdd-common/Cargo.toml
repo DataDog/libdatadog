@@ -18,7 +18,6 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 futures = { workspace = true, features = ["alloc", "executor"] }
-futures-core.workspace = true
 futures-util.workspace = true
 hex = { workspace = true, default-features = true }
 httparse = { workspace = true, features = ["std"], optional = true }
@@ -37,10 +36,11 @@ regex-lite = { workspace = true, default-features = true, optional = true }
 # backend. We install the ring provider explicitly in connector/mod.rs instead.
 reqwest = { workspace = true, features = ["rustls-no-provider", "hickory-dns"], optional = true }
 criterion = { workspace = true, optional = true }
+# Version 0.8.3+ uses openssl-probe 0.2, which scans multiple certificate
+# directories and adds unwanted I/O in latency-sensitive environments.
 rustls-native-certs = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 thiserror = { workspace = true, default-features = true }
-tokio-rustls = { workspace = true, optional = true }
 serde = { workspace = true, default-features = true, features = ["derive"] }
 static_assertions.workspace = true
 const_format.workspace = true
@@ -100,7 +100,7 @@ http-client = [
     "dep:tokio",
 ]
 # TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
-tls-core = ["http-client", "tokio-rustls", "rustls", "hyper-rustls","rustls-native-certs", "rustls-platform-verifier"]
+tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-native-certs", "rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
