@@ -95,6 +95,37 @@ pub fn init(
     Ok(())
 }
 
+/// Remove the GOT hooks installed by [`init`] for `sigaction` and
+/// `__assert_fail`, restoring every patched slot to its pre-hook value.
+///
+/// After this call, `sigaction` and `__assert_fail` calls in all
+/// previously-patched libraries go directly to whatever implementation
+/// was in their GOT before [`init`] ran — typically the real libc
+/// function, or an LD_PRELOAD interposer if one was loaded first.
+///
+/// # Return value
+///
+/// Returns a combined [`UnhookResult`]. If [`slots_failed`] is non-zero,
+/// one or more GOT entries still point into libdatadog's code. The caller
+/// **must not** unload the library until all slots are restored, or a later
+/// call through those entries will fault. The hook state is preserved on
+/// partial failure so this function may be retried.
+///
+/// Safe to call if [`init`] was never called (no-op in that case). Not
+/// reentrant; do not call concurrently with [`init`] or the hooked functions.
+///
+/// [`slots_failed`]: libdd_gotter::UnhookResult::slots_failed
+/// [`UnhookResult`]: libdd_gotter::UnhookResult
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub fn uninstall_hooks() -> libdd_gotter::UnhookResult {
+    let assert_result = super::assert_interceptor::uninstall_assert_hook();
+    let sigaction_result = super::sigaction_interceptor::uninstall_sigaction_hook();
+    libdd_gotter::UnhookResult {
+        slots_restored: assert_result.slots_restored + sigaction_result.slots_restored,
+        slots_failed: assert_result.slots_failed + sigaction_result.slots_failed,
+    }
+}
+
 /// Reconfigure the crash-tracking infrastructure.
 ///
 /// PRECONDITIONS:

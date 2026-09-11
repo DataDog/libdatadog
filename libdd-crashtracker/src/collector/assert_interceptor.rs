@@ -25,6 +25,11 @@ use core::sync::atomic::{
     Ordering::{Acquire, Relaxed, Release},
 };
 
+/// Per-slot `(GOT_address, original_value)` pairs captured at hook time,
+/// needed by [`uninstall_assert_hook`] to restore the exact pre-hook values.
+static ASSERT_HOOK_RESULT: std::sync::Mutex<Option<libdd_gotter::HookResult>> =
+    std::sync::Mutex::new(None);
+
 const ASSERT_BUF_CAP: usize = 1024;
 
 /// Fixed-size buffer for the formatted assert message.
@@ -224,7 +229,41 @@ pub(crate) fn install_assert_hook() {
         let our_hook = hook_assert_fail as *const () as usize;
         if hook.orig_addr != our_hook {
             ORIG_ASSERT_FN.store(hook.orig_addr, Release);
+            // Store the full HookResult so uninstall_assert_hook can restore
+            // each GOT slot to its exact pre-hook value.
+            if let Ok(mut guard) = ASSERT_HOOK_RESULT.lock() {
+                *guard = Some(hook);
+            }
         }
+    }
+}
+
+/// Remove the `__assert_fail` GOT hook installed by [`install_assert_hook`],
+/// restoring every patched slot to the value it held before hooking.
+///
+/// Safe to call when the hook was never installed (no-op in that case).
+///
+/// Returns an [`UnhookResult`] describing how many slots were restored and
+/// how many failed. If [`UnhookResult::slots_failed`] is non-zero, some GOT
+/// entries still point at `hook_assert_fail`; the caller must not unload
+/// libdatadog until all slots are restored.
+///
+/// On partial failure the hook state is left intact so a retry is possible.
+///
+/// [`UnhookResult`]: libdd_gotter::UnhookResult
+pub(crate) fn uninstall_assert_hook() -> libdd_gotter::UnhookResult {
+    let mut guard = ASSERT_HOOK_RESULT.lock().unwrap_or_else(|e| e.into_inner());
+
+    if let Some(result) = guard.as_ref() {
+        // SAFETY: all libraries patched at hook time are still loaded.
+        let unhook = unsafe { libdd_gotter::unhook_symbol(result) };
+        if unhook.is_complete() {
+            *guard = None;
+            ORIG_ASSERT_FN.store(0, Release);
+        }
+        unhook
+    } else {
+        libdd_gotter::UnhookResult::default()
     }
 }
 
