@@ -77,6 +77,21 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - A panic that reaches an `extern "C"` boundary aborts the host process. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime. Whether a release artifact gets panic containment is decided by `builder` alone, through its `catch_panic` feature (a default), which propagates to the `catch_panic` feature in `libdd-profiling-ffi/Cargo.toml`. Projects building their own flavor with `builder`'s default features off ask for `catch_panic` explicitly; leaving it out yields abort-on-panic semantics. The FFI examples are what verify containment is on for our own release process.
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
+### Dependency declarations
+Every external dependency of a workspace member is declared once in the root `Cargo.toml` `[workspace.dependencies]` and inherited by members with `workspace = true`. Workspace entries should have no features enabled (`default-features = false`, no `features`), so that each leaf crate opts into exactly the features it needs.
+
+Exceptions are per dependency and must be justified in a comment:
+- a member that cannot inherit (e.g. it is pinned to a different major version) needs
+  `# allow(workspace-deps): <justification>` on the line(s) directly above the dependency
+- a workspace entry that enables a feature for every member needs at least one comment line
+  directly above it explaining why (the `allow(workspace-deps)` marker works there too).
+
+This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
+
+```bash
+(cd .github/actions && cargo run -p workspace-deps-lint)
+```
+
 ### Cryptography
 - Default build: ring as TLS crypto provider
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
