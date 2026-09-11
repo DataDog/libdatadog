@@ -88,6 +88,7 @@ ignored = [
   "cargo-platform",
   "getrandom",
   "libdd-capabilities-impl",
+  "rustls-native-certs",
   "rustls-webpki",
   # Self dev-dependencies enable optional features in their own tests.
   "libdd-profiling-protobuf",
