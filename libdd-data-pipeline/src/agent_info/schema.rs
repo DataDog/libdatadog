@@ -24,7 +24,8 @@ pub struct AgentInfoStruct {
     /// List of available endpoints
     pub endpoints: Option<Vec<String>>,
     /// List of feature flags
-    pub feature_flags: Option<Vec<String>>,
+    #[serde(default)]
+    pub feature_flags: Vec<String>,
     pub client_drop_p0s: Option<bool>,
     pub span_meta_structs: Option<bool>,
     pub long_running_spans: Option<bool>,
@@ -120,6 +121,16 @@ pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
+}
+
+impl AgentInfo {
+    /// Return true if the agent advertises support for the extended (15 KB) resource length limit.
+    pub fn is_big_resource_enabled(&self) -> bool {
+        self.info
+            .feature_flags
+            .iter()
+            .any(|flag| flag == "big_resource")
+    }
 }
 
 #[cfg(test)]

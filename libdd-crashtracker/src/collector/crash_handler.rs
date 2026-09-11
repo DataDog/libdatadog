@@ -11,7 +11,7 @@ use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
 use core::ptr;
-use core::sync::atomic::Ordering::{Relaxed, SeqCst};
+use core::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 use errno::{errno, set_errno};
 use libc::{c_void, pid_t, siginfo_t, ucontext_t};
@@ -319,10 +319,27 @@ fn handle_posix_signal_impl(
     }
     let (_metadata, metadata_string) = unsafe { &*metadata_ptr };
 
-    // Get the panic message pointer but don't dereference or deallocate in signal handler.
-    // The collector child process will handle converting this to a String after forking.
-    // Leak of the message pointer is ok here.
-    let message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
+    // Take the panic message pointer. We borrow via raw pointer and
+    // intentionally leak (do not reconstruct the Box) to avoid calling
+    // `free` in the signal handler.
+    let panic_message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), Acquire);
+
+    // Prefer the panic message; fall back to a stored assert-failure
+    // message (captured by our __assert_fail GOT hook on SIGABRT).
+    let message: Option<&str> = if !panic_message_ptr.is_null() {
+        // SAFETY: the pointer was created by `Box::into_raw(Box::new(String))`
+        // in the panic hook and has not been freed.
+        Some(unsafe { &*panic_message_ptr })
+    } else {
+        #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+        {
+            super::assert_interceptor::take_assert_message()
+        }
+        #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+        {
+            None
+        }
+    };
 
     let timeout_manager = TimeoutManager::new(config.timeout());
 
@@ -342,7 +359,7 @@ fn handle_posix_signal_impl(
         config,
         config_str,
         metadata_string,
-        message_ptr,
+        message,
         sig_info,
         ucontext,
     )?;
@@ -523,8 +540,6 @@ pub fn report_unhandled_exception(
          Message: {error_message_str}"
     );
 
-    let message_ptr = Box::into_raw(Box::new(message));
-
     // Duplicate the socket fd before handing it to UnixStream so we retain an fd to poll on after
     // the write end is closed.  OwnedFd is the scope guard: it closes poll_fd on any exit path.
     //
@@ -541,7 +556,7 @@ pub fn report_unhandled_exception(
             &config,
             &config_str,
             &metadata_str,
-            message_ptr,
+            Some(message.as_str()),
             super::emitters::CrashKindData::UnhandledException { stacktrace },
             pid,
             tid,

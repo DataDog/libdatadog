@@ -10,8 +10,8 @@ use std::{
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
-use datadog_ipc::platform::locks::FLock;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::platform::locks::FLock;
+use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
 #[cfg(feature = "logging")]
 use log::{debug, warn};
@@ -61,7 +61,7 @@ impl Liaison for SharedDirLiaison {
 
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
-            if datadog_ipc::platform::sockets::is_listening(&self.socket_path)? {
+            if libdd_ipc::platform::sockets::is_listening(&self.socket_path)? {
                 debug!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
@@ -144,8 +144,8 @@ mod linux {
 
     use spawn_worker::getpid;
 
-    use datadog_ipc::platform;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::platform;
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 
@@ -228,7 +228,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 

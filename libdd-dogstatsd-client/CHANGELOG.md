@@ -2,6 +2,27 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v5.0.0..libdd-dogstatsd-client-v6.0.0) - 2026-09-08
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v4.0.0..libdd-dogstatsd-client-v5.0.0) - 2026-08-17
+
+### Added
+
+- Add shared_runtime buffered sink ([#2224](https://github.com/datadog/libdatadog/issues/2224)) - ([919c275](https://github.com/datadog/libdatadog/commit/919c275cdabdb5c1a300d605793908e219d1a22c))
+
+### Changed
+
+- Make client clonable ([#2222](https://github.com/datadog/libdatadog/issues/2222)) - ([b9fae6d](https://github.com/datadog/libdatadog/commit/b9fae6d5365be2ddce0d11d6d771481de5c47c27))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v3.0.0..libdd-dogstatsd-client-v4.0.0) - 2026-07-07
 
 ### Changed

@@ -68,7 +68,7 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    message_ptr: *mut String,
+    message: Option<&str>,
     crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
@@ -78,7 +78,7 @@ pub(crate) fn emit_crashreport(
     // section, so try to emit message, siginfo, and kind before it to make sure
     // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
-    emit_message(pipe, message_ptr)?;
+    emit_message(pipe, message)?;
 
     match &crash {
         CrashKindData::UnixSignal { sig_info, .. } => {
@@ -489,12 +489,11 @@ fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(),
     Ok(())
 }
 
-fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
-    if !message_ptr.is_null() {
-        let message = unsafe { &*message_ptr };
-        if !message.trim().is_empty() {
+fn emit_message(w: &mut impl Write, message: Option<&str>) -> Result<(), EmitterError> {
+    if let Some(msg) = message {
+        if !msg.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            write_sanitized_message_line(w, message)?;
+            write_sanitized_message_line(w, msg)?;
             writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
             w.flush()?;
         }
@@ -826,80 +825,64 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_message_nullptr() {
+    fn test_emit_message_none() {
         let mut buf = Vec::new();
-        emit_message(&mut buf, core::ptr::null_mut()).expect("to work ;-)");
+        emit_message(&mut buf, None).expect("to work ;-)");
         assert!(buf.is_empty());
     }
 
     #[test]
     fn test_emit_message() {
         let message = "test message";
-        let message_ptr = Box::into_raw(Box::new(message.to_string()));
         let mut buf = Vec::new();
-        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        emit_message(&mut buf, Some(message)).expect("to work ;-)");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
         assert!(out.contains("BEGIN_MESSAGE"));
         assert!(out.contains("END_MESSAGE"));
         assert!(out.contains(message));
-        // Clean up the allocated String
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_empty_string() {
-        let empty_message = String::new();
-        let message_ptr = Box::into_raw(Box::new(empty_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("")).expect("to work");
 
         // Empty messages should not emit anything
         assert!(buf.is_empty());
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_whitespace_only() {
         // Whitespace-only messages should not be emitted
-        let whitespace_message = "   \n\t  ".to_string();
-        let message_ptr = Box::into_raw(Box::new(whitespace_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("   \n\t  ")).expect("to work");
 
         // Whitespace-only messages should not emit anything
         assert!(buf.is_empty());
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_with_leading_trailing_whitespace() {
         // Messages with content and whitespace should be emitted (with the whitespace)
-        let message_with_whitespace = "  error message  ".to_string();
-        let message_ptr = Box::into_raw(Box::new(message_with_whitespace.clone()));
+        let message_with_whitespace = "  error message  ";
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(message_with_whitespace)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         // Should emit markers and preserve whitespace in content
         assert!(out.contains("BEGIN_MESSAGE"));
         assert!(out.contains("END_MESSAGE"));
-        assert!(out.contains(&message_with_whitespace));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
+        assert!(out.contains(message_with_whitespace));
     }
 
     #[test]
     fn test_emit_message_with_newlines() {
-        let message_with_newlines = "line1\nline2\nline3".to_string();
-        let message_ptr = Box::into_raw(Box::new(message_with_newlines));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("line1\nline2\nline3")).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains("line1"));
@@ -911,22 +894,17 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3, "BEGIN_MESSAGE, content, END_MESSAGE");
         assert!(lines[1].contains("line1\\nline2\\nline3"));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_unicode() {
-        let unicode_message = "Hello 世界 🦀 Rust!".to_string();
-        let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
+        let unicode_message = "Hello 世界 🦀 Rust!";
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(unicode_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
-        assert!(out.contains(&unicode_message));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
+        assert!(out.contains(unicode_message));
     }
 
     #[test]
@@ -958,10 +936,9 @@ mod tests {
             DD_CRASHTRACK_END_CONFIG,
             DD_CRASHTRACK_DONE,
         );
-        let message_ptr = Box::into_raw(Box::new(malicious));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&malicious)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         let lines: Vec<&str> = out.lines().collect();
@@ -983,17 +960,14 @@ mod tests {
             !lines.contains(&DD_CRASHTRACK_DONE),
             "injected DONE must not appear as a wire line"
         );
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_content_starting_with_sentinel_prefix() {
         let sentinel_message = format!("{} extra data", DD_CRASHTRACK_END_MESSAGE);
-        let message_ptr = Box::into_raw(Box::new(sentinel_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&sentinel_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         let lines: Vec<&str> = out.lines().collect();
@@ -1004,8 +978,6 @@ mod tests {
             "content line must not start with DD_CRASHTRACK_END_MESSAGE, got: {}",
             lines[1]
         );
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
@@ -1036,15 +1008,12 @@ mod tests {
     #[test]
     fn test_emit_message_very_long() {
         let long_message = "x".repeat(100000); // 100KB
-        let message_ptr = Box::into_raw(Box::new(long_message.clone()));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&long_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     // We only test edge cases specific to this wrapper function here.

@@ -222,11 +222,18 @@ impl<'a, T: 'a> Slice<'a, T> {
     ///
     /// 1. Fails if `self.ptr` is null and `self.len` is not zero.
     /// 2. Fails if `self.ptr` is not null and is unaligned.
-    /// 3. Fails if `self.len` is larger than [`isize::MAX`].
+    /// 3. Fails if the total size in bytes (`self.len * size_of::<T>()`) is larger than
+    ///    [`isize::MAX`].
     pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
         let (ptr, len) = self.as_raw_parts();
         if !ptr.is_null() {
-            if len > isize::MAX as usize {
+            // `from_raw_parts` bounds the total size in *bytes*, not the element
+            // count: for a wide `T` a count within `isize::MAX` can still
+            // overflow. `checked_mul` also covers the overflow and ZST cases.
+            let too_large = len
+                .checked_mul(core::mem::size_of::<T>())
+                .is_none_or(|bytes| bytes > isize::MAX as usize);
+            if too_large {
                 Err(SliceConversionError::LargeLength)
             } else if !ptr.is_aligned() {
                 Err(SliceConversionError::MisalignedPointer)
@@ -474,6 +481,25 @@ mod tests {
         };
 
         let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_byte_size() {
+        // `len` is within `isize::MAX` as an element count, but the byte size
+        // (`len * size_of::<u64>()`) exceeds it. The pointer is non-null and
+        // aligned, so the byte-size check is what must reject the slice.
+        let len = isize::MAX as usize / core::mem::size_of::<u64>() + 1;
+        let large_bytes: Slice<u64> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len,
+            _marker: PhantomData,
+        };
+
+        let result = large_bytes.try_as_slice();
         assert!(matches!(
             result.unwrap_err(),
             SliceConversionError::LargeLength

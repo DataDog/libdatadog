@@ -1,11 +1,59 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Datadog tag construction and validation.
+//!
+//! # Validation policy
+//!
+//! The Datadog documentation defines more tag rules than this module enforces:
+//! <https://docs.datadoghq.com/getting_started/tagging/#define-tags>. Enforcing rules that tracing
+//! and profiling do not apply consistently would produce a worse user experience, so runtime
+//! validation currently rejects only empty tags and likely colon-related mistakes. Compile-time
+//! validation by the [`tag!`] macro is intentionally stricter.
+
 use alloc::borrow::Cow;
 use core::fmt::{Debug, Display, Formatter};
 use serde::{Deserialize, Serialize};
 
 pub use static_assertions::{const_assert, const_assert_ne};
+
+/// Describes some reasons why a tag is invalid.
+#[allow(missing_docs, reason = "variant names are self-documenting")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+#[non_exhaustive] // so we can add more cases without breaking semver
+pub enum TagValidationError {
+    #[error("tag is empty")]
+    Empty,
+    #[error("tag begins with a colon")]
+    BeginsWithColon,
+    #[error("tag ends with a colon")]
+    EndsWithColon,
+}
+
+/// A tag rejected while validating a tag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidTag<'a> {
+    /// The invalid serialized tag.
+    pub value: &'a str,
+    /// Why the tag is invalid.
+    pub error: TagValidationError,
+}
+
+impl Display for InvalidTag<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        match self.error {
+            TagValidationError::Empty => f.write_str("tag is empty"),
+            TagValidationError::BeginsWithColon => {
+                write!(f, "tag '{}' begins with a colon", self.value)
+            }
+            TagValidationError::EndsWithColon => {
+                write!(f, "tag '{}' ends with a colon", self.value)
+            }
+        }
+    }
+}
+
+impl core::error::Error for InvalidTag<'_> {}
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -90,33 +138,50 @@ impl Display for Tag {
 }
 
 impl Tag {
+    /// Validates a tag key and value pair.
+    #[inline]
+    pub fn validate(key: &str, value: &str) -> Result<(), TagValidationError> {
+        if key.is_empty() || key.starts_with(':') {
+            Err(TagValidationError::BeginsWithColon)
+        } else if value.is_empty() || value.ends_with(':') {
+            Err(TagValidationError::EndsWithColon)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Validates a tag that has already been serialized.
+    #[inline]
+    pub fn validate_value(value: &str) -> Result<(), TagValidationError> {
+        if value.is_empty() {
+            Err(TagValidationError::Empty)
+        } else if value.starts_with(':') {
+            Err(TagValidationError::BeginsWithColon)
+        } else if value.ends_with(':') {
+            Err(TagValidationError::EndsWithColon)
+        } else {
+            Ok(())
+        }
+    }
+
     /// Validates a tag.
-    fn from_value<'a, IntoCow>(chunk: IntoCow) -> anyhow::Result<Self>
+    fn from_value<'a, IntoCow>(value: IntoCow) -> anyhow::Result<Self>
     where
         IntoCow: Into<Cow<'a, str>>,
     {
-        let chunk = chunk.into();
-
-        /* The docs have various rules, which we are choosing not to enforce:
-         * https://docs.datadoghq.com/getting_started/tagging/#defining-tags
-         * The reason is that if tracing and profiling disagree on what valid
-         * tags are, then the user experience is degraded.
-         * So... we mostly just pass it along and handle it in the backend.
-         * However, we do enforce some rules around the colon, because they
-         * are likely to be errors (such as passed in empty string).
-         */
-
-        anyhow::ensure!(!chunk.is_empty(), "tag is empty");
-
-        let mut chars = chunk.chars();
-        anyhow::ensure!(
-            chars.next() != Some(':'),
-            "tag '{chunk}' begins with a colon"
-        );
-        anyhow::ensure!(chars.last() != Some(':'), "tag '{chunk}' ends with a colon");
-
-        let value = Cow::Owned(chunk.into_owned());
-        Ok(Tag { value })
+        let value = value.into();
+        match Self::validate_value(&value) {
+            Ok(()) => Ok(Self {
+                value: Cow::Owned(value.into_owned()),
+            }),
+            Err(error) => {
+                let invalid = InvalidTag {
+                    value: value.as_ref(),
+                    error,
+                };
+                anyhow::bail!("{invalid}")
+            }
+        }
     }
 
     /// Creates a tag from a key and value. It's preferred to use the `tag!`
@@ -133,6 +198,34 @@ impl Tag {
     }
 }
 
+/// An allocation-free iterator over validated tags in a comma- or space-separated string.
+pub struct TagParser<'a> {
+    chunks: core::str::Split<'a, &'static [char]>,
+}
+
+impl<'a> TagParser<'a> {
+    /// Creates an iterator over the tags in `input`.
+    pub fn new(input: &'a str) -> Self {
+        const SEPARATORS: &[char] = &[',', ' '];
+        Self {
+            chunks: input.split(SEPARATORS),
+        }
+    }
+}
+
+impl<'a> Iterator for TagParser<'a> {
+    type Item = Result<&'a str, InvalidTag<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let tag = self.chunks.find(|chunk| !chunk.is_empty())?;
+        Some(
+            Tag::validate_value(tag)
+                .map(|()| tag)
+                .map_err(|error| InvalidTag { value: tag, error }),
+        )
+    }
+}
+
 /// Parse a string of tags typically provided by environment variables
 /// The tags are expected to be either space or comma separated:
 ///     "key1:value1,key2:value2"
@@ -142,16 +235,13 @@ impl Tag {
 /// Returns a tuple of the correctly parsed tags and an optional error message
 /// describing issues encountered during parsing.
 pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
-    let chunks = str
-        .split(&[',', ' '][..])
-        .filter(|str| !str.is_empty())
-        .map(Tag::from_value);
-
     let mut tags = vec![];
     let mut error_message = String::new();
-    for result in chunks {
+    for result in TagParser::new(str) {
         match result {
-            Ok(tag) => tags.push(tag),
+            Ok(tag) => tags.push(Tag {
+                value: Cow::Owned(tag.to_owned()),
+            }),
             Err(err) => {
                 if error_message.is_empty() {
                     error_message += "Errors while parsing tags: ";
@@ -174,6 +264,47 @@ pub fn parse_tags(str: &str) -> (Vec<Tag>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_component_and_serialized_validation_are_consistent(
+            key in any::<String>(),
+            value in any::<String>(),
+        ) {
+            let serialized = format!("{key}:{value}");
+
+            prop_assert_eq!(
+                Tag::validate(&key, &value),
+                Tag::validate_value(&serialized)
+            );
+        }
+
+        #[test]
+        fn prop_constructor_and_validation_are_consistent(
+            key in any::<String>(),
+            value in any::<String>(),
+        ) {
+            let serialized = format!("{key}:{value}");
+            let validation = Tag::validate(&key, &value);
+            let result = Tag::new(&key, &value);
+
+            prop_assert_eq!(result.is_ok(), validation.is_ok());
+            if let Ok(tag) = result {
+                prop_assert_eq!(tag.as_ref(), serialized);
+            }
+        }
+
+        #[test]
+        fn prop_serialized_constructor_and_validation_are_consistent(
+            value in any::<String>(),
+        ) {
+            prop_assert_eq!(
+                Tag::from_value(value.as_str()).is_ok(),
+                Tag::validate_value(&value).is_ok()
+            );
+        }
+    }
 
     #[test]
     fn test_is_send() {
@@ -185,13 +316,49 @@ mod tests {
     }
 
     #[test]
+    fn test_validation() {
+        assert_eq!(Tag::validate("key", "value"), Ok(()));
+        assert_eq!(Tag::validate("key", "value:with:colons"), Ok(()));
+        assert_eq!(
+            Tag::validate("", "value"),
+            Err(TagValidationError::BeginsWithColon)
+        );
+        assert_eq!(
+            Tag::validate(":key", "value"),
+            Err(TagValidationError::BeginsWithColon)
+        );
+        assert_eq!(
+            Tag::validate("key", ""),
+            Err(TagValidationError::EndsWithColon)
+        );
+        assert_eq!(
+            Tag::validate("key", "value:"),
+            Err(TagValidationError::EndsWithColon)
+        );
+
+        assert_eq!(Tag::validate_value("key:value"), Ok(()));
+        assert_eq!(Tag::validate_value("tag"), Ok(()));
+        assert_eq!(Tag::validate_value(""), Err(TagValidationError::Empty));
+        assert_eq!(
+            Tag::validate_value(":value"),
+            Err(TagValidationError::BeginsWithColon)
+        );
+        assert_eq!(
+            Tag::validate_value("key:"),
+            Err(TagValidationError::EndsWithColon)
+        );
+    }
+
+    #[test]
     fn test_empty_key() {
-        let _ = Tag::new("", "woof").expect_err("empty key is not allowed");
+        let error = Tag::new("", "woof").expect_err("empty key is not allowed");
+        assert_eq!(error.to_string(), "tag ':woof' begins with a colon");
     }
 
     #[test]
     fn test_empty_value() {
-        let _ = Tag::new("key1", "").expect_err("empty value is an error");
+        let error = Tag::new("key1", "").expect_err("empty value is an error");
+        assert_eq!(error.to_string(), "tag 'key1:' ends with a colon");
     }
 
     #[test]
@@ -247,6 +414,46 @@ mod tests {
     #[test]
     fn test_tailing_colon_parsing() {
         let _ = Tag::from_value("tag:").expect_err("Cannot end with a colon");
+    }
+
+    #[test]
+    fn test_tag_parser() {
+        let parsed =
+            TagParser::new("key:value, :leading middle:colon trailing:  bare").collect::<Vec<_>>();
+        assert_eq!(
+            parsed,
+            vec![
+                Ok("key:value"),
+                Err(InvalidTag {
+                    value: ":leading",
+                    error: TagValidationError::BeginsWithColon,
+                }),
+                Ok("middle:colon"),
+                Err(InvalidTag {
+                    value: "trailing:",
+                    error: TagValidationError::EndsWithColon,
+                }),
+                Ok("bare"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tag_parser_preserves_parse_tags_errors() {
+        let (tags, error) = parse_tags("valid:value,:leading,trailing:,also:valid");
+        assert_eq!(
+            tags,
+            vec![
+                Tag::new("valid", "value").unwrap(),
+                Tag::new("also", "valid").unwrap(),
+            ]
+        );
+        assert_eq!(
+            error.as_deref(),
+            Some(
+                "Errors while parsing tags: tag ':leading' begins with a colon, tag 'trailing:' ends with a colon"
+            )
+        );
     }
 
     #[test]

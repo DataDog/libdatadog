@@ -5,13 +5,14 @@
 // crashtracker when the altstack is used.
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
-    atom_to_clone, file_content_equals, file_write_msg, fileat_content_equals, remove_permissive,
-    removeat_permissive, set_atomic,
+    fileat_content_equals, handler_write_msg, remove_permissive, removeat_permissive,
+    set_handler_path, wait_for_file_content, SIGNAL_HANDLER_TIMEOUT,
 };
 
 use libc;
 use libdd_crashtracker::CrashtrackerConfiguration;
-use std::path::{Path, PathBuf};
+use std::ffi::CString;
+use std::path::Path;
 use std::sync::atomic::AtomicPtr;
 
 pub struct Test;
@@ -48,23 +49,17 @@ impl Behavior for Test {
 
 extern "C" fn sigchld_handler(_: libc::c_int) {
     // Open and write 'O' to the output file
-    let ofile = match atom_to_clone(&OUTPUT_FILE) {
-        Ok(ofile) => ofile,
-        _ => {
-            return;
-        }
-    };
-    file_write_msg(&ofile, "O").ok();
+    handler_write_msg(&OUTPUT_FILE, b"O");
 }
 
-static OUTPUT_FILE: AtomicPtr<PathBuf> = AtomicPtr::new(std::ptr::null_mut());
+static OUTPUT_FILE: AtomicPtr<CString> = AtomicPtr::new(std::ptr::null_mut());
 
 fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     // We're going to cause a SIGCHLD and check
 
     // Set the output file so the handler can pick up on it
-    set_atomic(&OUTPUT_FILE, output_dir.join(filename));
-    let ofile = atom_to_clone(&OUTPUT_FILE)?;
+    let ofile = output_dir.join(filename);
+    set_handler_path(&OUTPUT_FILE, &ofile)?;
 
     match unsafe { libc::fork() } {
         -1 => {
@@ -91,21 +86,16 @@ fn inner(output_dir: &Path, filename: &str) -> anyhow::Result<()> {
     }
 
     // Now check the output file.  Strongly assumes that nothing happened to change the value of
-    // OUTPUT_FILE within the handler.
-    match file_content_equals(&ofile, "O") {
-        Ok(true) => (), // Expected, do nothing
-        _ => {
-            anyhow::bail!("Output file {:?}/{} was not 'O'", output_dir, filename);
-        }
-    }
+    // OUTPUT_FILE within the handler.  The handler runs asynchronously, so the file is waited on
+    // rather than checked once.
+    wait_for_file_content(&ofile, "O", SIGNAL_HANDLER_TIMEOUT)?;
 
     // Delete the file and the INVALID file to remove any previous state
     remove_permissive(&ofile);
     removeat_permissive(output_dir, "INVALID");
 
     // OK, we're done.  Return the output file name
-    set_atomic(&OUTPUT_FILE, output_dir.join("INVALID"));
-    Ok(())
+    set_handler_path(&OUTPUT_FILE, &output_dir.join("INVALID"))
 }
 
 pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
@@ -132,7 +122,5 @@ pub fn setup(output_dir: &Path) -> anyhow::Result<()> {
     }
 
     // Additional setup logic for the output file
-    set_atomic(&OUTPUT_FILE, output_dir.join("INVALID"));
-
-    Ok(())
+    set_handler_path(&OUTPUT_FILE, &output_dir.join("INVALID"))
 }

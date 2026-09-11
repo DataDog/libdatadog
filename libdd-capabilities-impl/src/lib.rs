@@ -67,6 +67,15 @@ impl HttpClientCapability for NativeCapabilities {
         Self::new()
     }
 
+    fn new_without_connection_pooling() -> Self {
+        Self {
+            http: NativeHttpClient::new_without_connection_pooling(),
+            sleep: NativeSleepCapability,
+            env: NativeEnvCapability,
+            file: NativeFileCapability,
+        }
+    }
+
     fn request(
         &self,
         req: ::http::Request<bytes::Bytes>,

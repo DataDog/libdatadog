@@ -20,7 +20,7 @@
 use std::alloc::System;
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
-use libdd_common::bench_utils::{memory_allocated_measurement, AllocatedBytesMeasurement};
+use libdd_common::bench_utils::{memory_allocated_criterion, AllocatedBytesMeasurement};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::span::v04::SpanBytes;
@@ -150,7 +150,7 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
         .into_iter()
         .map(|trace| {
             trace
-                .into_iter()
+                .iter()
                 .map(|span| from_v04_span(span, &mut dict))
                 .collect::<anyhow::Result<Vec<_>>>()
         })
@@ -218,8 +218,7 @@ fn deserialize_msgpack_v05_allocs(c: &mut Criterion<AllocatedBytesMeasurement<Sy
 }
 
 criterion_group!(deserialize_v05_benches, deserialize_msgpack_v05);
-criterion_group!(
-    name = deserialize_v05_alloc_benches;
-    config = memory_allocated_measurement(&super::GLOBAL);
-    targets = deserialize_msgpack_v05_allocs
-);
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+pub fn deserialize_v05_alloc_benches() {
+    deserialize_msgpack_v05_allocs(&mut memory_allocated_criterion(&super::GLOBAL));
+}

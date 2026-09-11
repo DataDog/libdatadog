@@ -15,61 +15,32 @@
 //! trait bound) rather than the whole `T`, so the encoder does not require a
 //! `T: Serialize` bound — keeping the public exporter API free of that bound.
 
+use crate::hex::{hex_low_u64, hex_u128, hex_u64};
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::TraceData;
+use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;
 
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-
-/// Writes `value` as 16 zero-padded lowercase hex bytes into the start of `out`.
-///
-/// The caller guarantees `out` has room for at least 16 bytes.
-fn fill_hex(out: &mut [u8], value: u64) {
-    for i in 0..16 {
-        out[15 - i] = HEX_DIGITS[((value >> (i * 4)) & 0xf) as usize];
-    }
-}
-
-/// Serializes `buf` as a JSON string. `buf` must only contain ASCII hex digits,
-/// so the UTF-8 check below never fails in practice.
-fn serialize_ascii_hex<S: Serializer>(serializer: S, buf: &[u8]) -> Result<S::Ok, S::Error> {
-    match std::str::from_utf8(buf) {
-        Ok(text) => serializer.serialize_str(text),
-        // Unreachable: `fill_hex` only writes ASCII hex digits.
-        Err(_) => serializer.serialize_str(""),
-    }
-}
-
 /// A `u64` id rendered as a 16-char zero-padded lowercase hex JSON string.
-struct HexU64(u64);
+pub(super) struct HexU64(pub(super) u64);
 
 impl Serialize for HexU64 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut buf = [0u8; 16];
-        fill_hex(&mut buf, self.0);
-        serialize_ascii_hex(serializer, &buf)
+        hex_u64(self.0).serialize(serializer)
     }
 }
 
 /// A 128-bit trace id rendered as hex. When the high 64 bits are zero it is
 /// emitted as 16 hex chars (the low 64 bits); otherwise as the full 32 chars.
-struct HexTraceId(u128);
+pub(super) struct HexTraceId(pub(super) u128);
 
 impl Serialize for HexTraceId {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let high = (self.0 >> 64) as u64;
-        let low = self.0 as u64;
-        if high == 0 {
-            let mut buf = [0u8; 16];
-            fill_hex(&mut buf, low);
-            serialize_ascii_hex(serializer, &buf)
+        if self.0 >> 64 == 0 {
+            hex_low_u64(self.0).serialize(serializer)
         } else {
-            let mut buf = [0u8; 32];
-            fill_hex(&mut buf[0..16], high);
-            fill_hex(&mut buf[16..32], low);
-            serialize_ascii_hex(serializer, &buf)
+            hex_u128(self.0).serialize(serializer)
         }
     }
 }
@@ -102,7 +73,9 @@ impl<T: TraceData> Serialize for LogSpanLink<'_, T> {
             state.serialize_field("tracestate", &link.tracestate)?;
         }
         if has_flags {
-            state.serialize_field("flags", &link.flags)?;
+            // Mask off the internal "explicitly set" sentinel (bit 31): this JSON log field
+            // is consumer-facing and must not expose the internal wire encoding.
+            state.serialize_field("flags", &(link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL))?;
         }
         state.end()
     }

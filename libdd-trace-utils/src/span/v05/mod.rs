@@ -4,7 +4,7 @@
 pub mod dict;
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
-use crate::span::{SharedDictBytes, SpanText, TraceData};
+use crate::span::{SharedDictBytes, SpanText, TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
 use anyhow::Result;
 use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
@@ -43,7 +43,7 @@ pub struct Span {
 ///   low 64 bits).
 /// - `span_id` is the 64-bit id hex-encoded as 16 lowercase chars.
 /// - `tracestate` and `attributes` are only emitted when non-empty.
-/// - `flags` is only emitted when not zero.
+/// - `flags` is only emitted when not zero, with [`SPAN_LINK_FLAGS_SET_SENTINEL`] masked off.
 struct SpanLinksSerializerV05<'a, T: TraceData>(&'a [SpanLink<T>]);
 struct SpanLinkSerializerV05<'a, T: TraceData>(&'a SpanLink<T>);
 
@@ -81,7 +81,7 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
             )?;
         }
         if has_flags {
-            map.serialize_entry("flags", &link.flags)?;
+            map.serialize_entry("flags", &(link.flags & !SPAN_LINK_FLAGS_SET_SENTINEL))?;
         }
         map.end()
     }
@@ -217,14 +217,14 @@ fn get_or_insert(
 /// dictionary always owns its strings ([`SharedDictBytes`]). Borrowed input text is copied into
 /// the dictionary; owned text is reference-counted.
 pub fn from_v04_span<T: TraceData>(
-    span: crate::span::v04::Span<T>,
+    span: &crate::span::v04::Span<T>,
     dict: &mut SharedDictBytes,
 ) -> Result<Span> {
     let meta_len = span.meta.len();
     let metrics_len = span.metrics.len();
 
-    // Serialize span links / span events before `span` is consumed below. v0.5 has no
-    // dedicated slots for them, so they are flattened into `meta` as JSON strings.
+    // Serialize span links / span events
+    // v0.5 has no dedicated slots for them, so they are flattened into `meta` as JSON strings.
     let serialized_span_links = if span.span_links.is_empty() {
         None
     } else {
@@ -248,10 +248,10 @@ pub fn from_v04_span<T: TraceData>(
     let service = get_or_insert(dict, &span.service)?;
     let name = get_or_insert(dict, &span.name)?;
     let resource = get_or_insert(dict, &span.resource)?;
-    let mut meta = span.meta.into_iter().try_fold(
+    let mut meta = span.meta.iter().try_fold(
         HashMap::with_capacity(meta_len + extra_meta),
         |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-            meta.insert(get_or_insert(dict, &k)?, get_or_insert(dict, &v)?);
+            meta.insert(get_or_insert(dict, k)?, get_or_insert(dict, v)?);
             Ok(meta)
         },
     )?;
@@ -267,10 +267,10 @@ pub fn from_v04_span<T: TraceData>(
         meta.insert(key, value);
     }
 
-    let metrics = span.metrics.into_iter().try_fold(
+    let metrics = span.metrics.iter().try_fold(
         HashMap::with_capacity(metrics_len),
         |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-            metrics.insert(get_or_insert(dict, &k)?, v);
+            metrics.insert(get_or_insert(dict, k)?, *v);
             Ok(metrics)
         },
     )?;
@@ -332,7 +332,7 @@ mod tests {
         };
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
 
         let get_index_from_str = |str: &str| -> u32 {
             dict.iter()
@@ -420,7 +420,7 @@ mod tests {
         }];
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
 
         let links_json = meta_json(&dict, &v05_span, "_dd.span_links").unwrap();
         assert_eq!(
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn from_v04_span_empty_links_events_no_meta_keys_test() {
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(base_span(), &mut dict).unwrap();
+        let v05_span = from_v04_span(&base_span(), &mut dict).unwrap();
         assert_eq!(v05_span.meta.len(), 1);
         assert!(meta_json(&dict, &v05_span, "_dd.span_links").is_none());
         assert!(meta_json(&dict, &v05_span, "events").is_none());
@@ -459,14 +459,14 @@ mod tests {
         .into();
 
         let mut dict = SharedDictBytes::default();
-        let v05_span = from_v04_span(span, &mut dict).unwrap();
+        let v05_span = from_v04_span(&span, &mut dict).unwrap();
         assert_eq!(v05_span.meta.len(), 1);
         assert!(meta_json(&dict, &v05_span, "appsec").is_none());
         assert!(meta_json(&dict, &v05_span, "meta_struct").is_none());
     }
 
-    /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`;
-    /// `flags` is dropped.
+    /// A link with no tracestate and no attributes serializes only hex `trace_id`/`span_id`,
+    /// plus `flags` since it is non-zero.
     #[test]
     fn span_link_minimal_serialization_test() {
         let links = vec![SpanLink::<BytesData> {
@@ -482,6 +482,38 @@ mod tests {
             json,
             "[{\"trace_id\":\"000000000000000000000000deadbeef\",\"span_id\":\"000000000000feed\",\"flags\":7}]"
         );
+    }
+
+    /// Covers all three [`SPAN_LINK_FLAGS_SET_SENTINEL`] states: unset, kept, and explicitly
+    /// dropped.
+    #[test]
+    fn span_link_flags_sentinel_bit_masked_test() {
+        let kept = vec![SpanLink::<BytesData> {
+            span_id: 1,
+            flags: 0x8000_0001,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&kept)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["flags"], serde_json::json!(1));
+
+        let dropped = vec![SpanLink::<BytesData> {
+            span_id: 2,
+            flags: 0x8000_0000,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&dropped)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["flags"], serde_json::json!(0));
+
+        let unset = vec![SpanLink::<BytesData> {
+            span_id: 3,
+            flags: 0,
+            ..Default::default()
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&unset)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed[0].get("flags").is_none());
     }
 
     /// Multiple links serialize as an ordered JSON array preserving input order.

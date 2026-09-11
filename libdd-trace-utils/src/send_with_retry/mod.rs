@@ -7,7 +7,11 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
+pub(crate) mod compression;
+pub use compression::CompressionStrategy;
+
 use bytes::Bytes;
+use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
@@ -17,6 +21,9 @@ use tracing::{debug, error};
 pub type Attempts = u32;
 
 pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWithRetryError>;
+
+/// User-agent sent by the trace exporter.
+pub const TRACE_EXPORTER_USER_AGENT: &str = concat!("Tracer/", env!("CARGO_PKG_VERSION"));
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
@@ -83,7 +90,15 @@ impl std::error::Error for SendWithRetryError {}
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
-/// send_with_retry(&capabilities, &target, payload, &headers, &retry_strategy).await
+/// send_with_retry(
+///     &capabilities,
+///     &target,
+///     payload,
+///     &headers,
+///     &retry_strategy,
+///     CompressionStrategy::None,
+/// )
+/// .await
 /// # }
 /// ```
 #[allow(clippy::result_large_err)]
@@ -93,7 +108,30 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
     payload: Vec<u8>,
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
 ) -> SendWithRetryResult {
+    send_with_retry_and_size(
+        capabilities,
+        target,
+        payload,
+        headers,
+        retry_strategy,
+        compression_strategy,
+    )
+    .await
+    .0
+}
+
+/// Send a payload with retries and return its post-compression size.
+#[allow(clippy::result_large_err)]
+pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    target: &Endpoint,
+    payload: Vec<u8>,
+    headers: &HeaderMap,
+    retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
+) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
 
@@ -104,8 +142,11 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         "Sending with retry"
     );
 
-    let payload = Bytes::from(payload);
-    loop {
+    let (compressed, compression_strategy) = compression::compress(payload, compression_strategy);
+    let payload = Bytes::from(compressed);
+    let payload_size = payload.len();
+
+    let result = loop {
         request_attempt += 1;
 
         debug!(
@@ -118,22 +159,26 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone());
-        builder =
-            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
         for (key, value) in headers {
             builder = builder.header(key, value);
+        }
+        if let Some(headers) = builder.headers_mut() {
+            compression::add_headers(headers, compression_strategy);
         }
         let req = match builder.body(payload.clone()) {
             Ok(r) => r,
             Err(_) => {
-                return Err(SendWithRetryError::Build(request_attempt));
+                break Err(SendWithRetryError::Build(request_attempt));
             }
         };
 
-        let result = tokio::select! {
-            biased;
-            r = capabilities.request(req) => Ok(r),
-            _ = capabilities.sleep(timeout) => Err(()),
+        let request = capabilities.request(req);
+        let timeout = capabilities.sleep(timeout);
+        futures::pin_mut!(request, timeout);
+        let result = match select(request, timeout).await {
+            Either::Left((response, _)) => Ok(response),
+            Either::Right(((), _)) => Err(()),
         };
 
         match result {
@@ -168,7 +213,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                             attempts = request_attempt,
                             "Max retries exceeded, returning HTTP error"
                         );
-                        return Err(SendWithRetryError::Http(response, request_attempt));
+                        break Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
                     debug!(
@@ -176,7 +221,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Request succeeded"
                     );
-                    return Ok((response, request_attempt));
+                    break Ok((response, request_attempt));
                 }
             }
             Ok(Err(e)) => {
@@ -210,7 +255,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
-                    return Err(classified_error);
+                    break Err(classified_error);
                 }
             }
             Err(_) => {
@@ -234,11 +279,12 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning timeout error"
                     );
-                    return Err(SendWithRetryError::Timeout(request_attempt));
+                    break Err(SendWithRetryError::Timeout(request_attempt));
                 }
             }
         }
-    }
+    };
+    (result, payload_size)
 }
 
 #[cfg(test)]
@@ -286,6 +332,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(result.is_err(), "Expected an error result");
@@ -335,6 +382,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
@@ -380,6 +428,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
@@ -429,6 +478,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(

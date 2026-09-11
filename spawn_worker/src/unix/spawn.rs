@@ -632,21 +632,20 @@ impl SpawnWorker {
         let stderr = self.stderr.as_child_stdio()?;
 
         let ref_temp_files = &temp_files;
-        let do_fork = || unsafe {
-            match fork() {
-                Ok(fork) => Ok(fork),
-                Err(e) => {
-                    for temp_file in ref_temp_files {
-                        libc::unlink(temp_file.as_ptr());
-                    }
-                    Err(e)
-                }
+        let fork_cleanup = || {
+            for temp_file in ref_temp_files {
+                unsafe { libc::unlink(temp_file.as_ptr()) };
             }
         };
 
         // no allocations in the child process should happen by this point for maximum safety
-        if let Fork::Parent(child_pid) = do_fork()? {
-            return Ok(Some(child_pid));
+        match unsafe { fork() } {
+            Ok(Fork::Parent(child_pid)) => return Ok(Some(child_pid)),
+            Err(e) => {
+                fork_cleanup();
+                anyhow::bail!(e);
+            }
+            _ => {}
         }
 
         if let Some(fd) = stdin.as_fd() {
@@ -685,19 +684,31 @@ impl SpawnWorker {
         }
 
         if self.daemonize {
-            if let Fork::Parent(_) = do_fork()? {
-                // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the
-                // "true" position) Ensure all fds are closed so that musl cannot
-                // have side-effects
-                for i in 0..4 {
+            // Some runtimes (e.g. frankenphp) might set a deathsignal, killing the grandchild.
+            #[cfg(target_os = "linux")]
+            let forked = unsafe { crate::fork::fork_skip_atfork_handlers() };
+            #[cfg(not(target_os = "linux"))]
+            let forked = unsafe { fork() };
+            match forked {
+                Err(e) => {
+                    fork_cleanup();
+                    anyhow::bail!(e);
+                }
+                Ok(Fork::Parent(_)) => {
+                    // musl will try to "correct" offsets in an atexit handler (lseek a FILE* to the
+                    // "true" position) Ensure all fds are closed so that musl cannot
+                    // have side-effects
+                    for i in 0..4 {
+                        unsafe {
+                            libc::close(i);
+                        }
+                    }
                     unsafe {
-                        libc::close(i);
+                        libc::close(skip_close_fd);
+                        libc::_exit(0);
                     }
                 }
-                unsafe {
-                    libc::close(skip_close_fd);
-                    libc::_exit(0);
-                }
+                _ => {}
             }
         }
 

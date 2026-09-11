@@ -1,7 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod span_pool;
 pub mod trace_utils;
+pub mod trace_utils_v1;
 pub mod v04;
 pub mod v05;
 pub mod v1;
@@ -12,17 +14,31 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
 use serde::Serialize;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{fmt, ptr};
 
+/// A `SpanLink`'s `flags` field reserves bit 31 to mean "a value was explicitly set", separate
+/// from the sampling decision carried in the low bits. The sentinel bit distinguishes
+/// `flags == 0` (never set) from an explicit decision of `0`, for example a dropped context.
+/// Without the sentinel, both cases look identical on the wire.
+///
+/// Every non-JSON wire format keeps this bit raw, except OTLP. The native v0.4 msgpack format
+/// (`msgpack_encoder::v04::span_v04`), the v1 msgpack format, and the native protobuf format
+/// (`libdd_trace_protobuf::pb::SpanLink`) all keep the sentinel raw in `flags`. Tracers already
+/// send the bit set in these formats. JSON formats and OTLP protobuf must mask this bit before
+/// they emit `flags`, because those consumers treat `flags` as the real W3C trace-flags value.
+/// The JSON formats are the v0.5 `_dd.span_links` dictionary, agentless JSON, and structured
+/// JSON logging.
+pub(crate) const SPAN_LINK_FLAGS_SET_SENTINEL: u32 = 1 << 31;
+
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: `Borrow<str>` is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
+pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default + Send {
     fn from_static_str(value: &'static str) -> Self;
 
     /// Copies this text into an owned [`BytesString`].
@@ -34,11 +50,17 @@ pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
     fn to_bytes_string(&self) -> BytesString {
         BytesString::from(<Self as Borrow<str>>::borrow(self).to_string())
     }
+
+    fn from_owned(value: String) -> Self;
 }
 
-impl SpanText for &str {
+impl SpanText for Cow<'_, str> {
     fn from_static_str(value: &'static str) -> Self {
-        value
+        Cow::Borrowed(value)
+    }
+
+    fn from_owned(value: String) -> Self {
+        Cow::Owned(value)
     }
 }
 
@@ -50,9 +72,13 @@ impl SpanText for BytesString {
     fn to_bytes_string(&self) -> BytesString {
         self.clone()
     }
+
+    fn from_owned(value: String) -> Self {
+        BytesString::from_string(value)
+    }
 }
 
-pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default {
+pub trait SpanBytes: Debug + Eq + Hash + Borrow<[u8]> + Serialize + Default + Clone + Send {
     fn from_static_bytes(value: &'static [u8]) -> Self;
 }
 
@@ -83,6 +109,13 @@ pub trait DeserializableTraceData: TraceData {
     fn try_slice_and_advance(buf: &mut Self::Bytes, bytes: usize) -> Option<Self::Bytes>;
 
     fn read_string(buf: &mut Self::Bytes) -> Result<Self::Text, DecodeError>;
+
+    /// Interns a string found while walking a value through `get_mut_slice`'s lied `'static`
+    /// view (e.g. skipping an unrecognized V1 field for forward compatibility). `s` really
+    /// borrows from `owner`'s memory, not `'static`: implementations must derive `Self::Text`
+    /// from `owner` itself rather than trusting that lifetime, so a refcounted backing
+    /// allocation isn't freed out from under the interned string.
+    fn intern_skipped_str(owner: &Self::Bytes, s: &'static str) -> Self::Text;
 }
 
 /// TraceData implementation using `Bytes` and `BytesString`.
@@ -134,13 +167,18 @@ impl DeserializableTraceData for BytesData {
         }
         Ok(string)
     }
+
+    #[inline]
+    fn intern_skipped_str(owner: &Bytes, s: &'static str) -> BytesString {
+        BytesString::from_bytes_slice(owner, s)
+    }
 }
 
 /// TraceData implementation using `&str` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
 impl<'a> TraceData for SliceData<'a> {
-    type Text = &'a str;
+    type Text = Cow<'a, str>;
     type Bytes = &'a [u8];
 }
 
@@ -158,11 +196,18 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
     }
 
     #[inline]
-    fn read_string(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+    fn read_string(buf: &mut &'a [u8]) -> Result<Cow<'a, str>, DecodeError> {
         read_string_ref_nomut(buf).map(|(str, newbuf)| {
             *buf = newbuf;
-            str
+            Cow::Borrowed(str)
         })
+    }
+
+    #[inline]
+    fn intern_skipped_str(_owner: &&'a [u8], s: &'static str) -> Cow<'a, str> {
+        // No refcounted allocation to preserve here: `s` borrows from a plain slice the
+        // caller owns for `'a`, and a `'static` reference is always a valid `'a` reference.
+        Cow::Borrowed(s)
     }
 }
 

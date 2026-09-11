@@ -24,7 +24,7 @@ live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion.workspace = true
 
 [[bench]]
 name = "sampler_overhead"

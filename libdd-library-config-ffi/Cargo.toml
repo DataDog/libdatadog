@@ -16,7 +16,7 @@ libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer"] }
 anyhow.workspace = true
-constcat = "0.4.1"
+constcat.workspace = true
 
 [features]
 default = ["cbindgen", "catch_panic"]
@@ -28,7 +28,7 @@ regex-lite = ["libdd-common-ffi/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
-tempfile = { version = "3.3" }
+tempfile.workspace = true
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

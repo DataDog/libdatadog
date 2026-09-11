@@ -151,23 +151,18 @@ mod tests {
     // Touches sampler TLS internals, which only exist on Linux.
     #[cfg(target_os = "linux")]
     #[test]
-    fn lazy_init_populates_tls_on_first_alloc() {
-        // Spin a fresh thread so we start with uninitialized sampler TLS.
+    fn alloc_skips_tls_when_no_profiler_attached() {
+        // With the USDT semaphore inactive, alloc should not touch TLS.
         std::thread::spawn(|| unsafe {
-            assert!(
-                dd_tl_state_get().is_null(),
-                "fresh thread should have NULL sampler TLS"
-            );
+            assert!(dd_tl_state_get().is_null());
 
             let sampled = SampledAllocator::<System>::DEFAULT;
             let layout = Layout::from_size_align(64, 8).unwrap();
             let p = sampled.alloc(layout);
             assert!(!p.is_null());
 
-            assert!(
-                !dd_tl_state_get().is_null(),
-                "TLS should be populated after the first alloc"
-            );
+            // Semaphore inactive: TLS never initialized.
+            assert!(dd_tl_state_get().is_null());
 
             sampled.dealloc(p, layout);
         })

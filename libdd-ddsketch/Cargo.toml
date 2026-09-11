@@ -1,6 +1,6 @@
 [package]
 name = "libdd-ddsketch"
-version = "1.1.0"
+version = "1.1.1"
 description = "Minimal implementation of Datadog's DDSketch"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ddsketch"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ddsketch"
@@ -12,16 +12,18 @@ autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-prost = "0.14.1"
+prost = { workspace = true, default-features = true }
 
 [build-dependencies]
 prost-build = { workspace = true, features = ["format"], optional = true }
 protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
-rand = "0.8.5"
-rand_chacha = "0.3.1"
+criterion.workspace = true
+# Bench only uses gen_range + seed_from_u64 (ChaCha8Rng); no thread_rng/StdRng,
+# so the default `std_rng` feature is unneeded.
+rand = { workspace = true, features = ["std"] }
+rand_chacha.workspace = true
 
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]

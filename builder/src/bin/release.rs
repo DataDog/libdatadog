@@ -9,6 +9,7 @@ use builder::builder::Builder;
 use builder::common::Common;
 #[cfg(feature = "crashtracker")]
 use builder::crashtracker::CrashTracker;
+use builder::features::{profiling_features, Selection};
 #[cfg(feature = "profiling")]
 use builder::profiling::Profiling;
 use builder::utils::project_root;
@@ -17,6 +18,7 @@ use builder::utils::project_root;
 struct ReleaseArgs {
     pub out_dir: Option<String>,
     pub target: Option<String>,
+    pub profile: Option<String>,
 }
 
 impl From<pico_args::Arguments> for ReleaseArgs {
@@ -24,6 +26,7 @@ impl From<pico_args::Arguments> for ReleaseArgs {
         let release_args = ReleaseArgs {
             out_dir: args.value_from_str("--out").ok(),
             target: args.value_from_str("--target").ok(),
+            profile: args.value_from_str("--profile").ok(),
         };
 
         args.finish();
@@ -39,7 +42,10 @@ pub fn main() {
         ..
     } = determine_paths();
 
-    let profile = env::var("PROFILE").unwrap();
+    let profile = args
+        .profile
+        .clone()
+        .unwrap_or_else(|| env::var("PROFILE").unwrap());
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let host = env::var("TARGET").unwrap();
     let out_dir = if let Some(out) = args.out_dir {
@@ -54,32 +60,7 @@ pub fn main() {
         host.clone()
     };
 
-    #[allow(clippy::vec_init_then_push)]
-    let features = {
-        #[allow(unused_mut)]
-        let mut f: Vec<String> = vec![];
-        #[cfg(feature = "telemetry")]
-        f.push("ddtelemetry-ffi".to_string());
-        #[cfg(feature = "data-pipeline")]
-        f.push("data-pipeline-ffi".to_string());
-        #[cfg(feature = "crashtracker")]
-        f.push("crashtracker-ffi".to_string());
-        #[cfg(feature = "symbolizer")]
-        f.push("symbolizer".to_string());
-        #[cfg(feature = "library-config")]
-        f.push("datadog-library-config-ffi".to_string());
-        #[cfg(feature = "log")]
-        f.push("datadog-log-ffi".to_string());
-        #[cfg(feature = "ddsketch")]
-        f.push("ddsketch-ffi".to_string());
-        #[cfg(feature = "ffe")]
-        f.push("datadog-ffe-ffi".to_string());
-        #[cfg(feature = "shared-runtime")]
-        f.push("shared-runtime".to_string());
-        #[cfg(feature = "otel-thread-ctx")]
-        f.push("otel-thread-ctx-ffi".to_string());
-        f
-    };
+    let features = profiling_features(&Selection::from_cargo_features());
 
     let mut builder = Builder::new(
         source_path.to_str().unwrap(),

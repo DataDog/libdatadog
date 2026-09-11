@@ -339,6 +339,7 @@ mod tests {
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::SliceData;
+    use std::borrow::Cow;
     use std::collections::HashMap;
 
     #[test]
@@ -352,42 +353,50 @@ mod tests {
     #[test]
     fn serialize_deserialize_test() {
         let span: Span<SliceData<'_>> = Span {
-            name: "tracing.operation",
-            resource: "MyEndpoint",
+            name: Cow::Borrowed("tracing.operation"),
+            resource: Cow::Borrowed("MyEndpoint"),
             span_links: vec![SpanLink {
                 trace_id: 42,
-                attributes: HashMap::from([("span", "link")]),
-                tracestate: "running",
+                attributes: HashMap::from([(Cow::Borrowed("span"), Cow::Borrowed("link"))]),
+                tracestate: Cow::Borrowed("running"),
                 ..Default::default()
             }],
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "exception",
+                name: Cow::Borrowed("exception"),
                 attributes: HashMap::from([
                     (
-                        "exception.message",
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                        Cow::Borrowed("exception.message"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
                             "Cannot divide by zero",
-                        )),
+                        ))),
                     ),
                     (
-                        "exception.type",
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
+                        Cow::Borrowed("exception.type"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
+                            "RuntimeError",
+                        ))),
                     ),
                     (
-                        "exception.escaped",
+                        Cow::Borrowed("exception.escaped"),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
                     ),
                     (
-                        "exception.count",
+                        Cow::Borrowed("exception.count"),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
                     ),
                     (
-                        "exception.lines",
+                        Cow::Borrowed("exception.lines"),
                         AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
-                            AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in <module>",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in divide",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "RuntimeError: Cannot divide by zero",
+                            )),
                         ]),
                     ),
                 ]),
@@ -428,9 +437,9 @@ mod tests {
         let span: Span<SliceData<'_>> = Span {
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "test",
+                name: Cow::Borrowed("test"),
                 attributes: HashMap::from([(
-                    "test.event",
+                    Cow::Borrowed("test.event"),
                     AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.2)),
                 )]),
             }],

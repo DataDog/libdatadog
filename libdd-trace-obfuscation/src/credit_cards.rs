@@ -58,6 +58,18 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     is_valid_iin == FuzzyBool::True
 }
 
+/// Returns `Some("?")` when `s` looks like a credit card number, `None` otherwise.
+///
+/// [`is_card_number`] is the cheap precheck that bails early on short or non-card values.
+#[must_use]
+pub fn obfuscate_card_number(s: &str, validate_luhn: bool) -> Option<String> {
+    if is_card_number(s, validate_luhn) {
+        Some("?".to_string())
+    } else {
+        None
+    }
+}
+
 /// luhnValid checks that the number represented in the given vector validates the Luhn Checksum
 /// algorithm. nums must be non-empty
 ///

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-capabilities-impl"
-version = "3.0.0"
+version = "5.0.0"
 description = "Native implementations of libdd-capabilities traits"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
@@ -17,18 +17,18 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-bytes = "1"
-http = "1"
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
-libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
+bytes = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["std"] }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
+libdd-common = { path = "../libdd-common", version = "6.0.0", default-features = false, features = ["http-client"] }
 tokio = { workspace = true, features = ["fs", "time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-http-body-util = "0.1"
+http-body-util.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
-tokio = { version = "1", features = ["fs", "macros", "rt", "time"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["fs", "macros", "rt", "time"] }
 
 [features]
 default = ["https"]

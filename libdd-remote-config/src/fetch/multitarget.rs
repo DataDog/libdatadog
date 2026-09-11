@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities, FileStorage,
-    RefcountedFile, RefcountingStorage, RefcountingStorageStats, SharedFetcher,
+    random_uuid_string, ConfigApplyState, ConfigFetcherState, ConfigInvariants,
+    ConfigProductCapabilities, FileStorage, RefcountedFile, RefcountingStorage,
+    RefcountingStorageStats, SharedFetcher,
 };
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
 use futures_util::FutureExt;
-use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,7 @@ use tracing::{debug, error, trace};
 pub struct MultiTargetFetcher<
     N: NotifyTarget,
     S: FileStorage + Clone + Sync + Send,
-    C: HttpClientCapability + Send + Sync,
+    C: HttpClientCapability + SleepCapability + Send + Sync,
 > where
     S::StoredFile: RefcountedFile + Sync + Send,
     S: MultiTargetHandlers<N, S, C>,
@@ -156,7 +157,7 @@ pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
 pub trait MultiTargetHandlers<
     N: NotifyTarget,
     S: FileStorage + Clone + Sync + Send + MultiTargetHandlers<N, S, C>,
-    C: HttpClientCapability + Send + Sync,
+    C: HttpClientCapability + SleepCapability + Send + Sync,
 > where
     S::StoredFile: RefcountedFile + Sync + Send,
 {
@@ -186,7 +187,7 @@ struct RuntimeInfo<N: NotifyTarget> {
 impl<
         N: NotifyTarget + 'static,
         S: FileStorage + Clone + Sync + Send + 'static,
-        C: HttpClientCapability + Send + Sync + 'static,
+        C: HttpClientCapability + SleepCapability + Send + Sync + 'static,
     > MultiTargetFetcher<N, S, C>
 where
     S::StoredFile: RefcountedFile + Sync + Send,
@@ -219,7 +220,7 @@ where
     }
 
     fn generate_synthetic_id() -> String {
-        uuid::Uuid::new_v4().to_string()
+        random_uuid_string()
     }
 
     fn remove_target(
@@ -785,7 +786,7 @@ mod tests {
     use crate::fetch::shared::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::{RemoteConfigPath, Target};
-    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use manual_future::ManualFutureCompleter;
     use std::hash::Hasher;
     use std::sync::atomic::AtomicU8;
@@ -822,10 +823,10 @@ mod tests {
         }
     }
 
-    impl MultiTargetHandlers<Notifier, MultiFileStorage, NativeHttpClient> for MultiFileStorage {
+    impl MultiTargetHandlers<Notifier, MultiFileStorage, NativeCapabilities> for MultiFileStorage {
         fn fetched(
             &self,
-            _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage, NativeHttpClient>>,
+            _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage, NativeCapabilities>>,
             _runtime_id: &Arc<String>,
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
@@ -967,10 +968,10 @@ mod tests {
 
         let fut = storage.await_fetches(1);
 
-        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeHttpClient>::new(
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
             storage.clone(),
             server.dummy_options().invariants,
-            NativeHttpClient::new_without_connection_pooling(),
+            NativeCapabilities::new_without_connection_pooling(),
         );
         fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
 

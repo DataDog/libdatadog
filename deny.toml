@@ -1,5 +1,20 @@
 [advisories]
 unmaintained = "workspace"
+ignore = [
+  { id = "RUSTSEC-2026-0009", reason = "the fixed version requires rust >=1.88.0. TODO: remove this after bumping MSRV"}
+]
 
 [bans]
 multiple-versions = "warn"
+
+deny = [
+    { name = "arrayref", version = "=0.3.10" },
+    { name = "append-only-vec", version = "=0.1.9" },
+    { name = "internment", version = "=0.8.7" },
+    { name = "proc-macro1" },
+    { name = "proc-macro-en" },
+    { name = "aovine" },
+    { name = "arone" },
+    { name = "aronenao" },
+    { name = "tinymember" },
+]

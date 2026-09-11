@@ -9,8 +9,13 @@
 //! This is primarily used for testing to validate the exact bytes sent over the wire.
 
 use anyhow::Context;
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::path::PathBuf;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// Monotonic counter for directory-mode dump filenames, so each captured request lands in
+/// its own lexicographically-ordered file instead of overwriting a single one.
+static DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Helper to find subsequence in bytes
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -385,13 +390,55 @@ async fn write_request_to_file(
         return Ok(());
     }
 
+    // A path ending in a separator (e.g. `file:///dir/`) selects "directory mode": write each
+    // request's body as its own lexicographically-ordered file so requests accumulate instead of
+    // overwriting a single dump file.
+    let path_str = output_path.as_os_str().to_string_lossy();
+    if path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR) {
+        let body = if parsed_request.is_chunked {
+            decode_chunked_body(&parsed_request.raw_data[parsed_request.headers_len..])?
+        } else {
+            parsed_request.raw_data[parsed_request.headers_len..].to_vec()
+        };
+        if body.is_empty() {
+            return Ok(());
+        }
+        tokio::fs::create_dir_all(output_path)
+            .await
+            .context("Failed to create dump directory")?;
+        // Ordinal-first name so files sort in emission order; the PID avoids cross-process
+        // collisions when several processes share the directory.
+        let name = format!(
+            "{:020}-{}.json",
+            DUMP_SEQ.fetch_add(1, Ordering::Relaxed),
+            std::process::id()
+        );
+        let dest = output_path.join(&name);
+        let tmp = output_path.join(format!("{name}.tmp"));
+        {
+            let mut file = tokio::fs::File::create(&tmp)
+                .await
+                .context("Failed to create dump file")?;
+            file.write_all(&body)
+                .await
+                .context("Failed to write request dump")?;
+            file.sync_all()
+                .await
+                .context("Failed to sync request dump to disk")?;
+        }
+        // Atomic publish via rename so readers never observe a partial file.
+        tokio::fs::rename(&tmp, &dest)
+            .await
+            .context("Failed to publish request dump")?;
+        return Ok(());
+    }
+
     let data_to_write = if parsed_request.is_chunked && parsed_request.headers_len > 0 {
         reconstruct_with_content_length(&parsed_request.raw_data, parsed_request.headers_len)?
     } else {
         parsed_request.raw_data.clone()
     };
 
-    use tokio::io::AsyncWriteExt;
     let mut file = tokio::fs::File::create(output_path)
         .await
         .context("Failed to create dump file")?;

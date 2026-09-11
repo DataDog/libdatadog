@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-protobuf"
-version = "4.0.0"
+version = "5.0.0"
 description = "Protobuf utils for Datadog's traces serialization"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-protobuf"
@@ -12,10 +12,14 @@ license.workspace = true
 bench = false
 
 [dependencies]
-bolero = { version = "0.13.4", optional = true }
-prost = "0.14.1"
+bolero = { workspace = true, features = ["std"], optional = true }
+prost = { workspace = true, default-features = true }
 serde = { workspace = true, features = ["derive"] }
-serde_bytes = "0.11.9"
+# We tend to prefer the smaller `alloc` feature over `std` for crates that
+# expose both, as does `serde_bytes`. However, switching to `alloc` only here
+# removes the (required) `Deserialize` implementations of some basic types.
+# There might be a way to migrate, but for now, we stay with default-features.
+serde_bytes = { workspace = true, default-features = true }
 
 [build-dependencies]
 prost-build = { workspace = true, features = ["format"], optional = true }

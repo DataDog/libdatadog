@@ -1,0 +1,54 @@
+[package]
+name = "libdd-ffe"
+version = "2.0.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobenches = false
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ffe"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ffe"
+description = "Feature Flagging and Experimentation"
+
+[lib]
+bench = false
+
+[dependencies]
+libdd-remote-config = { version = "5.0.0", path = "../libdd-remote-config", default-features = false, optional = true }
+faststr = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive", "rc"] }
+serde_json = { workspace = true, features = ["std", "raw_value"] }
+chrono = { workspace = true, features = ["now", "serde"] }
+derive_more = { workspace = true, features = ["from", "into"] }
+log = { workspace = true, features = ["kv", "kv_serde"] }
+md5.workspace = true
+libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
+libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1", optional = true }
+http = { workspace = true, features = ["std"], optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
+# Uses semver::Version::parse in runtime code; parse is available without std (alloc fallback).
+semver.workspace = true
+serde-bool.workspace = true
+serde_with = { workspace = true, features = ["base64", "hex", "macros"] }
+thiserror.workspace = true
+url = { workspace = true, features = ["std"] }
+lru = { workspace = true, default-features = true, optional = true }
+libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf", optional = true }
+# Hand-written generated-style code uses #[derive(::prost::Message)] and ::prost::alloc types.
+prost = { workspace = true, default-features = true, optional = true }
+pyo3 = { workspace = true, features = ["macros"], optional = true }
+
+[dev-dependencies]
+# Matches the sidecar's bincode version. Used by the flagevaluation bincode
+# round-trip test, which guards against `skip_serializing_if` reintroducing the
+# worker→sidecar IPC field-misalignment bug (bincode is non-self-describing).
+bincode.workspace = true
+httpmock.workspace = true
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
+
+[features]
+default = ["remote-config"]
+exposure-events = ["dep:lru"]
+evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
+flagevaluation-evp = ["dep:http", "dep:libdd-capabilities", "dep:tokio"]
+pyo3 = ["dep:pyo3"]
+remote-config = ["dep:libdd-remote-config"]
