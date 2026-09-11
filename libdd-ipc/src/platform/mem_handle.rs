@@ -263,7 +263,7 @@ mod tests {
         let shm = ShmHandle::new(5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        mapped.ensure_space(100000).unwrap();
         assert!(mapped.as_slice().len() >= 100000);
         let mut exp = vec![0u8; mapped.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
@@ -277,7 +277,7 @@ mod tests {
         let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        mapped.ensure_space(100000).unwrap();
         assert!(mapped.as_slice().len() >= 100000);
 
         let other = NamedShmHandle::open(&path).unwrap().map().unwrap();

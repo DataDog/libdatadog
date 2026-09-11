@@ -163,25 +163,25 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
+    pub fn ensure_space(&mut self, expected_size: usize) -> io::Result<()> {
         let current_size = self.mem.get_shm().size;
         if expected_size <= current_size {
-            return;
+            return Ok(());
         }
 
-        #[allow(clippy::panic)]
         if expected_size > MAPPING_MAX_SIZE {
-            panic!(
+            return Err(io::Error::other(format!(
                 "Tried to allocate {expected_size} bytes for shared mapping (limit: {MAPPING_MAX_SIZE} bytes)",
-            );
+            )));
         }
 
-        #[allow(clippy::unwrap_used)]
         unsafe {
-            self.mem.set_mapping_size(expected_size).unwrap();
+            self.mem
+                .set_mapping_size(expected_size)
+                .map_err(io::Error::other)?;
         }
         let new_size = self.mem.get_shm().size;
-        unsafe {
+        let committed = unsafe {
             VirtualAlloc(
                 (self.ptr.as_ptr() as usize + current_size) as LPVOID,
                 new_size - current_size,
@@ -189,5 +189,10 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
                 PAGE_READWRITE,
             )
         };
+        if committed.is_null() {
+            self.mem.get_shm_mut().size = current_size;
+            return Err(Error::last_os_error());
+        }
+        Ok(())
     }
 }

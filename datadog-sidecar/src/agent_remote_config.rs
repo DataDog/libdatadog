@@ -90,7 +90,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T> {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
-    pub fn write(&self, contents: &[u8]) {
+    pub fn write(&self, contents: &[u8]) -> io::Result<()> {
         self.0.write(contents)
     }
 

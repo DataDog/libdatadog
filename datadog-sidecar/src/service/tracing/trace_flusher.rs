@@ -208,7 +208,9 @@ impl TraceFlusher {
                 }
             }
         };
-        writer.writer.write(contents.as_slice());
+        if let Err(e) = writer.writer.write(contents.as_slice()) {
+            error!("Failed to write agent provided config shm segment: {e}");
+        }
 
         let now = Instant::now();
         let last = writer.last_write;

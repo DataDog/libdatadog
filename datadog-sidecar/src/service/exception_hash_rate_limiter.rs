@@ -10,15 +10,13 @@ use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
+use tracing::warn;
 
 pub(crate) static EXCEPTION_HASH_LIMITER: LazyLock<
     Mutex<ManuallyDrop<ManagedExceptionHashRateLimiter>>,
 > = LazyLock::new(|| {
     unsafe { libc::atexit(drop_exception_hash_limiter) };
-    #[allow(clippy::unwrap_used)]
-    Mutex::new(ManuallyDrop::new(
-        ManagedExceptionHashRateLimiter::create().unwrap(),
-    ))
+    Mutex::new(ManuallyDrop::new(ManagedExceptionHashRateLimiter::create()))
 });
 
 extern "C" fn drop_exception_hash_limiter() {
@@ -36,7 +34,7 @@ pub(crate) struct ManagedExceptionHashRateLimiter {
 }
 
 impl ManagedExceptionHashRateLimiter {
-    fn create() -> io::Result<Self> {
+    fn create() -> Self {
         let (send, recv) = tokio::sync::oneshot::channel::<()>();
 
         tokio::spawn(async move {
@@ -58,21 +56,25 @@ impl ManagedExceptionHashRateLimiter {
             }
         });
 
-        Ok(ManagedExceptionHashRateLimiter {
-            limiter: ExceptionHashRateLimiter::create()?,
+        ManagedExceptionHashRateLimiter {
+            limiter: ExceptionHashRateLimiter::create(),
             active: vec![],
             _drop: send,
-        })
+        }
     }
 
     pub fn add(&mut self, hash: u64, granularity: Duration) {
-        let limiter = self.limiter.add(hash, granularity);
-        self.active.push(limiter);
+        if let Some(limiter) = self.limiter.add(hash, granularity) {
+            self.active.push(limiter);
+        }
     }
 }
 
 pub struct ExceptionHashRateLimiter {
-    mem: ShmLimiterMemory<EntryData>,
+    /// `None` when the segment hasn't been created yet, or a previous attempt
+    /// failed (e.g. `ENOSPC`); [`Self::add`] retries creation lazily the next
+    /// time a sample comes in.
+    mem: Option<ShmLimiterMemory<EntryData>>,
 }
 
 struct EntryData {
@@ -95,32 +97,53 @@ fn path() -> CString {
 }
 
 impl ExceptionHashRateLimiter {
-    pub fn create() -> io::Result<Self> {
-        Ok(ExceptionHashRateLimiter {
-            mem: ShmLimiterMemory::create(path())?,
-        })
+    pub fn create() -> Self {
+        ExceptionHashRateLimiter {
+            mem: Self::try_create_mem(),
+        }
+    }
+
+    fn try_create_mem() -> Option<ShmLimiterMemory<EntryData>> {
+        match ShmLimiterMemory::create(path()) {
+            Ok(mem) => Some(mem),
+            Err(e) => {
+                warn!("Failed to create exception hash rate limiter shm segment (will retry): {e}");
+                None
+            }
+        }
     }
 
     pub fn open() -> io::Result<Self> {
         Ok(ExceptionHashRateLimiter {
-            mem: ShmLimiterMemory::open(&path())?,
+            mem: Some(ShmLimiterMemory::open(&path())?),
         })
     }
 
-    fn add(&mut self, hash: u64, granularity: Duration) -> HashLimiter {
-        let allocated = self
-            .mem
-            .alloc_with_granularity(granularity.as_secs() as u32);
+    fn add(&mut self, hash: u64, granularity: Duration) -> Option<HashLimiter> {
+        if self.mem.is_none() {
+            self.mem = Self::try_create_mem();
+        }
+        let mem = self.mem.as_mut()?;
+        let allocated = match mem.alloc_with_granularity(granularity.as_secs() as u32) {
+            Ok(allocated) => allocated,
+            Err(e) => {
+                warn!(
+                    "Failed to allocate exception hash rate limiter entry (will retry on next sample): {e}"
+                );
+                return None;
+            }
+        };
         let data = allocated.data();
         data.hash.store(hash, Ordering::Relaxed);
         allocated.inc(1);
-        HashLimiter { shm: allocated }
+        Some(HashLimiter { shm: allocated })
     }
 
     pub fn find(&self, hash: u64) -> Option<HashLimiter> {
         Some(HashLimiter {
             shm: self
                 .mem
+                .as_ref()?
                 .find(|data| data.hash.load(Ordering::Relaxed) == hash)?,
         })
     }

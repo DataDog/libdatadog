@@ -393,7 +393,9 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
-    pub shm_writer: OneWayShmWriter<NamedShmHandle>,
+    /// `None` when the segment hasn't been created yet, or a previous attempt failed.
+    shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
+    shm_path: CString,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -458,23 +460,45 @@ impl TelemetryCachedClient {
                 .ok();
         });
 
+        let shm_path = path_for_telemetry(service, env);
+        let shm_writer = match OneWayShmWriter::<NamedShmHandle>::new(shm_path.clone()) {
+            Ok(writer) => Some(writer),
+            Err(e) => {
+                warn!("Failed to create telemetry shared memory segment: {e}");
+                None
+            }
+        };
+
         Self {
             worker: handle,
-            shm_writer: {
-                #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
-            },
+            shm_writer,
+            shm_path,
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
         }
     }
 
-    pub fn write_shm_file(&self) {
-        if let Ok(buf) = bincode::serialize(&self.shared) {
-            self.shm_writer.write(&buf);
-        } else {
+    pub fn write_shm_file(&mut self) {
+        let Ok(buf) = bincode::serialize(&self.shared) else {
             warn!("Failed to serialize telemetry data for shared memory");
+            return;
+        };
+
+        if self.shm_writer.is_none() {
+            match OneWayShmWriter::<NamedShmHandle>::new(self.shm_path.clone()) {
+                Ok(writer) => self.shm_writer = Some(writer),
+                Err(e) => {
+                    warn!("Failed to (re)create telemetry shared memory segment: {e}");
+                    return;
+                }
+            }
+        }
+
+        if let Some(writer) = &self.shm_writer {
+            if let Err(e) = writer.write(&buf) {
+                warn!("Failed to write telemetry data to shared memory: {e}");
+            }
         }
     }
 
@@ -600,7 +624,9 @@ impl TelemetryCachedClient {
 
 impl Drop for TelemetryCachedClient {
     fn drop(&mut self) {
-        self.shm_writer.write(&[]);
+        if let Some(writer) = &self.shm_writer {
+            let _ = writer.write(&[]);
+        }
     }
 }
 

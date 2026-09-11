@@ -213,18 +213,19 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
+    pub fn ensure_space(&mut self, expected_size: usize) -> io::Result<()> {
         if expected_size <= self.mem.get_shm().size {
-            return;
+            return Ok(());
         }
 
         // SAFETY: we'll overwrite the original memory later
         let mut handle: T = unsafe { std::ptr::read(self) }.into();
-        _ = handle.resize(expected_size);
+        let resize_result = handle.resize(expected_size);
         #[allow(clippy::unwrap_used)]
         unsafe {
             std::ptr::write(self, handle.map().unwrap())
         };
+        resize_result.map_err(io::Error::other)
     }
 }
 

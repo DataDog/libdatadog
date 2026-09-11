@@ -212,7 +212,9 @@ pub extern "C" fn ddog_agent_remote_config_write(
     writer: &AgentRemoteConfigWriter<ShmHandle>,
     data: ffi::CharSlice,
 ) {
-    writer.write(data.as_bytes());
+    if let Err(e) = writer.write(data.as_bytes()) {
+        tracing::warn!("Failed to write agent remote config to shared memory: {e}");
+    }
 }
 
 fn ddog_agent_remote_config_read_generic<'a, T>(

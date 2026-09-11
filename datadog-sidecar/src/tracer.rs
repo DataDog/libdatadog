@@ -3,27 +3,40 @@
 
 use crate::primary_sidecar_identifier;
 use http::uri::PathAndQuery;
-use libdd_common::Endpoint;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
 use std::borrow::Cow;
 use std::ffi::CString;
-use std::mem::ManuallyDrop;
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
+use tracing::warn;
 
-pub static SHM_LIMITER: LazyLock<Mutex<ManuallyDrop<ShmLimiterMemory<()>>>> = LazyLock::new(|| {
+pub static SHM_LIMITER: LazyLock<Mutex<Option<ShmLimiterMemory<()>>>> = LazyLock::new(|| {
     unsafe { libc::atexit(drop_shm_limiter) };
-    #[allow(clippy::unwrap_used)]
-    Mutex::new(ManuallyDrop::new(
-        ShmLimiterMemory::create(shm_limiter_path()).unwrap(),
-    ))
+    Mutex::new(create_shm_limiter())
 });
 
+fn create_shm_limiter() -> Option<ShmLimiterMemory<()>> {
+    match ShmLimiterMemory::create(shm_limiter_path()) {
+        Ok(mem) => Some(mem),
+        Err(e) => {
+            warn!("Failed to create shared-memory rate limiter segment: {e}");
+            None
+        }
+    }
+}
+
+pub fn with_shm_limiter<R>(f: impl FnOnce(&mut ShmLimiterMemory<()>) -> R) -> Option<R> {
+    let mut guard = SHM_LIMITER.lock_or_panic();
+    if guard.is_none() {
+        *guard = create_shm_limiter();
+    }
+    guard.as_mut().map(f)
+}
+
 extern "C" fn drop_shm_limiter() {
-    let mut guard = SHM_LIMITER.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
-    unsafe { ManuallyDrop::drop(&mut *guard) };
+    SHM_LIMITER.lock().unwrap_or_else(|e| e.into_inner()).take();
 }
 
 #[derive(Default)]
