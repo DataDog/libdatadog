@@ -64,6 +64,7 @@ members = [
   "libdd-log",
   "libdd-log-ffi",
   "libdd-sampling",
+  "libdd-otel-telemetry",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
