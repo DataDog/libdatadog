@@ -90,6 +90,17 @@ jobs:
         with:
           toolchain: 1.92.0
 
+      - name: Cache downstream Cargo sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            downstream-cargo-home/registry
+            downstream-cargo-home/git
+          key: >-
+            downstream-cargo-v1-${{ runner.os }}-${{ matrix.artifact_name }}-${{ hashFiles('downstream/**/Cargo.lock') }}
+          restore-keys: |
+            downstream-cargo-v1-${{ runner.os }}-${{ matrix.artifact_name }}-
+
       - name: Install protobuf compiler
         if: matrix.install_protoc
         run: |
