@@ -168,6 +168,7 @@ jobs:
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+            cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
@@ -175,6 +176,11 @@ jobs:
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
               cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
+            fi
+            if echo "$PACKAGES" | grep -q "libdd-otel-thread-ctx"; then
+              # The `shared-context` ownership mode is mutually exclusive with the default
+              # `owned-context` one, so its tests need their own run.
+              cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context --profile ci --verbose
             fi
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"

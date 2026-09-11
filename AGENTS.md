@@ -59,6 +59,12 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   # Hyper backend
   cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https
   ```
+- **otel-thread-ctx**: ships two mutually exclusive ownership modes (`owned-context` is the
+  default, `shared-context` is the alternative). Only one of them is compiled at a time, so the
+  `shared-context` tests need their own run:
+  ```bash
+  cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration
