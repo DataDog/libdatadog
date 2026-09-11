@@ -5,8 +5,8 @@ use object::macho::MachHeader64;
 use object::read::elf::{ElfFile64, FileHeader};
 use object::read::macho::{LoadCommandVariant, MachHeader};
 use object::{
-    Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol, SymbolFlags,
-    SymbolKind,
+    BinaryFormat, Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol,
+    SymbolFlags, SymbolKind,
 };
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -59,14 +59,15 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         }
     }
 
+    // Mach-O symbol names carry a leading '_' that ELF/COFF names don't.
+    let is_macho = so_file.format() == BinaryFormat::MachO;
+
     let mut generated = String::new();
     for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
         if sym_is_definition(&sym) {
             if let Ok(name) = sym.name() {
                 if missing_symbols.remove(name) {
-                    // strip leading underscore
-                    #[cfg(target_os = "macos")]
-                    let name = &name[1..];
+                    let name = if is_macho { &name[1..] } else { name };
                     _ = match sym.kind() {
                         SymbolKind::Text => {
                             if !sym.is_weak() {
@@ -79,23 +80,19 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                         SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {
                                 writeln!(generated, "char {}[{}];", name, sym.size())
+                            } else if is_macho {
+                                writeln!(generated, "char {name}[1];")
                             } else {
-                                #[cfg(not(target_os = "macos"))]
-                                let ret = Ok(());
-                                #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "char {name}[1];");
-                                ret
+                                Ok(())
                             }
                         }
                         SymbolKind::Tls => {
                             if sym.size() > 0 {
                                 writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            } else if is_macho {
+                                writeln!(generated, "__thread char {name}[1];")
                             } else {
-                                #[cfg(not(target_os = "macos"))]
-                                let ret = Ok(());
-                                #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "__thread char {name}[1];");
-                                ret
+                                Ok(())
                             }
                         }
                         _ => Ok(()),
@@ -114,7 +111,9 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
     let undefined_candidates: HashSet<String> = File::parse(data.as_slice())
         .map_err(|e| format!("parse {}: {e}", target.display()))?
         .symbols()
-        .filter(|s| s.is_undefined() && !s.is_weak())
+        .filter(
+            |s| s.is_undefined(), /* somehow symbols can be misreported as weak?! */
+        )
         .filter_map(|s| s.name().ok().map(|n| n.to_string()))
         .collect();
 
@@ -124,12 +123,27 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
         let so_file = File::parse(bin_data.as_slice())
             .map_err(|e| format!("parse {}: {e}", binary.display()))?;
         let mut result = HashSet::new();
-        for sym in so_file.dynamic_symbols() {
+        // Dispatch on the binary's actual format, not the host's `target_os`: `binary` may be
+        // for a different target than the one this tool was built for (cross-compilation).
+        let is_macho = so_file.format() == BinaryFormat::MachO;
+        // `dynamic_symbols()` is exported symbols only on macos.
+        let candidate_syms: Vec<_> = if is_macho {
+            so_file
+                .symbols()
+                .filter(|s| s.scope() == object::SymbolScope::Dynamic)
+                .collect()
+        } else {
+            so_file.dynamic_symbols().collect()
+        };
+        for sym in candidate_syms {
             if sym_is_definition(&sym) {
                 if let Ok(name) = sym.name() {
                     if undefined_candidates.contains(name) {
-                        #[cfg(target_os = "macos")]
-                        let name = &name[1..];
+                        let name = if is_macho {
+                            name.strip_prefix('_').unwrap_or(name)
+                        } else {
+                            name
+                        };
                         result.insert(name.to_string());
                     }
                 }
@@ -247,7 +261,6 @@ fn weaken_macho(
             .symbols()
             .filter(|sym| {
                 sym.is_undefined()
-                    && !sym.is_weak()
                     && sym
                         .name()
                         .is_ok_and(|n| symbols.contains(n.strip_prefix('_').unwrap_or(n)))

@@ -46,12 +46,15 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
         }
     }
 
+    // Handle transiently not yet assigned size the same than a non-existing mapping
+    let size = NonZeroUsize::new(shm.size)
+        .ok_or_else(|| io::Error::other("shared memory mapping size not yet committed"))?;
+
     Ok(MappedMem {
-        #[allow(clippy::unwrap_used)]
         ptr: unsafe {
             mmap(
                 None,
-                NonZeroUsize::new(shm.size).unwrap(),
+                size,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
                 fd,
