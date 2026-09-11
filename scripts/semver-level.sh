@@ -5,6 +5,7 @@
 
 
 VERBOSE=false
+LIST_AFFECTED=false
 
 # Use GITHUB_OUTPUT from environment or default to /dev/stdout for local testing
 if [ -z "$GITHUB_OUTPUT" ]; then
@@ -17,8 +18,20 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
+        --list-affected)
+            LIST_AFFECTED=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [-v] [-h] CRATE BASE_REF CURRENT_REF"
+            echo "       $0 [-v] --list-affected BASE_REF CURRENT_REF"
+            echo ""
+            echo "Without --list-affected: print the semver level CRATE needs, as JSON."
+            echo "With it: print, one per line, every workspace member whose dependency"
+            echo "requirements or feature surface moved between the two revisions --"
+            echo "the crates worth running the first form on, including those a"
+            echo "changed-file-path search cannot find because the edit was to the root"
+            echo "manifest's [workspace.dependencies]."
             exit 0
             ;;
         -*)
@@ -32,9 +45,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CRATE="${1:?ERROR: CRATE is required}"
-BASE_REF="${2:-main}"
-CURRENT_REF="${3:-HEAD}"
+if $LIST_AFFECTED; then
+    CRATE=""
+    BASE_REF="${1:-main}"
+    CURRENT_REF="${2:-HEAD}"
+else
+    CRATE="${1:?ERROR: CRATE is required}"
+    BASE_REF="${2:-main}"
+    CURRENT_REF="${3:-HEAD}"
+fi
 
 log_verbose() {
     if [ "$VERBOSE" = true ]; then
@@ -160,10 +179,14 @@ crate_target_kinds_at_rev() {
 }
 
 # Echo one tab-separated row per manifest fact about crate $1 at revision $2, read once
-# per revision for both manifest passes below:
+# per revision for both manifest passes below. Every workspace member is read when $1 is
+# empty, which is how list_affected_crates gets the whole workspace for one extraction.
 #
-#   dep      <name> <alias> <kind> <target> <req>   one per dependency a consumer resolves
-#   feature  <name> default|optional                one per declared feature
+#   <crate> dep      <name> <alias> <kind> <target> <req>  one per dependency a consumer resolves
+#   <crate> feature  <name> default|optional               one per declared feature
+#
+# The crate leads every row so that rows from different members stay apart; the passes
+# below, which ask for one crate, cut it back off.
 #
 # Read via `cargo metadata` rather than the crate's own Cargo.toml, which would see
 # neither the version behind a `{ workspace = true }` inheritance marker nor the implicit
@@ -173,12 +196,12 @@ crate_target_kinds_at_rev() {
 # may alias two versions of one package (`foo1`/`foo2` both `package = "foo"`), for which
 # cargo metadata reports an identical name, kind and target; keyed without it, the second
 # alias matches the first's baseline requirement and an unchanged pair reads as a raise.
-crate_manifest_facts_at_rev() {
+manifest_facts_at_rev() {
     local crate=$1 rev=$2
-    local tree meta cargo_status
+    local tree meta cargo_status label=${crate:-the workspace}
     tree=$(mktemp -d) || return 1
     if ! git archive "$rev" | tar -x -C "$tree"; then
-        echo "Error: could not extract $rev to read the manifest for $crate" >&2
+        echo "Error: could not extract $rev to read the manifest for $label" >&2
         rm -rf "$tree"
         return 1
     fi
@@ -188,24 +211,53 @@ crate_manifest_facts_at_rev() {
     cargo_status=$?
     rm -rf "$tree"
     if [[ $cargo_status -ne 0 || -z "$meta" ]]; then
-        echo "Error: could not read the manifest for $crate at $rev" >&2
+        echo "Error: could not read the manifest for $label at $rev" >&2
         return 1
     fi
     jq -r --arg crate "$crate" '
         .packages[]
-        | select(.name == $crate)
+        | select($crate == "" or .name == $crate)
         | . as $p
         | (
             ( $p.dependencies[]
               | select((.kind // "normal") != "dev")
-              | ["dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req] ),
+              | [$p.name, "dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req] ),
             ( ($p.features // {}) as $f
               | ($f.default // []) as $d
               | ($f | keys[]) as $n
               | select($n != "default")
-              | ["feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
+              | [$p.name, "feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
           )
         | @tsv' <<< "$meta"
+}
+
+# Echo the name of every workspace member whose manifest facts moved between revisions
+# $1 and $2, one per line, so a caller can run the passes below on each.
+#
+# This exists because the facts are *resolved* ones: an edit to the root manifest's
+# [workspace.dependencies] raises the floor of every member that inherits the entry
+# while touching no file under any member's directory. A caller selecting crates by
+# changed file path sees nothing to check and would score such a PR as no change at all.
+#
+# Publishability is the caller's business: a member it does not release never comes up.
+list_affected_crates() {
+    local baseline=$1 current=$2
+    local base_facts now_facts
+    if ! base_facts=$(manifest_facts_at_rev "" "$baseline"); then
+        return 1
+    fi
+    if ! now_facts=$(manifest_facts_at_rev "" "$current"); then
+        return 1
+    fi
+    # A row present in exactly one of the two revisions is a fact that moved, which
+    # `uniq -u` keeps and the unchanged pairs it drops. A member added or removed
+    # between the revisions has every row on one side only, so it reads as affected.
+    printf '%s\n%s\n' "$base_facts" "$now_facts" \
+        | grep -v '^$' \
+        | sort \
+        | uniq -u \
+        | cut -f1 \
+        | sort -u
 }
 
 # version_gt A B — true when the dotted numeric tuple A is strictly greater than B.
@@ -268,15 +320,10 @@ req_min() {
     fi
 }
 
-compute_semver_results() {
-    local crate=$1
-    local baseline=$2
-    local current=$3
-
-    # If current is not provided set it to the tip of the branch
-    if [ -z "$current" ]; then
-        current="HEAD"
-    fi
+# Fetch baseline ref $1 and echo the revision to read it by. Shared so that both entry
+# points resolve a caller's ref identically.
+resolve_baseline() {
+    local baseline=$1
 
     # Fetch base commit
     git fetch origin "$baseline" --quiet
@@ -289,6 +336,25 @@ compute_semver_results() {
     # Ensure baseline has origin/ prefix if it doesn't already (skip for tags: refs/tags/...)
     if [[ ! "$baseline" =~ ^origin/ ]] && [[ "$baseline" != *"refs/tags"* ]]; then
         baseline="origin/$baseline"
+    fi
+    printf '%s\n' "$baseline"
+}
+
+compute_semver_results() {
+    local crate=$1
+    local baseline=$2
+    local current=$3
+
+    # If current is not provided set it to the tip of the branch
+    if [ -z "$current" ]; then
+        current="HEAD"
+    fi
+
+    local resolve_status
+    baseline=$(resolve_baseline "$baseline")
+    resolve_status=$?
+    if [[ $resolve_status -ne 0 ]]; then
+        return "$resolve_status"
     fi
 
     log_verbose "========================================"
@@ -583,10 +649,10 @@ compute_semver_results() {
     elif [[ "$level_so_far" == "major" ]]; then
         log_verbose "Skipping manifest diff: already at major"
     else
-        if ! base_facts=$(crate_manifest_facts_at_rev "$crate" "$baseline"); then
+        if ! base_facts=$(manifest_facts_at_rev "$crate" "$baseline"); then
             exit 1
         fi
-        if ! now_facts=$(crate_manifest_facts_at_rev "$crate" "$current"); then
+        if ! now_facts=$(manifest_facts_at_rev "$crate" "$current"); then
             exit 1
         fi
         manifest_compared=true
@@ -596,13 +662,15 @@ compute_semver_results() {
         log_verbose "Skipping dependency requirement diff: already at minor, which is this pass's ceiling"
     elif $manifest_compared; then
         local base_reqs now_reqs raised=""
-        base_reqs=$(awk -F'\t' '$1 == "dep" { print substr($0, index($0, "\t") + 1) }' <<< "$base_facts")
-        now_reqs=$(awk -F'\t' '$1 == "dep" { print substr($0, index($0, "\t") + 1) }' <<< "$now_facts")
+        # Field 1 is the crate, identical on every row here, so the key below starts at
+        # the dependency name.
+        base_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$base_facts")
+        now_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$now_facts")
 
         local dep_name dep_alias dep_kind dep_target dep_req dep_label old_req old_min new_min
         while IFS=$'\t' read -r dep_name dep_alias dep_kind dep_target dep_req; do
             [[ -z "$dep_name" ]] && continue
-            # Name, alias, kind and target together: see crate_manifest_facts_at_rev for
+            # Name, alias, kind and target together: see manifest_facts_at_rev for
             # why the alias belongs in the key.
             old_req=$(awk -F'\t' -v n="$dep_name" -v a="$dep_alias" -v k="$dep_kind" -v t="$dep_target" \
                 '$1 == n && $2 == a && $3 == k && $4 == t { print $5; exit }' <<< "$base_reqs")
@@ -656,8 +724,8 @@ compute_semver_results() {
     if $manifest_compared; then
         local base_features now_features
         local feat_name feat_default removed="" added="" undefaulted=""
-        base_features=$(awk -F'\t' '$1 == "feature" { print $2 "\t" $3 }' <<< "$base_facts")
-        now_features=$(awk -F'\t' '$1 == "feature" { print $2 "\t" $3 }' <<< "$now_facts")
+        base_features=$(awk -F'\t' '$2 == "feature" { print $3 "\t" $4 }' <<< "$base_facts")
+        now_features=$(awk -F'\t' '$2 == "feature" { print $3 "\t" $4 }' <<< "$now_facts")
 
         while IFS=$'\t' read -r feat_name feat_default; do
             [[ -z "$feat_name" ]] && continue
@@ -729,6 +797,27 @@ compute_semver_results() {
         --arg details "$DETAILS" \
         '{"name": $name, "level": $level, "reason": $reason, "details": $details}'
 }
+
+# --list-affected stops here: it names the crates to check rather than checking one, so
+# none of the per-crate machinery below runs.
+if $LIST_AFFECTED; then
+    if ! BASE_REF=$(resolve_baseline "$BASE_REF"); then
+        exit 1
+    fi
+    # Compared from where the branch left the baseline, the way a changed-file search
+    # uses `git diff base...HEAD`: a fact that moved on the baseline *since* then is not
+    # this branch's doing, and selecting its crate would put another branch's change on
+    # this branch's report. A clone too shallow to hold a merge base falls back to the
+    # baseline tip, erring towards checking too much.
+    FORK_POINT=$(git merge-base "$BASE_REF" "$CURRENT_REF" 2>/dev/null)
+    if [[ -z "$FORK_POINT" ]]; then
+        echo "Warning: no merge base for $BASE_REF and $CURRENT_REF; comparing against the baseline tip" >&2
+        FORK_POINT="$BASE_REF"
+    fi
+    log_verbose "Listing crates whose manifest facts moved between $FORK_POINT and $CURRENT_REF"
+    list_affected_crates "$FORK_POINT" "$CURRENT_REF"
+    exit $?
+fi
 
 # Run the computation and capture JSON output.
 #

@@ -71,6 +71,9 @@ jobs:
           # Find all changed files
           CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)
 
+          MANIFEST_AFFECTED=$(./scripts/semver-level.sh --list-affected "$BASE_REF")
+          echo "Crates whose manifest facts moved: ${MANIFEST_AFFECTED:-<none>}"
+
           # Get workspace members metadata using cargo-metadata
           # Filter to only workspace members that are publishable (publish != false and publish != [])
           # Extract workspace root and convert manifest paths to relative paths
@@ -94,6 +97,9 @@ jobs:
             # Check if any files in this crate directory changed
             if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
               echo "Detected change in published crate: $CRATE_NAME ($CRATE_DIR)"
+              CHANGED_CRATES+=("$CRATE_NAME")
+            elif grep -qxF "$CRATE_NAME" <<< "$MANIFEST_AFFECTED"; then
+              echo "Detected manifest change reaching published crate: $CRATE_NAME (no file of its own changed)"
               CHANGED_CRATES+=("$CRATE_NAME")
             fi
           done < <(echo "$WORKSPACE_CRATES")
