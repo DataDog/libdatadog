@@ -10,11 +10,12 @@ use std::{
 };
 
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
+#[cfg(feature = "worker-exporter")]
 use async_trait::async_trait;
-use futures::stream::FuturesUnordered;
-use futures::StreamExt as _;
+use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
+#[cfg(feature = "worker-exporter")]
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -126,6 +127,251 @@ impl From<TracerMetadata> for StatsMetadata {
     }
 }
 
+/// Agentless stats exporter for runtimes that provide their own flush triggers.
+#[derive(Debug)]
+pub struct AgentlessStatsExporter<Cap: HttpClientCapability + SleepCapability> {
+    concentrator: Mutex<SpanConcentrator>,
+    sender: StatsSender<Cap, AgentlessStatsTarget>,
+}
+
+/// Errors returned when constructing an [`AgentlessStatsExporter`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentlessStatsExporterError {
+    /// The stats bucket size must be greater than zero.
+    InvalidBucketSize,
+}
+
+impl std::fmt::Display for AgentlessStatsExporterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidBucketSize => {
+                formatter.write_str("stats bucket size must be greater than zero")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AgentlessStatsExporterError {}
+
+impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
+    /// Create an agentless stats exporter with client-side resource obfuscation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AgentlessStatsExporterError::InvalidBucketSize`] when `bucket_size` is zero.
+    #[cfg(feature = "stats-obfuscation")]
+    pub fn new(
+        bucket_size: time::Duration,
+        meta: StatsMetadata,
+        target: AgentlessStatsTarget,
+        capabilities: Cap,
+        peer_tags: Vec<String>,
+        additional_metric_tag_keys: Vec<String>,
+    ) -> Result<Self, AgentlessStatsExporterError> {
+        if bucket_size.is_zero() {
+            return Err(AgentlessStatsExporterError::InvalidBucketSize);
+        }
+        let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+            .map(String::from)
+            .to_vec();
+        let obfuscation_config = Some(Arc::new(arc_swap::ArcSwap::from_pointee(
+            crate::span_concentrator::StatsComputationObfuscationConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        )));
+        Ok(Self {
+            concentrator: Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                web_time::SystemTime::now(),
+                span_kinds,
+                peer_tags,
+                None,
+                additional_metric_tag_keys,
+                obfuscation_config,
+            )),
+            sender: StatsSender::new(
+                target,
+                meta,
+                capabilities,
+                #[cfg(feature = "stats-obfuscation")]
+                "",
+            ),
+        })
+    }
+
+    /// Add decoded v0.4 traces to the stats concentrator.
+    pub fn add_traces<T: libdd_trace_utils::span::TraceData>(
+        &self,
+        traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
+        client_computed_top_level: bool,
+    ) {
+        let mut concentrator = self.concentrator.lock_or_panic();
+        for trace in traces {
+            concentrator.add_trace(trace, client_computed_top_level);
+        }
+    }
+
+    /// Flush and send stats. Returns `false` when no buckets are due.
+    pub async fn send(&self, force: bool) -> anyhow::Result<bool> {
+        let flush = self.concentrator.lock_or_panic().flush_buckets(force);
+        self.sender
+            .send(flush.obfuscated_buckets, flush.unobfuscated_buckets)
+            .await
+    }
+}
+
+#[derive(Debug)]
+struct StatsSender<Cap: HttpClientCapability + SleepCapability, Destination> {
+    destination: Destination,
+    meta: StatsMetadata,
+    sequence_id: AtomicU64,
+    capabilities: Cap,
+    #[cfg(feature = "stats-obfuscation")]
+    supported_obfuscation_version: &'static str,
+}
+
+impl<Cap, Destination> StatsSender<Cap, Destination>
+where
+    Cap: HttpClientCapability + SleepCapability,
+    Destination: StatsPayloadDestination<Cap>,
+{
+    fn new(
+        destination: Destination,
+        meta: StatsMetadata,
+        capabilities: Cap,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+    ) -> Self {
+        Self {
+            destination,
+            meta,
+            sequence_id: AtomicU64::new(0),
+            capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
+        }
+    }
+
+    async fn send(
+        &self,
+        obfuscated_buckets: Vec<pb::ClientStatsBucket>,
+        unobfuscated_buckets: Vec<pb::ClientStatsBucket>,
+    ) -> anyhow::Result<bool> {
+        match (
+            obfuscated_buckets.is_empty(),
+            unobfuscated_buckets.is_empty(),
+        ) {
+            (true, true) => Ok(false),
+            (false, true) => {
+                self.send_payload(obfuscated_buckets, true).await?;
+                Ok(true)
+            }
+            (true, false) => {
+                self.send_payload(unobfuscated_buckets, false).await?;
+                Ok(true)
+            }
+            (false, false) => {
+                let (obfuscated, unobfuscated) = join(
+                    self.send_payload(obfuscated_buckets, true),
+                    self.send_payload(unobfuscated_buckets, false),
+                )
+                .await;
+                let mut errors = Vec::new();
+                if let Err(error) = obfuscated {
+                    errors.push(error);
+                }
+                if let Err(error) = unobfuscated {
+                    errors.push(error);
+                }
+                payload_errors(errors)?;
+                Ok(true)
+            }
+        }
+    }
+
+    #[inline(always)]
+    async fn send_payload(
+        &self,
+        buckets: Vec<pb::ClientStatsBucket>,
+        obfuscated: bool,
+    ) -> anyhow::Result<()> {
+        self.destination
+            .send_payload(
+                &self.capabilities,
+                &self.meta,
+                &self.sequence_id,
+                buckets,
+                obfuscated,
+                #[cfg(feature = "stats-obfuscation")]
+                self.supported_obfuscation_version,
+            )
+            .await
+    }
+}
+
+trait StatsPayloadDestination<Cap: HttpClientCapability + SleepCapability> {
+    async fn send_payload(
+        &self,
+        capabilities: &Cap,
+        meta: &StatsMetadata,
+        sequence_id: &AtomicU64,
+        buckets: Vec<pb::ClientStatsBucket>,
+        obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+    ) -> anyhow::Result<()>;
+}
+
+impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
+    for AgentlessStatsTarget
+{
+    #[inline(always)]
+    async fn send_payload(
+        &self,
+        capabilities: &Cap,
+        meta: &StatsMetadata,
+        sequence_id: &AtomicU64,
+        buckets: Vec<pb::ClientStatsBucket>,
+        _obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] _supported_obfuscation_version: &'static str,
+    ) -> anyhow::Result<()> {
+        send_agentless_payloads(capabilities, meta, self, sequence_id, buckets).await
+    }
+}
+
+impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
+    for StatsDestination
+{
+    #[inline(always)]
+    async fn send_payload(
+        &self,
+        capabilities: &Cap,
+        meta: &StatsMetadata,
+        sequence_id: &AtomicU64,
+        buckets: Vec<pb::ClientStatsBucket>,
+        obfuscated: bool,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+    ) -> anyhow::Result<()> {
+        match self {
+            StatsDestination::Agentless(target) => {
+                send_agentless_payloads(capabilities, meta, target, sequence_id, buckets).await
+            }
+            StatsDestination::Agent { endpoint } => {
+                send_agent_payloads(
+                    capabilities,
+                    meta,
+                    sequence_id,
+                    endpoint,
+                    buckets,
+                    obfuscated,
+                    #[cfg(feature = "stats-obfuscation")]
+                    supported_obfuscation_version,
+                )
+                .await
+            }
+        }
+    }
+}
+
 /// An exporter that concentrates and sends stats to the agent.
 ///
 /// `Cap` is the capabilities bundle (HTTP + sleep). Leaf crates pin it to a
@@ -135,14 +381,10 @@ pub struct StatsExporter<
     Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     Con: FlushableConcentrator = SpanConcentrator,
 > {
+    #[cfg(feature = "worker-exporter")]
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
-    destination: StatsDestination,
-    meta: StatsMetadata,
-    sequence_id: AtomicU64,
-    capabilities: Cap,
-    #[cfg(feature = "stats-obfuscation")]
-    supported_obfuscation_version: &'static str,
+    sender: StatsSender<Cap, StatsDestination>,
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
     telemetry: Option<(
@@ -219,7 +461,7 @@ impl<
             StatsDestination::Agentless(target),
             capabilities,
             #[cfg(feature = "stats-obfuscation")]
-            "1",
+            "",
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "dogstatsd")]
@@ -241,6 +483,8 @@ impl<
         >,
         #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     ) -> Self {
+        #[cfg(not(feature = "worker-exporter"))]
+        let _ = flush_interval;
         #[cfg(feature = "telemetry")]
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
@@ -253,14 +497,16 @@ impl<
             (handle, key)
         });
         Self {
+            #[cfg(feature = "worker-exporter")]
             flush_interval,
             concentrator,
-            destination,
-            meta,
-            sequence_id: AtomicU64::new(0),
-            capabilities,
-            #[cfg(feature = "stats-obfuscation")]
-            supported_obfuscation_version,
+            sender: StatsSender::new(
+                destination,
+                meta,
+                capabilities,
+                #[cfg(feature = "stats-obfuscation")]
+                supported_obfuscation_version,
+            ),
             #[cfg(feature = "telemetry")]
             telemetry,
             #[cfg(feature = "dogstatsd")]
@@ -314,140 +560,75 @@ impl<
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
         }
 
-        let futures = FuturesUnordered::new();
-
-        if !flush.obfuscated_buckets.is_empty() {
-            futures.push(self.send_payload(flush.obfuscated_buckets, true));
-        }
-
-        if !flush.unobfuscated_buckets.is_empty() {
-            futures.push(self.send_payload(flush.unobfuscated_buckets, false));
-        }
-
-        let sent_stats = !futures.is_empty();
-
-        futures
-            .collect::<Vec<anyhow::Result<()>>>()
+        self.sender
+            .send(flush.obfuscated_buckets, flush.unobfuscated_buckets)
             .await
-            .into_iter()
-            .collect::<anyhow::Result<()>>()?;
-
-        Ok(sent_stats)
     }
+}
 
-    /// Encode the buckets into stats payloads and send them.
-    ///
-    /// Buckets over [`MAX_GROUPED_STATS_PER_PAYLOAD`] are split into several payloads. Like the
-    /// Agent, all fragments of one flush share a sequence id, are flagged `split_payload`, and are
-    /// sent in separate requests.
-    ///
-    /// `obfuscated` adds the `datadog-obfuscation-version` header.
-    async fn send_payload(
-        &self,
-        buckets: Vec<pb::ClientStatsBucket>,
-        obfuscated: bool,
-    ) -> anyhow::Result<()> {
-        let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
-        let split = groups.len() > 1;
-        // All fragments of one flush share a single sequence id, as the Agent does.
-        let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
-        let mut errors = Vec::new();
-        for group in groups {
-            if let Err(e) = self
-                .send_single_payload(group, obfuscated, split, sequence)
-                .await
-            {
-                errors.push(e);
-            }
-        }
-        if let Some(last_err) = errors.pop() {
-            if !errors.is_empty() {
-                struct AdditionalErrors(Vec<anyhow::Error>);
-                impl std::fmt::Display for AdditionalErrors {
-                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                        writeln!(f, "with {} additional errors:", self.0.len())?;
-                        for e in &self.0 {
-                            writeln!(f, "{e}")?;
-                        }
-                        Ok(())
-                    }
-                }
-                return Err(last_err.context(AdditionalErrors(errors)));
-            }
-            return Err(last_err);
-        }
-        Ok(())
-    }
-
-    /// Encode a single (already split) group of buckets into a stats payload and send it.
-    async fn send_single_payload(
-        &self,
-        buckets: Vec<pb::ClientStatsBucket>,
-        obfuscated: bool,
-        split: bool,
-        sequence: u64,
-    ) -> anyhow::Result<()> {
-        let request = match &self.destination {
-            StatsDestination::Agent { endpoint } => {
-                self.build_agent_request(endpoint.clone(), sequence, buckets, obfuscated)?
-            }
-            StatsDestination::Agentless(target) => {
-                build_agentless_request(&self.meta, sequence, buckets, target, split)?
-            }
+async fn send_agent_payloads<Cap: HttpClientCapability + SleepCapability>(
+    capabilities: &Cap,
+    meta: &StatsMetadata,
+    sequence_id: &AtomicU64,
+    endpoint: &Endpoint,
+    buckets: Vec<pb::ClientStatsBucket>,
+    obfuscated: bool,
+    #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+) -> anyhow::Result<()> {
+    let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+    let sequence = sequence_id.fetch_add(1, Ordering::Relaxed);
+    let mut errors = Vec::new();
+    for group in groups {
+        let result = match build_agent_request(
+            meta,
+            endpoint.clone(),
+            sequence,
+            group,
+            obfuscated,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
+        ) {
+            Ok(request) => send_stats_request(capabilities, request).await,
+            Err(error) => Err(error),
         };
-
-        let result = send_with_retry(
-            &self.capabilities,
-            &request.endpoint,
-            request.body,
-            &request.headers,
-            &request.retry,
-            request.compression,
-        )
-        .await;
-
-        match result {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                error!(?err, "Error with the StatsExporter when sending stats");
-                anyhow::bail!("Failed to send stats: {err}");
-            }
+        if let Err(error) = result {
+            errors.push(error);
         }
     }
+    payload_errors(errors)
+}
 
-    /// Build the request for the Agent `/v0.6/stats` destination: a
-    /// `ClientStatsPayload` serialized as msgpack, uncompressed.
-    fn build_agent_request(
-        &self,
-        endpoint: Endpoint,
-        sequence: u64,
-        buckets: Vec<pb::ClientStatsBucket>,
-        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))] obfuscated: bool,
-    ) -> anyhow::Result<StatsRequest> {
-        let payload = encode_stats_payload(&self.meta, sequence, buckets);
-        let body = rmp_serde::encode::to_vec_named(&payload)?;
+fn build_agent_request(
+    meta: &StatsMetadata,
+    endpoint: Endpoint,
+    sequence: u64,
+    buckets: Vec<pb::ClientStatsBucket>,
+    #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))] obfuscated: bool,
+    #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+) -> anyhow::Result<StatsRequest> {
+    let payload = encode_stats_payload(meta, sequence, buckets);
+    let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
+    let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        libdd_common::header::APPLICATION_MSGPACK,
+    );
+    #[cfg(feature = "stats-obfuscation")]
+    if obfuscated {
         headers.insert(
-            http::header::CONTENT_TYPE,
-            libdd_common::header::APPLICATION_MSGPACK,
+            http::HeaderName::from_static("datadog-obfuscation-version"),
+            http::HeaderValue::from_static(supported_obfuscation_version),
         );
-        #[cfg(feature = "stats-obfuscation")]
-        if obfuscated {
-            headers.insert(
-                http::HeaderName::from_static("datadog-obfuscation-version"),
-                http::HeaderValue::from_static(self.supported_obfuscation_version),
-            );
-        }
-
-        Ok(StatsRequest {
-            body,
-            headers,
-            compression: CompressionStrategy::None,
-            endpoint,
-            retry: RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
-        })
     }
+
+    Ok(StatsRequest {
+        body,
+        headers,
+        compression: CompressionStrategy::None,
+        endpoint,
+        retry: RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
+    })
 }
 
 /// Number of retries used by the agentless intake stats sender.
@@ -489,6 +670,14 @@ fn build_agentless_request(
     // endpoint (`Endpoint::api_key`), so only the payload-specific headers are added here.
     let mut headers: http::HeaderMap = TracerHeaderTags::from(meta).into();
     headers.insert(
+        http::HeaderName::from_static("datadog-client-computed-stats"),
+        http::HeaderValue::from_static("true"),
+    );
+    headers.insert(
+        http::HeaderName::from_static("datadog-client-computed-top-level"),
+        http::HeaderValue::from_static("true"),
+    );
+    headers.insert(
         http::header::CONTENT_TYPE,
         libdd_common::header::APPLICATION_MSGPACK,
     );
@@ -512,15 +701,82 @@ fn build_agentless_request(
     })
 }
 
+async fn send_agentless_payloads<Cap: HttpClientCapability + SleepCapability>(
+    capabilities: &Cap,
+    meta: &StatsMetadata,
+    target: &AgentlessStatsTarget,
+    sequence_id: &AtomicU64,
+    buckets: Vec<pb::ClientStatsBucket>,
+) -> anyhow::Result<()> {
+    let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+    let split = groups.len() > 1;
+    let sequence = sequence_id.fetch_add(1, Ordering::Relaxed);
+    let mut errors = Vec::new();
+    for group in groups {
+        let result = match build_agentless_request(meta, sequence, group, target, split) {
+            Ok(request) => send_stats_request(capabilities, request).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            errors.push(error);
+        }
+    }
+    payload_errors(errors)
+}
+
+async fn send_stats_request<Cap: HttpClientCapability + SleepCapability>(
+    capabilities: &Cap,
+    request: StatsRequest,
+) -> anyhow::Result<()> {
+    match send_with_retry(
+        capabilities,
+        &request.endpoint,
+        request.body,
+        &request.headers,
+        &request.retry,
+        request.compression,
+    )
+    .await
+    {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            error!(?error, "Error with the StatsExporter when sending stats");
+            anyhow::bail!("Failed to send stats: {error}");
+        }
+    }
+}
+
+fn payload_errors(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
+    let Some(last_error) = errors.pop() else {
+        return Ok(());
+    };
+    if errors.is_empty() {
+        return Err(last_error);
+    }
+
+    struct AdditionalErrors(Vec<anyhow::Error>);
+    impl std::fmt::Display for AdditionalErrors {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            writeln!(formatter, "with {} additional errors:", self.0.len())?;
+            for error in &self.0 {
+                writeln!(formatter, "{error}")?;
+            }
+            Ok(())
+        }
+    }
+    Err(last_error.context(AdditionalErrors(errors)))
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg(feature = "worker-exporter")]
 impl<
         Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
         Con: FlushableConcentrator + Send + Debug,
     > Worker for StatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
-        self.capabilities.sleep(self.flush_interval).await;
+        self.sender.capabilities.sleep(self.flush_interval).await;
     }
 
     /// Flush and send stats on every trigger.
@@ -530,7 +786,7 @@ impl<
 
     fn reset(&mut self) {
         let _ = self.concentrator.lock_or_panic().flush_buckets(true);
-        self.sequence_id.store(0, Ordering::Relaxed);
+        self.sender.sequence_id.store(0, Ordering::Relaxed);
     }
 
     async fn shutdown(&mut self) {
@@ -581,6 +837,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
+    #[cfg(feature = "worker-exporter")]
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::{poll_for_mock_hit, poll_for_mock_hits};
@@ -598,6 +855,47 @@ mod tests {
     fn test_stats_exporter_sync_send() {
         let _ = is_send::<StatsExporter<NativeCapabilities>>;
         let _ = is_sync::<StatsExporter<NativeCapabilities>>;
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_agent_destination_requires_only_an_endpoint() {
+        let destination = StatsDestination::Agent {
+            endpoint: Endpoint::default(),
+        };
+
+        assert!(matches!(destination, StatsDestination::Agent { .. }));
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_agentless_stats_exporter_rejects_zero_bucket_size() {
+        let target = || AgentlessStatsTarget {
+            endpoint: Endpoint::default(),
+            version: String::new(),
+        };
+        let exporter = AgentlessStatsExporter::new(
+            Duration::ZERO,
+            get_test_metadata(),
+            target(),
+            NativeCapabilities::new_client(),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            exporter,
+            Err(AgentlessStatsExporterError::InvalidBucketSize)
+        ));
+        assert!(AgentlessStatsExporter::new(
+            Duration::from_nanos(1),
+            get_test_metadata(),
+            target(),
+            NativeCapabilities::new_client(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .is_ok());
     }
 
     fn get_test_metadata() -> StatsMetadata {
@@ -841,6 +1139,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_run() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
@@ -887,6 +1186,7 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_worker_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");

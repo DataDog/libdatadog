@@ -15,6 +15,7 @@ Compute aggregated statistics from distributed tracing spans with time-bucketed 
 - **Time Bucketing**: Configurable bucket sizes for aggregation
 - **Statistics Export**: Generate statistics payloads for Datadog backend
 - **Stats Exporter** *(non-wasm)*: Periodic HTTP flusher backed by any `HttpClientTrait` implementation
+- **Agentless Exporter**: Host-triggered intake export for runtimes without a background worker
 
 ## Span Concentrator
 
@@ -64,6 +65,16 @@ let exporter = StatsExporter::<NativeCapabilities>::new(
 exporter.send(false).await?;
 ```
 
+`AgentlessStatsExporter` accepts decoded v0.4 traces and owns top-level detection,
+aggregation, payload encoding, and intake delivery. Its caller supplies the flush
+schedule and calls `send(true)` before shutdown or reconfiguration. Enable the
+`stats-obfuscation` feature to construct it because no Agent can obfuscate direct
+intake payloads. Construction requires a non-zero bucket size and returns
+`AgentlessStatsExporterError::InvalidBucketSize` otherwise.
+
+The default `worker-exporter` feature adds the `SharedRuntime` worker implementation.
+Runtimes that supply their own flush triggers can disable that feature.
+
 ## Example Usage
 
 ```rust
@@ -79,7 +90,8 @@ let mut concentrator = SpanConcentrator::new(
     vec!["example.key".to_string()], // additional metric tag keys
 );
 
-// Add spans
+// Add one span, or use add_trace() to compute missing top-level tags and add
+// all spans from a decoded v0.4 trace.
 // concentrator.add_span(&span);
 
 // Flush statistics
