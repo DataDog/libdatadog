@@ -325,6 +325,15 @@ req_min() {
 resolve_baseline() {
     local baseline=$1
 
+    # A full commit SHA already in this clone is taken as it stands: it is not a ref name
+    # the remote would serve by name, and `origin/<sha>` is not a revision. Narrow on
+    # purpose -- a branch or tag still resolves through the fetch below, so a stale local
+    # copy can never stand in for the remote's.
+    if [[ "$baseline" =~ ^[0-9a-f]{40}$ ]] && git rev-parse --verify --quiet "${baseline}^{commit}" >/dev/null; then
+        printf '%s\n' "$baseline"
+        return 0
+    fi
+
     # Fetch base commit
     git fetch origin "$baseline" --quiet
     local fetch_exit_code=$?
