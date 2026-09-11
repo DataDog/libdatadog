@@ -21,6 +21,12 @@ elf = { workspace = true, features = ["std"], optional = true }
 object = { workspace = true, features = ["archive", "read_core"], optional = true }
 
 [features]
+default = ["owned-context"]
+# Ownership modes for the thread-level context. They are mutually exclusive,
+# because the TLS slot is untyped (if both are enabled, shared-context is
+# ignored). See the crate-level documentation.
+owned-context = []
+shared-context = []
 sanity-check = ["dep:elf", "dep:anyhow"]
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
@@ -37,4 +43,8 @@ name = "gen_tls_shim_bytes"
 required-features = ["gen-tls-shim-bytes"]
 
 [dev-dependencies]
-libdd-otel-thread-ctx = { path = ".", features = ["test-utils"] }
+# `default-features = false` keeps this edge from force-enabling `owned-context`, so that
+# `--no-default-features --features shared-context` also applies to the test build.
+libdd-otel-thread-ctx = { path = ".", default-features = false, features = [
+    "test-utils",
+] }
