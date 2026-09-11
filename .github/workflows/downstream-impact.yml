@@ -60,6 +60,7 @@ jobs:
     if: needs.detect.outputs.has_validations == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.detect.outputs.validation_matrix) }}
@@ -149,6 +150,36 @@ jobs:
           mapfile -t SUBMODULES < <(jq -r '.[]' <<< "$SUBMODULES_JSON")
           mapfile -t CARGO_ARGS < <(jq -r '.[]' <<< "$CARGO_ARGS_JSON")
           MANIFEST_PATH="$DOWNSTREAM_ROOT/$DOWNSTREAM_MANIFEST"
+          DOWNSTREAM_SHA=$(git -C "$DOWNSTREAM_ROOT" rev-parse HEAD)
+          LIBDATADOG_BASE_SHA=$(git -C "$LIBDATADOG_BASE_ROOT" rev-parse HEAD)
+          LIBDATADOG_HEAD_SHA=$(git -C "$LIBDATADOG_HEAD_ROOT" rev-parse HEAD)
+
+          case "$BUILD_KIND" in
+            cargo-build)
+              VALIDATION_COMMAND="cargo +1.92.0 build --manifest-path $DOWNSTREAM_MANIFEST --message-format=json"
+              for arg in "${CARGO_ARGS[@]}"; do
+                printf -v escaped_arg '%q' "$arg"
+                VALIDATION_COMMAND+=" $escaped_arg"
+              done
+              ;;
+            node-wasm)
+              VALIDATION_COMMAND="npm run build --prefix packages/libdatadog"
+              ;;
+            python-extension)
+              VALIDATION_COMMAND="python3 setup.py build_ext --inplace --force"
+              ;;
+            php-sidecar)
+              VALIDATION_COMMAND="SHARED=1 PROFILE=tracer-release host_os=linux-gnu ./compile_rust.sh"
+              ;;
+            *)
+              VALIDATION_COMMAND="unsupported build kind: $BUILD_KIND"
+              ;;
+          esac
+
+          echo "downstream_sha=$DOWNSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "libdatadog_base_sha=$LIBDATADOG_BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "libdatadog_head_sha=$LIBDATADOG_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "validation_command=$VALIDATION_COMMAND" >> "$GITHUB_OUTPUT"
 
           generate_patch_config() {
             local libdatadog_root=$1
@@ -347,6 +378,10 @@ jobs:
           BASE_RESULT: ${{ steps.validate.outputs.base_result }}
           HEAD_RESULT: ${{ steps.validate.outputs.head_result }}
           NEW_ERROR_COUNT: ${{ steps.validate.outputs.new_error_count }}
+          DOWNSTREAM_SHA: ${{ steps.validate.outputs.downstream_sha }}
+          LIBDATADOG_BASE_SHA: ${{ steps.validate.outputs.libdatadog_base_sha }}
+          LIBDATADOG_HEAD_SHA: ${{ steps.validate.outputs.libdatadog_head_sha }}
+          VALIDATION_COMMAND: ${{ steps.validate.outputs.validation_command }}
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
           IMPACTED_COMPONENTS: ${{ matrix.components }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
@@ -356,6 +391,11 @@ jobs:
             echo "## $DOWNSTREAM_REPOSITORY compatibility"
             echo
             echo "Components: $IMPACTED_COMPONENTS"
+            echo
+            echo "Downstream revision: [\`${DOWNSTREAM_SHA:0:12}\`](https://github.com/$DOWNSTREAM_REPOSITORY/commit/$DOWNSTREAM_SHA)"
+            echo "libdatadog base: [\`${LIBDATADOG_BASE_SHA:0:12}\`](https://github.com/DataDog/libdatadog/commit/$LIBDATADOG_BASE_SHA)"
+            echo "libdatadog proposed merge: [\`${LIBDATADOG_HEAD_SHA:0:12}\`](https://github.com/DataDog/libdatadog/commit/$LIBDATADOG_HEAD_SHA)"
+            echo "Validation command: \`$VALIDATION_COMMAND\`"
             echo
             echo "Base: **$BASE_RESULT** — Head: **$HEAD_RESULT**"
             echo "New Cargo/compiler diagnostics: **${NEW_ERROR_COUNT:-unknown}**"
