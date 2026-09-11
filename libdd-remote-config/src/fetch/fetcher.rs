@@ -849,7 +849,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             )),
         )
         .await
@@ -889,7 +889,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             )),
         )
         .await
@@ -1009,7 +1009,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             )),
         )
         .await
@@ -1199,7 +1199,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             )),
         )
         .await
@@ -1303,7 +1303,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             )),
         )
         .await

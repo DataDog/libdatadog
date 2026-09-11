@@ -491,7 +491,7 @@ mod tests {
             Self
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self
         }
 
