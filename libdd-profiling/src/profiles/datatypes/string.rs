@@ -48,6 +48,23 @@ impl StringId2 {
         self.0.is_null()
     }
 
+    #[cfg(feature = "cxx")]
+    pub(crate) fn into_raw_ptr(self) -> *mut StringHeader {
+        self.0
+    }
+
+    /// Reconstructs a StringId2 from its opaque CXX carrier.
+    ///
+    /// # Safety
+    /// raw must be null/default or a StringId2 handle produced by libdatadog.
+    /// Null/default handles represent the empty string. Non-null handles require
+    /// their originating ProfilesDictionary or well-known string set to still be
+    /// alive.
+    #[cfg(feature = "cxx")]
+    pub(crate) unsafe fn from_raw_ptr(raw: *mut StringHeader) -> Self {
+        Self(raw)
+    }
+
     /// Creates a [`StringId2`] from the [`StringRef`]. This is an associated
     /// method so that it can be marked const and used in const contexts such
     /// as static initializers.

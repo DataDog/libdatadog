@@ -9,6 +9,14 @@
 
 using namespace datadog::profiling;
 
+bool check_status(const Status& status, const char* operation) {
+    if (status.ok) {
+        return true;
+    }
+    std::cerr << "Error: " << operation << " failed: " << std::string(status.message) << std::endl;
+    return false;
+}
+
 int main(int argc, char *argv[]) {
     try {
         const char *api_key = std::getenv("DD_API_KEY");
@@ -26,17 +34,12 @@ int main(int argc, char *argv[]) {
         std::cout << "=== Example 1: Basic ExporterManager Usage ===" << std::endl;
 
         // Create a profile
-        ValueType wall_time{
-            .type_ = "wall-time",
-            .unit = "nanoseconds"
-        };
-
         Period period{
-            .value_type = wall_time,
+            .value_type = SampleType::WallTime,
             .value = 60
         };
 
-        auto profile = Profile::create({wall_time}, period);
+        auto profile = Profile::create_or_throw({SampleType::WallTime}, period);
         std::cout << "✓ Created profile" << std::endl;
 
         // Add some sample data
@@ -48,7 +51,7 @@ int main(int argc, char *argv[]) {
             .build_id = "abc123"
         };
 
-        profile->add_sample(Sample{
+        if (!check_status(profile->add_sample(Sample{
             .locations = {
                 Location{
                     .mapping = mapping,
@@ -65,13 +68,13 @@ int main(int argc, char *argv[]) {
             .labels = {
                 Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}
             }
-        });
+        }), "add_sample")) return 1;
 
         std::cout << "✓ Added sample to profile" << std::endl;
 
         // Create exporter
         auto exporter = api_key 
-            ? ProfileExporter::create_agentless_exporter(
+            ? ProfileExporter::create_agentless_exporter_or_throw(
                 "libdatadog-example",
                 "1.0.0",
                 "native",
@@ -84,7 +87,7 @@ int main(int argc, char *argv[]) {
                 10000,
                 false
               )
-            : ProfileExporter::create_file_exporter(
+            : ProfileExporter::create_file_exporter_or_throw(
                 "libdatadog-example",
                 "1.0.0",
                 "native",
@@ -98,18 +101,18 @@ int main(int argc, char *argv[]) {
         std::cout << "✓ Created exporter" << std::endl;
 
         // Create ExporterManager
-        auto manager = ExporterManager::new_manager(std::move(exporter));
+        auto manager = ExporterManager::new_manager_or_throw(std::move(exporter));
         std::cout << "✓ Created ExporterManager with background worker thread" << std::endl;
 
         // Queue the profile (this resets the profile and queues the previous data)
-        manager->queue_profile(
+        if (!check_status(manager->queue_profile(
             *profile,
             {},    // files_to_compress
             {},    // additional_tags
             "",    // process_tags
             "",    // internal_metadata
             ""     // info
-        );
+        ), "queue_profile")) return 1;
 
         std::cout << "✓ Queued profile for async sending" << std::endl;
 
@@ -117,7 +120,7 @@ int main(int argc, char *argv[]) {
         sleep(1);
 
         // Abort the manager (stops worker thread)
-        manager->abort();
+        if (!check_status(manager->abort(), "abort")) return 1;
         std::cout << "✓ Aborted manager (worker thread stopped)" << std::endl;
 
         std::cout << std::endl;
@@ -129,9 +132,9 @@ int main(int argc, char *argv[]) {
         std::cout << "=== Example 2: Fork-Safe ExporterManager Usage ===" << std::endl;
 
         // Create a new profile and exporter for the fork example
-        auto profile2 = Profile::create({wall_time}, period);
+        auto profile2 = Profile::create_or_throw({SampleType::WallTime}, period);
         
-        profile2->add_sample(Sample{
+        if (!check_status(profile2->add_sample(Sample{
             .locations = {
                 Location{
                     .mapping = mapping,
@@ -148,9 +151,9 @@ int main(int argc, char *argv[]) {
             .labels = {
                 Label{.key = "thread_id", .str = "", .num = 2, .num_unit = ""}
             }
-        });
+        }), "add_sample")) return 1;
 
-        auto exporter2 = ProfileExporter::create_file_exporter(
+        auto exporter2 = ProfileExporter::create_file_exporter_or_throw(
             "libdatadog-example-fork",
             "1.0.0",
             "native",
@@ -161,15 +164,15 @@ int main(int argc, char *argv[]) {
             "/tmp/exporter_manager_fork_cxx.txt"
         );
 
-        auto manager2 = ExporterManager::new_manager(std::move(exporter2));
+        auto manager2 = ExporterManager::new_manager_or_throw(std::move(exporter2));
         std::cout << "✓ Created ExporterManager for fork example" << std::endl;
 
         // Queue a profile before forking
-        manager2->queue_profile(*profile2, {}, {}, "", "", "");
+        if (!check_status(manager2->queue_profile(*profile2, {}, {}, "", "", ""), "queue_profile")) return 1;
         std::cout << "✓ Queued profile (may be inflight during fork)" << std::endl;
 
         // Call prefork before forking
-        manager2->prefork();
+        if (!check_status(manager2->prefork(), "prefork")) return 1;
         std::cout << "✓ Called prefork (worker thread stopped, ready to fork)" << std::endl;
 
         pid_t pid = fork();
@@ -184,12 +187,12 @@ int main(int argc, char *argv[]) {
             std::cout << "[CHILD] ✓ In child process (PID: " << getpid() << ")" << std::endl;
 
             // Call postfork_child to restart the manager
-            manager2->postfork_child();
+            if (!check_status(manager2->postfork_child(), "postfork_child")) return 1;
             std::cout << "[CHILD] ✓ Restarted manager (inflight requests discarded)" << std::endl;
 
             // Child can now use the manager independently
             // Add another sample in the child
-            profile2->add_sample(Sample{
+            if (!check_status(profile2->add_sample(Sample{
                 .locations = {
                     Location{
                         .mapping = mapping,
@@ -206,14 +209,14 @@ int main(int argc, char *argv[]) {
                 .labels = {
                     Label{.key = "process", .str = "child", .num = 0, .num_unit = ""}
                 }
-            });
+            }), "add_sample")) return 1;
 
-            manager2->queue_profile(*profile2, {}, {}, "", "", "");
+            if (!check_status(manager2->queue_profile(*profile2, {}, {}, "", "", ""), "queue_profile")) return 1;
             std::cout << "[CHILD] ✓ Queued child-specific profile" << std::endl;
 
             sleep(1);
 
-            manager2->abort();
+            if (!check_status(manager2->abort(), "abort")) return 1;
             std::cout << "[CHILD] ✓ Cleaned up and exiting" << std::endl;
             
             exit(0);
@@ -223,11 +226,11 @@ int main(int argc, char *argv[]) {
                       << ", child PID: " << pid << ")" << std::endl;
 
             // Call postfork_parent to restart the manager with inflight requests
-            manager2->postfork_parent();
+            if (!check_status(manager2->postfork_parent(), "postfork_parent")) return 1;
             std::cout << "[PARENT] ✓ Restarted manager (inflight requests re-queued)" << std::endl;
 
             // Parent continues profiling
-            profile2->add_sample(Sample{
+            if (!check_status(profile2->add_sample(Sample{
                 .locations = {
                     Location{
                         .mapping = mapping,
@@ -244,9 +247,9 @@ int main(int argc, char *argv[]) {
                 .labels = {
                     Label{.key = "process", .str = "parent", .num = 0, .num_unit = ""}
                 }
-            });
+            }), "add_sample")) return 1;
 
-            manager2->queue_profile(*profile2, {}, {}, "", "", "");
+            if (!check_status(manager2->queue_profile(*profile2, {}, {}, "", "", ""), "queue_profile")) return 1;
             std::cout << "[PARENT] ✓ Queued parent-specific profile" << std::endl;
 
             // Wait for child to finish
@@ -256,7 +259,7 @@ int main(int argc, char *argv[]) {
 
             sleep(1);
 
-            manager2->abort();
+            if (!check_status(manager2->abort(), "abort")) return 1;
             std::cout << "[PARENT] ✓ Cleaned up" << std::endl;
         }
 

@@ -203,7 +203,7 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
                 let labels_iter = [Ok(api2::Label::num(thread_id_key, thread_id, ""))].into_iter();
                 // SAFETY: all ids come from the profile's dictionary.
                 black_box(unsafe {
-                    profile.try_add_sample2(&locations, &values, labels_iter, None)
+                    profile.try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 })
                 .unwrap();
             }

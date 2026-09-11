@@ -5,9 +5,25 @@
 
 #![allow(clippy::needless_lifetimes)]
 
+use anyhow::Context;
+
 use crate::api;
+use crate::api2;
 use crate::exporter;
 use crate::internal;
+use crate::profiles;
+
+pub struct StringId2Opaque {
+    _private: [u8; 0],
+}
+
+pub struct FunctionId2Opaque {
+    _private: [u8; 0],
+}
+
+pub struct MappingId2Opaque {
+    _private: [u8; 0],
+}
 
 // ============================================================================
 // CXX Bridge - C++ Bindings
@@ -137,6 +153,105 @@ pub mod ffi {
         labels: Vec<Label<'a>>,
     }
 
+    /// Opaque pointer-shaped dictionary string id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents the empty string. A non-null handle is only valid with the
+    /// ProfilesDictionary that produced it, or Profiles created from that
+    /// dictionary.
+    struct StringId2 {
+        handle: *mut StringId2Opaque,
+    }
+
+    /// Opaque pointer-shaped dictionary function id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents the default/unknown function. A non-null handle is only valid
+    /// with the ProfilesDictionary that produced it, or Profiles created from
+    /// that dictionary.
+    struct FunctionId2 {
+        handle: *mut FunctionId2Opaque,
+    }
+
+    /// Opaque pointer-shaped dictionary mapping id.
+    ///
+    /// C++ callers must treat handle as opaque. Do not dereference it, invent
+    /// non-null values, persist non-null values beyond the ProfilesDictionary
+    /// lifetime, or compare values across dictionaries. A null/default handle
+    /// represents an unknown/no mapping. A non-null handle is only valid with
+    /// the ProfilesDictionary that produced it, or Profiles created from that
+    /// dictionary.
+    struct MappingId2 {
+        handle: *mut MappingId2Opaque,
+    }
+
+    /// Function data for insertion into a ProfilesDictionary.
+    ///
+    /// String ids may be null/default to represent empty strings. Non-null ids
+    /// must come from the same ProfilesDictionary receiving the insertion.
+    struct Function2 {
+        name: StringId2,
+        system_name: StringId2,
+        // NOTE: api2's Rust/C FFI datatype uses file_name, while pprof and
+        // the string-based CXX Function use filename. Keep file_name for now
+        // to match api2; revisit the CXX-facing name during PR review.
+        file_name: StringId2,
+    }
+
+    /// Mapping data for insertion into a ProfilesDictionary.
+    ///
+    /// String ids may be null/default to represent empty strings. Non-null ids
+    /// must come from the same ProfilesDictionary receiving the insertion.
+    struct Mapping2 {
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: StringId2,
+        build_id: StringId2,
+    }
+
+    /// Dictionary-backed location.
+    ///
+    /// mapping and function may be null/default to represent unknown values.
+    /// Non-null ids must come from the same ProfilesDictionary used to create
+    /// the Profile receiving this location.
+    struct Location2 {
+        mapping: MappingId2,
+        function: FunctionId2,
+        address: u64,
+        line: i64,
+    }
+
+    /// Dictionary-backed label.
+    ///
+    /// key may be null/default to represent an empty key, though callers should
+    /// normally use a meaningful dictionary string. Non-null key ids must come
+    /// from the same ProfilesDictionary used to create the Profile receiving
+    /// this label. str and num_unit are borrowed only for the duration of the
+    /// add_sample2 call.
+    struct Label2<'a> {
+        key: StringId2,
+        str: &'a str,
+        num: i64,
+        num_unit: &'a str,
+    }
+
+    /// Dictionary-backed sample.
+    ///
+    /// locations, values, and labels are borrowed only for the duration of the
+    /// add_sample2 call. Null/default ids represent empty or unknown values.
+    /// All non-null ids in locations and labels must come from the
+    /// ProfilesDictionary used to create the Profile receiving this sample.
+    struct Sample2<'a> {
+        locations: &'a [Location2],
+        values: &'a [i64],
+        labels: &'a [Label2<'a>],
+    }
+
     struct Tag<'a> {
         key: &'a str,
         value: &'a str,
@@ -147,11 +262,60 @@ pub mod ffi {
         data: &'a [u8],
     }
 
+    /// Explicit no-exception status for CXX callers.
+    ///
+    /// These status-returning APIs are intended for runtimes that cannot allow
+    /// Rust errors to cross the CXX bridge as C++ exceptions. Success uses an
+    /// empty message; failure carries a human-readable error string.
+    ///
+    /// #[must_use] catches ignored statuses in Rust tests/helpers, but cxx does
+    /// not currently translate it to C++ [[nodiscard]] in generated headers.
+    #[must_use]
+    struct Status {
+        ok: bool,
+        message: String,
+    }
+
+    /// No-exception result for ProfilesDictionary::insert_string.
+    ///
+    /// If status.ok is false, value is the null/default string id.
+    #[must_use]
+    struct StringId2Result {
+        status: Status,
+        value: StringId2,
+    }
+
+    /// No-exception result for ProfilesDictionary::insert_function.
+    ///
+    /// If status.ok is false, value is the null/default function id.
+    #[must_use]
+    struct FunctionId2Result {
+        status: Status,
+        value: FunctionId2,
+    }
+
+    /// No-exception result for ProfilesDictionary::insert_mapping.
+    ///
+    /// If status.ok is false, value is the null/default mapping id.
+    #[must_use]
+    struct MappingId2Result {
+        status: Status,
+        value: MappingId2,
+    }
+
     // Opaque Rust types
     extern "Rust" {
+        // CXX exposes Rust Result<T> errors as C++ exceptions. Keep any Result-returning
+        // C++ API explicitly named *_or_throw; hot-path mutation APIs below return Status
+        // or typed result structs instead.
         type Profile;
         type ProfileExporter;
+        type EncodedProfile;
         type ExporterManager;
+        type ProfilesDictionary;
+        type StringId2Opaque;
+        type FunctionId2Opaque;
+        type MappingId2Opaque;
         type CancellationToken;
 
         // CancellationToken factory and methods
@@ -162,22 +326,80 @@ pub mod ffi {
 
         // Static factory methods for Profile
         #[Self = "Profile"]
+        #[cxx_name = "create_or_throw"]
         fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
 
         /// Create a profile without a sampling period.
         #[Self = "Profile"]
+        #[cxx_name = "create_no_period_or_throw"]
         fn create_no_period(sample_types: Vec<SampleType>) -> Result<Box<Profile>>;
 
+        // Static factory methods for ProfilesDictionary
+        #[Self = "ProfilesDictionary"]
+        #[cxx_name = "create_or_throw"]
+        fn create() -> Result<Box<ProfilesDictionary>>;
+
+        /// Inserts value into this dictionary and returns an opaque id.
+        ///
+        /// The returned id must only be used with this dictionary or Profiles
+        /// created from it.
+        fn insert_string(self: &ProfilesDictionary, value: &str) -> StringId2Result;
+
+        /// Inserts function into this dictionary and returns an opaque id.
+        ///
+        /// Null/default ids in function represent empty strings. Non-null ids
+        /// in function must have been produced by this dictionary. The returned
+        /// id must only be used with this dictionary or Profiles created from
+        /// it.
+        fn insert_function(self: &ProfilesDictionary, function: &Function2) -> FunctionId2Result;
+
+        /// Inserts mapping into this dictionary and returns an opaque id.
+        ///
+        /// Null/default ids in mapping represent empty strings. Non-null ids in
+        /// mapping must have been produced by this dictionary. The returned id
+        /// must only be used with this dictionary or Profiles created from it.
+        fn insert_mapping(self: &ProfilesDictionary, mapping: &Mapping2) -> MappingId2Result;
+
+        /// Creates a Profile backed by dictionary.
+        ///
+        /// The Profile keeps dictionary storage alive internally. Future
+        /// add_sample2 calls on the Profile may use null/default ids for empty
+        /// or unknown values, but all non-null ids must be produced by this
+        /// same dictionary.
+        #[Self = "Profile"]
+        #[cxx_name = "create_with_dictionary_or_throw"]
+        fn create_with_dictionary(
+            sample_types: Vec<SampleType>,
+            period: &Period,
+            dictionary: &ProfilesDictionary,
+        ) -> Result<Box<Profile>>;
+
         // Profile methods
-        fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_sample(self: &mut Profile, sample: &Sample) -> Status;
+        fn add_sample_with_timestamp(
+            self: &mut Profile,
+            sample: &Sample,
+            endtime_ns: i64,
+        ) -> Status;
+
+        /// Adds a dictionary-backed sample.
+        ///
+        /// Null/default ids in sample represent empty or unknown values. All
+        /// non-null ids in sample must have been produced by the
+        /// ProfilesDictionary used to create this Profile. The sample slices are
+        /// borrowed only for the duration of this call. endtime_ns is an
+        /// optional end timestamp in nanoseconds; pass 0 to record the sample
+        /// without a timestamp.
+        fn add_sample2(self: &mut Profile, sample: &Sample2, endtime_ns: i64) -> Status;
+
         fn set_custom_sample_type(
             self: &mut Profile,
             slot: SampleType,
             type_: &str,
             unit: &str,
-        ) -> Result<()>;
-        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
-        fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
+        ) -> Status;
+        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Status;
+        fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Status;
 
         // Upscaling rule methods (one for each variant)
         fn add_upscaling_rule_poisson(
@@ -188,7 +410,7 @@ pub mod ffi {
             sum_value_offset: usize,
             count_value_offset: usize,
             sampling_distance: u64,
-        ) -> Result<()>;
+        ) -> Status;
 
         fn add_upscaling_rule_poisson_non_sample_type_count(
             self: &mut Profile,
@@ -198,7 +420,7 @@ pub mod ffi {
             sum_value_offset: usize,
             count_value: u64,
             sampling_distance: u64,
-        ) -> Result<()>;
+        ) -> Status;
 
         fn add_upscaling_rule_proportional(
             self: &mut Profile,
@@ -206,13 +428,30 @@ pub mod ffi {
             label_name: &str,
             label_value: &str,
             scale: f64,
-        ) -> Result<()>;
+        ) -> Status;
 
-        fn reset(self: &mut Profile) -> Result<()>;
+        fn reset(self: &mut Profile) -> Status;
+
+        /// Serialize and reset the profile, returning the encoded previous
+        /// profile data. The returned EncodedProfile includes the compressed
+        /// pprof bytes plus metadata needed by exporters, such as endpoint
+        /// counts.
+        #[cxx_name = "serialize_or_throw"]
+        fn serialize(self: &mut Profile) -> Result<Box<EncodedProfile>>;
+
+        /// Serialize and reset the profile, returning only compressed pprof
+        /// bytes. This is a convenience/debug API; callers that intend to send
+        /// the profile should prefer Profile::serialize_or_throw() plus
+        /// ProfileExporter::send_encoded_profile().
+        #[cxx_name = "serialize_to_vec_or_throw"]
         fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        /// Return a copy of the compressed pprof bytes.
+        fn bytes(self: &EncodedProfile) -> Vec<u8>;
 
         // Static factory methods for ProfileExporter
         #[Self = "ProfileExporter"]
+        #[cxx_name = "create_agent_exporter_or_throw"]
         fn create_agent_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
@@ -224,6 +463,7 @@ pub mod ffi {
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
+        #[cxx_name = "create_agentless_exporter_or_throw"]
         #[allow(clippy::too_many_arguments)]
         fn create_agentless_exporter(
             profiling_library_name: &str,
@@ -237,6 +477,7 @@ pub mod ffi {
         ) -> Result<Box<ProfileExporter>>;
 
         #[Self = "ProfileExporter"]
+        #[cxx_name = "create_file_exporter_or_throw"]
         fn create_file_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
@@ -271,7 +512,7 @@ pub mod ffi {
             process_tags: &str,
             internal_metadata: &str,
             info: &str,
-        ) -> Result<()>;
+        ) -> Status;
 
         /// Sends a profile to Datadog with cancellation support.
         ///
@@ -304,11 +545,51 @@ pub mod ffi {
             internal_metadata: &str,
             info: &str,
             cancel: &CancellationToken,
-        ) -> Result<()>;
+        ) -> Status;
+
+        /// Sends a previously serialized profile to Datadog.
+        ///
+        /// This is the split form of send_profile(). It allows callers to
+        /// serialize/reset a Profile under their own lock, then release that
+        /// lock before performing blocking I/O.
+        ///
+        /// # Arguments
+        /// * `encoded` - EncodedProfile previously returned by Profile::serialize_or_throw().
+        /// * `files_to_compress` - Additional files to compress and attach.
+        /// * `additional_tags` - Per-profile tags in addition to exporter-level tags.
+        /// * `process_tags` - Process-level tags as comma-separated string; empty if not needed.
+        /// * `internal_metadata` - Internal metadata JSON object; empty if not needed.
+        /// * `info` - System/environment info JSON object; empty if not needed.
+        fn send_encoded_profile(
+            self: &mut ProfileExporter,
+            encoded: Box<EncodedProfile>,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Status;
+
+        /// Sends a previously serialized profile to Datadog with cancellation
+        /// support.
+        ///
+        /// This is the split form of send_profile_with_cancellation().
+        #[allow(clippy::too_many_arguments)]
+        fn send_encoded_profile_with_cancellation(
+            self: &mut ProfileExporter,
+            encoded: Box<EncodedProfile>,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+            cancel: &CancellationToken,
+        ) -> Status;
 
         // ExporterManager methods
         /// Creates a new ExporterManager with a background worker thread
         #[Self = "ExporterManager"]
+        #[cxx_name = "new_manager_or_throw"]
         fn new_manager(exporter: Box<ProfileExporter>) -> Result<Box<ExporterManager>>;
 
         /// Queue a profile to be sent asynchronously by the worker thread
@@ -324,29 +605,165 @@ pub mod ffi {
             process_tags: &str,
             internal_metadata: &str,
             info: &str,
-        ) -> Result<()>;
+        ) -> Status;
+
+        /// Queue a previously serialized profile to be sent asynchronously by
+        /// the background worker thread.
+        ///
+        /// This is the split form of queue_profile().
+        #[allow(clippy::too_many_arguments)]
+        fn queue_encoded_profile(
+            self: &ExporterManager,
+            encoded: Box<EncodedProfile>,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Status;
 
         /// Abort the manager, stopping the worker thread
         /// Transitions the manager from Active to Suspended state
-        fn abort(self: &mut ExporterManager) -> Result<()>;
+        fn abort(self: &mut ExporterManager) -> Status;
 
         /// Prefork: suspend the manager before forking
         /// Transitions the manager from Active to Suspended state
-        fn prefork(self: &mut ExporterManager) -> Result<()>;
+        fn prefork(self: &mut ExporterManager) -> Status;
 
         /// Postfork child: reinitialize manager in child process, discarding inflight requests
         /// Transitions the manager from Suspended to Active state
-        fn postfork_child(self: &mut ExporterManager) -> Result<()>;
+        fn postfork_child(self: &mut ExporterManager) -> Status;
 
         /// Postfork parent: reinitialize manager in parent process and re-queue inflight requests
         /// Transitions the manager from Suspended to Active state
-        fn postfork_parent(self: &mut ExporterManager) -> Result<()>;
+        fn postfork_parent(self: &mut ExporterManager) -> Status;
     }
 }
 
 // ============================================================================
 // From Implementations - Convert CXX types to API types
 // ============================================================================
+
+impl ffi::Status {
+    fn ok() -> Self {
+        Self {
+            ok: true,
+            message: String::new(),
+        }
+    }
+
+    fn err(err: impl std::fmt::Display) -> Self {
+        Self {
+            ok: false,
+            message: format!("{err:#}"),
+        }
+    }
+
+    #[cfg(test)]
+    #[track_caller]
+    pub fn unwrap(self) {
+        assert!(self.ok, "{}", self.message);
+    }
+}
+
+impl ffi::StringId2Result {
+    #[cfg(test)]
+    #[track_caller]
+    pub fn unwrap(self) -> ffi::StringId2 {
+        self.status.unwrap();
+        self.value
+    }
+}
+
+impl ffi::FunctionId2Result {
+    #[cfg(test)]
+    #[track_caller]
+    pub fn unwrap(self) -> ffi::FunctionId2 {
+        self.status.unwrap();
+        self.value
+    }
+}
+
+impl ffi::MappingId2Result {
+    #[cfg(test)]
+    #[track_caller]
+    pub fn unwrap(self) -> ffi::MappingId2 {
+        self.status.unwrap();
+        self.value
+    }
+}
+
+impl<E> From<std::result::Result<(), E>> for ffi::Status
+where
+    E: std::fmt::Display,
+{
+    fn from(result: std::result::Result<(), E>) -> Self {
+        match result {
+            Ok(()) => Self::ok(),
+            Err(err) => Self::err(err),
+        }
+    }
+}
+
+impl<E> From<std::result::Result<ffi::StringId2, E>> for ffi::StringId2Result
+where
+    E: std::fmt::Display,
+{
+    fn from(result: std::result::Result<ffi::StringId2, E>) -> Self {
+        match result {
+            Ok(value) => Self {
+                status: ffi::Status::ok(),
+                value,
+            },
+            Err(err) => Self {
+                status: ffi::Status::err(err),
+                value: ffi::StringId2 {
+                    handle: std::ptr::null_mut(),
+                },
+            },
+        }
+    }
+}
+
+impl<E> From<std::result::Result<ffi::FunctionId2, E>> for ffi::FunctionId2Result
+where
+    E: std::fmt::Display,
+{
+    fn from(result: std::result::Result<ffi::FunctionId2, E>) -> Self {
+        match result {
+            Ok(value) => Self {
+                status: ffi::Status::ok(),
+                value,
+            },
+            Err(err) => Self {
+                status: ffi::Status::err(err),
+                value: ffi::FunctionId2 {
+                    handle: std::ptr::null_mut(),
+                },
+            },
+        }
+    }
+}
+
+impl<E> From<std::result::Result<ffi::MappingId2, E>> for ffi::MappingId2Result
+where
+    E: std::fmt::Display,
+{
+    fn from(result: std::result::Result<ffi::MappingId2, E>) -> Self {
+        match result {
+            Ok(value) => Self {
+                status: ffi::Status::ok(),
+                value,
+            },
+            Err(err) => Self {
+                status: ffi::Status::err(err),
+                value: ffi::MappingId2 {
+                    handle: std::ptr::null_mut(),
+                },
+            },
+        }
+    }
+}
 
 impl TryFrom<ffi::SampleType> for api::SampleType {
     type Error = anyhow::Error;
@@ -461,6 +878,114 @@ impl<'a> From<&ffi::Location<'a>> for api::Location<'a> {
     }
 }
 
+impl From<profiles::datatypes::StringId2> for ffi::StringId2 {
+    fn from(id: profiles::datatypes::StringId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid StringId2 handle produced by
+/// libdatadog. Null/default handles represent the empty string. For non-null
+/// handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn string_id2_from_cxx(id: &ffi::StringId2) -> profiles::datatypes::StringId2 {
+    unsafe { profiles::datatypes::StringId2::from_raw_ptr(id.handle.cast()) }
+}
+
+impl From<profiles::datatypes::FunctionId2> for ffi::FunctionId2 {
+    fn from(id: profiles::datatypes::FunctionId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid FunctionId2 handle produced by
+/// libdatadog. Null/default handles represent the default/unknown function. For
+/// non-null handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn function_id2_from_cxx(id: &ffi::FunctionId2) -> profiles::datatypes::FunctionId2 {
+    unsafe { profiles::datatypes::FunctionId2::from_raw_ptr(id.handle.cast()) }
+}
+
+impl From<profiles::datatypes::MappingId2> for ffi::MappingId2 {
+    fn from(id: profiles::datatypes::MappingId2) -> Self {
+        Self {
+            handle: id.into_raw_ptr().cast(),
+        }
+    }
+}
+
+/// # Safety
+///
+/// id.handle must be null/default or a valid MappingId2 handle produced by
+/// libdatadog. Null/default handles represent an unknown/no mapping. For
+/// non-null handles, the producing ProfilesDictionary must remain alive for any
+/// operation that uses the returned id, and callers must only use the id with
+/// that dictionary.
+unsafe fn mapping_id2_from_cxx(id: &ffi::MappingId2) -> profiles::datatypes::MappingId2 {
+    unsafe { profiles::datatypes::MappingId2::from_raw_ptr(id.handle.cast()) }
+}
+
+/// # Safety
+///
+/// All ids in function must be null/default or valid handles produced by the
+/// same ProfilesDictionary receiving the function insertion. Null/default ids
+/// represent empty strings.
+unsafe fn function2_from_cxx(function: &ffi::Function2) -> profiles::datatypes::Function2 {
+    profiles::datatypes::Function2 {
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // same ProfilesDictionary receiving the insertion. Null/default ids
+        // represent empty strings.
+        name: unsafe { string_id2_from_cxx(&function.name) },
+        system_name: unsafe { string_id2_from_cxx(&function.system_name) },
+        file_name: unsafe { string_id2_from_cxx(&function.file_name) },
+    }
+}
+
+/// # Safety
+///
+/// All ids in mapping must be null/default or valid handles produced by the
+/// same ProfilesDictionary receiving the mapping insertion. Null/default ids
+/// represent empty strings.
+unsafe fn mapping2_from_cxx(mapping: &ffi::Mapping2) -> profiles::datatypes::Mapping2 {
+    profiles::datatypes::Mapping2 {
+        memory_start: mapping.memory_start,
+        memory_limit: mapping.memory_limit,
+        file_offset: mapping.file_offset,
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // same ProfilesDictionary receiving the insertion. Null/default ids
+        // represent empty strings.
+        filename: unsafe { string_id2_from_cxx(&mapping.filename) },
+        build_id: unsafe { string_id2_from_cxx(&mapping.build_id) },
+    }
+}
+
+/// # Safety
+///
+/// All ids in location must be null/default or valid handles produced by the
+/// ProfilesDictionary used to create the receiving Profile. Null/default ids
+/// represent unknown values.
+unsafe fn location2_from_cxx(location: &ffi::Location2) -> api2::Location2 {
+    api2::Location2 {
+        // SAFETY: The caller guarantees all non-null ids were produced by the
+        // ProfilesDictionary used to create the receiving Profile. Null/default
+        // ids represent unknown values.
+        mapping: unsafe { mapping_id2_from_cxx(&location.mapping) },
+        function: unsafe { function_id2_from_cxx(&location.function) },
+        address: location.address,
+        line: location.line,
+    }
+}
+
 impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
     fn from(label: &ffi::Label<'a>) -> Self {
         api::Label {
@@ -537,6 +1062,51 @@ impl CancellationToken {
 // Profile - Wrapper around internal::Profile
 // ============================================================================
 
+pub struct ProfilesDictionary {
+    inner: profiles::collections::Arc<profiles::datatypes::ProfilesDictionary>,
+}
+
+impl ProfilesDictionary {
+    pub fn create() -> anyhow::Result<Box<ProfilesDictionary>> {
+        let dictionary = profiles::datatypes::ProfilesDictionary::try_new()
+            .context("ProfilesDictionary::create failed")?;
+        let inner = profiles::collections::Arc::try_new(dictionary)
+            .map_err(|_| anyhow::anyhow!("failed to allocate ProfilesDictionary"))?;
+
+        Ok(Box::new(ProfilesDictionary { inner }))
+    }
+
+    pub fn insert_string(&self, value: &str) -> ffi::StringId2Result {
+        self.inner
+            .try_insert_str2(value)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_string failed")
+            .into()
+    }
+
+    pub fn insert_function(&self, function: &ffi::Function2) -> ffi::FunctionId2Result {
+        // SAFETY: The CXX API contract requires all ids in function to come
+        // from this ProfilesDictionary.
+        let function = unsafe { function2_from_cxx(function) };
+        self.inner
+            .try_insert_function2(function)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_function failed")
+            .into()
+    }
+
+    pub fn insert_mapping(&self, mapping: &ffi::Mapping2) -> ffi::MappingId2Result {
+        // SAFETY: The CXX API contract requires all ids in mapping to come
+        // from this ProfilesDictionary.
+        let mapping = unsafe { mapping2_from_cxx(mapping) };
+        self.inner
+            .try_insert_mapping2(mapping)
+            .map(Into::into)
+            .context("ProfilesDictionary::insert_mapping failed")
+            .into()
+    }
+}
+
 pub struct Profile {
     inner: internal::Profile,
 }
@@ -568,7 +1138,27 @@ impl Profile {
         Ok(Box::new(Profile { inner }))
     }
 
-    pub fn add_sample(&mut self, sample: &ffi::Sample) -> anyhow::Result<()> {
+    pub fn create_with_dictionary(
+        sample_types: Vec<ffi::SampleType>,
+        period: &ffi::Period,
+        dictionary: &ProfilesDictionary,
+    ) -> anyhow::Result<Box<Profile>> {
+        let types: Vec<api::SampleType> = sample_types
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        let period_value: api::Period = period.try_into()?;
+        let dictionary = dictionary
+            .inner
+            .try_clone()
+            .context("failed to clone ProfilesDictionary for Profile")?;
+        let inner =
+            internal::Profile::try_new_with_dictionary(&types, Some(period_value), dictionary)
+                .context("Profile::create_with_dictionary failed")?;
+        Ok(Box::new(Profile { inner }))
+    }
+
+    pub fn add_sample(&mut self, sample: &ffi::Sample) -> ffi::Status {
         let api_sample = api::Sample {
             locations: sample.locations.iter().map(Into::into).collect(),
             values: &sample.values,
@@ -576,8 +1166,78 @@ impl Profile {
         };
 
         // Profile interns the strings
-        self.inner.try_add_sample(api_sample, None)?;
-        Ok(())
+        self.inner
+            .try_add_sample(api_sample, None)
+            .context("Profile::add_sample failed")
+            .into()
+    }
+
+    pub fn add_sample_with_timestamp(
+        &mut self,
+        sample: &ffi::Sample,
+        endtime_ns: i64,
+    ) -> ffi::Status {
+        let result =
+            match internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero") {
+                Ok(timestamp) => {
+                    let api_sample = api::Sample {
+                        locations: sample.locations.iter().map(Into::into).collect(),
+                        values: &sample.values,
+                        labels: sample.labels.iter().map(Into::into).collect(),
+                    };
+
+                    self.inner
+                        .try_add_sample(api_sample, Some(timestamp))
+                        .context("Profile::add_sample_with_timestamp failed")
+                }
+                Err(err) => Err(err),
+            };
+        result.into()
+    }
+
+    /// Adds an api2/dictionary-backed sample.
+    ///
+    /// Null/default ids in sample represent empty or unknown values. All
+    /// non-null ids in sample must have been produced by the same
+    /// ProfilesDictionary used to create this Profile. The caller must keep the
+    /// provided slices valid for the duration of this call. An endtime_ns value
+    /// of 0 records the sample without a timestamp.
+    pub fn add_sample2(&mut self, sample: &ffi::Sample2, endtime_ns: i64) -> ffi::Status {
+        let result = {
+            let timestamp = internal::Timestamp::new(endtime_ns);
+            let locations_iter = sample.locations.iter().map(|location| {
+                // SAFETY: The CXX API contract requires all non-null api2 ids in
+                // sample to come from the same ProfilesDictionary used to create
+                // this Profile. Null/default ids represent unknown values.
+                unsafe { location2_from_cxx(location) }
+            });
+            let labels_iter =
+                sample
+                    .labels
+                    .iter()
+                    .map(|label| -> anyhow::Result<api2::Label<'_>> {
+                        Ok(api2::Label {
+                            // SAFETY: The CXX API contract requires all non-null api2
+                            // ids in sample to come from the same ProfilesDictionary
+                            // used to create this Profile. Null/default keys represent
+                            // the empty string.
+                            key: unsafe { string_id2_from_cxx(&label.key) },
+                            str: label.str,
+                            num: label.num,
+                            num_unit: label.num_unit,
+                        })
+                    });
+
+            // SAFETY: The CXX API contract requires all non-null api2 ids in sample
+            // to come from the same ProfilesDictionary used to create this Profile.
+            // Null/default ids represent empty or unknown values.
+            unsafe {
+                self.inner
+                    .try_add_sample2(locations_iter, sample.values, labels_iter, timestamp)
+                    .context("Profile::add_sample2 failed")
+            }
+        };
+        result.into()
     }
 
     pub fn set_custom_sample_type(
@@ -585,20 +1245,26 @@ impl Profile {
         slot: ffi::SampleType,
         type_: &str,
         unit: &str,
-    ) -> anyhow::Result<()> {
-        let slot: api::SampleType = slot.try_into()?;
-        self.inner
-            .set_custom_sample_type(slot, api::ValueType::new(type_, unit))
+    ) -> ffi::Status {
+        let result = match slot.try_into() {
+            Ok(slot) => self
+                .inner
+                .set_custom_sample_type(slot, api::ValueType::new(type_, unit)),
+            Err(err) => Err(err),
+        };
+        result.into()
     }
 
-    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> ffi::Status {
         self.inner
             .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint))
+            .into()
     }
 
-    pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> anyhow::Result<()> {
+    pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> ffi::Status {
         self.inner
             .add_endpoint_count(std::borrow::Cow::Borrowed(endpoint), value)
+            .into()
     }
 
     pub fn add_upscaling_rule_poisson(
@@ -609,7 +1275,7 @@ impl Profile {
         sum_value_offset: usize,
         count_value_offset: usize,
         sampling_distance: u64,
-    ) -> anyhow::Result<()> {
+    ) -> ffi::Status {
         let upscaling_info = api::UpscalingInfo::Poisson {
             sum_value_offset,
             count_value_offset,
@@ -617,6 +1283,7 @@ impl Profile {
         };
         self.inner
             .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+            .into()
     }
 
     pub fn add_upscaling_rule_poisson_non_sample_type_count(
@@ -627,7 +1294,7 @@ impl Profile {
         sum_value_offset: usize,
         count_value: u64,
         sampling_distance: u64,
-    ) -> anyhow::Result<()> {
+    ) -> ffi::Status {
         let upscaling_info = api::UpscalingInfo::PoissonNonSampleTypeCount {
             sum_value_offset,
             count_value,
@@ -635,6 +1302,7 @@ impl Profile {
         };
         self.inner
             .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+            .into()
     }
 
     pub fn add_upscaling_rule_proportional(
@@ -643,24 +1311,43 @@ impl Profile {
         label_name: &str,
         label_value: &str,
         scale: f64,
-    ) -> anyhow::Result<()> {
+    ) -> ffi::Status {
         let upscaling_info = api::UpscalingInfo::Proportional { scale };
         self.inner
             .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+            .into()
     }
 
-    pub fn reset(&mut self) -> anyhow::Result<()> {
+    pub fn reset(&mut self) -> ffi::Status {
         // Reset and discard the old profile
-        self.inner.reset_and_return_previous()?;
-        Ok(())
+        self.inner.reset_and_return_previous().map(|_| ()).into()
     }
 
-    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
-        // Reset the profile and get the old one to serialize
+    pub fn serialize(&mut self) -> anyhow::Result<Box<EncodedProfile>> {
+        // Reset the profile and get the old one to serialize.
         let old_profile = self.inner.reset_and_return_previous()?;
         let end_time = Some(std::time::SystemTime::now());
         let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
-        Ok(encoded.buffer)
+        Ok(Box::new(EncodedProfile { inner: encoded }))
+    }
+
+    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
+        let EncodedProfile { inner } = *self.serialize()?;
+        Ok(inner.buffer)
+    }
+}
+
+// ============================================================================
+// EncodedProfile - Wrapper around internal::EncodedProfile
+// ============================================================================
+
+pub struct EncodedProfile {
+    inner: internal::EncodedProfile,
+}
+
+impl EncodedProfile {
+    pub fn bytes(&self) -> Vec<u8> {
+        self.inner.buffer.clone()
     }
 }
 
@@ -668,30 +1355,21 @@ impl Profile {
 // Helper Functions
 // ============================================================================
 
-/// Helper to encode a profile and prepare arguments for sending/queuing.
-///
-/// Resets the profile and returns the encoded previous profile data along with
-/// converted arguments ready for the exporter APIs.
-#[allow(clippy::type_complexity)]
-fn prepare_profile_for_export<'a>(
-    profile: &mut Profile,
-    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
-    additional_tags: Vec<ffi::Tag>,
-    process_tags: &'a str,
-    internal_metadata: &str,
-    info: &str,
-) -> anyhow::Result<(
-    internal::EncodedProfile,
+type PreparedExportArgs<'a> = (
     Vec<exporter::File<'a>>,
     Vec<libdd_common::tag::Tag>,
     Option<&'a str>,
     Option<serde_json::Value>,
     Option<serde_json::Value>,
-)> {
-    let old_profile = profile.inner.reset_and_return_previous()?;
-    let end_time = Some(std::time::SystemTime::now());
-    let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+);
 
+fn prepare_export_args<'a>(
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<PreparedExportArgs<'a>> {
     let files_to_compress_vec: Vec<exporter::File> =
         files_to_compress.iter().map(Into::into).collect();
 
@@ -717,6 +1395,50 @@ fn prepare_profile_for_export<'a>(
     } else {
         Some(process_tags)
     };
+
+    Ok((
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ))
+}
+
+/// Helper to encode a profile and prepare arguments for sending/queuing.
+///
+/// Resets the profile and returns the encoded previous profile data along with
+/// converted arguments ready for the exporter APIs.
+#[allow(clippy::type_complexity)]
+fn prepare_profile_for_export<'a>(
+    profile: &mut Profile,
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<(
+    Box<EncodedProfile>,
+    Vec<exporter::File<'a>>,
+    Vec<libdd_common::tag::Tag>,
+    Option<&'a str>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+)> {
+    let encoded = profile.serialize()?;
+    let (
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ) = prepare_export_args(
+        files_to_compress,
+        additional_tags,
+        process_tags,
+        internal_metadata,
+        info,
+    )?;
 
     Ok((
         encoded,
@@ -848,7 +1570,7 @@ impl ProfileExporter {
         process_tags: &str,
         internal_metadata: &str,
         info: &str,
-    ) -> anyhow::Result<()> {
+    ) -> ffi::Status {
         self.send_profile_impl(
             profile,
             files_to_compress,
@@ -858,6 +1580,7 @@ impl ProfileExporter {
             info,
             None,
         )
+        .into()
     }
 
     /// Sends a profile to Datadog with cancellation support.
@@ -882,7 +1605,7 @@ impl ProfileExporter {
         internal_metadata: &str,
         info: &str,
         cancel: &CancellationToken,
-    ) -> anyhow::Result<()> {
+    ) -> ffi::Status {
         self.send_profile_impl(
             profile,
             files_to_compress,
@@ -892,6 +1615,7 @@ impl ProfileExporter {
             info,
             Some(&cancel.inner),
         )
+        .into()
     }
 
     /// Internal implementation shared by send_profile and send_profile_with_cancellation
@@ -926,13 +1650,120 @@ impl ProfileExporter {
             info,
         )?;
 
-        let status = self.inner.send_blocking(
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.send_encoded_profile_prepared(
             encoded,
             &files_to_compress_vec,
             &additional_tags_vec,
+            process_tags_opt,
             internal_metadata_json,
             info_json,
+            cancel,
+        )
+    }
+
+    /// Sends a previously serialized profile to Datadog.
+    #[allow(clippy::boxed_local)]
+    pub fn send_encoded_profile(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> ffi::Status {
+        self.send_encoded_profile_impl(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            None,
+        )
+        .into()
+    }
+
+    /// Sends a previously serialized profile to Datadog with cancellation support.
+    #[allow(clippy::boxed_local, clippy::too_many_arguments)]
+    pub fn send_encoded_profile_with_cancellation(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: &CancellationToken,
+    ) -> ffi::Status {
+        self.send_encoded_profile_impl(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            Some(&cancel.inner),
+        )
+        .into()
+    }
+
+    #[allow(clippy::boxed_local, clippy::too_many_arguments)]
+    fn send_encoded_profile_impl(
+        &mut self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
+        let (
+            files_to_compress_vec,
+            additional_tags_vec,
             process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_export_args(
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        let EncodedProfile { inner: encoded } = *encoded;
+        self.send_encoded_profile_prepared(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+            cancel,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn send_encoded_profile_prepared(
+        &mut self,
+        encoded: internal::EncodedProfile,
+        files_to_compress: &[exporter::File<'_>],
+        additional_tags: &[libdd_common::tag::Tag],
+        process_tags: Option<&str>,
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
+        let status = self.inner.send_blocking(
+            encoded,
+            files_to_compress,
+            additional_tags,
+            internal_metadata,
+            info,
+            process_tags,
             cancel,
         )?;
 
@@ -972,55 +1803,124 @@ impl ExporterManager {
         process_tags: &str,
         internal_metadata: &str,
         info: &str,
-    ) -> anyhow::Result<()> {
-        let (
-            encoded,
-            files_to_compress_vec,
-            additional_tags_vec,
-            process_tags_opt,
-            internal_metadata_json,
-            info_json,
-        ) = prepare_profile_for_export(
+    ) -> ffi::Status {
+        match prepare_profile_for_export(
             profile,
             files_to_compress,
             additional_tags,
             process_tags,
             internal_metadata,
             info,
-        )?;
+        ) {
+            Ok((
+                encoded,
+                files_to_compress_vec,
+                additional_tags_vec,
+                process_tags_opt,
+                internal_metadata_json,
+                info_json,
+            )) => {
+                let EncodedProfile { inner: encoded } = *encoded;
+                self.queue_encoded_profile_prepared(
+                    encoded,
+                    &files_to_compress_vec,
+                    &additional_tags_vec,
+                    process_tags_opt,
+                    internal_metadata_json,
+                    info_json,
+                )
+                .into()
+            }
+            Err(err) => ffi::Status::err(err),
+        }
+    }
 
+    #[allow(clippy::boxed_local)]
+    pub fn queue_encoded_profile(
+        &self,
+        encoded: Box<EncodedProfile>,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> ffi::Status {
+        match prepare_export_args(
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        ) {
+            Ok((
+                files_to_compress_vec,
+                additional_tags_vec,
+                process_tags_opt,
+                internal_metadata_json,
+                info_json,
+            )) => {
+                let EncodedProfile { inner: encoded } = *encoded;
+                self.queue_encoded_profile_prepared(
+                    encoded,
+                    &files_to_compress_vec,
+                    &additional_tags_vec,
+                    process_tags_opt,
+                    internal_metadata_json,
+                    info_json,
+                )
+                .into()
+            }
+            Err(err) => ffi::Status::err(err),
+        }
+    }
+
+    fn queue_encoded_profile_prepared(
+        &self,
+        encoded: internal::EncodedProfile,
+        files_to_compress: &[exporter::File<'_>],
+        additional_tags: &[libdd_common::tag::Tag],
+        process_tags: Option<&str>,
+        internal_metadata: Option<serde_json::Value>,
+        info: Option<serde_json::Value>,
+    ) -> anyhow::Result<()> {
         self.inner.queue(
             encoded,
-            &files_to_compress_vec,
-            &additional_tags_vec,
-            internal_metadata_json,
-            info_json,
-            process_tags_opt,
+            files_to_compress,
+            additional_tags,
+            internal_metadata,
+            info,
+            process_tags,
         )?;
 
         Ok(())
     }
 
-    pub fn abort(&mut self) -> anyhow::Result<()> {
-        self.inner.abort()
+    pub fn abort(&mut self) -> ffi::Status {
+        self.inner.abort().into()
     }
 
-    pub fn prefork(&mut self) -> anyhow::Result<()> {
-        self.inner.prefork()
+    pub fn prefork(&mut self) -> ffi::Status {
+        self.inner.prefork().into()
     }
 
-    pub fn postfork_child(&mut self) -> anyhow::Result<()> {
-        self.inner.postfork_child()
+    pub fn postfork_child(&mut self) -> ffi::Status {
+        self.inner.postfork_child().into()
     }
 
-    pub fn postfork_parent(&mut self) -> anyhow::Result<()> {
-        self.inner.postfork_parent()
+    pub fn postfork_parent(&mut self) -> ffi::Status {
+        self.inner.postfork_parent().into()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
+    use libdd_common::test_utils::{
+        create_temp_file_path, parse_http_request_sync, HttpRequest, TempFileGuard,
+    };
+    use serde_json::json;
+    use std::time::{Duration, Instant};
 
     const TEST_LIB_NAME: &str = "dd-trace-test";
     const TEST_LIB_VERSION: &str = "1.0.0";
@@ -1033,6 +1933,63 @@ mod tests {
             value: 60,
         };
         Profile::create(vec![ffi::SampleType::WallTime], &period).unwrap()
+    }
+
+    fn create_test_dictionary() -> Box<ProfilesDictionary> {
+        ProfilesDictionary::create().unwrap()
+    }
+
+    fn create_test_profile_with_dictionary(dictionary: &ProfilesDictionary) -> Box<Profile> {
+        let wall_time = ffi::SampleType::WallTime;
+        let period = ffi::Period {
+            value_type: wall_time,
+            value: 60,
+        };
+        Profile::create_with_dictionary(vec![ffi::SampleType::WallTime], &period, dictionary)
+            .unwrap()
+    }
+
+    fn create_test_sample2_parts(
+        dictionary: &ProfilesDictionary,
+    ) -> (ffi::Location2, Vec<i64>, Vec<ffi::Label2<'static>>) {
+        let filename_mapping = dictionary.insert_string("/usr/lib/libtest.so").unwrap();
+        let filename_function = dictionary.insert_string("/src/test.cpp").unwrap();
+        let build_id = dictionary.insert_string("abc123").unwrap();
+        let name = dictionary.insert_string("test_function").unwrap();
+        let system_name = dictionary.insert_string("_Z13test_functionv").unwrap();
+        let label_key = dictionary.insert_string("pid").unwrap();
+        let mapping = dictionary
+            .insert_mapping(&ffi::Mapping2 {
+                memory_start: 0x10000000,
+                memory_limit: 0x20000000,
+                file_offset: 0,
+                filename: filename_mapping,
+                build_id,
+            })
+            .unwrap();
+        let function = dictionary
+            .insert_function(&ffi::Function2 {
+                name,
+                system_name,
+                file_name: filename_function,
+            })
+            .unwrap();
+
+        (
+            ffi::Location2 {
+                mapping,
+                function,
+                address: 0x10003000,
+                line: 100,
+            },
+            vec![1000000],
+            vec![ffi::Label2 {
+                key: label_key,
+                str: "",
+                num: 101,
+                num_unit: "",
+            }],
+        )
     }
 
     fn create_test_location(address: u64, line: i64) -> ffi::Location<'static> {
@@ -1076,6 +2033,49 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    fn create_test_file_exporter(test_name: &str) -> (Box<ProfileExporter>, TempFileGuard) {
+        let file_path = create_temp_file_path(test_name, "http");
+        let exporter = ProfileExporter::create_file_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag {
+                key: "env",
+                value: "test",
+            }],
+            file_path.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+
+        (exporter, file_path)
+    }
+
+    fn read_dumped_request_and_event(
+        file_path: &std::path::Path,
+    ) -> (HttpRequest, serde_json::Value) {
+        let request_bytes = std::fs::read(file_path).expect("read dumped request");
+        let request = parse_http_request_sync(&request_bytes).expect("parse dumped request");
+        let event_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.filename.as_deref() == Some("event.json"))
+            .expect("event.json multipart part");
+        let event_json = serde_json::from_slice(&event_part.content).expect("parse event.json");
+
+        (request, event_json)
+    }
+
+    fn wait_for_request(file_path: &std::path::Path, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if file_path.exists() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        file_path.exists()
     }
 
     #[test]
@@ -1164,6 +2164,493 @@ mod tests {
             0,
             "Profile should be empty after reset"
         );
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_operations() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Timestamped samples should not be aggregated into the non-timestamped bucket"
+        );
+        assert_eq!(
+            profile.inner.only_for_testing_num_timestamped_samples(),
+            1,
+            "Profile should have 1 timestamped sample after adding"
+        );
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(
+            serialized.len() > 100,
+            "Serialized timestamped profile should be non-trivial"
+        );
+        assert!(
+            serialized.starts_with(&[0x28, 0xb5, 0x2f, 0xfd])
+                || serialized.starts_with(&[0x1f, 0x8b]),
+            "Serialized timestamped profile should be compressed"
+        );
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_rejects_zero_timestamp() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        let status = profile.add_sample_with_timestamp(&sample, 0);
+
+        assert!(!status.ok);
+        assert!(status.message.contains("endtime_ns must be non-zero"));
+    }
+
+    #[test]
+    fn test_profile_timestamped_sample_serializes_end_timestamp_label() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let timestamp_labels = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .collect::<Vec<_>>();
+
+        assert_eq!(timestamp_labels.len(), 1);
+        let timestamp_label = timestamp_labels[0];
+        assert_eq!(timestamp_label.num, 42);
+        assert_eq!(string_table_fetch(&pprof, timestamp_label.str), "");
+        assert_eq!(string_table_fetch(&pprof, timestamp_label.num_unit), "");
+    }
+
+    #[test]
+    fn test_profile_timestamped_identical_samples_remain_distinct() {
+        let mut profile = create_test_profile();
+        let sample = create_test_sample();
+
+        profile.add_sample_with_timestamp(&sample, 42).unwrap();
+        profile.add_sample_with_timestamp(&sample, 43).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let mut timestamps = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .map(|label| label.num)
+            .collect::<Vec<_>>();
+
+        timestamps.sort_unstable();
+
+        assert_eq!(timestamps, vec![42, 43]);
+    }
+
+    #[test]
+    fn test_profiles_dictionary_operations() {
+        let dictionary = create_test_dictionary();
+        let filename = dictionary.insert_string("example.py").unwrap();
+        let build_id = dictionary.insert_string("build-id").unwrap();
+        let function_name = dictionary.insert_string("function").unwrap();
+        let system_name = dictionary.insert_string("system_function").unwrap();
+        let function_file_name = dictionary.insert_string("example.py").unwrap();
+
+        let mapping = dictionary
+            .insert_mapping(&ffi::Mapping2 {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename,
+                build_id,
+            })
+            .unwrap();
+        let function = dictionary
+            .insert_function(&ffi::Function2 {
+                name: function_name,
+                system_name,
+                file_name: function_file_name,
+            })
+            .unwrap();
+
+        assert!(!mapping.handle.is_null());
+        assert!(!function.handle.is_null());
+    }
+
+    #[test]
+    fn test_profiles_dictionary_status_operations() {
+        let dictionary = create_test_dictionary();
+
+        let filename = dictionary.insert_string("example.py");
+        assert!(filename.status.ok);
+        assert!(filename.status.message.is_empty());
+        assert!(!filename.value.handle.is_null());
+
+        let build_id = dictionary.insert_string("build-id");
+        assert!(build_id.status.ok);
+        assert!(!build_id.value.handle.is_null());
+
+        let mapping = dictionary.insert_mapping(&ffi::Mapping2 {
+            memory_start: 1,
+            memory_limit: 2,
+            file_offset: 3,
+            filename: filename.value,
+            build_id: build_id.value,
+        });
+        assert!(mapping.status.ok);
+        assert!(!mapping.value.handle.is_null());
+
+        let function_name = dictionary.insert_string("function");
+        assert!(function_name.status.ok);
+        let function_file_name = dictionary.insert_string("example.py");
+        assert!(function_file_name.status.ok);
+        let function = dictionary.insert_function(&ffi::Function2 {
+            name: function_name.value,
+            system_name: ffi::StringId2 {
+                handle: std::ptr::null_mut(),
+            },
+            file_name: function_file_name.value,
+        });
+        assert!(function.status.ok);
+        assert!(!function.value.handle.is_null());
+    }
+
+    #[test]
+    fn test_profile_add_sample2_serializes() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(
+            serialized.len() > 100,
+            "Serialized api2 profile should be non-trivial"
+        );
+    }
+
+    #[test]
+    fn test_profile_add_sample2_profile_holds_dictionary_alive() {
+        let dictionary = create_test_dictionary();
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        drop(dictionary);
+
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(serialized.len() > 100);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_serializes_dictionary_label_and_timestamp() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+
+        let sample = pprof.samples.first().expect("serialized sample");
+        let pid_label = sample
+            .labels
+            .iter()
+            .find(|label| string_table_fetch(&pprof, label.key) == "pid")
+            .expect("pid label");
+        assert_eq!(pid_label.num, 101);
+
+        let timestamp_label = sample
+            .labels
+            .iter()
+            .find(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .expect("end_timestamp_ns label");
+        assert_eq!(timestamp_label.num, 42);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_identical_timestamped_samples_remain_distinct() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 42).unwrap();
+        profile.add_sample2(&sample, 43).unwrap();
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let mut timestamps = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .filter(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns")
+            .map(|label| label.num)
+            .collect::<Vec<_>>();
+
+        timestamps.sort_unstable();
+
+        assert_eq!(timestamps, vec![42, 43]);
+    }
+
+    #[test]
+    fn test_profile_add_sample2_accepts_zero_timestamp_as_none() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.add_sample2(&sample, 0).unwrap();
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
+        assert_eq!(profile.inner.only_for_testing_num_timestamped_samples(), 0);
+
+        let serialized = profile.serialize_to_vec().unwrap();
+        let pprof = deserialize_compressed_pprof(&serialized).unwrap();
+        let has_timestamp_label = pprof
+            .samples
+            .iter()
+            .flat_map(|sample| sample.labels.iter())
+            .any(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns");
+
+        assert!(!has_timestamp_label);
+    }
+
+    #[test]
+    fn test_profile_serialize_returns_encoded_profile_and_resets() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+
+        assert!(
+            encoded.bytes().len() > 100,
+            "Encoded profile should contain non-trivial compressed bytes"
+        );
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after serialize"
+        );
+    }
+
+    #[test]
+    fn test_send_encoded_profile_with_attachments() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/api/test", 100).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+        let mut exporter = create_test_exporter();
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+
+        // Should fail with connection error because test exporter points at localhost:1,
+        // but this validates request construction and the encoded-profile API boundary.
+        let result = exporter.send_encoded_profile(
+            encoded,
+            vec![ffi::AttachmentFile {
+                name: "metadata.json",
+                data: &attachment_data,
+            }],
+            vec![ffi::Tag {
+                key: "profile_type",
+                value: "cpu",
+            }],
+            "language:rust,profiler_version:1.0",
+            r#"{"version": "1.0", "profiler": "test"}"#,
+            r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+        );
+
+        assert!(!result.ok, "Should fail when no server is available");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_encoded_profile_file_export_preserves_metadata() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/api/test", 2).unwrap();
+        profile.add_endpoint_count("/api/test", 3).unwrap();
+        profile.add_endpoint_count("/api/other", 7).unwrap();
+
+        let encoded = profile.serialize().unwrap();
+        let (mut exporter, file_path) = create_test_file_exporter("cxx_send_encoded_profile");
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+
+        exporter
+            .send_encoded_profile(
+                encoded,
+                vec![ffi::AttachmentFile {
+                    name: "metadata.json",
+                    data: &attachment_data,
+                }],
+                vec![ffi::Tag {
+                    key: "profile_type",
+                    value: "cpu",
+                }],
+                "language:rust,profiler_version:1.0",
+                r#"{"version": "1.0", "profiler": "test"}"#,
+                r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+            )
+            .unwrap();
+
+        let (request, event_json) = read_dumped_request_and_event(file_path.as_ref());
+        assert_eq!(request.method, "POST");
+        assert_eq!(
+            event_json["attachments"],
+            json!(["metadata.json", "profile.pprof"])
+        );
+        assert_eq!(
+            event_json["endpoint_counts"],
+            json!({
+                "/api/test": 5,
+                "/api/other": 7,
+            })
+        );
+        assert_eq!(
+            event_json["process_tags"],
+            "language:rust,profiler_version:1.0"
+        );
+        assert_eq!(event_json["internal"]["version"], "1.0");
+        assert_eq!(event_json["internal"]["profiler"], "test");
+        assert_eq!(
+            event_json["internal"]["libdatadog_version"],
+            env!("CARGO_PKG_VERSION")
+        );
+        assert_eq!(event_json["info"]["os"], "linux");
+        assert_eq!(event_json["info"]["arch"], "x86_64");
+        assert_eq!(event_json["info"]["cores"], 8);
+
+        let tags_profiler = event_json["tags_profiler"].as_str().unwrap();
+        assert!(tags_profiler.split(',').any(|tag| tag == "env:test"));
+        assert!(tags_profiler
+            .split(',')
+            .any(|tag| tag == "profile_type:cpu"));
+        assert!(tags_profiler
+            .split(',')
+            .any(|tag| tag.starts_with("runtime_platform:")));
+
+        let attachment_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.filename.as_deref() == Some("metadata.json"))
+            .expect("metadata.json multipart part");
+        assert!(!attachment_part.content.is_empty());
+        let profile_part = request
+            .multipart_parts
+            .iter()
+            .find(|part| part.name == "profile.pprof")
+            .expect("profile.pprof multipart part");
+        assert!(!profile_part.content.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        let encoded = profile.serialize().unwrap();
+        let (mut exporter, file_path) =
+            create_test_file_exporter("cxx_send_encoded_profile_cancelled");
+        let cancel = new_cancellation_token();
+        cancel.cancel();
+
+        let result = exporter.send_encoded_profile_with_cancellation(
+            encoded,
+            vec![],
+            vec![],
+            "",
+            "",
+            "",
+            &cancel,
+        );
+
+        assert!(!result.ok, "pre-cancelled upload should fail");
+        assert!(
+            !file_path.exists(),
+            "pre-cancelled upload should not write a request dump"
+        );
+    }
+
+    #[test]
+    fn test_endpoint_operations() {
+        let mut profile = create_test_profile();
+
+        profile.add_endpoint(12345, "/api/test").unwrap();
+        profile.add_endpoint_count("/api/test", 100).unwrap();
+    }
+
+    #[test]
+    fn test_profile_add_sample2_rejects_wrong_value_count() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, _values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let values = Vec::new();
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        let status = profile.add_sample2(&sample, 42);
+
+        assert!(!status.ok);
+        assert!(!status.message.is_empty());
+    }
+
+    #[test]
+    fn test_profile_add_sample2_requires_dictionary_profile() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile();
+        let (location, values, labels) = create_test_sample2_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::Sample2 {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        let status = profile.add_sample2(&sample, 42);
+
+        assert!(!status.ok);
+        assert!(status.message.contains("profiles dictionary not set"));
     }
 
     #[test]
@@ -1361,7 +2848,7 @@ mod tests {
             r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
         );
 
-        assert!(result.is_err(), "Should fail when no server available");
+        assert!(!result.ok, "Should fail when no server available");
         assert_eq!(
             profile.inner.only_for_testing_num_aggregated_samples(),
             0,
@@ -1371,10 +2858,7 @@ mod tests {
         // Test with empty optional parameters
         profile.add_sample(&create_test_sample()).unwrap();
         let result2 = exporter.send_profile(&mut profile, vec![], vec![], "", "", "");
-        assert!(
-            result2.is_err(),
-            "Should fail with empty optional params too"
-        );
+        assert!(!result2.ok, "Should fail with empty optional params too");
     }
 
     #[test]
@@ -1404,6 +2888,51 @@ mod tests {
 
         // Verify profile was reset
         assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_manager_queue_encoded_profile_writes_file_export() {
+        let (exporter, file_path) = create_test_file_exporter("cxx_queue_encoded_profile");
+        let manager = ExporterManager::new_manager(exporter).unwrap();
+
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        profile.add_endpoint_count("/queued", 11).unwrap();
+        let encoded = profile.serialize().unwrap();
+
+        manager
+            .queue_encoded_profile(
+                encoded,
+                vec![],
+                vec![ffi::Tag {
+                    key: "profile_type",
+                    value: "wall",
+                }],
+                "runtime:rust",
+                r#"{"queued": true}"#,
+                r#"{"worker": "background"}"#,
+            )
+            .unwrap();
+
+        assert!(
+            wait_for_request(file_path.as_ref(), Duration::from_secs(5)),
+            "queued encoded profile should be exported"
+        );
+        let (_request, event_json) = read_dumped_request_and_event(file_path.as_ref());
+        assert_eq!(event_json["attachments"], json!(["profile.pprof"]));
+        assert_eq!(event_json["endpoint_counts"], json!({ "/queued": 11 }));
+        assert_eq!(event_json["process_tags"], "runtime:rust");
+        assert_eq!(event_json["internal"]["queued"], true);
+        assert_eq!(event_json["info"]["worker"], "background");
+        assert!(event_json["tags_profiler"]
+            .as_str()
+            .unwrap()
+            .split(',')
+            .any(|tag| tag == "profile_type:wall"));
+
+        let mut manager = manager;
+        manager.abort().unwrap();
     }
 
     #[test]
@@ -1473,12 +3002,11 @@ mod tests {
         profile.add_sample(&create_test_sample()).unwrap();
 
         let result = manager.queue_profile(&mut profile, vec![], vec![], "", "", "");
-        assert!(result.is_err(), "Should fail to queue after abort");
-        let error_msg = result.unwrap_err().to_string();
+        assert!(!result.ok, "Should fail to queue after abort");
         assert!(
-            error_msg.contains("Suspended") || error_msg.contains("state"),
+            result.message.contains("Suspended") || result.message.contains("state"),
             "Error message should indicate manager is in Suspended state, got: {}",
-            error_msg
+            result.message
         );
     }
 }
