@@ -50,7 +50,7 @@ mod linux {
         span_id: &[u8; 8],
         trace_flags: u8,
         local_root_span_id: &[u8; 8],
-    ) -> NonNull<ThreadContextHandle> {
+    ) -> NonNull<ThreadContext> {
         OwnedThreadContext::new(*trace_id, *span_id, trace_flags, *local_root_span_id, &[])
             .into_opaque_ptr()
     }
@@ -119,12 +119,12 @@ mod linux {
     /// concurrently updated or freed. A non-null returned context is owned by the caller.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_update_and_attach(
-        ctx: *mut ThreadContextHandle,
+        ctx: *mut ThreadContext,
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
         trace_flags: u8,
         local_root_span_id: &[u8; 8],
-    ) -> Option<NonNull<ThreadContextHandle>> {
+    ) -> Option<NonNull<ThreadContext>> {
         let target = NonNull::new(ctx)?;
 
         let previous = unsafe {
@@ -138,6 +138,6 @@ mod linux {
             )
         };
 
-        previous.map(ThreadContext::into_opaque_ptr)
+        previous.map(OwnedThreadContext::into_opaque_ptr)
     }
 }
