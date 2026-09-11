@@ -3,6 +3,9 @@
 
 use crate::normalize_utils;
 use libdd_trace_protobuf::pb;
+use libdd_trace_types::span::SpanText;
+use libdd_trace_types::span::TraceData;
+use std::borrow::Borrow;
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -69,6 +72,103 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
         normalize_span(span)?;
     }
     Ok(())
+}
+
+/// Private generic helper: allocates one String, normalizes it, compares directly, replaces if
+/// changed.
+fn normalize_span_text_field<S: SpanText, F>(field: &mut S, normalizer: F)
+where
+    F: FnOnce(&mut String),
+{
+    let mut normalized = <S as Borrow<str>>::borrow(field).to_owned();
+    normalizer(&mut normalized);
+    if normalized != *<S as Borrow<str>>::borrow(field) {
+        *field = S::from_owned(normalized);
+    }
+}
+
+/// normalize_trace_v04 takes a v0.4 trace and:
+/// * validates the trace is nonempty
+/// * validates all spans share one consistent u128 trace ID
+/// * validates all spans have nonzero span IDs
+/// * normalizes service, name, resource, parent ID, start/duration, type, env, and invalid
+///   http.status_code
+/// * replaces text only when normalization changes it
+pub fn normalize_trace_v04<T: TraceData>(
+    trace: &mut [libdd_trace_types::span::v04::Span<T>],
+) -> anyhow::Result<()> {
+    // Validate trace is not empty
+    let first_span = match trace.first() {
+        Some(span) => span,
+        None => anyhow::bail!("Normalize Trace Error: Trace is empty"),
+    };
+
+    let first_trace_id = first_span.trace_id;
+    anyhow::ensure!(
+        first_trace_id != 0,
+        "TraceID is zero (reason:trace_id_zero)"
+    );
+
+    // Validate consistency: all spans have same trace ID and nonzero span ID
+    for span in trace.iter() {
+        anyhow::ensure!(
+            span.trace_id == first_trace_id,
+            "Normalize Trace Error: Trace has foreign span with trace_id {}",
+            span.trace_id
+        );
+        anyhow::ensure!(span.span_id != 0, "SpanID is zero (reason:span_id_zero)");
+    }
+
+    // Normalize each span
+    for span in trace.iter_mut() {
+        normalize_v04_span(span, first_trace_id);
+    }
+
+    Ok(())
+}
+
+fn normalize_v04_span<T: TraceData>(
+    span: &mut libdd_trace_types::span::v04::Span<T>,
+    trace_id: u128,
+) {
+    // Normalize service using helper
+    normalize_span_text_field(&mut span.service, normalize_utils::normalize_service);
+
+    // Normalize name using helper
+    normalize_span_text_field(&mut span.name, normalize_utils::normalize_name);
+
+    // Normalize resource using helper: borrow span.name, allocate one String for resource, compare,
+    // replace if different
+    let name_ref = <T::Text as Borrow<str>>::borrow(&span.name);
+    let mut resource_str = <T::Text as Borrow<str>>::borrow(&span.resource).to_owned();
+    normalize_utils::normalize_resource(&mut resource_str, name_ref);
+    if resource_str != *<T::Text as Borrow<str>>::borrow(&span.resource) {
+        span.resource = T::Text::from_owned(resource_str);
+    }
+
+    // Normalize parent_id using u128 trace_id comparison for Zipkin root span detection
+    let parent_id_as_u128 = u128::from(span.parent_id);
+    if parent_id_as_u128 == trace_id && trace_id == u128::from(span.span_id) {
+        span.parent_id = 0;
+    }
+
+    // Normalize start and duration
+    normalize_utils::normalize_span_start_duration(&mut span.start, &mut span.duration);
+
+    // Normalize type using helper
+    normalize_span_text_field(&mut span.r#type, normalize_utils::normalize_span_type);
+
+    // Normalize env meta tag if present using helper
+    if let Some(env_val) = span.meta.get_mut("env") {
+        normalize_span_text_field(env_val, normalize_utils::normalize_tag);
+    }
+
+    // Remove invalid http.status_code
+    if let Some(code_val) = span.meta.get("http.status_code") {
+        if !is_valid_http_status_code(code_val.borrow()) {
+            span.meta.remove_slow("http.status_code");
+        }
+    }
 }
 
 /// normalize_chunk takes a trace chunk and
@@ -560,5 +660,262 @@ mod tests {
         );
         assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
         assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);
+    }
+}
+
+#[cfg(test)]
+mod v04_tests {
+    use crate::normalizer;
+    use libdd_trace_types::span::v04::Span;
+    use libdd_trace_types::span::vec_map::VecMap;
+    use libdd_trace_types::span::{BytesData, SpanText};
+    use std::borrow::Borrow;
+
+    fn new_v04_test_span() -> Span<BytesData> {
+        Span {
+            service: <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+                "django".to_string(),
+            ),
+            name: <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+                "django.controller".to_string(),
+            ),
+            resource: <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+                "GET /api".to_string(),
+            ),
+            r#type: <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+                "http".to_string(),
+            ),
+            trace_id: 424242u128,
+            span_id: 999u64,
+            parent_id: 111u64,
+            start: 1448466874000000000i64,
+            duration: 10000000i64,
+            error: 0,
+            meta: VecMap::new(),
+            metrics: VecMap::new(),
+            meta_struct: VecMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        }
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_empty() {
+        let mut trace: Vec<Span<BytesData>> = vec![];
+        let result = normalizer::normalize_trace_v04(&mut trace);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Trace is empty"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_zero_trace_id() {
+        let mut span = new_v04_test_span();
+        span.trace_id = 0;
+        let mut trace = vec![span];
+        let result = normalizer::normalize_trace_v04(&mut trace);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("trace_id_zero"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_zero_span_id() {
+        let mut span = new_v04_test_span();
+        span.span_id = 0;
+        let mut trace = vec![span];
+        let result = normalizer::normalize_trace_v04(&mut trace);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("span_id_zero"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_foreign_span() {
+        let mut span1 = new_v04_test_span();
+        let mut span2 = new_v04_test_span();
+        span1.trace_id = 100u128;
+        span2.trace_id = 200u128;
+        let mut trace = vec![span1, span2];
+        let result = normalizer::normalize_trace_v04(&mut trace);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("foreign span"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_normalizes_service() {
+        let mut span = new_v04_test_span();
+        span.service = <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+            "BAD$SERVICE".to_string(),
+        );
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(<_>::borrow(&trace[0].service) as &str, "bad_service");
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_normalizes_name() {
+        let mut span = new_v04_test_span();
+        span.name =
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned("".to_string());
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(<_>::borrow(&trace[0].name) as &str, "unnamed_operation");
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_normalizes_resource() {
+        let mut span = new_v04_test_span();
+        span.resource =
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned("".to_string());
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(<_>::borrow(&trace[0].resource) as &str, "django.controller");
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_normalizes_type() {
+        let mut span = new_v04_test_span();
+        span.r#type =
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned("web".repeat(50));
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert!((<_>::borrow(&trace[0].r#type) as &str).len() <= 100); // MAX_TYPE_LEN
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_zipkin_root_span() {
+        let mut span = new_v04_test_span();
+        span.trace_id = 42u128;
+        span.span_id = 42u64;
+        span.parent_id = 42u64;
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(trace[0].parent_id, 0);
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_preserves_parent_id_not_zipkin() {
+        let mut span = new_v04_test_span();
+        span.parent_id = 123u64;
+        let before_parent = span.parent_id;
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(trace[0].parent_id, before_parent);
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_high_64_bit_trace_id_not_parent_id() {
+        let mut span = new_v04_test_span();
+        let trace_id = (1u128 << 64) | 1;
+        span.trace_id = trace_id;
+        span.span_id = 1u64;
+        span.parent_id = 1u64;
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(trace[0].parent_id, 1);
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_removes_invalid_http_status_code() {
+        let mut span = new_v04_test_span();
+        span.meta.insert(
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_static_str(
+                "http.status_code",
+            ),
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned("999".to_string()),
+        );
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert!(!trace[0]
+            .meta
+            .iter()
+            .any(|(k, _)| <_>::borrow(k) as &str == "http.status_code"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_preserves_valid_http_status_code() {
+        let mut span = new_v04_test_span();
+        span.meta.insert(
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_static_str(
+                "http.status_code",
+            ),
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned("200".to_string()),
+        );
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert!(trace[0]
+            .meta
+            .iter()
+            .any(|(k, _)| <_>::borrow(k) as &str == "http.status_code"));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_invalid_service_not_mutated_on_validation_error() {
+        let mut span = new_v04_test_span();
+        span.trace_id = 0; // Trigger validation error: zero trace_id
+        let invalid_service = "BAD$SERVICE";
+        span.service = <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+            invalid_service.to_string(),
+        );
+        let mut trace = vec![span];
+        let result = normalizer::normalize_trace_v04(&mut trace);
+        assert!(result.is_err());
+        // Verify service was NOT normalized because validation failed before mutation
+        assert_eq!(
+            (<_>::borrow(&trace[0].service) as &str).to_string(),
+            invalid_service
+        );
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_normalizes_env_tag() {
+        let mut span = new_v04_test_span();
+        span.meta.insert(
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_static_str("env"),
+            <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+                "PRODUCTION".to_string(),
+            ),
+        );
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        let env_val = trace[0]
+            .meta
+            .iter()
+            .find(|(k, _)| <_>::borrow(k) as &str == "env")
+            .map(|(_, v)| (<_>::borrow(v) as &str).to_string());
+        assert_eq!(env_val, Some("production".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_does_not_mutate_when_already_normalized() {
+        let span = new_v04_test_span();
+        let original_service = (<_>::borrow(&span.service) as &str).to_string();
+        let original_name = (<_>::borrow(&span.name) as &str).to_string();
+        let mut trace = vec![span];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(
+            (<_>::borrow(&trace[0].service) as &str).to_string(),
+            original_service
+        );
+        assert_eq!(
+            (<_>::borrow(&trace[0].name) as &str).to_string(),
+            original_name
+        );
+    }
+
+    #[test]
+    fn test_normalize_trace_v04_multiple_spans_same_trace() {
+        let mut span1 = new_v04_test_span();
+        let mut span2 = new_v04_test_span();
+        span1.span_id = 1u64;
+        span2.span_id = 2u64;
+        span1.service = <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+            "BAD_SVC1".to_string(),
+        );
+        span2.service = <BytesData as libdd_trace_types::span::TraceData>::Text::from_owned(
+            "BAD_SVC2".to_string(),
+        );
+        let mut trace = vec![span1, span2];
+        assert!(normalizer::normalize_trace_v04(&mut trace).is_ok());
+        assert_eq!(<_>::borrow(&trace[0].service) as &str, "bad_svc1");
+        assert_eq!(<_>::borrow(&trace[1].service) as &str, "bad_svc2");
     }
 }

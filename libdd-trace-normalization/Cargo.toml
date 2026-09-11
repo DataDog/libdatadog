@@ -15,6 +15,7 @@ bench = false
 [dependencies]
 anyhow.workspace = true
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-types = { version = "1.0.0", path = "../libdd-trace-types" }
 arbitrary = { version = "1.3", features = ["derive"], optional = true }
 
 [features]
