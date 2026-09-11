@@ -1,5 +1,5 @@
 # libdd-trace-types
 
-Representation-independent Datadog trace models for language-agnostic APM serialization and processing.
+Datadog APM trace data types supporting owned and borrowed storage.
 
 This crate provides core data types for traces, spans, and related metadata in a format-agnostic way, enabling trace handling across Datadog instrumentation tooling.

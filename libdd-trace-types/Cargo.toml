@@ -4,7 +4,7 @@
 [package]
 name = "libdd-trace-types"
 version = "1.0.0"
-description = "Representation-independent trace data types for Datadog APM"
+description = "Datadog APM trace data types supporting owned and borrowed storage"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-types"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-types"
 edition.workspace = true
