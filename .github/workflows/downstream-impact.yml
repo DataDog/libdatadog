@@ -113,17 +113,12 @@ jobs:
         with:
           node-version: 24
 
-      - name: Set up Ruby
-        if: matrix.build_kind == 'ruby-package'
-        uses: ruby/setup-ruby@afeafc3d1ab54a631816aba4c914a0081c12ff2f # v1.310.0
-        with:
-          ruby-version: "4.0"
-
       - name: Install Ruby native build dependencies
         if: matrix.build_kind == 'ruby-package'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes autoconf automake libtool
+          sudo apt-get install --yes autoconf automake libtool ruby ruby-dev
+          gem install bundler
 
       - name: Install WASM build tools
         if: matrix.build_kind == 'node-wasm'
