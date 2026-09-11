@@ -44,10 +44,9 @@ impl ThreadContextRecord {
 /// readers through thread-level context and through the FFI. But it is a boxed
 /// `ThreadContextRecord` for all intent and purpose.
 ///
-/// Since an owned context can be modified in place, it is `!Send` and `!Sync`. Readers rely on the
-/// fact that their can't be any writer while they interrupt the current thread, but this wouldn't
-/// be true anymore if we moved `OwnedThreadContext` to a different thread. It is thus not
-/// thread-safe.
+/// Since an owned context can be modified in place, it is not thread safe: it is neither `Send` nor
+/// `!Sync`. Readers rely on the fact that there can't be any concurrent writer while they interrupt
+/// the current thread.
 pub struct OwnedThreadContext(NonNull<ThreadContextRecord>);
 
 impl OwnedThreadContext {
@@ -131,9 +130,9 @@ impl OwnedThreadContext {
 
     /// Update `target` and make it the current thread's context.
     ///
-    /// If `target` is already current, its pointer remains unchanged and no previous
-    /// context is returned. Otherwise, the updated target is published and the
-    /// different previously attached context is returned.
+    /// If `target` is already current, its pointer remains unchanged and no previous context is
+    /// returned. Otherwise, the updated target is published and the different previously attached
+    /// context is returned.
     ///
     /// # Safety
     ///
@@ -176,14 +175,13 @@ impl OwnedThreadContext {
         })
     }
 
-    /// Update the currently attached record in-place. Sets `valid = 0` before the update and
-    /// `valid = 1` after, so a reader that fires between the two writes sees an inconsistent
-    /// record and skips it. Compiler fences prevent the compiler from reordering field writes
-    /// outside that window.
+    /// Update the currently attached record in-place. Sets `valid = 0` before the update and `valid
+    /// = 1` after, so a reader that fires between the two writes sees an inconsistent record and
+    /// skips it. Compiler fences prevent the compiler from reordering field writes outside that
+    /// window.
     ///
     /// If there's currently no attached context, `update` will create one, and is in this case
-    /// equivalent to
-    /// `OwnedThreadContext::new(trace_id, span_id, trace_flags, local_root_span_id,
+    /// equivalent to `OwnedThreadContext::new(trace_id, span_id, trace_flags, local_root_span_id,
     /// attrs).attach()`.
     pub fn update(
         trace_id: [u8; 16],

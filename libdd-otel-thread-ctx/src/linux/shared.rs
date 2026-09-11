@@ -71,9 +71,11 @@ impl SharedThreadContext {
         Self(Arc::from_raw(ptr.as_ptr() as *const ThreadContext))
     }
 
-    /// Publish this shared context by writing its record pointer into the current thread's TLS
-    /// slot, cloning the `Arc` into the slot so the record stays alive for as long as it is
-    /// attached. Returns the previously attached shared context, if any.
+    /// Publish this shared context. Write its record pointer into the current thread's TLS slot.
+    /// The underlying `Arc` is moved into the slot, so the record stays alive for as long as it is
+    /// attached.
+    ///
+    /// Returns the previously attached shared context, if any.
     pub fn attach(self) -> Option<SharedThreadContext> {
         // Move the strong reference into the TLS slot; it stays alive until detached.
         // `ThreadContext` is `repr(transparent)` over `ThreadContextRecord`, so the data pointer is
@@ -89,8 +91,7 @@ impl SharedThreadContext {
             .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
     }
 
-    /// Detach the currently attached shared context from the TLS slot and return it. Dropping the
-    /// returned value will decrement the strong count that [`Self::attach`] moved into the slot.
+    /// Detach the currently attached shared context from the TLS slot and return it.
     ///
     /// Returns `None` if the slot was empty.
     pub fn detach() -> Option<SharedThreadContext> {
