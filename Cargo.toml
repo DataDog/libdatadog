@@ -69,6 +69,31 @@ members = [
 # https://doc.rust-lang.org/cargo/reference/resolver.html
 resolver = "2"
 
+[workspace.metadata.cargo-machete]
+ignored = [
+  # Used from build scripts, which cargo-machete does not scan.
+  "bindgen",
+  "build_common",
+  "cc",
+  "cc_utils",
+  "cxx-build",
+  "glibc_version",
+  "prost-build",
+  "protoc-bin-vendored",
+  # Hidden by symlinked source, benchmark discovery, or proc-macro expansion.
+  "anyhow",
+  "criterion",
+  "strum",
+  # Intentional feature or dependency-resolution wiring without direct imports.
+  "cargo-platform",
+  "getrandom",
+  "libdd-capabilities-impl",
+  "rustls-webpki",
+  # Self dev-dependencies enable optional features in their own tests.
+  "libdd-profiling-protobuf",
+  "libdd-tinybytes",
+]
+
 # These are used by many packages, but not all. For instance, the sidecar and
 # serverless packages wanted to maintain their own version numbers. Some of
 # their depenencies also remain under their own versioning.
