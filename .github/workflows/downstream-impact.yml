@@ -191,6 +191,9 @@ jobs:
             local log_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log"
             local messages_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.jsonl"
             local cargo_home="$GITHUB_WORKSPACE/downstream-cargo-home"
+            local lockfile
+            local locked_packages_file="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-locked-packages.txt"
+            local locked_libdatadog_packages=()
             local source_target
 
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
@@ -222,13 +225,43 @@ jobs:
             export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
             export CARGO_TERM_COLOR=never
             if [ "${#PATCH_SOURCES[@]}" -gt 0 ]; then
-              cargo +1.92.0 update \
-                --manifest-path "$MANIFEST_PATH" \
-                --config "$patch_config" \
-                2>&1 | tee "$log_path"
-              local update_status=${PIPESTATUS[0]}
-              if [ "$update_status" -ne 0 ]; then
-                return "$update_status"
+              lockfile="$(dirname "$MANIFEST_PATH")/Cargo.lock"
+              if [ ! -f "$lockfile" ]; then
+                lockfile="$DOWNSTREAM_ROOT/Cargo.lock"
+              fi
+              local selector_args=(
+                --lockfile "$lockfile"
+                --packages "$packages"
+              )
+              for source in "${PATCH_SOURCES[@]}"; do
+                selector_args+=(--patch-source "$source")
+              done
+              python3 "$LIBDATADOG_HEAD_ROOT/scripts/select-locked-libdatadog-packages.py" \
+                "${selector_args[@]}" > "$locked_packages_file"
+              local selector_status=$?
+              if [ "$selector_status" -ne 0 ]; then
+                return "$selector_status"
+              fi
+              mapfile -t locked_libdatadog_packages < "$locked_packages_file"
+              if [ "${#locked_libdatadog_packages[@]}" -gt 0 ]; then
+                local update_args=()
+                for package in "${locked_libdatadog_packages[@]}"; do
+                  update_args+=(-p "$package")
+                done
+                printf 'Updating patched libdatadog packages: %s\n' \
+                  "${locked_libdatadog_packages[*]}" | tee -a "$log_path"
+                cargo +1.92.0 update \
+                  --manifest-path "$MANIFEST_PATH" \
+                  --config "$patch_config" \
+                  "${update_args[@]}" \
+                  2>&1 | tee -a "$log_path"
+                local update_status=${PIPESTATUS[0]}
+                if [ "$update_status" -ne 0 ]; then
+                  return "$update_status"
+                fi
+              else
+                echo "No locked libdatadog package needs a targeted update." \
+                  | tee -a "$log_path"
               fi
             fi
 
