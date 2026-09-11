@@ -113,13 +113,14 @@ jobs:
         with:
           node-version: 24
 
-      - name: Install Ruby native build dependencies
+      - name: Set up Ruby build dependencies
         if: matrix.build_kind == 'ruby-package'
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes autoconf automake libtool
+          set -euo pipefail
           ruby --version
-          bundle --version
+          gem install --user-install bundler --version 2.6.9 --no-document
+          ruby_gem_bin="$(ruby -e 'print Gem.user_dir')/bin"
+          echo "$ruby_gem_bin" >> "$GITHUB_PATH"
 
       - name: Install WASM build tools
         if: matrix.build_kind == 'node-wasm'
