@@ -1,0 +1,533 @@
+name: Downstream impact
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect potentially impacted repositories
+    runs-on: ubuntu-latest
+    outputs:
+      has_impacted: ${{ steps.impact.outputs.has_impacted }}
+      impacted_count: ${{ steps.impact.outputs.impacted_count }}
+      matrix: ${{ steps.impact.outputs.matrix }}
+      has_validations: ${{ steps.impact.outputs.has_validations }}
+      validation_count: ${{ steps.impact.outputs.validation_count }}
+      validation_matrix: ${{ steps.impact.outputs.validation_matrix }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate downstream impact detector
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      - name: Detect impact
+        id: impact
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/downstream-impact.py \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --json-output downstream-impact.json \
+            --markdown-output downstream-impact.md \
+            --github-output "$GITHUB_OUTPUT"
+          cat downstream-impact.md | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload impact report
+        uses: actions/upload-artifact@v4
+        with:
+          name: downstream-impact
+          path: |
+            downstream-impact.json
+            downstream-impact.md
+          retention-days: 7
+
+  validate-consumers:
+    name: Validate ${{ matrix.repository }} (non-blocking)
+    needs: detect
+    if: needs.detect.outputs.has_validations == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect.outputs.validation_matrix) }}
+    steps:
+      - name: Checkout proposed libdatadog merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          path: libdatadog-head
+          persist-credentials: false
+
+      - name: Checkout libdatadog PR base
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: libdatadog-base
+          persist-credentials: false
+
+      - name: Checkout downstream repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ matrix.repository }}
+          path: downstream
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache downstream Cargo sources
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            downstream-cargo-home/registry
+            downstream-cargo-home/git
+          key: >-
+            downstream-cargo-v1-${{ runner.os }}-${{ matrix.artifact_name }}-${{ hashFiles('downstream/**/Cargo.lock') }}
+          restore-keys: |
+            downstream-cargo-v1-${{ runner.os }}-${{ matrix.artifact_name }}-
+
+      - name: Install protobuf compiler
+        if: matrix.install_protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+
+      - name: Set up Node.js
+        if: matrix.build_kind == 'node-wasm'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Set up Ruby build dependencies
+        if: matrix.build_kind == 'ruby-package'
+        run: |
+          set -euo pipefail
+          ruby --version
+          gem install --user-install bundler --version 2.6.9 --no-document
+          ruby_gem_bin="$(ruby -e 'print Gem.user_dir')/bin"
+          echo "$ruby_gem_bin" >> "$GITHUB_PATH"
+
+      - name: Install WASM build tools
+        if: matrix.build_kind == 'node-wasm'
+        env:
+          WASM_PACK_SHA256: 278a8d668085821f4d1a637bd864f1713f872b0ae3a118c77562a308c0abfe8d
+          WASM_PACK_VERSION: 0.14.0
+        run: |
+          set -euo pipefail
+          toolchain=$(cat downstream/wasm-rust-toolchain)
+          rustup toolchain install "$toolchain" \
+            --profile minimal \
+            --component rust-src \
+            --target wasm32-unknown-unknown
+          archive="wasm-pack-v${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          install_directory="$RUNNER_TEMP/wasm-pack"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WASM_PACK_VERSION}/$archive"
+          echo "$WASM_PACK_SHA256  $RUNNER_TEMP/$archive" | sha256sum --check
+          mkdir --parents "$install_directory"
+          tar --extract --gzip --file "$RUNNER_TEMP/$archive" \
+            --directory "$install_directory" --strip-components=1
+          echo "$install_directory" >> "$GITHUB_PATH"
+
+      - name: Install Python native build tools
+        if: matrix.build_kind == 'python-extension'
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          cython 'cmake>=3.24.2,<3.28' 'setuptools-rust<2' 'patchelf>=0.17.0.0'
+
+      - name: Build downstream product with PR crates
+        id: validate
+        env:
+          LIBDATADOG_BASE_ROOT: ${{ github.workspace }}/libdatadog-base
+          LIBDATADOG_HEAD_ROOT: ${{ github.workspace }}/libdatadog-head
+          DOWNSTREAM_ROOT: ${{ github.workspace }}/downstream
+          DOWNSTREAM_MANIFEST: ${{ matrix.manifest }}
+          BUILD_KIND: ${{ matrix.build_kind }}
+          CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
+          PATCH_SOURCES_JSON: ${{ toJSON(matrix.patch_sources) }}
+          SUBMODULES_JSON: ${{ toJSON(matrix.submodules) }}
+          SOURCE_PATH: ${{ matrix.source_path }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t PATCH_SOURCES < <(jq -r '.[]' <<< "$PATCH_SOURCES_JSON")
+          mapfile -t SUBMODULES < <(jq -r '.[]' <<< "$SUBMODULES_JSON")
+          mapfile -t CARGO_ARGS < <(jq -r '.[]' <<< "$CARGO_ARGS_JSON")
+          MANIFEST_PATH="$DOWNSTREAM_ROOT/$DOWNSTREAM_MANIFEST"
+          DOWNSTREAM_SHA=$(git -C "$DOWNSTREAM_ROOT" rev-parse HEAD)
+          LIBDATADOG_BASE_SHA=$(git -C "$LIBDATADOG_BASE_ROOT" rev-parse HEAD)
+          LIBDATADOG_HEAD_SHA=$(git -C "$LIBDATADOG_HEAD_ROOT" rev-parse HEAD)
+
+          case "$BUILD_KIND" in
+            cargo-build)
+              VALIDATION_COMMAND="cargo +1.92.0 build --manifest-path $DOWNSTREAM_MANIFEST --message-format=json"
+              for arg in "${CARGO_ARGS[@]}"; do
+                printf -v escaped_arg '%q' "$arg"
+                VALIDATION_COMMAND+=" $escaped_arg"
+              done
+              ;;
+            node-wasm)
+              VALIDATION_COMMAND="npm run build --prefix packages/libdatadog"
+              ;;
+            python-extension)
+              VALIDATION_COMMAND="python3 setup.py build_ext --inplace --force"
+              ;;
+            php-sidecar)
+              VALIDATION_COMMAND="SHARED=1 PROFILE=tracer-release host_os=linux-gnu ./compile_rust.sh"
+              ;;
+            ruby-package)
+              VALIDATION_COMMAND="LIBDATADOG_SOURCE=<libdatadog> bundle exec rake libdatadog:build"
+              ;;
+            *)
+              VALIDATION_COMMAND="unsupported build kind: $BUILD_KIND"
+              ;;
+          esac
+
+          echo "downstream_sha=$DOWNSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "libdatadog_base_sha=$LIBDATADOG_BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "libdatadog_head_sha=$LIBDATADOG_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          echo "validation_command=$VALIDATION_COMMAND" >> "$GITHUB_OUTPUT"
+
+          generate_patch_config() {
+            local libdatadog_root=$1
+            local patch_config=$2
+            local packages=$3
+
+            cargo +1.92.0 metadata \
+              --manifest-path "$libdatadog_root/Cargo.toml" \
+              --format-version=1 \
+              --no-deps \
+              | jq -r '
+                  .packages[]
+                  | select(.source == null)
+                  | select(.publish == null or (.publish | type == "array" and length > 0))
+                  | [.name, .manifest_path]
+                  | @tsv
+                ' > "$packages"
+
+            : > "$patch_config"
+            for source in "${PATCH_SOURCES[@]}"; do
+              if [ "$source" = "crates-io" ]; then
+                printf '[patch.crates-io]\n' >> "$patch_config"
+              else
+                printf '[patch."%s"]\n' "$source" >> "$patch_config"
+              fi
+              while IFS=$'\t' read -r crate manifest_path; do
+                crate_path=$(dirname "$manifest_path")
+                printf '"%s" = { path = "%s" }\n' \
+                  "$crate" "$crate_path" >> "$patch_config"
+              done < "$packages"
+              echo >> "$patch_config"
+            done
+          }
+
+          run_validation() {
+            local label=$1
+            local libdatadog_root=$2
+            local patch_config="$GITHUB_WORKSPACE/libdatadog-$label-patches.toml"
+            local packages="$GITHUB_WORKSPACE/libdatadog-$label-packages.tsv"
+            local log_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log"
+            local messages_path="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.jsonl"
+            local cargo_home="$GITHUB_WORKSPACE/downstream-cargo-home"
+            local lockfile
+            local locked_packages_file="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-locked-packages.txt"
+            local locked_libdatadog_packages=()
+            local source_target
+
+            generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
+            git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
+            git -C "$DOWNSTREAM_ROOT" clean -ffdx
+            for submodule in "${SUBMODULES[@]}"; do
+              git -C "$DOWNSTREAM_ROOT" submodule update --init --recursive "$submodule"
+              git -C "$DOWNSTREAM_ROOT/$submodule" rev-parse --verify HEAD
+            done
+            if [ -n "$SOURCE_PATH" ]; then
+              source_target="$DOWNSTREAM_ROOT/$SOURCE_PATH"
+              if [ -d "$source_target" ] && [ ! -L "$source_target" ]; then
+                if ! rmdir "$source_target"; then
+                  echo "Cannot replace non-empty source path: $SOURCE_PATH" >&2
+                  return 86
+                fi
+              elif [ -e "$source_target" ] || [ -L "$source_target" ]; then
+                unlink "$source_target" || return 86
+              fi
+              ln -s "$libdatadog_root" "$source_target" || return 86
+            fi
+            : > "$log_path"
+            : > "$messages_path"
+            mkdir -p "$cargo_home"
+            cp "$patch_config" "$cargo_home/config.toml"
+
+            cd "$DOWNSTREAM_ROOT"
+            export CARGO_HOME="$cargo_home"
+            export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$label"
+            export CARGO_TERM_COLOR=never
+            if [ "${#PATCH_SOURCES[@]}" -gt 0 ]; then
+              lockfile="$(dirname "$MANIFEST_PATH")/Cargo.lock"
+              if [ ! -f "$lockfile" ]; then
+                lockfile="$DOWNSTREAM_ROOT/Cargo.lock"
+              fi
+              local selector_args=(
+                --lockfile "$lockfile"
+                --packages "$packages"
+              )
+              for source in "${PATCH_SOURCES[@]}"; do
+                selector_args+=(--patch-source "$source")
+              done
+              python3 "$LIBDATADOG_HEAD_ROOT/scripts/select-locked-libdatadog-packages.py" \
+                "${selector_args[@]}" > "$locked_packages_file"
+              local selector_status=$?
+              if [ "$selector_status" -ne 0 ]; then
+                return "$selector_status"
+              fi
+              mapfile -t locked_libdatadog_packages < "$locked_packages_file"
+              if [ "${#locked_libdatadog_packages[@]}" -gt 0 ]; then
+                local update_args=()
+                for package in "${locked_libdatadog_packages[@]}"; do
+                  update_args+=(-p "$package")
+                done
+                printf 'Updating patched libdatadog packages: %s\n' \
+                  "${locked_libdatadog_packages[*]}" | tee -a "$log_path"
+                cargo +1.92.0 update \
+                  --manifest-path "$MANIFEST_PATH" \
+                  --config "$patch_config" \
+                  "${update_args[@]}" \
+                  2>&1 | tee -a "$log_path"
+                local update_status=${PIPESTATUS[0]}
+                if [ "$update_status" -ne 0 ]; then
+                  return "$update_status"
+                fi
+              else
+                echo "No locked libdatadog package needs a targeted update." \
+                  | tee -a "$log_path"
+              fi
+            fi
+
+            case "$BUILD_KIND" in
+              cargo-build)
+                cargo +1.92.0 build \
+                  --manifest-path "$MANIFEST_PATH" \
+                  --message-format=json \
+                  "${CARGO_ARGS[@]}" \
+                  2> >(tee -a "$log_path" >&2) \
+                  | tee "$messages_path" \
+                  | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
+                  | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              node-wasm)
+                (
+                  export CARGO_BUILD_JOBS=1
+                  npm ci --prefix packages/libdatadog
+                  npm run build --prefix packages/libdatadog
+                  test -s packages/libdatadog/wasm/dist/libdatadog_wasm.js
+                  test -s packages/libdatadog/wasm/dist/remote-config/remote_config.js
+                  test ! -e packages/libdatadog/wasm/dist/libdatadog_wasm_bg.wasm
+                  test ! -e packages/libdatadog/wasm/dist/remote-config/remote_config_bg.wasm
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              python-extension)
+                (
+                  python3 setup.py build_ext --inplace --force
+                  test -n "$(find ddtrace -type f \( -name '*.so' -o -name '*.pyd' \) -print -quit)"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              php-sidecar)
+                (
+                  SHARED=1 PROFILE=tracer-release host_os=linux-gnu ./compile_rust.sh
+                  test -s "$CARGO_TARGET_DIR/tracer-release/libdatadog_php.a"
+                  test -s "$CARGO_TARGET_DIR/tracer-release/libdatadog_php.so"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              ruby-package)
+                (
+                  export RUSTUP_TOOLCHAIN=1.92.0
+                  bundle config set --local path "$GITHUB_WORKSPACE/downstream-bundle"
+                  bundle install --jobs 4 --retry 3
+                  LIBDATADOG_SOURCE="$source_target" \
+                    bundle exec rake libdatadog:build
+                  test -n "$(find vendor -type f -name 'libdatadog_profiling.a' -print -quit)"
+                  test -n "$(find vendor -type f -name 'libdatadog_profiling.so' -print -quit)"
+                  test -n "$(find vendor -type f -name 'libdatadog-crashtracking-receiver' -print -quit)"
+                  test -n "$(find vendor -type f -name 'datadog_profiling.pc' -print -quit)"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              *)
+                echo "Unsupported downstream build kind: $BUILD_KIND" | tee -a "$log_path"
+                return 86
+                ;;
+            esac
+          }
+
+          set +e
+          run_validation base "$LIBDATADOG_BASE_ROOT"
+          BASE_STATUS=$?
+          run_validation head "$LIBDATADOG_HEAD_ROOT"
+          HEAD_STATUS=$?
+          set -e
+
+          if [ "$BASE_STATUS" -eq 0 ]; then BASE_RESULT=success; else BASE_RESULT=failure; fi
+          if [ "$HEAD_STATUS" -eq 0 ]; then HEAD_RESULT=success; else HEAD_RESULT=failure; fi
+          echo "base_result=$BASE_RESULT" >> "$GITHUB_OUTPUT"
+          echo "head_result=$HEAD_RESULT" >> "$GITHUB_OUTPUT"
+          if [ "$HEAD_STATUS" -eq 0 ]; then
+            # Successful product builds may contain diagnostics from optional
+            # compiler probes. They are not downstream compatibility failures.
+            echo '[]' > "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
+            echo "new_error_count=0" >> "$GITHUB_OUTPUT"
+          else
+            python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
+              --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
+              --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
+              --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
+              --head-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.log" \
+              --base-normalize-path "$LIBDATADOG_BASE_ROOT" \
+              --head-normalize-path "$LIBDATADOG_HEAD_ROOT" \
+              --base-normalize-path "$GITHUB_WORKSPACE/target-base" \
+              --head-normalize-path "$GITHUB_WORKSPACE/target-head" \
+              --output "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json" \
+              --github-output "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report downstream compatibility
+        if: always()
+        env:
+          BASE_RESULT: ${{ steps.validate.outputs.base_result }}
+          HEAD_RESULT: ${{ steps.validate.outputs.head_result }}
+          NEW_ERROR_COUNT: ${{ steps.validate.outputs.new_error_count }}
+          DOWNSTREAM_SHA: ${{ steps.validate.outputs.downstream_sha }}
+          LIBDATADOG_BASE_SHA: ${{ steps.validate.outputs.libdatadog_base_sha }}
+          LIBDATADOG_HEAD_SHA: ${{ steps.validate.outputs.libdatadog_head_sha }}
+          VALIDATION_COMMAND: ${{ steps.validate.outputs.validation_command }}
+          DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
+          IMPACTED_COMPONENTS: ${{ matrix.components }}
+          ARTIFACT_NAME: ${{ matrix.artifact_name }}
+        run: |
+          echo "::notice title=$DOWNSTREAM_REPOSITORY compatibility::Base=$BASE_RESULT Head=$HEAD_RESULT NewErrors=${NEW_ERROR_COUNT:-unknown}"
+          {
+            echo "## $DOWNSTREAM_REPOSITORY compatibility"
+            echo
+            echo "Components: $IMPACTED_COMPONENTS"
+            echo
+            echo "Downstream revision: [\`${DOWNSTREAM_SHA:0:12}\`](https://github.com/$DOWNSTREAM_REPOSITORY/commit/$DOWNSTREAM_SHA)"
+            echo "libdatadog base: [\`${LIBDATADOG_BASE_SHA:0:12}\`](https://github.com/DataDog/libdatadog/commit/$LIBDATADOG_BASE_SHA)"
+            echo "libdatadog proposed merge: [\`${LIBDATADOG_HEAD_SHA:0:12}\`](https://github.com/DataDog/libdatadog/commit/$LIBDATADOG_HEAD_SHA)"
+            echo "Validation command: \`$VALIDATION_COMMAND\`"
+            echo
+            echo "Base: **$BASE_RESULT** — Head: **$HEAD_RESULT**"
+            echo "New Cargo/compiler diagnostics: **${NEW_ERROR_COUNT:-unknown}**"
+            echo
+            case "$BASE_RESULT:$HEAD_RESULT" in
+              success:success)
+                echo "✅ **Compatible:** the downstream product builds before and after this PR."
+                ;;
+              success:failure)
+                echo "❌ **Regression (non-blocking):** the PR breaks a downstream build that passes on its base."
+                ;;
+              failure:failure)
+                if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
+                  echo "❌ **Additional regression (non-blocking):** the downstream build already fails against the base, and this PR introduces new build errors."
+                else
+                  echo "⚠️ **Baseline incompatible:** the downstream build already fails against the PR base, with no additional build error detected in this PR."
+                fi
+                ;;
+              failure:success)
+                echo "✅ **Improved:** the downstream product fails against the base but builds with this PR."
+                ;;
+              *)
+                echo "⚠️ **Inconclusive:** the differential validation did not produce both results."
+                ;;
+            esac
+
+            if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
+              echo
+              echo "### Cargo/compiler errors introduced by the PR"
+              echo
+              jq -r '
+                .[]
+                | "- `\(.target)`"
+                  + (if (.code // "") == "" then "" else " `\(.code)`" end)
+                  + ": \(.message)"
+              ' \
+                "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
+            fi
+
+            for label in base head; do
+              result_var="${label^^}_RESULT"
+              if [ "${!result_var}" = "failure" ]; then
+                echo
+                echo "<details><summary>Last 40 lines of $label failure</summary>"
+                echo
+                echo '```text'
+                tail -n 40 "$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label.log" || true
+                echo '```'
+                echo "</details>"
+              fi
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Classify regression from compatible base
+        if: >-
+          always() &&
+          steps.validate.outputs.base_result == 'success' &&
+          steps.validate.outputs.head_result == 'failure'
+        run: echo "The PR breaks a downstream build that passes against its base."
+
+      - name: Classify additional regression on failing base
+        if: >-
+          always() &&
+          steps.validate.outputs.base_result == 'failure' &&
+          steps.validate.outputs.head_result == 'failure' &&
+          steps.validate.outputs.new_error_count != '0'
+        run: echo "The PR adds compiler or Cargo errors to an already failing baseline."
+
+      - name: Upload downstream validation log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-validation
+          path: |
+            ${{ matrix.artifact_name }}-base.log
+            ${{ matrix.artifact_name }}-head.log
+            ${{ matrix.artifact_name }}-base.jsonl
+            ${{ matrix.artifact_name }}-head.jsonl
+            ${{ matrix.artifact_name }}-new-errors.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Mark downstream regression as failed
+        if: >-
+          always() &&
+          (
+            steps.validate.outcome == 'failure' ||
+            (
+              steps.validate.outputs.head_result == 'failure' &&
+              (
+                steps.validate.outputs.base_result == 'success' ||
+                steps.validate.outputs.new_error_count != '0'
+              )
+            )
+          )
+        run: |
+          echo "The PR introduces a downstream compilation regression."
+          exit 1
