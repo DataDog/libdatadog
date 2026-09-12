@@ -464,4 +464,39 @@ mod tests {
              expected near-immediate detection via the liveness pipe, not a timeout wait"
         );
     }
+
+    /// Async counterpart of `test_recv_blocking_detects_peer_disconnect_promptly`, covering
+    /// `recv_raw_async` (used by the macro-generated server dispatch loop) rather than the
+    /// client-side `recv_raw_blocking`. This reproduces the real-world
+    /// `pcntl_fork_thread_mode_orphan.phpt` hang: in thread mode, the main PHP thread connects
+    /// to its own in-process sidecar listener as a worker, and `datadog_sidecar_shutdown()`
+    /// drops that connection from the client side. Before this fix, the server-side task
+    /// handling that connection only polled the data socket via `fd.readable()`, so it never
+    /// learned the client was gone and awaited forever instead of the listener's shutdown
+    /// completing (`shutdown_complete_rx` never resolved).
+    #[tokio::test]
+    async fn test_recv_async_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        // Simulate the client (e.g. the main PHP thread) disconnecting.
+        drop(client);
+
+        let start = std::time::Instant::now();
+        let err = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_async took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not an indefinite wait"
+        );
+    }
 }
