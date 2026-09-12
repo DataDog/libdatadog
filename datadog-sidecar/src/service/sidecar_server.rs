@@ -1697,11 +1697,18 @@ mod tests {
         assert_eq!(agentless_transport.producer().origin(), "dd-trace-rb");
         assert_eq!(agentless_transport.producer().version(), "3.0.0");
 
-        drop(sender);
-        tokio::time::timeout(TokioDuration::from_secs(1), server_task)
+        // macOS emulates seqpacket socketpairs with SOCK_DGRAM, which does not
+        // report peer closure. The pings above prove that both IPC messages
+        // were handled; explicitly cancel the otherwise idle test server so
+        // teardown does not depend on platform-specific disconnect behavior.
+        server_task.abort();
+        let error = server_task
             .await
-            .expect("server should stop when the client disconnects")
-            .expect("server task should complete");
+            .expect_err("aborted server task should not complete normally");
+        assert!(
+            error.is_cancelled(),
+            "server task was not cancelled: {error}"
+        );
     }
 
     #[tokio::test]
