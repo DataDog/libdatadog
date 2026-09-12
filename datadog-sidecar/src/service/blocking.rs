@@ -300,6 +300,23 @@ pub fn set_session_config(
     Ok(())
 }
 
+/// Sets the explicit Feature Flags EVP transport for this session.
+pub fn set_session_ffe_evp_config(
+    transport: &mut SidecarTransport,
+    config: crate::service::FfeEvpTransportConfig,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_ffe_evp_config(config);
+    Ok(())
+}
+
+pub fn set_session_ffe_evp_config_with_identity(
+    transport: &mut SidecarTransport,
+    config: crate::service::FfeEvpTransportConfigWithIdentity,
+) -> anyhow::Result<()> {
+    lock_sender(transport)?.set_session_ffe_evp_config_with_identity(config);
+    Ok(())
+}
+
 /// Updates the process tags for an existing session.
 pub fn set_session_process_tags(
     transport: &mut SidecarTransport,

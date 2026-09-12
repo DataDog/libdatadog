@@ -56,11 +56,23 @@ impl ExposureDeduplicator {
     }
 
     pub fn should_send(&self, context: &FfeTelemetryContext, exposure: &FfeExposure) -> bool {
+        self.should_send_in_scope("", context, exposure)
+    }
+
+    /// Returns whether an exposure should be emitted within a producer-owned
+    /// deduplication scope. The scope is bookkeeping only and is not serialized.
+    pub fn should_send_in_scope(
+        &self,
+        scope: &str,
+        context: &FfeTelemetryContext,
+        exposure: &FfeExposure,
+    ) -> bool {
         let Some(cache) = &self.cache else {
             return true;
         };
 
         let key = ExposureCacheKey {
+            scope: scope.to_owned(),
             service: context.service.clone(),
             env: context.env.clone(),
             version: context.version.clone(),
@@ -85,6 +97,7 @@ impl ExposureDeduplicator {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ExposureCacheKey {
+    scope: String,
     service: String,
     env: String,
     version: String,
@@ -103,11 +116,21 @@ pub fn encode_exposure_batch(
     deduplicator: &ExposureDeduplicator,
     batch: FfeExposureBatch,
 ) -> Result<Option<String>, serde_json::Error> {
+    encode_exposure_batch_in_scope(deduplicator, "", batch)
+}
+
+/// Encodes an exposure batch while partitioning deduplication by destination
+/// and logical producer identity.
+pub fn encode_exposure_batch_in_scope(
+    deduplicator: &ExposureDeduplicator,
+    scope: &str,
+    batch: FfeExposureBatch,
+) -> Result<Option<String>, serde_json::Error> {
     let exposures = batch
         .exposures
         .into_iter()
         .filter(is_complete)
-        .filter(|exposure| deduplicator.should_send(&batch.context, exposure))
+        .filter(|exposure| deduplicator.should_send_in_scope(scope, &batch.context, exposure))
         .map(ExposureEvent::from)
         .collect::<Vec<_>>();
 
@@ -267,6 +290,31 @@ mod tests {
         )
         .unwrap()
         .map(|payload| serde_json::from_str(&payload).unwrap())
+    }
+
+    #[test]
+    fn deduplication_is_partitioned_by_producer_scope() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let make_batch = || FfeExposureBatch {
+            context: context(),
+            exposures: vec![exposure("user", "alloc", "variant")],
+        };
+
+        assert!(
+            encode_exposure_batch_in_scope(&deduplicator, "ruby/1.0", make_batch())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            encode_exposure_batch_in_scope(&deduplicator, "ruby/1.0", make_batch())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            encode_exposure_batch_in_scope(&deduplicator, "dotnet/1.0", make_batch())
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

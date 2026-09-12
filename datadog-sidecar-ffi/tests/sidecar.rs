@@ -126,6 +126,34 @@ fn test_ddog_sidecar_register_app() {
         )
         .unwrap_none();
 
+        // Exercise both the original additive configuration symbol and the
+        // identity-bearing successor through the real sender, bincode IPC,
+        // sidecar handler, and session ownership path. Ping is an ordered IPC
+        // round trip, so both preceding configuration messages were consumed.
+        assert_maybe_no_error!(ddog_sidecar_session_set_ffe_evp_config(
+            &mut transport,
+            FfeEvpConfigurationSource::Agent,
+            &agent_endpoint,
+            null(),
+        ));
+        let direct_endpoint = Endpoint {
+            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+        let producer = FfeEvpProducerIdentity {
+            origin: "dd-trace-rb".into(),
+            version: "3.0.0".into(),
+        };
+        assert_maybe_no_error!(ddog_sidecar_session_set_ffe_evp_config_with_identity(
+            &mut transport,
+            FfeEvpConfigurationSource::Agentless,
+            &agent_endpoint,
+            &direct_endpoint,
+            &producer,
+        ));
+        assert_maybe_no_error!(ddog_sidecar_ping(&mut transport));
+
         let meta = ddog_sidecar_runtimeMeta_build(
             "language_name".into(),
             "language_version".into(),

@@ -18,7 +18,10 @@ use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
-    FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
+    FfeConfigurationSource as SidecarFfeConfigurationSource,
+    FfeEvaluationMetric as SidecarFfeEvaluationMetric,
+    FfeEvpProducerIdentity as SidecarFfeEvpProducerIdentity, FfeEvpTransportConfig,
+    FfeEvpTransportConfigWithIdentity, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
     FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
@@ -1266,6 +1269,140 @@ pub struct FfeTelemetryContext<'a> {
     pub version: CharSlice<'a>,
 }
 
+/// Controls whether FFE EVP traffic is fixed to the Agent or may use direct
+/// intake fallback. This is independent from the tracing transport mode.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FfeEvpConfigurationSource {
+    Agent,
+    Agentless,
+}
+
+/// Logical tracer identity attached to FFE EVP requests.
+///
+/// Both fields must be non-empty, valid HTTP header values no longer than 256
+/// bytes. This identifies the producing SDK, not the sidecar transport.
+#[repr(C)]
+pub struct FfeEvpProducerIdentity<'a> {
+    pub origin: CharSlice<'a>,
+    pub version: CharSlice<'a>,
+}
+
+/// Configure the Feature Flags EVP network path for the current sidecar
+/// session. The optional direct endpoint must include an API key; credentials
+/// are never copied to the local Agent endpoint.
+///
+/// # Safety
+/// `direct_endpoint` must be null or point to a valid `Endpoint` for the
+/// duration of this call.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_ffe_evp_config(
+    transport: &mut Box<SidecarTransport>,
+    source: FfeEvpConfigurationSource,
+    agent_endpoint: &Endpoint,
+    direct_endpoint: *const Endpoint,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ddog_sidecar_session_set_ffe_evp_config_impl(
+            transport,
+            source,
+            agent_endpoint,
+            direct_endpoint,
+        )
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_session_set_ffe_evp_config",
+        ))
+    })
+}
+
+fn ddog_sidecar_session_set_ffe_evp_config_impl(
+    transport: &mut Box<SidecarTransport>,
+    source: FfeEvpConfigurationSource,
+    agent_endpoint: &Endpoint,
+    direct_endpoint: *const Endpoint,
+) -> MaybeError {
+    let source = match source {
+        FfeEvpConfigurationSource::Agent => SidecarFfeConfigurationSource::Agent,
+        FfeEvpConfigurationSource::Agentless => SidecarFfeConfigurationSource::Agentless,
+    };
+    let config = FfeEvpTransportConfig {
+        source,
+        agent_endpoint: agent_endpoint.clone(),
+        // SAFETY: The public FFI function requires a null pointer or a valid
+        // Endpoint for the duration of the call.
+        direct_endpoint: unsafe { direct_endpoint.as_ref() }.cloned(),
+    };
+    try_c!(config.validate());
+    try_c!(blocking::set_session_ffe_evp_config(transport, config));
+    MaybeError::None
+}
+
+/// Configure the Feature Flags EVP network path together with the identity of
+/// the SDK that produces the events. This additive entry point leaves
+/// `ddog_sidecar_session_set_ffe_evp_config` available to existing callers.
+///
+/// # Safety
+/// `direct_endpoint` must be null or point to a valid `Endpoint`, and all
+/// producer slices must remain valid for the duration of this call.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_ffe_evp_config_with_identity(
+    transport: &mut Box<SidecarTransport>,
+    source: FfeEvpConfigurationSource,
+    agent_endpoint: &Endpoint,
+    direct_endpoint: *const Endpoint,
+    producer: &FfeEvpProducerIdentity<'_>,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ddog_sidecar_session_set_ffe_evp_config_with_identity_impl(
+            transport,
+            source,
+            agent_endpoint,
+            direct_endpoint,
+            producer,
+        )
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_session_set_ffe_evp_config_with_identity",
+        ))
+    })
+}
+
+fn ddog_sidecar_session_set_ffe_evp_config_with_identity_impl(
+    transport: &mut Box<SidecarTransport>,
+    source: FfeEvpConfigurationSource,
+    agent_endpoint: &Endpoint,
+    direct_endpoint: *const Endpoint,
+    producer: &FfeEvpProducerIdentity<'_>,
+) -> MaybeError {
+    let source = match source {
+        FfeEvpConfigurationSource::Agent => SidecarFfeConfigurationSource::Agent,
+        FfeEvpConfigurationSource::Agentless => SidecarFfeConfigurationSource::Agentless,
+    };
+    let transport_config = FfeEvpTransportConfig {
+        source,
+        agent_endpoint: agent_endpoint.clone(),
+        // SAFETY: The public FFI function requires a null pointer or a valid
+        // Endpoint for the duration of the call.
+        direct_endpoint: unsafe { direct_endpoint.as_ref() }.cloned(),
+    };
+    let producer = try_c!(ffe_evp_producer_identity_from_ffi(producer));
+    let config = try_c!(FfeEvpTransportConfigWithIdentity::new(
+        transport_config,
+        producer
+    ));
+    try_c!(blocking::set_session_ffe_evp_config_with_identity(
+        transport, config
+    ));
+    MaybeError::None
+}
+
 #[repr(C)]
 pub struct FfeExposure<'a> {
     pub timestamp_ms: u64,
@@ -1502,6 +1639,14 @@ fn ffe_context_from_ffi(
         env: char_slice_to_string(context.env)?,
         version: char_slice_to_string(context.version)?,
     })
+}
+
+fn ffe_evp_producer_identity_from_ffi(
+    producer: &FfeEvpProducerIdentity<'_>,
+) -> Result<SidecarFfeEvpProducerIdentity, String> {
+    let origin = char_slice_to_string(producer.origin)?;
+    let version = char_slice_to_string(producer.version)?;
+    SidecarFfeEvpProducerIdentity::new(origin, version).map_err(|error| error.to_string())
 }
 
 fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposure, String> {
@@ -2158,6 +2303,30 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 mod tests {
     use super::*;
     use std::borrow::Cow;
+
+    fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> FfeEvpProducerIdentity<'a> {
+        FfeEvpProducerIdentity {
+            origin: CharSlice::from(origin),
+            version: CharSlice::from(version),
+        }
+    }
+
+    #[test]
+    fn ffe_producer_identity_validates_native_input() {
+        let identity =
+            ffe_evp_producer_identity_from_ffi(&ffi_producer_identity("dd-trace-rb", "3.0.0"))
+                .unwrap();
+        assert_eq!(identity.origin(), "dd-trace-rb");
+        assert_eq!(identity.version(), "3.0.0");
+
+        for identity in [
+            ffi_producer_identity("", "3.0.0"),
+            ffi_producer_identity("dd-trace-rb", " "),
+            ffi_producer_identity("invalid\norigin", "3.0.0"),
+        ] {
+            assert!(ffe_evp_producer_identity_from_ffi(&identity).is_err());
+        }
+    }
 
     fn ffi_flag_evaluation<'a>(evaluation_context_json: &'a str) -> FfeFlagEvaluation<'a> {
         FfeFlagEvaluation {
