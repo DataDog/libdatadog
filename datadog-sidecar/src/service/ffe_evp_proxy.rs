@@ -452,8 +452,9 @@ impl FfeEvpTransport {
     /// Send one already-encoded JSON payload through the selected route.
     ///
     /// A local 404/405 or a definitive pre-send failure replays the current
-    /// payload directly. Ambiguous failures switch only future payloads. Other
-    /// statuses, including 429 and 5xx, leave the local route unchanged.
+    /// payload directly. Ambiguous failures and local 403/429/5xx responses
+    /// switch only future payloads, or enter cooldown when direct delivery is
+    /// unavailable.
     pub(crate) async fn send_payload<C: HttpClientCapability + SleepCapability>(
         &self,
         client: &C,
@@ -491,7 +492,13 @@ impl FfeEvpTransport {
             DeliveryFailure::Status(status) => AGENT_ROUTE_REJECTION_STATUSES.contains(status),
             DeliveryFailure::Ambiguous(_) => false,
         };
-        let switch_future = replay || matches!(&failure, DeliveryFailure::Ambiguous(_));
+        let switch_future = replay
+            || matches!(&failure, DeliveryFailure::Ambiguous(_))
+            || matches!(
+                &failure,
+                DeliveryFailure::Status(status)
+                    if *status == 403 || *status == 429 || (500..600).contains(status)
+            );
 
         if switch_future && self.leave_local_route().await && replay {
             let direct = self
@@ -1066,21 +1073,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forbidden_local_response_does_not_replay_or_change_routes() {
-        let client = ScriptedCapabilities::new(vec![
-            info_response(&["/evp_proxy/v4"]),
-            response(403, "forbidden"),
-            response(202, ""),
-        ]);
-        let transport = agentless(Some("api-key"));
+    async fn non_replayable_local_statuses_switch_only_future_batches_to_direct() {
+        for status in [403, 429, 500, 503] {
+            let client = ScriptedCapabilities::new(vec![
+                info_response(&["/evp_proxy/v4"]),
+                response(status, "local rejection"),
+                response(202, ""),
+            ]);
+            let transport = agentless(Some("api-key"));
 
-        assert!(!send(&transport, &client, "/api/v2/exposures").await);
-        assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
+            assert!(!send(&transport, &client, "/api/v2/exposures").await);
+            assert_eq!(
+                client.requests().len(),
+                2,
+                "status {status} replayed the current batch"
+            );
+            assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
 
-        let requests = client.requests();
-        assert_eq!(requests.len(), 3, "403 response was replayed");
-        assert!(requests[1].0.contains("/evp_proxy/v4/"));
-        assert!(requests[2].0.contains("/evp_proxy/v4/"));
+            let requests = client.requests();
+            assert!(requests[1].0.contains("/evp_proxy/v4/"));
+            assert!(
+                requests[2].0.starts_with("https://event-platform-intake."),
+                "status {status} did not move the future batch to direct intake"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1118,19 +1134,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn overload_and_server_failures_do_not_switch_routes() {
-        for status in [429, 500] {
+    async fn non_replayable_local_statuses_enter_bounded_cooldown_without_direct_credentials() {
+        for status in [403, 429, 500, 503] {
             let client = ScriptedCapabilities::new(vec![
+                info_response(&["/evp_proxy/v4"]),
+                response(status, "local rejection"),
                 info_response(&["/evp_proxy/v2"]),
-                response(status, "try later"),
                 response(202, ""),
             ]);
-            let transport = agentless(Some("api-key"));
+            let current = Arc::new(Mutex::new(Instant::now()));
+            let clock_state = current.clone();
+            let cooldown = Duration::from_secs(30);
+            let transport = agentless(None)
+                .with_clock(Arc::new(move || *clock_state.lock().unwrap()), cooldown);
 
             assert!(!send(&transport, &client, "/api/v2/exposures").await);
+            assert_eq!(
+                client.requests().len(),
+                2,
+                "status {status} replayed the current batch"
+            );
+            assert!(!send(&transport, &client, "/api/v2/flagevaluation").await);
+            assert_eq!(
+                client.requests().len(),
+                2,
+                "status {status} re-probed before the cooldown elapsed"
+            );
+
+            {
+                let mut now = current.lock().unwrap();
+                *now += cooldown;
+            }
             assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
-            assert!(client.requests()[1].0.contains("/evp_proxy/v2/"));
-            assert!(client.requests()[2].0.contains("/evp_proxy/v2/"));
+            let requests = client.requests();
+            assert_eq!(requests[2].0, "http://agent.internal:8126/info");
+            assert!(requests[3].0.contains("/evp_proxy/v2/"));
         }
     }
 
