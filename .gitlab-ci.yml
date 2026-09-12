@@ -15,6 +15,7 @@ include:
   - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+  - local: .gitlab/bench-analysis.yml
 
 .untrusted_ref_guard:
   rules:
