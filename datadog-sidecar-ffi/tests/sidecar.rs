@@ -126,6 +126,48 @@ fn test_ddog_sidecar_register_app() {
         )
         .unwrap_none();
 
+        let direct_endpoint = Endpoint {
+            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        // The identity-less compatibility API must reject Agentless/direct
+        // configuration before it crosses the IPC boundary.
+        match ddog_sidecar_session_set_ffe_evp_config(
+            &mut transport,
+            FfeEvpConfigurationSource::Agentless,
+            &agent_endpoint,
+            &direct_endpoint,
+        ) {
+            libdd_common_ffi::Option::Some(error) => assert!(error
+                .to_string()
+                .contains("requires a logical SDK producer identity")),
+            libdd_common_ffi::Option::None => {
+                panic!("identity-less API accepted Agentless EVP configuration")
+            }
+        }
+
+        // Exercise the Agent-only compatibility symbol and identity-bearing
+        // successor through the real sender and bincode IPC path.
+        assert_maybe_no_error!(ddog_sidecar_session_set_ffe_evp_config(
+            &mut transport,
+            FfeEvpConfigurationSource::Agent,
+            &agent_endpoint,
+            null(),
+        ));
+        let producer = FfeEvpProducerIdentity {
+            origin: "dd-trace-rb".into(),
+            version: "3.0.0".into(),
+        };
+        assert_maybe_no_error!(ddog_sidecar_session_set_ffe_evp_config_with_identity(
+            &mut transport,
+            FfeEvpConfigurationSource::Agentless,
+            &agent_endpoint,
+            &direct_endpoint,
+            &producer,
+        ));
+
         let meta = ddog_sidecar_runtimeMeta_build(
             "language_name".into(),
             "language_version".into(),

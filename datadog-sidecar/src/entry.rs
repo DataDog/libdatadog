@@ -192,7 +192,10 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
-    #[cfg(feature = "tokio-console")]
+    // `console-subscriber` requires Tokio's unstable task tracing support. Cargo's
+    // `--all-features` does not set that compiler cfg, so only initialize the
+    // subscriber when both halves of the opt-in are present.
+    #[cfg(all(feature = "tokio-console", tokio_unstable))]
     console_subscriber::init();
 
     let mut builder = tokio::runtime::Builder::new_multi_thread();

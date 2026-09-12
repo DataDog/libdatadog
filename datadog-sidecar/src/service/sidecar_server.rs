@@ -6,9 +6,9 @@ use crate::service::{
     sidecar_interface::serve_sidecar_interface_connection,
     telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
     tracing::TraceFlusher,
-    DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
-    SidecarInterface,
+    DynamicInstrumentationConfigState, FfeEvpTransportConfig, FfeEvpTransportConfigWithIdentity,
+    InstanceId, QueueId, RuntimeInfo, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig,
+    SessionInfo, SidecarAction, SidecarFlushOptions, SidecarInterface,
 };
 use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
@@ -585,6 +585,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let connection_metric_registrations = self.metric_registrations.lock_or_panic().clone();
         let session = self.server.get_session(&instance_id.session_id);
+        let ffe_evp_transport = session.get_ffe_evp_transport();
         let trace_config = session.get_trace_config();
         let runtime_metadata = RuntimeMetadata::new(
             trace_config.language.clone(),
@@ -597,48 +598,33 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .into_iter()
             .filter(|a| match a {
                 SidecarAction::FfeExposureBatch(batch) => {
-                    if let Some(base) = trace_config.endpoint.as_ref() {
-                        if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
-                            let batch = batch.clone();
-                            let client = ffe_http_client.clone();
-                            let deduplicator = self.server.ffe_exposure_deduplicator.clone();
-                            tokio::spawn(async move {
-                                ffe_exposures_flusher::send_batch(
-                                    &client,
-                                    &ep,
-                                    &deduplicator,
-                                    batch,
-                                )
-                                .await;
-                            });
-                        } else {
-                            debug!(
-                                "ffe_exposures_flusher: could not derive endpoint, dropping batch"
-                            );
-                        }
+                    if let Some(transport) = ffe_evp_transport.clone() {
+                        let batch = batch.clone();
+                        let client = ffe_http_client.clone();
+                        let deduplicator = self.server.ffe_exposure_deduplicator.clone();
+                        tokio::spawn(async move {
+                            ffe_exposures_flusher::send_batch(
+                                &client,
+                                &transport,
+                                &deduplicator,
+                                batch,
+                            )
+                            .await;
+                        });
                     } else {
-                        debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
+                        debug!("ffe_exposures_flusher: no session transport, dropping batch");
                     }
                     false
                 }
                 SidecarAction::FfeFlagEvaluationBatch(batch) => {
-                    if let Some(base) = trace_config.endpoint.as_ref() {
-                        if let Some(ep) = ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
-                        {
-                            self.server.ffe_flagevaluation_coalescer.enqueue(
-                                ffe_http_client.clone(),
-                                ep,
-                                batch.clone(),
-                            );
-                        } else {
-                            debug!(
-                                "ffe_flagevaluation_flusher: could not derive endpoint, dropping batch"
-                            );
-                        }
-                    } else {
-                        debug!(
-                            "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
+                    if let Some(transport) = ffe_evp_transport.clone() {
+                        self.server.ffe_flagevaluation_coalescer.enqueue(
+                            ffe_http_client.clone(),
+                            transport,
+                            batch.clone(),
                         );
+                    } else {
+                        debug!("ffe_flagevaluation_flusher: no session transport, dropping batch");
                     }
                     false
                 }
@@ -873,6 +859,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         debug!("Set session config for {session_id} to {config:?}");
 
         let session = self.server.get_session(&session_id);
+        session.set_default_ffe_evp_transport(config.endpoint.clone());
         session
             .pid
             .store(self.connection.peer().pid as i32, Ordering::Relaxed);
@@ -1015,6 +1002,35 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 completer.complete(config).await;
             });
         }
+    }
+
+    async fn set_session_ffe_evp_config(&self, config: FfeEvpTransportConfig) {
+        let Some(session_id) = self.session_id.get() else {
+            warn!("cannot configure FFE EVP transport before session configuration");
+            return;
+        };
+        if let Err(error) = self
+            .server
+            .get_session(session_id)
+            .set_ffe_evp_transport(config)
+        {
+            warn!("rejected FFE EVP transport configuration: {error}");
+        }
+    }
+
+    async fn set_session_ffe_evp_config_with_identity(
+        &self,
+        config: FfeEvpTransportConfigWithIdentity,
+    ) {
+        let Some(session_id) = self.session_id.get() else {
+            warn!(
+                "cannot configure identity-bearing FFE EVP transport before session configuration"
+            );
+            return;
+        };
+        self.server
+            .get_session(session_id)
+            .set_ffe_evp_transport_with_identity(config);
     }
 
     async fn set_session_process_tags(&self, process_tags: Vec<Tag>) {
@@ -1549,7 +1565,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
 mod tests {
     use super::*;
     use crate::service::{
-        FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
+        sender::SidecarSender, sidecar_interface::SidecarInterfaceChannel, FfeConfigurationSource,
+        FfeEvaluationMetric, FfeEvpProducerIdentity, FfeEvpTransportConfig,
+        FfeEvpTransportConfigWithIdentity, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
         FfeFlagEvaluationEvent, FfeTelemetryContext, FlagKey,
     };
     use httpmock::{Method::POST, MockServer};
@@ -1618,6 +1636,81 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_evp_config_reaches_the_session_through_ipc() {
+        let (server_connection, client) = SeqpacketConn::socketpair().expect("socketpair");
+        let server_connection = OwnedServerConn::new(server_connection).expect("OwnedServerConn");
+        let server = SidecarServer::default();
+        let handler = Arc::new(ConnectionSidecarHandler::new(
+            server.clone(),
+            server_connection,
+        ));
+        handler
+            .session_id
+            .set("session".to_owned())
+            .expect("fresh handler");
+        let server_task = tokio::spawn(serve_sidecar_interface_connection(handler));
+
+        let agent_endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(client));
+
+        tokio::task::block_in_place(|| {
+            sender.set_session_ffe_evp_config(FfeEvpTransportConfig::agent(agent_endpoint.clone()));
+            sender.ping().expect("Agent config IPC round trip");
+        });
+        let agent_transport = server
+            .get_session("session")
+            .get_ffe_evp_transport()
+            .expect("Agent transport installed");
+        assert_eq!(agent_transport.producer().origin(), "ddtrace-sidecar");
+
+        let agentless_config = FfeEvpTransportConfigWithIdentity::new(
+            FfeEvpTransportConfig {
+                source: FfeConfigurationSource::Agentless,
+                agent_endpoint,
+                direct_endpoint: Some(direct_endpoint),
+            },
+            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        tokio::task::block_in_place(|| {
+            sender.set_session_ffe_evp_config_with_identity(agentless_config);
+            sender
+                .ping()
+                .expect("identity-bearing Agentless config IPC round trip");
+        });
+        let agentless_transport = server
+            .get_session("session")
+            .get_ffe_evp_transport()
+            .expect("Agentless transport installed");
+        assert_eq!(agentless_transport.producer().origin(), "dd-trace-rb");
+        assert_eq!(agentless_transport.producer().version(), "3.0.0");
+
+        // macOS emulates seqpacket socketpairs with SOCK_DGRAM, which does not
+        // report peer closure. The pings above prove that both IPC messages
+        // were handled; explicitly cancel the otherwise idle test server so
+        // teardown does not depend on platform-specific disconnect behavior.
+        server_task.abort();
+        let error = server_task
+            .await
+            .expect_err("aborted server task should not complete normally");
+        assert!(
+            error.is_cancelled(),
+            "server task was not cancelled: {error}"
+        );
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn ffe_exposure_actions_dispatch_without_registered_application() {
@@ -1634,16 +1727,13 @@ mod tests {
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
 
-        handler
-            .server
-            .get_session(&instance_id.session_id)
-            .modify_trace_config(|cfg| {
-                let endpoint = Endpoint {
-                    url: http_server.url("/").parse().unwrap(),
-                    ..Endpoint::default()
-                };
-                cfg.set_endpoint(endpoint).unwrap();
-            });
+        let session = handler.server.get_session(&instance_id.session_id);
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        session.modify_trace_config(|cfg| cfg.set_endpoint(endpoint.clone()).unwrap());
+        session.set_default_ffe_evp_transport(endpoint);
 
         assert!(!handler
             .server
@@ -1753,16 +1843,13 @@ mod tests {
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
 
-        handler
-            .server
-            .get_session(&instance_id.session_id)
-            .modify_trace_config(|cfg| {
-                let endpoint = Endpoint {
-                    url: http_server.url("/").parse().unwrap(),
-                    ..Endpoint::default()
-                };
-                cfg.set_endpoint(endpoint).unwrap();
-            });
+        let session = handler.server.get_session(&instance_id.session_id);
+        let endpoint = Endpoint {
+            url: http_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        session.modify_trace_config(|cfg| cfg.set_endpoint(endpoint.clone()).unwrap());
+        session.set_default_ffe_evp_transport(endpoint);
 
         handler
             .enqueue_actions(
