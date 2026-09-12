@@ -23,7 +23,7 @@ pub struct SliceSet<T: Copy + Hash + Eq + 'static> {
 }
 
 impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
-    const SIZE_HINT: usize = 1024 * 1024;
+    const SIZE_HINT: usize = 256 * 1024;
 
     pub fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
         let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
