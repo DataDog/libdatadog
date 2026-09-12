@@ -352,6 +352,11 @@ pub trait SidecarInterface {
 #[cfg(test)]
 mod tests {
     use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+    use crate::service::{
+        FfeConfigurationSource, FfeEvpProducerIdentity, FfeEvpTransportConfig,
+        FfeEvpTransportConfigWithIdentity,
+    };
+    use libdd_common::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
@@ -370,6 +375,58 @@ mod tests {
                 assert_eq!(data, b"payload");
             }
             _ => panic!("decoded the wrong request variant"),
+        }
+    }
+
+    #[test]
+    fn ffe_evp_config_requests_decode_across_the_ipc_boundary() {
+        let agent_endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        let agent_config = FfeEvpTransportConfig::agent(agent_endpoint.clone());
+        let encoded =
+            libdd_ipc::codec::encode(&SidecarInterfaceClientRequest::SetSessionFfeEvpConfig {
+                config: agent_config.clone(),
+            });
+        let decoded: SidecarInterfaceRequest =
+            libdd_ipc::codec::decode(&encoded).expect("Agent config request should decode");
+        match decoded {
+            SidecarInterfaceRequest::SetSessionFfeEvpConfig { config } => {
+                assert_eq!(config, agent_config);
+            }
+            _ => panic!("decoded the wrong Agent config request variant"),
+        }
+
+        let agentless_config = FfeEvpTransportConfigWithIdentity::new(
+            FfeEvpTransportConfig {
+                source: FfeConfigurationSource::Agentless,
+                agent_endpoint,
+                direct_endpoint: Some(direct_endpoint),
+            },
+            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        let encoded = libdd_ipc::codec::encode(
+            &SidecarInterfaceClientRequest::SetSessionFfeEvpConfigWithIdentity {
+                config: agentless_config.clone(),
+            },
+        );
+        let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&encoded)
+            .expect("identity-bearing Agentless config request should decode");
+        match decoded {
+            SidecarInterfaceRequest::SetSessionFfeEvpConfigWithIdentity { config } => {
+                assert_eq!(config, agentless_config);
+            }
+            _ => panic!("decoded the wrong Agentless config request variant"),
         }
     }
 }

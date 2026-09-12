@@ -149,9 +149,7 @@ fn test_ddog_sidecar_register_app() {
         }
 
         // Exercise the Agent-only compatibility symbol and identity-bearing
-        // successor through the real sender, bincode IPC, sidecar handler, and
-        // session ownership path. Ping is an ordered IPC round trip, so both
-        // preceding valid configuration messages were consumed.
+        // successor through the real sender and bincode IPC path.
         assert_maybe_no_error!(ddog_sidecar_session_set_ffe_evp_config(
             &mut transport,
             FfeEvpConfigurationSource::Agent,
@@ -169,6 +167,13 @@ fn test_ddog_sidecar_register_app() {
             &direct_endpoint,
             &producer,
         ));
+        // A ping is an ordered IPC round trip, proving both preceding valid
+        // configuration messages reached the sidecar handler and session. The
+        // ordinary Windows test binary cannot perform blocking spawned-sidecar
+        // round trips; that platform's connection test requires prefer-dynamic.
+        // The request wire format is covered cross-platform in
+        // sidecar_interface::tests.
+        #[cfg(not(windows))]
         assert_maybe_no_error!(ddog_sidecar_ping(&mut transport));
 
         let meta = ddog_sidecar_runtimeMeta_build(
