@@ -1,0 +1,23 @@
+# Manual trigger for the dd-trace-py downstream pipeline.
+# This lets a maintainer test the current libdatadog commit against dd-trace-py
+# on demand from the GitLab pipeline UI.
+
+trigger_dd_trace_py:
+  variables:
+    LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
+    LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
+    LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
+    LIBDATADOG_COMMIT_TAG: $CI_COMMIT_TAG
+    UPDATE_LIBDATADOG_VERSION: "true"
+  rules:
+    # Run automatically on every push to the default branch.
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+      allow_failure: true
+    # Otherwise allow a maintainer to trigger it manually from the pipeline UI.
+    - when: manual
+      allow_failure: true
+  trigger:
+    project: DataDog/apm-reliability/dd-trace-py
+    strategy: depend
+    branch: $DD_TRACE_PY_BRANCH
