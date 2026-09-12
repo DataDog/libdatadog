@@ -1565,7 +1565,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
 mod tests {
     use super::*;
     use crate::service::{
-        FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
+        sender::SidecarSender, sidecar_interface::SidecarInterfaceChannel, FfeConfigurationSource,
+        FfeEvaluationMetric, FfeEvpProducerIdentity, FfeEvpTransportConfig,
+        FfeEvpTransportConfigWithIdentity, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
         FfeFlagEvaluationEvent, FfeTelemetryContext, FlagKey,
     };
     use httpmock::{Method::POST, MockServer};
@@ -1632,6 +1634,74 @@ mod tests {
                 runtime_default_used: false,
             }],
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_evp_config_reaches_the_session_through_ipc() {
+        let (server_connection, client) = SeqpacketConn::socketpair().expect("socketpair");
+        let server_connection = OwnedServerConn::new(server_connection).expect("OwnedServerConn");
+        let server = SidecarServer::default();
+        let handler = Arc::new(ConnectionSidecarHandler::new(
+            server.clone(),
+            server_connection,
+        ));
+        handler
+            .session_id
+            .set("session".to_owned())
+            .expect("fresh handler");
+        let server_task = tokio::spawn(serve_sidecar_interface_connection(handler));
+
+        let agent_endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+        let mut sender = SidecarSender::new(SidecarInterfaceChannel::new(client));
+
+        tokio::task::block_in_place(|| {
+            sender.set_session_ffe_evp_config(FfeEvpTransportConfig::agent(agent_endpoint.clone()));
+            sender.ping().expect("Agent config IPC round trip");
+        });
+        let agent_transport = server
+            .get_session("session")
+            .get_ffe_evp_transport()
+            .expect("Agent transport installed");
+        assert_eq!(agent_transport.producer().origin(), "ddtrace-sidecar");
+
+        let agentless_config = FfeEvpTransportConfigWithIdentity::new(
+            FfeEvpTransportConfig {
+                source: FfeConfigurationSource::Agentless,
+                agent_endpoint,
+                direct_endpoint: Some(direct_endpoint),
+            },
+            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        tokio::task::block_in_place(|| {
+            sender.set_session_ffe_evp_config_with_identity(agentless_config);
+            sender
+                .ping()
+                .expect("identity-bearing Agentless config IPC round trip");
+        });
+        let agentless_transport = server
+            .get_session("session")
+            .get_ffe_evp_transport()
+            .expect("Agentless transport installed");
+        assert_eq!(agentless_transport.producer().origin(), "dd-trace-rb");
+        assert_eq!(agentless_transport.producer().version(), "3.0.0");
+
+        drop(sender);
+        tokio::time::timeout(TokioDuration::from_secs(1), server_task)
+            .await
+            .expect("server should stop when the client disconnects")
+            .expect("server task should complete");
     }
 
     #[tokio::test]
