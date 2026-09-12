@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{encode_flag_evaluation_payloads, FfeFlagEvaluationBatch};
+use http::header::{HeaderValue, InvalidHeaderValue};
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use std::time::Duration;
+use thiserror::Error;
 
 /// EVP proxy path for FFE flag evaluation intake.
 pub const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
@@ -14,6 +16,8 @@ pub const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
 pub const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
 /// EVP subdomain that routes requests to event-platform intake.
 pub const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
+const EVP_ORIGIN_HEADER: &str = "DD-EVP-ORIGIN";
+const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
 /// Agent EVP proxy uncompressed request-body limit.
 ///
 /// Revalidated against `DataDog/datadog-agent` on 2026-07-01:
@@ -23,18 +27,58 @@ pub const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
 /// `apiutil.NewLimitedReader`.
 pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Error)]
+pub enum FlagEvaluationEvpSendConfigError {
+    #[error("EVP origin must not be empty")]
+    EmptyOrigin,
+    #[error("EVP origin version must not be empty")]
+    EmptyOriginVersion,
+    #[error("EVP origin is not a valid HTTP header value")]
+    InvalidOrigin(#[source] InvalidHeaderValue),
+    #[error("EVP origin version is not a valid HTTP header value")]
+    InvalidOriginVersion(#[source] InvalidHeaderValue),
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FlagEvaluationEvpSendConfig {
     user_agent: String,
+    origin: HeaderValue,
+    origin_version: HeaderValue,
     payload_size_limit: usize,
 }
 
 impl FlagEvaluationEvpSendConfig {
-    pub fn new(user_agent: impl Into<String>) -> Self {
-        Self {
-            user_agent: user_agent.into(),
-            payload_size_limit: EVP_PAYLOAD_SIZE_LIMIT,
+    /// Creates a send configuration with required producer identity metadata.
+    ///
+    /// Origin and origin version must both contain a non-whitespace character
+    /// and be valid HTTP header values. Validating them here ensures every
+    /// request built from this configuration carries usable producer identity
+    /// metadata. Accepted values are stored without normalization.
+    pub fn new(
+        user_agent: impl Into<String>,
+        origin: impl Into<String>,
+        origin_version: impl Into<String>,
+    ) -> Result<Self, FlagEvaluationEvpSendConfigError> {
+        let origin = origin.into();
+        if origin.trim().is_empty() {
+            return Err(FlagEvaluationEvpSendConfigError::EmptyOrigin);
         }
+        let origin = HeaderValue::try_from(origin.as_str())
+            .map_err(FlagEvaluationEvpSendConfigError::InvalidOrigin)?;
+
+        let origin_version = origin_version.into();
+        if origin_version.trim().is_empty() {
+            return Err(FlagEvaluationEvpSendConfigError::EmptyOriginVersion);
+        }
+        let origin_version = HeaderValue::try_from(origin_version.as_str())
+            .map_err(FlagEvaluationEvpSendConfigError::InvalidOriginVersion)?;
+
+        Ok(Self {
+            user_agent: user_agent.into(),
+            origin,
+            origin_version,
+            payload_size_limit: EVP_PAYLOAD_SIZE_LIMIT,
+        })
     }
 
     pub fn with_payload_size_limit(mut self, payload_size_limit: usize) -> Self {
@@ -115,6 +159,8 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         .method(Method::POST)
         .header("Content-Type", "application/json")
         .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
+        .header(EVP_ORIGIN_HEADER, config.origin.clone())
+        .header(EVP_ORIGIN_VERSION_HEADER, config.origin_version.clone())
         .body(Bytes::from(payload))
     {
         Ok(r) => r,
@@ -273,7 +319,8 @@ mod tests {
     }
 
     fn send_config() -> FlagEvaluationEvpSendConfig {
-        FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0")
+        FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0", "libdd-ffe-test-origin", "1.2.3")
+            .unwrap()
     }
 
     fn batch() -> FfeFlagEvaluationBatch {
@@ -292,7 +339,10 @@ mod tests {
                 when.method(httpmock::Method::POST)
                     .path(EVP_FLAGEVALUATION_PATH)
                     .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-                    .header("content-type", "application/json");
+                    .header("content-type", "application/json")
+                    .header("user-agent", "libdd-ffe-test/0.0.0")
+                    .header(EVP_ORIGIN_HEADER, "libdd-ffe-test-origin")
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
                 then.status(202);
             })
             .await;
@@ -304,6 +354,30 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
+    }
+
+    #[test]
+    fn send_config_rejects_empty_whitespace_or_invalid_producer_identity() {
+        for empty_origin in ["", " ", "\t", " \t "] {
+            assert!(matches!(
+                FlagEvaluationEvpSendConfig::new("user-agent", empty_origin, "1.2.3"),
+                Err(FlagEvaluationEvpSendConfigError::EmptyOrigin)
+            ));
+        }
+        for empty_origin_version in ["", " ", "\t", " \t "] {
+            assert!(matches!(
+                FlagEvaluationEvpSendConfig::new("user-agent", "origin", empty_origin_version),
+                Err(FlagEvaluationEvpSendConfigError::EmptyOriginVersion)
+            ));
+        }
+        assert!(matches!(
+            FlagEvaluationEvpSendConfig::new("user-agent", "invalid\norigin", "1.2.3"),
+            Err(FlagEvaluationEvpSendConfigError::InvalidOrigin(_))
+        ));
+        assert!(matches!(
+            FlagEvaluationEvpSendConfig::new("user-agent", "origin", "invalid\nversion"),
+            Err(FlagEvaluationEvpSendConfigError::InvalidOriginVersion(_))
+        ));
     }
 
     #[tokio::test]
