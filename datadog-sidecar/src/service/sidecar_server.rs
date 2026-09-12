@@ -1009,9 +1009,13 @@ impl SidecarInterface for ConnectionSidecarHandler {
             warn!("cannot configure FFE EVP transport before session configuration");
             return;
         };
-        self.server
+        if let Err(error) = self
+            .server
             .get_session(session_id)
-            .set_ffe_evp_transport(config);
+            .set_ffe_evp_transport(config)
+        {
+            warn!("rejected FFE EVP transport configuration: {error}");
+        }
     }
 
     async fn set_session_ffe_evp_config_with_identity(

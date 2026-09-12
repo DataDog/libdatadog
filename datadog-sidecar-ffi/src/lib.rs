@@ -1288,9 +1288,9 @@ pub struct FfeEvpProducerIdentity<'a> {
     pub version: CharSlice<'a>,
 }
 
-/// Configure the Feature Flags EVP network path for the current sidecar
-/// session. The optional direct endpoint must include an API key; credentials
-/// are never copied to the local Agent endpoint.
+/// Configure the Agent-backed Feature Flags EVP network path for the current
+/// sidecar session. Agentless configuration requires the identity-bearing
+/// `ddog_sidecar_session_set_ffe_evp_config_with_identity` entry point.
 ///
 /// # Safety
 /// `direct_endpoint` must be null or point to a valid `Endpoint` for the
@@ -1336,14 +1336,14 @@ fn ddog_sidecar_session_set_ffe_evp_config_impl(
         // Endpoint for the duration of the call.
         direct_endpoint: unsafe { direct_endpoint.as_ref() }.cloned(),
     };
-    try_c!(config.validate());
+    try_c!(config.validate_without_identity());
     try_c!(blocking::set_session_ffe_evp_config(transport, config));
     MaybeError::None
 }
 
 /// Configure the Feature Flags EVP network path together with the identity of
-/// the SDK that produces the events. This additive entry point leaves
-/// `ddog_sidecar_session_set_ffe_evp_config` available to existing callers.
+/// the SDK that produces the events. Agentless/direct delivery is available
+/// only through this identity-bearing entry point.
 ///
 /// # Safety
 /// `direct_endpoint` must be null or point to a valid `Endpoint`, and all

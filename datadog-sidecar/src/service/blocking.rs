@@ -305,6 +305,9 @@ pub fn set_session_ffe_evp_config(
     transport: &mut SidecarTransport,
     config: crate::service::FfeEvpTransportConfig,
 ) -> io::Result<()> {
+    config
+        .validate_without_identity()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     lock_sender(transport)?.set_session_ffe_evp_config(config);
     Ok(())
 }

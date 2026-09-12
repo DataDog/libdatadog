@@ -29,6 +29,7 @@ const USER_AGENT: &str = concat!("ddtrace-sidecar/", crate::sidecar_version!());
 const EVP_PROXY_V4_PATH: &str = "/evp_proxy/v4";
 const EVP_PROXY_V2_PATH: &str = "/evp_proxy/v2";
 const INFO_PATH: &str = "/info";
+const TRACE_ENDPOINT_PATHS: &[&str] = &["/v0.4/traces", "/v0.5/traces", "/v1.0/traces"];
 const MAX_INFO_RESPONSE_BYTES: usize = 1 << 20;
 const EVP_ORIGIN_HEADER: &str = "DD-EVP-ORIGIN";
 const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
@@ -206,6 +207,21 @@ impl FfeEvpTransportConfig {
         }
         Ok(())
     }
+
+    /// Validate configuration supplied without a logical SDK identity.
+    ///
+    /// Agentless delivery is intentionally rejected on this compatibility
+    /// path: direct intake must identify the SDK that produced the events,
+    /// rather than silently identifying the sidecar process that sent them.
+    pub fn validate_without_identity(&self) -> Result<(), String> {
+        self.validate()?;
+        if self.source == FfeConfigurationSource::Agentless {
+            return Err(
+                "Agentless EVP configuration requires a logical SDK producer identity".to_owned(),
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Additive identity-bearing configuration for logical SDK producers.
@@ -354,8 +370,12 @@ impl Hash for FfeEvpTransport {
 }
 
 impl FfeEvpTransport {
-    pub(crate) fn new(config: FfeEvpTransportConfig) -> Self {
-        Self::new_with_identity(config, FfeEvpProducerIdentity::legacy_sidecar())
+    pub(crate) fn new(config: FfeEvpTransportConfig) -> Result<Self, String> {
+        config.validate_without_identity()?;
+        Ok(Self::new_with_identity(
+            config,
+            FfeEvpProducerIdentity::legacy_sidecar(),
+        ))
     }
 
     pub(crate) fn new_with_identity(
@@ -394,7 +414,10 @@ impl FfeEvpTransport {
     }
 
     pub(crate) fn agent_only(endpoint: Endpoint) -> Self {
-        Self::new(FfeEvpTransportConfig::agent(endpoint))
+        Self::new_with_identity(
+            FfeEvpTransportConfig::agent(endpoint),
+            FfeEvpProducerIdentity::legacy_sidecar(),
+        )
     }
 
     #[cfg(test)]
@@ -529,7 +552,7 @@ impl FfeEvpTransport {
         client: &C,
         log_prefix: &'static str,
     ) -> Option<ProxyVersion> {
-        let endpoint = endpoint_with_path(&self.config.agent_endpoint, INFO_PATH).ok()?;
+        let endpoint = agent_endpoint_with_path(&self.config.agent_endpoint, INFO_PATH).ok()?;
         let request = endpoint
             .to_request_builder(USER_AGENT)
             .ok()?
@@ -554,9 +577,13 @@ impl FfeEvpTransport {
         struct InfoResponse {
             #[serde(default)]
             endpoints: Vec<String>,
+            evp_proxy_allowed_headers: Option<Vec<String>>,
         }
 
         let info: InfoResponse = serde_json::from_slice(response.body()).ok()?;
+        if !supports_identity_headers(info.evp_proxy_allowed_headers.as_deref()) {
+            return None;
+        }
         select_proxy_version(&info.endpoints)
     }
 
@@ -587,7 +614,7 @@ impl FfeEvpTransport {
         success_name: &'static str,
     ) -> Result<(), DeliveryFailure> {
         let endpoint = match route {
-            Route::Local(version) => endpoint_with_path(
+            Route::Local(version) => agent_endpoint_with_path(
                 &self.config.agent_endpoint,
                 &join_paths(version.path(), intake_path),
             ),
@@ -644,6 +671,28 @@ fn endpoint_with_path(base: &Endpoint, path: &str) -> Result<Endpoint, String> {
         url,
         ..base.clone()
     })
+}
+
+fn agent_endpoint_with_path(base: &Endpoint, path: &str) -> Result<Endpoint, String> {
+    let base_path = base.url.path().trim_end_matches('/');
+    let prefix = TRACE_ENDPOINT_PATHS
+        .iter()
+        .find_map(|trace_path| base_path.strip_suffix(trace_path))
+        .unwrap_or(base_path);
+    endpoint_with_path(base, &join_paths(prefix, path))
+}
+
+fn supports_identity_headers(headers: Option<&[String]>) -> bool {
+    let Some(headers) = headers else {
+        return false;
+    };
+    [EVP_ORIGIN_HEADER, EVP_ORIGIN_VERSION_HEADER]
+        .iter()
+        .all(|required| {
+            headers
+                .iter()
+                .any(|header| header.trim().eq_ignore_ascii_case(required))
+        })
 }
 
 fn select_proxy_version(endpoints: &[String]) -> Option<ProxyVersion> {
@@ -795,6 +844,20 @@ mod tests {
             .unwrap())
     }
 
+    fn info_response(endpoints: &[&str]) -> Result<http::Response<Bytes>, HttpError> {
+        response(
+            200,
+            &serde_json::json!({
+                "endpoints": endpoints,
+                "evp_proxy_allowed_headers": [
+                    EVP_ORIGIN_HEADER,
+                    EVP_ORIGIN_VERSION_HEADER,
+                ],
+            })
+            .to_string(),
+        )
+    }
+
     fn endpoint(url: &str, api_key: Option<&'static str>) -> Endpoint {
         Endpoint {
             url: url.parse().unwrap(),
@@ -830,7 +893,7 @@ mod tests {
     #[tokio::test]
     async fn concurrent_first_flush_prefers_v4_and_performs_one_shared_discovery() {
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":["/evp_proxy/v2/","/evp_proxy/v4"]}"#),
+            info_response(&["/evp_proxy/v2/", "/evp_proxy/v4"]),
             response(202, ""),
             response(202, ""),
         ]);
@@ -876,10 +939,8 @@ mod tests {
 
     #[tokio::test]
     async fn v2_is_used_when_v4_is_not_advertised() {
-        let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":["/evp_proxy/v2"]}"#),
-            response(202, ""),
-        ]);
+        let client =
+            ScriptedCapabilities::new(vec![info_response(&["/evp_proxy/v2"]), response(202, "")]);
         let transport = agentless(Some("api-key"));
 
         assert!(send(&transport, &client, "/api/v2/exposures").await);
@@ -890,9 +951,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn discovery_requires_both_identity_headers() {
+        for body in [
+            r#"{"endpoints":["/evp_proxy/v4"]}"#,
+            r#"{"endpoints":["/evp_proxy/v4"],"evp_proxy_allowed_headers":null}"#,
+            r#"{"endpoints":["/evp_proxy/v4"],"evp_proxy_allowed_headers":["DD-EVP-ORIGIN"]}"#,
+            r#"{"endpoints":["/evp_proxy/v4"],"evp_proxy_allowed_headers":["DD-EVP-ORIGIN-VERSION"]}"#,
+        ] {
+            let client = ScriptedCapabilities::new(vec![response(200, body), response(202, "")]);
+            let transport = agentless(Some("api-key"));
+
+            assert!(send(&transport, &client, "/api/v2/exposures").await);
+            assert_eq!(
+                client.requests()[1].0,
+                "https://event-platform-intake.datadoghq.com/api/v2/exposures",
+                "accepted incomplete Agent identity-header capabilities from {body}",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn prefixed_agent_discovery_and_v4_delivery_preserve_prefix() {
+        let client = ScriptedCapabilities::new(vec![
+            response(
+                200,
+                r#"{"endpoints":["/evp_proxy/v4"],"evp_proxy_allowed_headers":[" dd-evp-origin ","\tDd-EvP-OrIgIn-VeRsIoN\t"]}"#,
+            ),
+            response(202, ""),
+        ]);
+        let transport = FfeEvpTransport::new_with_identity(
+            FfeEvpTransportConfig::agentless(
+                endpoint(
+                    "http://agent.internal:8126/customer/proxy/v0.4/traces",
+                    None,
+                ),
+                Some(endpoint(
+                    "https://event-platform-intake.datadoghq.com/",
+                    Some("api-key"),
+                )),
+            ),
+            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        );
+
+        assert!(send(&transport, &client, "/api/v2/exposures").await);
+        let requests = client.requests();
+        assert_eq!(
+            requests[0].0,
+            "http://agent.internal:8126/customer/proxy/info"
+        );
+        assert_eq!(
+            requests[1].0,
+            "http://agent.internal:8126/customer/proxy/evp_proxy/v4/api/v2/exposures"
+        );
+    }
+
+    #[tokio::test]
     async fn missing_local_route_selects_authenticated_direct_and_stays_sticky() {
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":[]}"#),
+            info_response(&[]),
             response(202, ""),
             response(202, ""),
         ]);
@@ -932,7 +1048,7 @@ mod tests {
     async fn rejected_local_route_replays_current_batch_direct() {
         for status in [404, 405] {
             let client = ScriptedCapabilities::new(vec![
-                response(200, r#"{"endpoints":["/evp_proxy/v4"]}"#),
+                info_response(&["/evp_proxy/v4"]),
                 response(status, "rejected"),
                 response(202, ""),
                 response(202, ""),
@@ -952,7 +1068,7 @@ mod tests {
     #[tokio::test]
     async fn forbidden_local_response_does_not_replay_or_change_routes() {
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":["/evp_proxy/v4"]}"#),
+            info_response(&["/evp_proxy/v4"]),
             response(403, "forbidden"),
             response(202, ""),
         ]);
@@ -971,7 +1087,7 @@ mod tests {
     async fn definitive_pre_send_failure_replays_current_batch() {
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":["/evp_proxy/v2"]}"#),
+            info_response(&["/evp_proxy/v2"]),
             Err(HttpError::Network(anyhow::Error::new(refused))),
             response(202, ""),
         ]);
@@ -987,7 +1103,7 @@ mod tests {
     async fn ambiguous_failure_changes_only_future_routing() {
         let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":["/evp_proxy/v2"]}"#),
+            info_response(&["/evp_proxy/v2"]),
             Err(HttpError::Network(anyhow::Error::new(reset))),
             response(202, ""),
         ]);
@@ -1005,7 +1121,7 @@ mod tests {
     async fn overload_and_server_failures_do_not_switch_routes() {
         for status in [429, 500] {
             let client = ScriptedCapabilities::new(vec![
-                response(200, r#"{"endpoints":["/evp_proxy/v2"]}"#),
+                info_response(&["/evp_proxy/v2"]),
                 response(status, "try later"),
                 response(202, ""),
             ]);
@@ -1021,8 +1137,8 @@ mod tests {
     #[tokio::test]
     async fn unavailable_route_reprobes_once_after_cooldown_and_recovers() {
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":[]}"#),
-            response(200, r#"{"endpoints":["/evp_proxy/v4"]}"#),
+            info_response(&[]),
+            info_response(&["/evp_proxy/v4"]),
             response(202, ""),
             response(202, ""),
         ]);
@@ -1102,11 +1218,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_only_v2_delivery_preserves_agent_path_prefix() {
+        let client = ScriptedCapabilities::new(vec![response(202, "")]);
+        let transport = FfeEvpTransport::agent_only(endpoint(
+            "http://agent.internal:8126/customer/proxy/v0.4/traces",
+            None,
+        ));
+
+        assert!(send(&transport, &client, "/api/v2/exposures").await);
+        assert_eq!(
+            client.requests()[0].0,
+            "http://agent.internal:8126/customer/proxy/evp_proxy/v2/api/v2/exposures"
+        );
+    }
+
+    #[tokio::test]
     async fn redirect_response_is_not_followed_or_replayed() {
-        let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":[]}"#),
-            response(302, "redirect"),
-        ]);
+        let client = ScriptedCapabilities::new(vec![info_response(&[]), response(302, "redirect")]);
         let transport = agentless(Some("api-key"));
 
         assert!(!send(&transport, &client, "/api/v2/exposures").await);
@@ -1122,9 +1250,9 @@ mod tests {
     #[tokio::test]
     async fn distinct_sessions_keep_direct_credentials_isolated() {
         let client = ScriptedCapabilities::new(vec![
-            response(200, r#"{"endpoints":[]}"#),
+            info_response(&[]),
             response(202, ""),
-            response(200, r#"{"endpoints":[]}"#),
+            info_response(&[]),
             response(202, ""),
         ]);
         let first = agentless(Some("first-key"));
@@ -1168,6 +1296,23 @@ mod tests {
         )
         .validate()
         .is_ok());
+    }
+
+    #[test]
+    fn identityless_transport_rejects_agentless_configuration() {
+        let config = FfeEvpTransportConfig::agentless(
+            endpoint("http://agent.internal:8126/v0.4/traces", None),
+            Some(endpoint(
+                "https://event-platform-intake.datadoghq.com/",
+                Some("api-key"),
+            )),
+        );
+        assert!(config.validate().is_ok());
+        assert_eq!(
+            config.validate_without_identity().unwrap_err(),
+            "Agentless EVP configuration requires a logical SDK producer identity"
+        );
+        assert!(FfeEvpTransport::new(config).is_err());
     }
 
     #[test]
