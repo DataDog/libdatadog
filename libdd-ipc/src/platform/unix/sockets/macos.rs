@@ -22,8 +22,8 @@
 //! - Success → live server.  `ECONNRESET` → stale socket file.
 
 use super::{
-    create_unix_socket, max_message_size, sendmsg, set_nonblocking, ControlMessage, MsgFlags,
-    SeqpacketConn, SeqpacketListener, UnixAddr,
+    create_unix_socket, max_message_size, poll_with_timeout, sendmsg, set_nonblocking,
+    ControlMessage, MsgFlags, SeqpacketConn, SeqpacketListener, UnixAddr,
 };
 use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
@@ -36,6 +36,7 @@ use std::{
         io::{AsRawFd, FromRawFd, OwnedFd},
     },
     path::Path,
+    time::Duration,
 };
 use tracing::error;
 
@@ -256,6 +257,56 @@ impl SeqpacketConn {
         Ok(())
     }
 
+    /// Like [`poll_with_timeout`] for `POLLIN` on the data socket, but also watches the
+    /// liveness pipe for `POLLHUP` so a peer that disconnects *while we're waiting for a
+    /// response* is detected immediately as `BrokenPipe`, instead of only after the full
+    /// `timeout` elapses with a generic `TimedOut`.
+    ///
+    /// This matters because `SOCK_DGRAM` (macOS's SOCK_SEQPACKET emulation, see the module
+    /// docs) has no connection state: unlike Linux, where the peer closing a real
+    /// SOCK_SEQPACKET socket makes an in-flight `recv()` return immediately (EOF/ECONNRESET),
+    /// here the daemon closing its end (e.g. after failing to decode a garbled message, see
+    /// the IPC serve loop) is invisible to a plain `recv()` wait — only the liveness pipe
+    /// (checked here) reflects it.
+    pub(super) fn poll_readable_with_liveness(&self, timeout: Option<Duration>) -> io::Result<()> {
+        let Some(ref lw) = self.liveness else {
+            return poll_with_timeout(self.inner.as_raw_fd(), libc::POLLIN, timeout);
+        };
+        let timeout_ms: i32 = match timeout {
+            None => -1,
+            Some(d) => d.as_millis().min(i32::MAX as u128) as i32,
+        };
+        let mut pfds = [
+            libc::pollfd {
+                fd: self.inner.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: lw.as_raw_fd(),
+                events: libc::POLLHUP as libc::c_short,
+                revents: 0,
+            },
+        ];
+        loop {
+            let ret =
+                unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, timeout_ms) };
+            if ret > 0 {
+                if pfds[1].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                    return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                }
+                return Ok(());
+            }
+            if ret == 0 {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
+    }
+
     /// Create from a connected fd plus a peer fd that must be kept alive.
     ///
     /// On macOS, the peer fd must be kept open locally to maintain the SOCK_DGRAM
@@ -370,6 +421,47 @@ mod tests {
         assert!(
             conn0.try_send_raw(&mut vec![42u8; 10], &[]).is_err(),
             "expected send error after dropping peer on macOS"
+        );
+    }
+
+    /// A peer that disconnects while we're blocked in `recv_raw_blocking` must be detected
+    /// immediately (via the liveness pipe) rather than only once the whole read_timeout
+    /// elapses. This reproduces the real-world scenario in `broken_pipe.phpt`: the daemon
+    /// closes its connection after failing to decode a garbled message (see the IPC serve
+    /// loop's `Ok((Err(_), _)) => break` arm), and the client is waiting on a `call()`'s
+    /// `recv_raw_blocking` for the response that will now never arrive. Before this fix,
+    /// `recv_raw_blocking` only polled the data socket, so it had no way to learn the peer
+    /// was gone and just blocked for the full timeout, then returned a generic `TimedOut`
+    /// (which `with_retry` treats as non-reconnectable) instead of `BrokenPipe`.
+    #[test]
+    fn test_recv_blocking_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        // Generous timeout: if the fix regresses, this test would otherwise have to wait out
+        // this whole duration before failing, so keep it well above scheduling jitter but far
+        // below what a CI timeout would tolerate for a passing run.
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Simulate the daemon closing its connection (e.g. after a decode failure).
+        drop(server);
+
+        let start = std::time::Instant::now();
+        let err = client
+            .recv_raw_blocking(&mut [0u8; 64])
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_blocking took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not a timeout wait"
         );
     }
 }

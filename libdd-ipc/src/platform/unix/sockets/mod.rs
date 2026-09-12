@@ -388,6 +388,14 @@ impl SeqpacketConn {
             match recvmsg_raw(fd, buf, MsgFlags::empty()) {
                 Ok(r) => return Ok(r),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // On macOS, also watch the liveness pipe so a peer that disconnects while
+                    // we're waiting for a response is detected immediately (BrokenPipe) rather
+                    // than only after the full read_timeout elapses (see
+                    // poll_readable_with_liveness's docs: SOCK_DGRAM has no connection state,
+                    // so a plain poll on the data socket alone can't see the peer is gone).
+                    #[cfg(target_os = "macos")]
+                    self.poll_readable_with_liveness(self.read_timeout)?;
+                    #[cfg(not(target_os = "macos"))]
                     poll_with_timeout(fd, libc::POLLIN, self.read_timeout)?;
                 }
                 Err(e) => return Err(e),
