@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
         // ============================================================================
         // Example 1: Basic ExporterManager usage
         // ============================================================================
-        
+
         std::cout << "=== Example 1: Basic ExporterManager Usage ===" << std::endl;
 
         // Create a profile
@@ -39,7 +39,9 @@ int main(int argc, char *argv[]) {
             .value = 60
         };
 
-        auto profile = Profile::create_or_throw({SampleType::WallTime}, period);
+        auto profile_result = Profile::create({SampleType::WallTime}, period);
+        if (!check_status(profile_result->status(), "Profile::create")) return 1;
+        auto profile = profile_result->take();
         std::cout << "✓ Created profile" << std::endl;
 
         // Add some sample data
@@ -73,8 +75,8 @@ int main(int argc, char *argv[]) {
         std::cout << "✓ Added sample to profile" << std::endl;
 
         // Create exporter
-        auto exporter = api_key 
-            ? ProfileExporter::create_agentless_exporter_or_throw(
+        auto exporter_result = api_key
+            ? ProfileExporter::create_agentless_exporter(
                 "libdatadog-example",
                 "1.0.0",
                 "native",
@@ -87,7 +89,7 @@ int main(int argc, char *argv[]) {
                 10000,
                 false
               )
-            : ProfileExporter::create_file_exporter_or_throw(
+            : ProfileExporter::create_file_exporter(
                 "libdatadog-example",
                 "1.0.0",
                 "native",
@@ -97,11 +99,15 @@ int main(int argc, char *argv[]) {
                 },
                 "/tmp/exporter_manager_example_cxx.txt"
               );
+        if (!check_status(exporter_result->status(), "ProfileExporter::create")) return 1;
+        auto exporter = exporter_result->take();
 
         std::cout << "✓ Created exporter" << std::endl;
 
         // Create ExporterManager
-        auto manager = ExporterManager::new_manager_or_throw(std::move(exporter));
+        auto manager_result = ExporterManager::new_manager(std::move(exporter));
+        if (!check_status(manager_result->status(), "ExporterManager::new_manager")) return 1;
+        auto manager = manager_result->take();
         std::cout << "✓ Created ExporterManager with background worker thread" << std::endl;
 
         // Queue the profile (this resets the profile and queues the previous data)
@@ -128,12 +134,14 @@ int main(int argc, char *argv[]) {
         // ============================================================================
         // Example 2: Fork-safe usage
         // ============================================================================
-        
+
         std::cout << "=== Example 2: Fork-Safe ExporterManager Usage ===" << std::endl;
 
         // Create a new profile and exporter for the fork example
-        auto profile2 = Profile::create_or_throw({SampleType::WallTime}, period);
-        
+        auto profile2_result = Profile::create({SampleType::WallTime}, period);
+        if (!check_status(profile2_result->status(), "Profile::create")) return 1;
+        auto profile2 = profile2_result->take();
+
         if (!check_status(profile2->add_sample(Sample{
             .locations = {
                 Location{
@@ -153,7 +161,7 @@ int main(int argc, char *argv[]) {
             }
         }), "add_sample")) return 1;
 
-        auto exporter2 = ProfileExporter::create_file_exporter_or_throw(
+        auto exporter2_result = ProfileExporter::create_file_exporter(
             "libdatadog-example-fork",
             "1.0.0",
             "native",
@@ -163,8 +171,12 @@ int main(int argc, char *argv[]) {
             },
             "/tmp/exporter_manager_fork_cxx.txt"
         );
+        if (!check_status(exporter2_result->status(), "ProfileExporter::create_file_exporter")) return 1;
+        auto exporter2 = exporter2_result->take();
 
-        auto manager2 = ExporterManager::new_manager_or_throw(std::move(exporter2));
+        auto manager2_result = ExporterManager::new_manager(std::move(exporter2));
+        if (!check_status(manager2_result->status(), "ExporterManager::new_manager")) return 1;
+        auto manager2 = manager2_result->take();
         std::cout << "✓ Created ExporterManager for fork example" << std::endl;
 
         // Queue a profile before forking
@@ -218,11 +230,11 @@ int main(int argc, char *argv[]) {
 
             if (!check_status(manager2->abort(), "abort")) return 1;
             std::cout << "[CHILD] ✓ Cleaned up and exiting" << std::endl;
-            
+
             exit(0);
         } else {
             // Parent process
-            std::cout << "[PARENT] ✓ In parent process (PID: " << getpid() 
+            std::cout << "[PARENT] ✓ In parent process (PID: " << getpid()
                       << ", child PID: " << pid << ")" << std::endl;
 
             // Call postfork_parent to restart the manager with inflight requests

@@ -32,7 +32,9 @@ int main() {
         // Create profile with predefined sample types. For prototyping a type
         // not yet in SampleType, use Custom1..Custom5 and configure the slot
         // with Profile::set_custom_sample_type before serialization.
-        auto profile = Profile::create_or_throw({SampleType::WallTime}, period);
+        auto profile_result = Profile::create({SampleType::WallTime}, period);
+        if (!check_status(profile_result->status(), "Profile::create")) return 1;
+        auto profile = profile_result->take();
         std::cout << "✅ Profile created" << std::endl;
         
         std::cout << "Adding upscaling rules..." << std::endl;
@@ -196,44 +198,50 @@ int main() {
                 const char* site = std::getenv("DD_SITE");
                 std::string dd_site = site ? site : "datadoghq.com";
                 std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
+                auto exporter_result = ProfileExporter::create_agentless_exporter(
+                    "dd-trace-cpp", "1.0.0", "native",
+                    {
+                        Tag{.key = "service", .value = "profiling-example"},
+                        Tag{.key = "env", .value = "dev"},
+                        Tag{.key = "example", .value = "cxx"}
+                    },
+                    dd_site.c_str(), api_key, 10000, false
+                );
+                if (!check_status(exporter_result->status(), "ProfileExporter::create_agentless_exporter")) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    ProfileExporter::create_agentless_exporter_or_throw(
-                        "dd-trace-cpp", "1.0.0", "native",
-                        {
-                            Tag{.key = "service", .value = "profiling-example"},
-                            Tag{.key = "env", .value = "dev"},
-                            Tag{.key = "example", .value = "cxx"}
-                        },
-                        dd_site.c_str(), api_key, 10000, false
-                    )
+                    exporter_result->take()
                 );
             } else if (agent_url) {
                 // Agent mode - send to local Datadog agent
                 std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
+                auto exporter_result = ProfileExporter::create_agent_exporter(
+                    "dd-trace-cpp", "1.0.0", "native",
+                    {
+                        Tag{.key = "service", .value = "profiling-example"},
+                        Tag{.key = "env", .value = "dev"},
+                        Tag{.key = "example", .value = "cxx"}
+                    },
+                    agent_url, 10000, false
+                );
+                if (!check_status(exporter_result->status(), "ProfileExporter::create_agent_exporter")) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    ProfileExporter::create_agent_exporter_or_throw(
-                        "dd-trace-cpp", "1.0.0", "native",
-                        {
-                            Tag{.key = "service", .value = "profiling-example"},
-                            Tag{.key = "env", .value = "dev"},
-                            Tag{.key = "example", .value = "cxx"}
-                        },
-                        agent_url, 10000, false
-                    )
+                    exporter_result->take()
                 );
             } else {
                 // File mode - dump HTTP request for debugging/testing
                 std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
+                auto exporter_result = ProfileExporter::create_file_exporter(
+                    "dd-trace-cpp", "1.0.0", "native",
+                    {
+                        Tag{.key = "service", .value = "profiling-example"},
+                        Tag{.key = "env", .value = "dev"},
+                        Tag{.key = "example", .value = "cxx"}
+                    },
+                    "profile_dump.txt"
+                );
+                if (!check_status(exporter_result->status(), "ProfileExporter::create_file_exporter")) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    ProfileExporter::create_file_exporter_or_throw(
-                        "dd-trace-cpp", "1.0.0", "native",
-                        {
-                            Tag{.key = "service", .value = "profiling-example"},
-                            Tag{.key = "env", .value = "dev"},
-                            Tag{.key = "example", .value = "cxx"}
-                        },
-                        "profile_dump.txt"
-                    )
+                    exporter_result->take()
                 );
             }
             std::cout << "✅ Exporter created" << std::endl;
@@ -280,7 +288,9 @@ int main() {
             // profile under their own lock, release that lock, and upload the
             // already-encoded profile later.
             std::cout << "Exporting a second profile with split serialize/send..." << std::endl;
-            auto split_profile = Profile::create_or_throw({SampleType::WallTime}, period);
+            auto split_profile_result = Profile::create({SampleType::WallTime}, period);
+            if (!check_status(split_profile_result->status(), "Profile::create")) return 1;
+            auto split_profile = split_profile_result->take();
             Mapping split_mapping{
                 .memory_start = 0x30000000,
                 .memory_limit = 0x40000000,
@@ -308,7 +318,9 @@ int main() {
             }), "add_sample")) return 1;
             if (!check_status(split_profile->add_endpoint_count("/api/split-export", 1), "add_endpoint_count")) return 1;
 
-            auto encoded_profile = split_profile->serialize_or_throw();
+            auto encoded_profile_result = split_profile->serialize();
+            if (!check_status(encoded_profile_result->status(), "Profile::serialize")) return 1;
+            auto encoded_profile = encoded_profile_result->take();
             auto encoded_bytes = encoded_profile->bytes();
             std::cout << "ℹ️  Split profile serialized to " << encoded_bytes.size() << " compressed bytes" << std::endl;
 

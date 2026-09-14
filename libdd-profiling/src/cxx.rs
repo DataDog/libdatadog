@@ -303,18 +303,37 @@ pub mod ffi {
 
     // Opaque Rust types
     extern "Rust" {
-        // CXX exposes Rust Result<T> errors as C++ exceptions. Keep any Result-returning
-        // C++ API explicitly named *_or_throw; hot-path mutation APIs below return Status
-        // or typed result structs instead.
+        // CXX exposes Rust Result<T> errors as C++ exceptions. Profiling CXX APIs avoid
+        // Result<T> in bridge signatures and report failures through Status or typed
+        // result wrappers instead.
         type Profile;
+        type ProfileResult;
         type ProfileExporter;
+        type ProfileExporterResult;
         type EncodedProfile;
+        type EncodedProfileResult;
+        type BytesResult;
         type ExporterManager;
+        type ExporterManagerResult;
         type ProfilesDictionary;
+        type ProfilesDictionaryResult;
         type StringId2Opaque;
         type FunctionId2Opaque;
         type MappingId2Opaque;
         type CancellationToken;
+
+        fn status(self: &ProfileResult) -> Status;
+        fn take(self: &mut ProfileResult) -> Box<Profile>;
+        fn status(self: &ProfileExporterResult) -> Status;
+        fn take(self: &mut ProfileExporterResult) -> Box<ProfileExporter>;
+        fn status(self: &EncodedProfileResult) -> Status;
+        fn take(self: &mut EncodedProfileResult) -> Box<EncodedProfile>;
+        fn status(self: &BytesResult) -> Status;
+        fn take(self: &mut BytesResult) -> Vec<u8>;
+        fn status(self: &ExporterManagerResult) -> Status;
+        fn take(self: &mut ExporterManagerResult) -> Box<ExporterManager>;
+        fn status(self: &ProfilesDictionaryResult) -> Status;
+        fn take(self: &mut ProfilesDictionaryResult) -> Box<ProfilesDictionary>;
 
         // CancellationToken factory and methods
         fn new_cancellation_token() -> Box<CancellationToken>;
@@ -324,18 +343,15 @@ pub mod ffi {
 
         // Static factory methods for Profile
         #[Self = "Profile"]
-        #[cxx_name = "create_or_throw"]
-        fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
+        fn create(sample_types: Vec<SampleType>, period: &Period) -> Box<ProfileResult>;
 
         /// Create a profile without a sampling period.
         #[Self = "Profile"]
-        #[cxx_name = "create_no_period_or_throw"]
-        fn create_no_period(sample_types: Vec<SampleType>) -> Result<Box<Profile>>;
+        fn create_no_period(sample_types: Vec<SampleType>) -> Box<ProfileResult>;
 
         // Static factory methods for ProfilesDictionary
         #[Self = "ProfilesDictionary"]
-        #[cxx_name = "create_or_throw"]
-        fn create() -> Result<Box<ProfilesDictionary>>;
+        fn create() -> Box<ProfilesDictionaryResult>;
 
         /// Inserts value into this dictionary and returns an opaque id.
         ///
@@ -365,12 +381,11 @@ pub mod ffi {
         /// or unknown values, but all non-null ids must be produced by this
         /// same dictionary.
         #[Self = "Profile"]
-        #[cxx_name = "create_with_dictionary_or_throw"]
         fn create_with_dictionary(
             sample_types: Vec<SampleType>,
             period: &Period,
             dictionary: &ProfilesDictionary,
-        ) -> Result<Box<Profile>>;
+        ) -> Box<ProfileResult>;
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Status;
@@ -434,22 +449,19 @@ pub mod ffi {
         /// profile data. The returned EncodedProfile includes the compressed
         /// pprof bytes plus metadata needed by exporters, such as endpoint
         /// counts.
-        #[cxx_name = "serialize_or_throw"]
-        fn serialize(self: &mut Profile) -> Result<Box<EncodedProfile>>;
+        fn serialize(self: &mut Profile) -> Box<EncodedProfileResult>;
 
         /// Serialize and reset the profile, returning only compressed pprof
         /// bytes. This is a convenience/debug API; callers that intend to send
-        /// the profile should prefer Profile::serialize_or_throw() plus
+        /// the profile should prefer Profile::serialize() plus
         /// ProfileExporter::send_encoded_profile().
-        #[cxx_name = "serialize_to_vec_or_throw"]
-        fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+        fn serialize_to_vec(self: &mut Profile) -> Box<BytesResult>;
 
         /// Return a copy of the compressed pprof bytes.
         fn bytes(self: &EncodedProfile) -> Vec<u8>;
 
         // Static factory methods for ProfileExporter
         #[Self = "ProfileExporter"]
-        #[cxx_name = "create_agent_exporter_or_throw"]
         fn create_agent_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
@@ -458,10 +470,9 @@ pub mod ffi {
             agent_url: &str,
             timeout_ms: u64,
             use_system_resolver: bool,
-        ) -> Result<Box<ProfileExporter>>;
+        ) -> Box<ProfileExporterResult>;
 
         #[Self = "ProfileExporter"]
-        #[cxx_name = "create_agentless_exporter_or_throw"]
         #[allow(clippy::too_many_arguments)]
         fn create_agentless_exporter(
             profiling_library_name: &str,
@@ -472,17 +483,16 @@ pub mod ffi {
             api_key: &str,
             timeout_ms: u64,
             use_system_resolver: bool,
-        ) -> Result<Box<ProfileExporter>>;
+        ) -> Box<ProfileExporterResult>;
 
         #[Self = "ProfileExporter"]
-        #[cxx_name = "create_file_exporter_or_throw"]
         fn create_file_exporter(
             profiling_library_name: &str,
             profiling_library_version: &str,
             family: &str,
             tags: Vec<Tag>,
             output_path: &str,
-        ) -> Result<Box<ProfileExporter>>;
+        ) -> Box<ProfileExporterResult>;
 
         // ProfileExporter methods
         /// Sends a profile to Datadog.
@@ -552,7 +562,7 @@ pub mod ffi {
         /// lock before performing blocking I/O.
         ///
         /// # Arguments
-        /// * `encoded` - EncodedProfile previously returned by Profile::serialize_or_throw().
+        /// * `encoded` - EncodedProfile previously returned by Profile::serialize().
         /// * `files_to_compress` - Additional files to compress and attach.
         /// * `additional_tags` - Per-profile tags in addition to exporter-level tags.
         /// * `process_tags` - Process-level tags as comma-separated string; empty if not needed.
@@ -587,8 +597,7 @@ pub mod ffi {
         // ExporterManager methods
         /// Creates a new ExporterManager with a background worker thread
         #[Self = "ExporterManager"]
-        #[cxx_name = "new_manager_or_throw"]
-        fn new_manager(exporter: Box<ProfileExporter>) -> Result<Box<ExporterManager>>;
+        fn new_manager(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult>;
 
         /// Queue a profile to be sent asynchronously by the worker thread
         ///
@@ -657,10 +666,116 @@ impl ffi::Status {
         }
     }
 
+    fn clone_status(&self) -> Self {
+        Self {
+            ok: self.ok,
+            message: self.message.clone(),
+        }
+    }
+
     #[cfg(test)]
     #[track_caller]
     pub fn unwrap(self) {
         assert!(self.ok, "{}", self.message);
+    }
+}
+
+macro_rules! impl_box_result {
+    ($result:ident, $value:ty) => {
+        #[must_use]
+        pub struct $result {
+            status: ffi::Status,
+            value: Option<Box<$value>>,
+        }
+
+        impl $result {
+            fn from_result(result: anyhow::Result<Box<$value>>) -> Box<Self> {
+                match result {
+                    Ok(value) => Box::new(Self {
+                        status: ffi::Status::ok(),
+                        value: Some(value),
+                    }),
+                    Err(err) => Box::new(Self {
+                        status: ffi::Status::err(err),
+                        value: None,
+                    }),
+                }
+            }
+
+            pub fn status(&self) -> ffi::Status {
+                self.status.clone_status()
+            }
+
+            pub fn take(&mut self) -> Box<$value> {
+                match self.value.take() {
+                    Some(value) => value,
+                    None => std::process::abort(),
+                }
+            }
+
+            #[cfg(test)]
+            #[track_caller]
+            pub fn is_ok(&self) -> bool {
+                self.status.ok
+            }
+
+            #[cfg(test)]
+            #[track_caller]
+            pub fn is_err(&self) -> bool {
+                !self.status.ok
+            }
+
+            #[cfg(test)]
+            #[allow(clippy::boxed_local)]
+            #[track_caller]
+            pub fn unwrap(mut self: Box<Self>) -> Box<$value> {
+                self.status.unwrap();
+                self.value.take().expect("successful result has value")
+            }
+        }
+    };
+}
+
+impl_box_result!(ProfileResult, Profile);
+impl_box_result!(ProfilesDictionaryResult, ProfilesDictionary);
+impl_box_result!(EncodedProfileResult, EncodedProfile);
+impl_box_result!(ProfileExporterResult, ProfileExporter);
+impl_box_result!(ExporterManagerResult, ExporterManager);
+
+#[must_use]
+pub struct BytesResult {
+    status: ffi::Status,
+    value: Option<Vec<u8>>,
+}
+
+impl BytesResult {
+    fn from_result(result: anyhow::Result<Vec<u8>>) -> Box<Self> {
+        match result {
+            Ok(value) => Box::new(Self {
+                status: ffi::Status::ok(),
+                value: Some(value),
+            }),
+            Err(err) => Box::new(Self {
+                status: ffi::Status::err(err),
+                value: None,
+            }),
+        }
+    }
+
+    pub fn status(&self) -> ffi::Status {
+        self.status.clone_status()
+    }
+
+    pub fn take(&mut self) -> Vec<u8> {
+        self.value.take().unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::boxed_local)]
+    #[track_caller]
+    pub fn unwrap(mut self: Box<Self>) -> Vec<u8> {
+        self.status.unwrap();
+        self.value.take().expect("successful result has value")
     }
 }
 
@@ -1063,13 +1178,15 @@ pub struct ProfilesDictionary {
 }
 
 impl ProfilesDictionary {
-    pub fn create() -> anyhow::Result<Box<ProfilesDictionary>> {
-        let dictionary = profiles::datatypes::ProfilesDictionary::try_new()
-            .context("ProfilesDictionary::create failed")?;
-        let inner = profiles::collections::Arc::try_new(dictionary)
-            .map_err(|_| anyhow::anyhow!("failed to allocate ProfilesDictionary"))?;
+    pub fn create() -> Box<ProfilesDictionaryResult> {
+        ProfilesDictionaryResult::from_result((|| -> anyhow::Result<Box<ProfilesDictionary>> {
+            let dictionary = profiles::datatypes::ProfilesDictionary::try_new()
+                .context("ProfilesDictionary::create failed")?;
+            let inner = profiles::collections::Arc::try_new(dictionary)
+                .map_err(|_| anyhow::anyhow!("failed to allocate ProfilesDictionary"))?;
 
-        Ok(Box::new(ProfilesDictionary { inner }))
+            Ok(Box::new(ProfilesDictionary { inner }))
+        })())
     }
 
     pub fn insert_string(&self, value: &str) -> ffi::StringId2Result {
@@ -1108,50 +1225,53 @@ pub struct Profile {
 }
 
 impl Profile {
-    pub fn create(
-        sample_types: Vec<ffi::SampleType>,
-        period: &ffi::Period,
-    ) -> anyhow::Result<Box<Profile>> {
-        // Convert (fallibly) from CXX types to API types
-        let types: Vec<api::SampleType> = sample_types
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-        let period_value: api::Period = period.try_into()?;
+    pub fn create(sample_types: Vec<ffi::SampleType>, period: &ffi::Period) -> Box<ProfileResult> {
+        ProfileResult::from_result((|| -> anyhow::Result<Box<Profile>> {
+            // Convert (fallibly) from CXX types to API types
+            let types: Vec<api::SampleType> = sample_types
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
+            let period_value: api::Period = period.try_into()?;
 
-        // Profile::try_new interns the strings
-        let inner = internal::Profile::try_new(&types, Some(period_value))?;
+            // Profile::try_new interns the strings
+            let inner = internal::Profile::try_new(&types, Some(period_value))?;
 
-        Ok(Box::new(Profile { inner }))
+            Ok(Box::new(Profile { inner }))
+        })())
     }
 
-    pub fn create_no_period(sample_types: Vec<ffi::SampleType>) -> anyhow::Result<Box<Profile>> {
-        let types: Vec<api::SampleType> = sample_types
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-        let inner = internal::Profile::try_new(&types, None)?;
-        Ok(Box::new(Profile { inner }))
+    pub fn create_no_period(sample_types: Vec<ffi::SampleType>) -> Box<ProfileResult> {
+        ProfileResult::from_result((|| -> anyhow::Result<Box<Profile>> {
+            let types: Vec<api::SampleType> = sample_types
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
+            let inner = internal::Profile::try_new(&types, None)?;
+            Ok(Box::new(Profile { inner }))
+        })())
     }
 
     pub fn create_with_dictionary(
         sample_types: Vec<ffi::SampleType>,
         period: &ffi::Period,
         dictionary: &ProfilesDictionary,
-    ) -> anyhow::Result<Box<Profile>> {
-        let types: Vec<api::SampleType> = sample_types
-            .into_iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
-        let period_value: api::Period = period.try_into()?;
-        let dictionary = dictionary
-            .inner
-            .try_clone()
-            .context("failed to clone ProfilesDictionary for Profile")?;
-        let inner =
-            internal::Profile::try_new_with_dictionary(&types, Some(period_value), dictionary)
-                .context("Profile::create_with_dictionary failed")?;
-        Ok(Box::new(Profile { inner }))
+    ) -> Box<ProfileResult> {
+        ProfileResult::from_result((|| -> anyhow::Result<Box<Profile>> {
+            let types: Vec<api::SampleType> = sample_types
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
+            let period_value: api::Period = period.try_into()?;
+            let dictionary = dictionary
+                .inner
+                .try_clone()
+                .context("failed to clone ProfilesDictionary for Profile")?;
+            let inner =
+                internal::Profile::try_new_with_dictionary(&types, Some(period_value), dictionary)
+                    .context("Profile::create_with_dictionary failed")?;
+            Ok(Box::new(Profile { inner }))
+        })())
     }
 
     pub fn add_sample(&mut self, sample: &ffi::Sample) -> ffi::Status {
@@ -1319,17 +1439,25 @@ impl Profile {
         self.inner.reset_and_return_previous().map(|_| ()).into()
     }
 
-    pub fn serialize(&mut self) -> anyhow::Result<Box<EncodedProfile>> {
-        // Reset the profile and get the old one to serialize.
-        let old_profile = self.inner.reset_and_return_previous()?;
-        let end_time = Some(std::time::SystemTime::now());
-        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
-        Ok(Box::new(EncodedProfile { inner: encoded }))
+    pub fn serialize(&mut self) -> Box<EncodedProfileResult> {
+        EncodedProfileResult::from_result((|| -> anyhow::Result<Box<EncodedProfile>> {
+            // Reset the profile and get the old one to serialize.
+            let old_profile = self.inner.reset_and_return_previous()?;
+            let end_time = Some(std::time::SystemTime::now());
+            let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+            Ok(Box::new(EncodedProfile { inner: encoded }))
+        })())
     }
 
-    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
-        let EncodedProfile { inner } = *self.serialize()?;
-        Ok(inner.buffer)
+    pub fn serialize_to_vec(&mut self) -> Box<BytesResult> {
+        BytesResult::from_result((|| -> anyhow::Result<Vec<u8>> {
+            let mut encoded = self.serialize();
+            let status = encoded.status();
+            anyhow::ensure!(status.ok, status.message);
+            let encoded = encoded.take();
+            let EncodedProfile { inner } = *encoded;
+            Ok(inner.buffer)
+        })())
     }
 }
 
@@ -1421,7 +1549,10 @@ fn prepare_profile_for_export<'a>(
     Option<serde_json::Value>,
     Option<serde_json::Value>,
 )> {
-    let encoded = profile.serialize()?;
+    let mut encoded_result = profile.serialize();
+    let status = encoded_result.status();
+    anyhow::ensure!(status.ok, status.message);
+    let encoded = encoded_result.take();
     let (
         files_to_compress_vec,
         additional_tags_vec,
@@ -1463,29 +1594,31 @@ impl ProfileExporter {
         agent_url: &str,
         timeout_ms: u64,
         use_system_resolver: bool,
-    ) -> anyhow::Result<Box<ProfileExporter>> {
-        let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
+    ) -> Box<ProfileExporterResult> {
+        ProfileExporterResult::from_result((|| -> anyhow::Result<Box<ProfileExporter>> {
+            let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
 
-        // Set timeout if non-zero (0 means use default)
-        if timeout_ms > 0 {
-            endpoint.timeout_ms = timeout_ms;
-        }
-        endpoint = endpoint.with_system_resolver(use_system_resolver);
+            // Set timeout if non-zero (0 means use default)
+            if timeout_ms > 0 {
+                endpoint.timeout_ms = timeout_ms;
+            }
+            endpoint = endpoint.with_system_resolver(use_system_resolver);
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
-            .iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
+            let tags_vec: Vec<libdd_common::tag::Tag> = tags
+                .iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
 
-        let inner = exporter::ProfileExporter::new(
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags_vec,
-            endpoint,
-        )?;
+            let inner = exporter::ProfileExporter::new(
+                profiling_library_name,
+                profiling_library_version,
+                family,
+                tags_vec,
+                endpoint,
+            )?;
 
-        Ok(Box::new(ProfileExporter { inner }))
+            Ok(Box::new(ProfileExporter { inner }))
+        })())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1498,29 +1631,31 @@ impl ProfileExporter {
         api_key: &str,
         timeout_ms: u64,
         use_system_resolver: bool,
-    ) -> anyhow::Result<Box<ProfileExporter>> {
-        let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
+    ) -> Box<ProfileExporterResult> {
+        ProfileExporterResult::from_result((|| -> anyhow::Result<Box<ProfileExporter>> {
+            let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
 
-        // Set timeout if non-zero (0 means use default)
-        if timeout_ms > 0 {
-            endpoint.timeout_ms = timeout_ms;
-        }
-        endpoint = endpoint.with_system_resolver(use_system_resolver);
+            // Set timeout if non-zero (0 means use default)
+            if timeout_ms > 0 {
+                endpoint.timeout_ms = timeout_ms;
+            }
+            endpoint = endpoint.with_system_resolver(use_system_resolver);
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
-            .iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
+            let tags_vec: Vec<libdd_common::tag::Tag> = tags
+                .iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
 
-        let inner = exporter::ProfileExporter::new(
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags_vec,
-            endpoint,
-        )?;
+            let inner = exporter::ProfileExporter::new(
+                profiling_library_name,
+                profiling_library_version,
+                family,
+                tags_vec,
+                endpoint,
+            )?;
 
-        Ok(Box::new(ProfileExporter { inner }))
+            Ok(Box::new(ProfileExporter { inner }))
+        })())
     }
 
     pub fn create_file_exporter(
@@ -1529,23 +1664,25 @@ impl ProfileExporter {
         family: &str,
         tags: Vec<ffi::Tag>,
         output_path: &str,
-    ) -> anyhow::Result<Box<ProfileExporter>> {
-        let endpoint = exporter::config::file(output_path)?;
+    ) -> Box<ProfileExporterResult> {
+        ProfileExporterResult::from_result((|| -> anyhow::Result<Box<ProfileExporter>> {
+            let endpoint = exporter::config::file(output_path)?;
 
-        let tags_vec: Vec<libdd_common::tag::Tag> = tags
-            .iter()
-            .map(TryInto::try_into)
-            .collect::<Result<Vec<_>, _>>()?;
+            let tags_vec: Vec<libdd_common::tag::Tag> = tags
+                .iter()
+                .map(TryInto::try_into)
+                .collect::<Result<Vec<_>, _>>()?;
 
-        let inner = exporter::ProfileExporter::new(
-            profiling_library_name,
-            profiling_library_version,
-            family,
-            tags_vec,
-            endpoint,
-        )?;
+            let inner = exporter::ProfileExporter::new(
+                profiling_library_name,
+                profiling_library_version,
+                family,
+                tags_vec,
+                endpoint,
+            )?;
 
-        Ok(Box::new(ProfileExporter { inner }))
+            Ok(Box::new(ProfileExporter { inner }))
+        })())
     }
 
     /// Sends a profile to Datadog.
@@ -1781,9 +1918,11 @@ pub struct ExporterManager {
 }
 
 impl ExporterManager {
-    pub fn new_manager(exporter: Box<ProfileExporter>) -> anyhow::Result<Box<ExporterManager>> {
-        let inner = exporter::ExporterManager::new(exporter.inner)?;
-        Ok(Box::new(ExporterManager { inner }))
+    pub fn new_manager(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult> {
+        ExporterManagerResult::from_result((|| -> anyhow::Result<Box<ExporterManager>> {
+            let inner = exporter::ExporterManager::new(exporter.inner)?;
+            Ok(Box::new(ExporterManager { inner }))
+        })())
     }
 
     /// Queue a profile to be sent asynchronously by the background worker thread.

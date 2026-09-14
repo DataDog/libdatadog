@@ -29,7 +29,9 @@ int main() {
         };
 
         std::cout << "Creating ProfilesDictionary..." << std::endl;
-        auto dictionary = ProfilesDictionary::create_or_throw();
+        auto dictionary_result = ProfilesDictionary::create();
+        if (!check_status(dictionary_result->status(), "ProfilesDictionary::create")) return 1;
+        auto dictionary = dictionary_result->take();
 
         // Insert dictionary strings once and reuse opaque ids on every sample.
         auto mapping_filename_result = dictionary->insert_string("/usr/lib/libexample.so");
@@ -101,7 +103,9 @@ int main() {
         std::cout << "✅ Dictionary populated" << std::endl;
 
         std::cout << "Creating dictionary-backed Profile..." << std::endl;
-        auto profile = Profile::create_with_dictionary_or_throw({SampleType::WallTime}, period, *dictionary);
+        auto profile_result = Profile::create_with_dictionary({SampleType::WallTime}, period, *dictionary);
+        if (!check_status(profile_result->status(), "Profile::create_with_dictionary")) return 1;
+        auto profile = profile_result->take();
         std::cout << "✅ Profile created" << std::endl;
 
         std::cout << "Adding api2 samples..." << std::endl;
@@ -164,7 +168,9 @@ int main() {
         std::cout << "✅ Added endpoint data" << std::endl;
 
         std::cout << "Serializing profile..." << std::endl;
-        auto encoded = profile->serialize_to_vec_or_throw();
+        auto encoded_result = profile->serialize_to_vec();
+        if (!check_status(encoded_result->status(), "Profile::serialize_to_vec")) return 1;
+        auto encoded = encoded_result->take();
         if (encoded.size() == 0) {
             throw std::runtime_error("serialized profile was empty");
         }
