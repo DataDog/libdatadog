@@ -12,7 +12,7 @@ autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-prost = "0.14.1"
+prost = { workspace = true, default-features = true }
 
 [build-dependencies]
 prost-build = { workspace = true, features = ["format"], optional = true }
@@ -20,8 +20,10 @@ protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
-rand = ">=0.8.6, <0.9"
-rand_chacha = "0.3.1"
+# Bench only uses gen_range + seed_from_u64 (ChaCha8Rng); no thread_rng/StdRng,
+# so the default `std_rng` feature is unneeded.
+rand = { workspace = true, features = ["std"] }
+rand_chacha.workspace = true
 
 [features]
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]

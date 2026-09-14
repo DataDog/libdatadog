@@ -14,7 +14,8 @@ bench = false
 libdd-ffe = { path = "../libdd-ffe", features = ["flagevaluation-evp"] }
 chrono = { workspace = true, features = ["now", "serde"] }
 criterion = { workspace = true, features = ["html_reports"] }
-env_logger = "0.10"
+# Only builder().is_test().try_init() used; colored timestamps/regex filter syntax not needed.
+env_logger = { workspace = true, default-features = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
 

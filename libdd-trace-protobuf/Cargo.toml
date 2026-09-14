@@ -13,9 +13,13 @@ bench = false
 
 [dependencies]
 bolero = { workspace = true, features = ["std"], optional = true }
-prost = "0.14.1"
+prost = { workspace = true, default-features = true }
 serde = { workspace = true, features = ["derive"] }
-serde_bytes = "0.11.9"
+# We tend to prefer the smaller `alloc` feature over `std` for crates that
+# expose both, as does `serde_bytes`. However, switching to `alloc` only here
+# removes the (required) `Deserialize` implementations of some basic types.
+# There might be a way to migrate, but for now, we stay with default-features.
+serde_bytes = { workspace = true, default-features = true }
 
 [build-dependencies]
 prost-build = { workspace = true, features = ["format"], optional = true }
