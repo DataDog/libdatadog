@@ -31,6 +31,10 @@ pub struct FfeExposure {
     pub subject_attributes_json: String,
     pub allocation_key: String,
     pub variant: String,
+    /// Serial id of the split the subject was assigned to. Zero-based per
+    /// organization, so `Some(0)` is a real value and must not be treated as
+    /// absent.
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Clone)]
@@ -66,6 +70,7 @@ impl ExposureDeduplicator {
         let value = ExposureCacheValue {
             allocation_key: exposure.allocation_key.clone(),
             variant: exposure.variant.clone(),
+            serial_id: exposure.serial_id,
         };
 
         let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -91,6 +96,7 @@ struct ExposureCacheKey {
 struct ExposureCacheValue {
     allocation_key: String,
     variant: String,
+    serial_id: Option<i32>,
 }
 
 pub fn encode_exposure_batch(
@@ -157,6 +163,8 @@ struct ExposureEvent {
     flag: Key,
     variant: Key,
     subject: Subject,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    serial_id: Option<i32>,
 }
 
 impl From<FfeExposure> for ExposureEvent {
@@ -174,6 +182,7 @@ impl From<FfeExposure> for ExposureEvent {
                 id: value.subject_id,
                 attributes: subject_attributes(&value.subject_attributes_json),
             },
+            serial_id: value.serial_id,
         }
     }
 }
@@ -232,7 +241,32 @@ mod tests {
             subject_attributes_json: r#"{"tier":"premium"}"#.to_owned(),
             allocation_key: allocation_key.to_owned(),
             variant: variant.to_owned(),
+            serial_id: None,
         }
+    }
+
+    fn exposure_with_serial_id(
+        subject_id: &str,
+        allocation_key: &str,
+        variant: &str,
+        serial_id: i32,
+    ) -> FfeExposure {
+        FfeExposure {
+            serial_id: Some(serial_id),
+            ..exposure(subject_id, allocation_key, variant)
+        }
+    }
+
+    fn encode_one(deduplicator: &ExposureDeduplicator, exposure: FfeExposure) -> Option<Value> {
+        encode_exposure_batch(
+            deduplicator,
+            FfeExposureBatch {
+                context: context(),
+                exposures: vec![exposure],
+            },
+        )
+        .unwrap()
+        .map(|payload| serde_json::from_str(&payload).unwrap())
     }
 
     #[test]
@@ -341,6 +375,118 @@ mod tests {
 
         assert!(first.is_some());
         assert!(other_service.is_some());
+    }
+
+    #[test]
+    fn serializes_serial_id_at_the_event_top_level() {
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure_with_serial_id("user", "alloc", "variant", 4242),
+        )
+        .unwrap();
+
+        assert_eq!(payload["exposures"][0]["serial_id"], 4242);
+    }
+
+    #[test]
+    fn serializes_a_zero_serial_id() {
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        )
+        .unwrap();
+
+        assert_eq!(payload["exposures"][0]["serial_id"], 0);
+    }
+
+    #[test]
+    fn omits_an_absent_serial_id() {
+        let payload = encode_one(
+            &ExposureDeduplicator::new(4),
+            exposure("user", "alloc", "variant"),
+        )
+        .unwrap();
+
+        assert_eq!(payload["exposures"][0].get("serial_id"), None);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_only_the_serial_id_appears() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(&deduplicator, exposure("user", "alloc", "variant"));
+        let appeared = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+
+        assert_eq!(first.unwrap()["exposures"][0].get("serial_id"), None);
+        assert_eq!(appeared.unwrap()["exposures"][0]["serial_id"], 0);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_only_the_serial_id_changes() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+        let changed = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 1),
+        );
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
+        assert_eq!(changed.unwrap()["exposures"][0]["serial_id"], 1);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_the_serial_id_disappears() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+        let disappeared = encode_one(&deduplicator, exposure("user", "alloc", "variant"));
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
+        assert_eq!(disappeared.unwrap()["exposures"][0].get("serial_id"), None);
+    }
+
+    #[test]
+    fn emits_an_exposure_when_the_serial_id_returns_to_an_earlier_value() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 7),
+        );
+        let changed = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 9),
+        );
+        let returned = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 7),
+        );
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 7);
+        assert_eq!(changed.unwrap()["exposures"][0]["serial_id"], 9);
+        assert_eq!(returned.unwrap()["exposures"][0]["serial_id"], 7);
+    }
+
+    #[test]
+    fn deduplicates_an_unchanged_serial_id() {
+        let deduplicator = ExposureDeduplicator::new(4);
+        let first = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+        let duplicate = encode_one(
+            &deduplicator,
+            exposure_with_serial_id("user", "alloc", "variant", 0),
+        );
+
+        assert_eq!(first.unwrap()["exposures"][0]["serial_id"], 0);
+        assert_eq!(duplicate, None);
     }
 
     #[test]

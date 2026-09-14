@@ -143,8 +143,12 @@ impl Module for Profiling {
             &self.arch,
         ];
 
-        if self.profile.as_ref() == "release" {
-            cargo_args.push("--release");
+        match self.profile.as_ref() {
+            "debug" | "dev" => {}
+            profile => {
+                cargo_args.push("--profile");
+                cargo_args.push(profile);
+            }
         }
 
         // Parse profiling-ffi manifest in order to get the crate-type array.

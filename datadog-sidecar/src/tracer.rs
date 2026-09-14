@@ -28,7 +28,12 @@ extern "C" fn drop_shm_limiter() {
 
 #[derive(Default)]
 pub struct Config {
+    /// Endpoint for the V0.4 trace path: agentful sessions are normalized to `/v0.4/traces`;
+    /// agentless sessions point at the intake URL, which is encoding-agnostic.
     pub endpoint: Option<Endpoint>,
+    /// Endpoint for the V1 trace path: agentful sessions are normalized to `/v1.0/traces`
+    /// instead; agentless sessions share the same intake URL as `endpoint`.
+    pub endpoint_v1: Option<Endpoint>,
     pub language: String,
     pub language_version: String,
     pub tracer_version: String,
@@ -37,23 +42,37 @@ pub struct Config {
 
 impl Config {
     pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
-        let uri = if endpoint.api_key.is_some() {
-            http::Uri::from_str(&trace_intake_url_prefixed(&endpoint.url.to_string()))?
+        let (url, url_v1) = if endpoint.api_key.is_some() {
+            let url = http::Uri::from_str(&trace_intake_url_prefixed(&endpoint.url.to_string()))?;
+            (url.clone(), url)
         } else {
-            let mut parts = endpoint.url.into_parts();
+            let mut parts = endpoint.url.clone().into_parts();
             parts.path_and_query = Some(PathAndQuery::from_static("/v0.4/traces"));
-            http::Uri::from_parts(parts)?
+            let url = http::Uri::from_parts(parts)?;
+
+            let mut parts_v1 = endpoint.url.clone().into_parts();
+            parts_v1.path_and_query = Some(PathAndQuery::from_static("/v1.0/traces"));
+            let url_v1 = http::Uri::from_parts(parts_v1)?;
+
+            (url, url_v1)
         };
-        self.endpoint = Some(Endpoint {
-            url: uri,
-            ..endpoint
+        self.endpoint_v1 = Some(Endpoint {
+            url: url_v1,
+            ..endpoint.clone()
         });
+        self.endpoint = Some(Endpoint { url, ..endpoint });
         Ok(())
     }
 
-    pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
+    pub fn set_endpoint_test_token<T: Into<Cow<'static, str>> + Clone>(
+        &mut self,
+        test_token: Option<T>,
+    ) {
         if let Some(endpoint) = &mut self.endpoint {
-            endpoint.test_token = test_token.map(|t| t.into());
+            endpoint.test_token = test_token.clone().map(Into::into);
+        }
+        if let Some(endpoint) = &mut self.endpoint_v1 {
+            endpoint.test_token = test_token.map(Into::into);
         }
     }
 }

@@ -13,6 +13,7 @@ on:
     - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   setup:
@@ -77,6 +78,7 @@ jobs:
     permissions:
       checks: write
       contents: read
+      id-token: write
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -118,10 +120,14 @@ jobs:
           go-version: 'stable'
           cache: false
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: all-features
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
@@ -138,6 +144,20 @@ jobs:
             # shellcheck disable=SC2086
             cargo build $PACKAGES --verbose
           fi
+      - name: "[${{ steps.rust-version.outputs.version}}] check minimal native features"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | \
+            grep -Eq "libdd-(common|dogstatsd-client|http-client|trace-utils)"; then
+            cargo check -p libdd-dogstatsd-client --no-default-features
+            cargo check -p libdd-http-client --no-default-features \
+              --features hyper-backend
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features mini_agent
+            cargo check -p libdd-trace-utils --no-default-features \
+              --features test-utils
+          fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
@@ -147,14 +167,14 @@ jobs:
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
-            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
             cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
-              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,hyper-proxy,https --profile ci --verbose
             fi
           fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
@@ -220,8 +240,18 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ steps.rust-version.outputs.version }}] test report"
           include_passed: true
+      # Forked PRs get no id-token permission, so on failure the upload below
+      # runs with an empty key and is itself continue-on-error.
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        if: success() || failure()
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
       - name: Upload test results to Datadog
         if: success() || failure()
+        continue-on-error: true
         shell: bash
         run: |
           # Download datadog-ci binary
@@ -265,13 +295,17 @@ jobs:
             --tags rustc:${{ steps.rust-version.outputs.version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }} \
             target/nextest/ci/junit.xml
         env:
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
 
   cross-centos7:
     name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      id-token: write
     env:
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
@@ -294,10 +328,14 @@ jobs:
         with:
           submodules: recursive
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: centos7
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Build CentOS 7 Docker image
         run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
       - name: "cargo nextest run (centos7)"
@@ -334,8 +372,18 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[centos7] test report"
           include_passed: true
+      # Forked PRs get no id-token permission, so on failure the upload below
+      # runs with an empty key and is itself continue-on-error.
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        if: success() || failure()
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
       - name: Upload test results to Datadog
         if: success() || failure()
+        continue-on-error: true
         run: |
           URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
           OUTPUT="datadog-ci"
@@ -362,7 +410,7 @@ jobs:
             --tags arch:${{ runner.arch }},os:Linux,platform:centos7 \
             target/nextest/ci/junit.xml
         env:
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
 
   no-certs-exporter:
     name: "exporter_e2e tests (no CA certificates)"
@@ -376,10 +424,14 @@ jobs:
         with:
           submodules: recursive
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true
           cache-bin: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
       - name: Pre-fetch dependencies (requires network/certs on the runner)
@@ -412,7 +464,7 @@ jobs:
           cargo test -p libdd-profiling --test exporter_e2e
 
   wasm:
-    name: "cargo check --target wasm32-unknown-unknown"
+    name: "WASM checks and tests"
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-wasm
@@ -425,11 +477,27 @@ jobs:
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true
           cache-bin: true
+          shared-key: wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: Install wasm-bindgen test runner
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:
           RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+      - name: Run WASM tests
+        run: cargo test -p libdd-wasm-tests --target wasm32-unknown-unknown
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+      - name: "cargo check -p libdd-remote-config --target wasm32-unknown-unknown --features client,agentless"
+        run: cargo check -p libdd-remote-config --target wasm32-unknown-unknown --no-default-features --features client,agentless
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
+          # ring compiles C for wasm32, which the runner's default `cc` (gcc) cannot target.
+          CC_wasm32_unknown_unknown: clang

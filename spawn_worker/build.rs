@@ -5,6 +5,7 @@ pub use cc_utils::cc;
 
 fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
     // Compile the ELF entry point for the shared library (direct exec by ld.so).
     if target_os == "linux" {
@@ -24,8 +25,7 @@ fn main() {
         .file("src/trampoline.c")
         .warnings(true)
         .flag("-g") // DWARF debug info so Valgrind can load symbols before unlink
-        .link_dynamically("dl")
-        .warnings_into_errors(true)
+        .warnings_into_errors(!(target_os == "windows" && target_env == "gnu"))
         .emit_rerun_if_env_changed(true);
 
     if target_os != "windows" {
@@ -37,7 +37,7 @@ fn main() {
         builder.link_dynamically("m");
         // some old libc versions are unhappy if it gets linked in dynamically later on
         builder.link_dynamically("pthread");
-    } else {
+    } else if target_env == "msvc" {
         builder.flag("-wd4996"); // disable deprecation warnings
     }
 
@@ -53,14 +53,21 @@ fn main() {
             .try_compile_shared_lib("ld_preload_trampoline.shared_lib")
             .unwrap();
     } else {
-        cc_utils::ImprovedBuild::new()
-            .file("src/crashtracking_trampoline.cpp") // Path to your C++ file
+        let mut builder = cc_utils::ImprovedBuild::new();
+        builder
+            .cpp(true)
+            .file("src/crashtracking_trampoline.cpp")
             .warnings(true)
-            .warnings_into_errors(true)
-            .flag("/std:c++17") // Set the C++ standard (adjust as needed)
-            .flag("/LD")
-            .flag("/EHsc")
-            .emit_rerun_if_env_changed(true)
+            .warnings_into_errors(!(target_os == "windows" && target_env == "gnu"))
+            .emit_rerun_if_env_changed(true);
+
+        if target_env == "msvc" {
+            builder.flag("/std:c++17").flag("/LD").flag("/EHsc");
+        } else {
+            builder.flag("-std=c++17");
+        }
+
+        builder
             .try_compile_shared_lib("crashtracking_trampoline.bin")
             .unwrap();
     }

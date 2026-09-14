@@ -21,15 +21,6 @@ usage() {
 API_JSON=$1
 [[ -f "$API_JSON" ]] || { echo "Not a file: $API_JSON" >&2; exit 2; }
 
-level_rank() {
-  case "${1:-}" in
-    patch) echo 0 ;;
-    minor) echo 1 ;;
-    major) echo 2 ;;
-    *) echo -1 ;;
-  esac
-}
-
 libdd_deps_for_crate() {
   local manifest crate
   manifest=$1
@@ -90,7 +81,6 @@ trap cleanup EXIT
 n=$(jq length "$API_JSON")
 OUT=$(mktemp)
 echo '[]' >"$OUT"
-FAIL=0
 
 for ((i = 0; i < n; i++)); do
   row=$(jq -c ".[$i]" "$API_JSON")

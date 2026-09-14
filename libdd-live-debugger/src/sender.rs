@@ -291,6 +291,7 @@ pub fn generate_tags(
     runtime_id: &dyn Display,
     custom_tags: &mut dyn Iterator<Item = &Tag>,
 ) -> String {
+    const MAX_TAGS_LEN: usize = 4001; // it's before percent-encoding, but 4001 is small enough
     let mut tags = format!(
         "debugger_version:{debugger_version},env:{env},version:{version},runtime_id:{runtime_id}"
     );
@@ -299,6 +300,10 @@ pub fn generate_tags(
         tags.push_str(hostname.as_str());
     }
     for tag in custom_tags {
+        // Trim tags to avoid too long of an URL and the intake reject our payload
+        if tags.len() + tag.as_ref().len() >= MAX_TAGS_LEN {
+            break;
+        }
         tags.push(',');
         tags.push_str(tag.as_ref());
     }

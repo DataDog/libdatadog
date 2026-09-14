@@ -563,6 +563,7 @@ mod tests {
             Some(vec!["db.hostname:prod-db-1", "db.name:orders"])
         );
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
+        assert_eq!(a.iter().filter(|kv| kv["key"] == "status.code").count(), 1);
         let custom = pts
             .iter()
             .find(|p| {

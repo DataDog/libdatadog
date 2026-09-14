@@ -8,6 +8,7 @@
 //! and processing traces for stats collection.
 
 pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+use libdd_trace_utils::span::span_pool::PooledChunks;
 
 use super::add_path;
 use super::TracerMetadata;
@@ -321,6 +322,8 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 ///
 /// If a telemetry client is provided and stats are enabled, dropped P0 counts
 /// will be sent to telemetry.
+///
+/// Returns true if stats were computed for the traces passed
 pub(crate) fn process_traces_for_stats<
     T: libdd_trace_utils::span::TraceData,
     #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
@@ -329,13 +332,13 @@ pub(crate) fn process_traces_for_stats<
         + Sync
         + 'static,
 >(
-    traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+    traces: &mut PooledChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
     #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
-) {
+) -> bool {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
@@ -372,6 +375,9 @@ pub(crate) fn process_traces_for_stats<
                 tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
             }
         }
+        true
+    } else {
+        false
     }
 }
 

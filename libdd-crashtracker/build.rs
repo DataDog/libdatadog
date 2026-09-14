@@ -1,39 +1,35 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#[cfg(unix)]
-mod unix_imports {
-    pub use std::path::Path;
-    pub use std::path::PathBuf;
-    pub use std::process::Command;
-}
-
-#[cfg(unix)]
-use unix_imports::*;
+#[cfg(feature = "generate-unit-test-files")]
+use std::path::{Path, PathBuf};
+#[cfg(feature = "generate-unit-test-files")]
+use std::process::Command;
 
 pub use libdd_common::cc_utils::cc;
 
 // Build CXX bridge - cross-platform function
 #[cfg(feature = "cxx")]
-fn build_cxx_bridge() {
+fn build_cxx_bridge(target_os: &str) {
     let mut build = cxx_build::bridge("src/crash_info/cxx.rs");
     build.flag_if_supported("-std=c++20");
 
     // On Windows, use dynamic CRT (/MD) to match the default Rust build
-    #[cfg(target_os = "windows")]
-    build.static_crt(false);
+    if target_os == "windows" {
+        build.static_crt(false);
+    }
 
     build.compile("libdd-crashtracker-cxx");
 
     println!("cargo:rerun-if-changed=src/crash_info/cxx.rs");
 }
 
-#[cfg(unix)]
+#[cfg(feature = "generate-unit-test-files")]
 fn build_shared_libs() {
     build_c_file();
     build_cpp_file();
 }
 
-#[cfg(unix)]
+#[cfg(feature = "generate-unit-test-files")]
 fn get_tests_folder_path() -> PathBuf {
     Path::new(&env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -41,7 +37,7 @@ fn get_tests_folder_path() -> PathBuf {
         .expect("Failed to canonicalize base path for libtest")
 }
 
-#[cfg(unix)]
+#[cfg(feature = "generate-unit-test-files")]
 fn build_c_file() {
     let base_path = get_tests_folder_path();
 
@@ -85,7 +81,7 @@ fn build_c_file() {
         .expect("Failed to change alignement of debug_abbrev ELF section");
 }
 
-#[cfg(unix)]
+#[cfg(feature = "generate-unit-test-files")]
 fn build_cpp_file() {
     let base_path = get_tests_folder_path();
 
@@ -112,44 +108,37 @@ fn build_cpp_file() {
         .unwrap();
 }
 
-#[cfg(unix)]
 fn main() {
+    #[cfg(any(feature = "cxx", feature = "generate-unit-test-files"))]
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_family = std::env::var("CARGO_CFG_TARGET_FAMILY").unwrap_or_default();
+
     println!(
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()
     );
+
+    #[cfg(feature = "cxx")]
+    build_cxx_bridge(&target_os);
+
+    if target_family != "unix" {
+        return;
+    }
 
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
 
-    // Build CXX bridge if feature is enabled
-    #[cfg(feature = "cxx")]
-    build_cxx_bridge();
-
     // Don't build test libraries during `cargo publish` verification.
     // During verification, the package is unpacked to target/package/ and built there.
-    let is_packaging = std::env::var("CARGO_MANIFEST_DIR")
-        .unwrap_or_default()
-        .contains("/target/package/");
-
-    if cfg!(all(
-        feature = "generate-unit-test-files",
-        not(target_os = "macos")
-    )) && !is_packaging
+    #[cfg(feature = "generate-unit-test-files")]
     {
-        build_shared_libs();
+        let is_packaging = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_default()
+            .contains("/target/package/");
+
+        if target_os != "macos" && !is_packaging {
+            build_shared_libs();
+        }
     }
-}
-
-#[cfg(not(unix))]
-fn main() {
-    println!(
-        "cargo:rustc-env=TARGET={}",
-        std::env::var("TARGET").unwrap()
-    );
-
-    // Build CXX bridge if feature is enabled
-    #[cfg(feature = "cxx")]
-    build_cxx_bridge();
 }

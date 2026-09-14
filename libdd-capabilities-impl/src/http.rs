@@ -18,6 +18,7 @@ mod native {
     use libdd_common::http_common::{
         new_client_periodic, new_default_client, Body, GenericHttpClient,
     };
+    use libdd_common::MutexExt;
 
     use http_body_util::BodyExt;
 
@@ -45,12 +46,9 @@ mod native {
     }
 
     impl NativeHttpClient {
-        /// Like [`HttpClientCapability::new_client`], but disables connection pooling.
-        ///
-        /// Intended for clients that issue requests on a fixed interval (e.g. remote
-        /// config polling): the agent's low keep-alive setting can close an idle
-        /// connection between polls, which turns a pooled/reused connection into
-        /// intermittent request failures.
+        /// Like [`HttpClientCapability::new_client`], but sets a small lifetime on pooled
+        /// connections. See [`HttpClientCapability::new_without_connection_pooling`] for the
+        /// rationale.
         pub fn new_without_connection_pooling() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
@@ -94,6 +92,11 @@ mod native {
             std::fs::rename(&tmp, &dest)
                 .map_err(|e| HttpError::Other(anyhow::anyhow!("renaming to {dest:?}: {e}")))?;
         } else {
+            // Serialize writes to avoid large writes interleaving. This is a global lock,
+            // but totally acceptable for the debug-case of file://.
+            static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = WRITE_LOCK.lock_or_panic();
+
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)

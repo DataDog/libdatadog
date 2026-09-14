@@ -67,10 +67,13 @@ jobs:
         include:
           - platform: "ubuntu-latest"
             flags: "-C relocation-model=pic"
+            profile: "release-ci"
           - platform: "macos-15"
             flags: "-C relocation-model=pic"
+            profile: "release"
           - platform: "windows-latest"
             flags: "-C target-feature=+crt-static"
+            profile: "release-ci"
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
@@ -108,12 +111,16 @@ jobs:
           cache: false
 
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: "Generate profiling FFI"
         shell: bash
         env:
@@ -122,7 +129,7 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
               git config --global core.longpaths true
           fi
-          cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
+          cargo run --bin release --profile ${{ matrix.profile }} -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
         if: success() || failure()
@@ -173,6 +180,8 @@ jobs:
       - name: "(Windows) Run FFI examples"
         shell: bash
         if: matrix.platform == 'windows-latest'
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
           cargo ffi-test
       - name: "Test building CXX bindings - Crashinfo (Unix)"

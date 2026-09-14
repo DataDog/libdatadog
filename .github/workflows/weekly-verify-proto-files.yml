@@ -59,7 +59,12 @@ jobs:
         if: always()
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
-
+      - name: Exclude from Green CI
+        if: always()
+        env:
+          DATADOG_SITE: datadoghq.com
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: ./scripts/exclude-from-green-ci.sh
       - name: report failure
         id: slack
         if: failure()

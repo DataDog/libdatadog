@@ -4,6 +4,15 @@
 schema-version: v1
 kind: mergequeue
 merge_method: squash
+# Each PR in the MQ will be rebased on the base branch before merging
+# conflicts between PRs in the MQ will not be able to be detected
+workflow_type: noqueue
+gitlab_check_enable: true
+# Do not auto-retry any failed GitLab jobs
+gitlab_jobs_retry_enable: false
+# Fail the MQ request as soon as any job fails
+# Note: the MQ will honor any `retry: #` and `allow_failures: true` set on a job
+gitlab_fail_fast: true
 ---
 schema-version: v1
 kind: mergegate

@@ -96,6 +96,21 @@ impl MockHttp {
     }
 }
 
+// Resolving immediately would make every request look timed out, so this sleep never completes:
+// the request future always wins.
+impl libdd_capabilities::SleepCapability for MockHttp {
+    fn new() -> Self {
+        panic!("agentless fetcher must use the injected sleep capability")
+    }
+
+    fn sleep(
+        &self,
+        _duration: std::time::Duration,
+    ) -> impl std::future::Future<Output = ()> + libdd_capabilities::MaybeSend {
+        std::future::pending()
+    }
+}
+
 impl HttpClientCapability for MockHttp {
     fn new_client() -> Self {
         Self::new()
