@@ -120,7 +120,7 @@ hyper-proxy = ["http-client", "hyper-util/client-proxy"]
 reqwest = ["http-client", "dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
 test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
-# Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
+# Enable Criterion allocation and Linux thread CPU benchmark utilities
 bench-utils = ["dep:criterion"]
 
 [lints.rust]
