@@ -45,7 +45,7 @@ mod linux_bench {
         Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
     }
 
-    #[inline]
+    #[inline(always)]
     fn measure_thread_cpu_time(iterations: u64, mut routine: impl FnMut()) -> Duration {
         let start = thread_cpu_time();
         for _ in 0..iterations {
