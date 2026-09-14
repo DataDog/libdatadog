@@ -129,8 +129,17 @@ if ! echo "$INPUT_JSON" | jq empty 2>/dev/null; then
     exit 1
 fi
 
-# Get cargo metadata once and cache it
-METADATA=$(cargo metadata --format-version=1 --no-deps 2>/dev/null)
+# Get cargo metadata once and cache it.
+#
+# Checked rather than left to `set -e`, which ends the script on a failing command
+# substitution with cargo's exit code and nothing on stdout -- so a manifest cargo cannot
+# parse used to leave the caller an empty result and status 101 to explain it. cargo's own
+# stderr is no longer discarded either: it names the file and the line, and it travels to
+# the job log rather than into this script's stdout, which is the JSON result.
+if ! METADATA=$(cargo metadata --format-version=1 --no-deps); then
+    echo "ERROR: could not read cargo metadata for this workspace (cargo's reason is above)" >&2
+    exit 1
+fi
 
 # Get workspace root (for determining crate paths)
 WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root' || pwd)
