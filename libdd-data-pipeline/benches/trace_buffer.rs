@@ -95,7 +95,8 @@ fn setup_buffer(max_buffered_bytes: usize) -> (Arc<ForkSafeRuntime>, Arc<TraceBu
 }
 
 fn bench_trace_buffer(c: &mut Criterion) {
-    // Keep the historical group name for pairwise CI comparisons; the custom timer isolates sender enqueue work.
+    // Keep the historical group name for pairwise CI comparisons; the custom timer isolates sender
+    // enqueue work.
     let mut group = c.benchmark_group("trace_buffer");
     group.sampling_mode(SamplingMode::Flat);
 
