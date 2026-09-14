@@ -5,7 +5,7 @@
 
 
 VERBOSE=false
-LIST_AFFECTED=false
+LIST_MODE=""
 
 # Use GITHUB_OUTPUT from environment or default to /dev/stdout for local testing
 if [ -z "$GITHUB_OUTPUT" ]; then
@@ -19,19 +19,33 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --list-affected)
-            LIST_AFFECTED=true
+            LIST_MODE="affected"
+            shift
+            ;;
+        --list-raised-floors)
+            LIST_MODE="raised-floors"
             shift
             ;;
         -h|--help)
             echo "Usage: $0 [-v] [-h] CRATE BASE_REF CURRENT_REF"
             echo "       $0 [-v] --list-affected BASE_REF CURRENT_REF"
+            echo "       $0 [-v] --list-raised-floors BASE_REF CURRENT_REF"
             echo ""
-            echo "Without --list-affected: print the semver level CRATE needs, as JSON."
-            echo "With it: print, one per line, every workspace member whose dependency"
-            echo "requirements or feature surface moved between the two revisions --"
-            echo "the crates worth running the first form on, including those a"
-            echo "changed-file-path search cannot find because the edit was to the root"
-            echo "manifest's [workspace.dependencies]."
+            echo "With no list flag: print the semver level CRATE needs, as JSON."
+            echo ""
+            echo "--list-affected prints, one per line, every workspace member whose"
+            echo "dependency requirements or feature surface moved between the two"
+            echo "revisions -- the crates worth running the first form on, including those"
+            echo "a changed-file-path search cannot find because the edit was to the root"
+            echo "manifest's [workspace.dependencies]. Any difference counts, since any of"
+            echo "them is a reason to check the crate."
+            echo ""
+            echo "--list-raised-floors prints only the dependency requirement floors that"
+            echo "ROSE, tab-separated as <crate> <dep> <kind> <old req> <new req>. That is"
+            echo "the subset the first form scores a minor for, so a caller can say which"
+            echo "crates a bump is owed to and why. A widened, lowered or unparseable"
+            echo "requirement, a dependency added or removed, and a feature change are all"
+            echo "absent: they are not raised floors and do not earn a minor on their own."
             exit 0
             ;;
         -*)
@@ -45,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if $LIST_AFFECTED; then
+if [[ -n "$LIST_MODE" ]]; then
     CRATE=""
     BASE_REF="${1:-main}"
     CURRENT_REF="${2:-HEAD}"
@@ -229,6 +243,69 @@ manifest_facts_at_rev() {
               | [$p.name, "feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
           )
         | @tsv' <<< "$meta"
+}
+
+# Echo one row per dependency requirement floor that rose between the fact sets $1
+# (baseline) and $2, tab-separated:
+#
+#   <crate> <label> <kind> <old req> <new req>
+#
+# Both arguments are manifest_facts_at_rev output, so a whole-workspace set and a
+# single-crate one read alike: pass 2b below judges one crate with it, --list-raised-floors
+# the whole workspace.
+#
+# A floor *rose* exactly when the lowest version the requirement admits went up. A
+# dependency added or removed, an alias changed, a bound widened or lowered, and a
+# requirement req_min cannot parse are all deliberately none of that: they are changes a
+# consumer can see, but not ones that stop it resolving the crate, so this pass does not
+# report them and semver-level leaves them at patch.
+raised_floors() {
+    local base_facts=$1 now_facts=$2
+    local base_reqs now_reqs
+    base_reqs=$(awk -F'\t' '$2 == "dep" { print $1 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$base_facts")
+    now_reqs=$(awk -F'\t' '$2 == "dep" { print $1 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$now_facts")
+
+    local crate dep_name dep_alias dep_kind dep_target dep_req dep_label old_req old_min new_min
+    while IFS=$'\t' read -r crate dep_name dep_alias dep_kind dep_target dep_req; do
+        [[ -z "$dep_name" ]] && continue
+        # Crate, name, alias, kind and target together: see manifest_facts_at_rev for
+        # why the alias belongs in the key.
+        old_req=$(awk -F'\t' -v c="$crate" -v n="$dep_name" -v a="$dep_alias" -v k="$dep_kind" -v t="$dep_target" \
+            '$1 == c && $2 == n && $3 == a && $4 == k && $5 == t { print $6; exit }' <<< "$base_reqs")
+        # Absent from the baseline: a dependency newly added, or one whose alias
+        # changed. Either way not a raised floor.
+        [[ -z "$old_req" ]] && continue
+        [[ "$old_req" == "$dep_req" ]] && continue
+
+        dep_label="$dep_name"
+        [[ "$dep_alias" != "$dep_name" ]] && dep_label="$dep_name as $dep_alias"
+
+        old_min=$(req_min "$old_req")
+        new_min=$(req_min "$dep_req")
+        if [[ -z "$old_min" || -z "$new_min" ]]; then
+            log_verbose "Not judging $crate's $dep_label: unparsed requirement ($old_req -> $dep_req)"
+            continue
+        fi
+        if version_gt "$new_min" "$old_min"; then
+            printf '%s\t%s\t%s\t%s\t%s\n' "$crate" "$dep_label" "$dep_kind" "$old_req" "$dep_req"
+        fi
+    done <<< "$now_reqs"
+}
+
+# Echo the floors that rose for every workspace member between revisions $1 and $2, in
+# raised_floors' format. One comparison of the two revisions, not a walk of the commits
+# between them: a raise later reverted, or a bound lowered and raised back, nets out to
+# nothing here exactly as it does for the crate's next release.
+list_raised_floors() {
+    local baseline=$1 current=$2
+    local base_facts now_facts
+    if ! base_facts=$(manifest_facts_at_rev "" "$baseline"); then
+        return 1
+    fi
+    if ! now_facts=$(manifest_facts_at_rev "" "$current"); then
+        return 1
+    fi
+    raised_floors "$base_facts" "$now_facts"
 }
 
 # Echo the name of every workspace member whose manifest facts moved between revisions
@@ -670,43 +747,16 @@ compute_semver_results() {
     if $manifest_compared && [[ "$level_so_far" == "minor" ]]; then
         log_verbose "Skipping dependency requirement diff: already at minor, which is this pass's ceiling"
     elif $manifest_compared; then
-        local base_reqs now_reqs raised=""
-        # Field 1 is the crate, identical on every row here, so the key below starts at
-        # the dependency name.
-        base_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$base_facts")
-        now_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$now_facts")
-
-        local dep_name dep_alias dep_kind dep_target dep_req dep_label old_req old_min new_min
-        while IFS=$'\t' read -r dep_name dep_alias dep_kind dep_target dep_req; do
-            [[ -z "$dep_name" ]] && continue
-            # Name, alias, kind and target together: see manifest_facts_at_rev for
-            # why the alias belongs in the key.
-            old_req=$(awk -F'\t' -v n="$dep_name" -v a="$dep_alias" -v k="$dep_kind" -v t="$dep_target" \
-                '$1 == n && $2 == a && $3 == k && $4 == t { print $5; exit }' <<< "$base_reqs")
-            # Absent from the baseline: a dependency newly added, or one whose alias
-            # changed. Either way not a raised floor.
-            [[ -z "$old_req" ]] && continue
-            [[ "$old_req" == "$dep_req" ]] && continue
-
-            dep_label="$dep_name"
-            [[ "$dep_alias" != "$dep_name" ]] && dep_label="$dep_name as $dep_alias"
-
-            old_min=$(req_min "$old_req")
-            new_min=$(req_min "$dep_req")
-            if [[ -z "$old_min" || -z "$new_min" ]]; then
-                log_verbose "Not judging $dep_label: unparsed requirement ($old_req -> $dep_req)"
-                continue
-            fi
-            if version_gt "$new_min" "$old_min"; then
-                raised+="$dep_label ($dep_kind): $old_req -> $dep_req"$'\n'
-                log_verbose "$dep_label floor raised: $old_req -> $dep_req"
-            fi
-        done <<< "$now_reqs"
+        local raised
+        # Field 1 is the crate, identical on every row here, so it is dropped again.
+        raised=$(raised_floors "$base_facts" "$now_facts" \
+            | awk -F'\t' '{ printf "%s (%s): %s -> %s\n", $2, $3, $4, $5 }')
 
         if [[ -n "$raised" ]]; then
             dep_level="minor"
             dep_reason="Dependency requirement floor raised"
-            dep_details=$(truncate_details 50 <<< "${raised%$'\n'}")
+            dep_details=$(truncate_details 50 <<< "$raised")
+            log_verbose "floors raised:"$'\n'"$raised"
         fi
     fi
 
@@ -807,24 +857,33 @@ compute_semver_results() {
         '{"name": $name, "level": $level, "reason": $reason, "details": $details}'
 }
 
-# --list-affected stops here: it names the crates to check rather than checking one, so
-# none of the per-crate machinery below runs.
-if $LIST_AFFECTED; then
+# The list modes stop here: they report on the workspace rather than checking one crate,
+# so none of the per-crate machinery below runs.
+if [[ -n "$LIST_MODE" ]]; then
     if ! BASE_REF=$(resolve_baseline "$BASE_REF"); then
         exit 1
     fi
     # Compared from where the branch left the baseline, the way a changed-file search
     # uses `git diff base...HEAD`: a fact that moved on the baseline *since* then is not
-    # this branch's doing, and selecting its crate would put another branch's change on
-    # this branch's report. A clone too shallow to hold a merge base falls back to the
-    # baseline tip, erring towards checking too much.
+    # this branch's doing, and reporting it would put another branch's change on this
+    # branch's report. A clone too shallow to hold a merge base falls back to the
+    # baseline tip, erring towards reporting too much. A caller passing the start of a
+    # range it already resolved gets that commit back unchanged, being its own merge base.
     FORK_POINT=$(git merge-base "$BASE_REF" "$CURRENT_REF" 2>/dev/null)
     if [[ -z "$FORK_POINT" ]]; then
         echo "Warning: no merge base for $BASE_REF and $CURRENT_REF; comparing against the baseline tip" >&2
         FORK_POINT="$BASE_REF"
     fi
-    log_verbose "Listing crates whose manifest facts moved between $FORK_POINT and $CURRENT_REF"
-    list_affected_crates "$FORK_POINT" "$CURRENT_REF"
+    case "$LIST_MODE" in
+        affected)
+            log_verbose "Listing crates whose manifest facts moved between $FORK_POINT and $CURRENT_REF"
+            list_affected_crates "$FORK_POINT" "$CURRENT_REF"
+            ;;
+        raised-floors)
+            log_verbose "Listing floors raised between $FORK_POINT and $CURRENT_REF"
+            list_raised_floors "$FORK_POINT" "$CURRENT_REF"
+            ;;
+    esac
     exit $?
 fi
 

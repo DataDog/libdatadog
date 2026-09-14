@@ -6,10 +6,12 @@
 # Commits Since Release Script
 # Takes JSON from publication-order.sh and finds commits since the last release tag for each crate
 #
-# A crate's commits are the ones touching a file of its own. Alongside them, `manifest_moves`
-# reports the commits that moved its *resolved* manifest facts from outside its directory --
-# a raised `[workspace.dependencies]` floor it inherits with `workspace = true`. Those do not
-# make the crate a release, but they are why semver-level.sh will score its next one a minor.
+# A crate's commits are the ones touching a file of its own. Alongside them, `raised_floors`
+# reports the dependency requirement floors that rose over the same range -- including a
+# raise to a `[workspace.dependencies]` entry the crate inherits, which is in the root
+# manifest and so in no commit of the crate's own. A raised floor is not a release on its
+# own, but it is what semver-level.sh scores a minor, so it is the one thing a crate with
+# no commits still has to be able to report.
 #
 # Usage: ./commits-since-release.sh [OPTIONS] [JSON]
 #
@@ -53,9 +55,9 @@ ${arg#--exclude=}"
             echo ""
             echo "Takes JSON from publication-order.sh and finds commits since the last release tag for each crate."
             echo ""
-            echo "A crate's commits are those touching a file of its own. \"manifest_moves\" reports,"
-            echo "separately, those that moved its resolved manifest facts from outside its directory:"
-            echo "a raised [workspace.dependencies] floor it inherits. Reading those needs"
+            echo "A crate's commits are those touching a file of its own. \"raised_floors\" reports,"
+            echo "separately, the dependency requirement floors that rose over the same range,"
+            echo "an inherited [workspace.dependencies] entry included. Reading those needs"
             echo "semver-level.sh alongside this script."
             echo ""
             echo "Arguments:"
@@ -82,11 +84,14 @@ ${arg#--exclude=}"
             echo '  [{"name":"crate-name","version":"1.0.0","path":"crate-name","tag":"crate-name-v1.0.0",'
             echo '    "tag_exists":true,"tag_ancestor":"true","tag_commit":"<sha>",'
             echo '    "tag_in_local_branch":true,"latest_tag":"crate-name-v1.0.0",'
-            echo '    "range":"<start-sha>..<head-sha>","commits":[...],"manifest_moves":[...]}]'
+            echo '    "range":"<start-sha>..<head-sha>","commits":[...],"raised_floors":[...]}]'
             echo ""
-            echo '  "manifest_moves" holds {"hash","subject"} for each commit that moved what a'
-            echo '  consumer of the crate resolves while touching no file of its own. Never'
-            echo '  overlaps "commits". Empty for a crate with no previous release tag.'
+            echo '  "raised_floors" holds {"dependency","kind","previous_req","current_req"} for'
+            echo '  each requirement whose lowest admitted version rose across "range", read as'
+            echo '  one comparison of its ends: a raise reverted before the release nets out to'
+            echo '  nothing. A widened, lowered or unparseable requirement, a dependency added or'
+            echo '  removed and a feature change are not raised floors and are absent. Empty for'
+            echo '  a crate with no previous release tag.'
             echo ""
             echo '  "tag_in_local_branch" is false when no local branch contains the tagged commit,'
             echo '  which is normal for squash-merged releases. Always false when there is no tag.'
@@ -140,31 +145,29 @@ log_verbose() {
     fi
 }
 
-ROOT_MANIFEST=Cargo.toml
+# The floors raised between a baseline and HEAD, for the whole workspace at once,
+# computed on first use of a baseline and kept for the crates that share it. Two worktree
+# extractions per baseline, so the cost follows the number of distinct release points in
+# the input rather than the number of crates.
+RAISES_CACHE=$(mktemp -d)
+trap 'rm -rf "$RAISES_CACHE"' EXIT
 
-# Which crates each root-manifest commit actually moved, computed on first use and kept
-# for the crates that follow. Each answer costs two worktree extractions, and the ranges
-# are as long as the gap since a crate's last release -- around 60 root-manifest commits
-# for a crate last released months ago -- so the cache is what keeps the cost proportional
-# to the release range rather than to the range times the number of crates.
-AFFECTED_CACHE=$(mktemp -d)
-trap 'rm -rf "$AFFECTED_CACHE"' EXIT
-
-# Echo the crates whose manifest facts commit $1 moved, one per line.
-crates_affected_by_commit() {
-    local commit=$1
-    local cache="$AFFECTED_CACHE/$commit" parent
+# Echo the floors that rose between revision $1 and HEAD, tab-separated as
+# <crate> <dep> <kind> <old req> <new req>.
+#
+# One comparison of the two revisions, deliberately, rather than a walk of the commits
+# between them: a raise reverted before the release, or a bound lowered and raised back,
+# nets out to nothing -- which is what the crate's own next release will conclude too.
+# Only raises, so what is reported is exactly what earns the minor.
+raised_floors_since() {
+    local baseline=$1
+    local cache="$RAISES_CACHE/$baseline"
 
     if [ ! -f "$cache" ]; then
-        parent=$(git rev-parse --verify --quiet "${commit}^" || true)
-        if [ -z "$parent" ]; then
-            # A root commit, or a clone shallow enough to have cut the parent off.
-            echo "  WARNING: $commit has no parent here; its manifest facts are not compared" >&2
-            : > "$cache"
-        elif ! "${SCRIPT_DIR}/semver-level.sh" --list-affected "$parent" "$commit" > "$cache"; then
+        if ! "${SCRIPT_DIR}/semver-level.sh" --list-raised-floors "$baseline" "$HEAD_COMMIT" > "$cache"; then
             # Removed so a later crate retries rather than reading a half-written list.
             rm -f "$cache"
-            echo "ERROR: could not read manifest facts across $commit" >&2
+            echo "ERROR: could not read the floors raised since $baseline" >&2
             return 1
         fi
     fi
@@ -235,7 +238,7 @@ while read -r crate; do
     RANGE=""
     RANGE_START=""
     COMMITS_JSON="[]"
-    MANIFEST_MOVES_JSON="[]"
+    RAISED_FLOORS_JSON="[]"
 
     if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
         TAG_EXISTS=true
@@ -314,47 +317,6 @@ while read -r crate; do
 
         COMMITS_JSON+="]"
 
-        # Commits that moved what a consumer of this crate resolves without touching a
-        # file of its own: a raised [workspace.dependencies] floor it inherits. Reported
-        # beside the commits rather than among them, deliberately. They are not a release
-        # on their own -- the crate's code is unchanged, and the requirement its published
-        # version states is still true of that code -- but a candidate deferred for having
-        # no commits has to be able to say its resolved requirements moved, or the
-        # proposal reads as "nothing happened" where semver-level.sh sees a minor.
-        MANIFEST_MOVES_JSON="["
-        MOVE_FIRST=true
-        OWN_HASHES=$(echo "$COMMITS_JSON" | jq -r '.[].hash')
-
-        while IFS=$'\x1F' read -r hash subject author date; do
-            [ -n "$hash" ] || continue
-            if should_exclude "$subject" "$author"; then
-                continue
-            fi
-            # Already among the commits above, so it needs no second mention.
-            if grep -qxF "$hash" <<< "$OWN_HASHES"; then
-                continue
-            fi
-            if ! AFFECTED=$(crates_affected_by_commit "$hash"); then
-                exit 1
-            fi
-            # Every other root-manifest edit -- another crate's entry, a new member, a
-            # dev-dependency, a comment -- moves nothing this crate's consumers resolve.
-            if ! grep -qxF "$NAME" <<< "$AFFECTED"; then
-                continue
-            fi
-
-            if [ "$MOVE_FIRST" = true ]; then
-                MOVE_FIRST=false
-            else
-                MANIFEST_MOVES_JSON+=","
-            fi
-            subject_escaped=$(echo "$subject" | jq -R .)
-            MANIFEST_MOVES_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped}"
-            log_verbose "    Resolved requirements moved by: $subject"
-        done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$ROOT_MANIFEST" 2>/dev/null || true)
-
-        MANIFEST_MOVES_JSON+="]"
-
         COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
         log_verbose "  Found $COMMIT_COUNT commits since $TAG"
 
@@ -384,6 +346,30 @@ while read -r crate; do
         if [ -n "$RANGE_START" ]; then
             RANGE="${RANGE_START}..${HEAD_COMMIT}"
             log_verbose "  Range: $RANGE"
+
+            # The dependency requirement floors this crate's consumers see rise over that
+            # same range, which the commit list cannot show: the raise may be an inherited
+            # [workspace.dependencies] entry, edited in the root manifest and so in no
+            # commit touching a file of this crate's own. Reported beside the commits and
+            # never among them, deliberately -- a raised floor is not a release on its own,
+            # since the crate's code is unchanged and the requirement its published version
+            # states is still true of that code -- but a candidate deferred for having no
+            # commits has to be able to say a floor rose, or the proposal reads as "nothing
+            # happened" where semver-level.sh scores a minor.
+            #
+            # Read from RANGE_START so the two answers agree on where the last release was,
+            # and as one comparison of its two ends: a raise reverted before the release
+            # nets out to nothing here exactly as it will for the crate's next release.
+            if ! RAISES=$(raised_floors_since "$RANGE_START"); then
+                exit 1
+            fi
+            RAISED_FLOORS_JSON=$(awk -F'\t' -v crate="$NAME" \
+                    '$1 == crate { printf "%s\t%s\t%s\t%s\n", $2, $3, $4, $5 }' <<< "$RAISES" \
+                | jq -R -s 'split("\n")
+                    | map(select(length > 0)
+                          | split("\t")
+                          | {dependency: .[0], kind: .[1], previous_req: .[2], current_req: .[3]})')
+            log_verbose "  Floors raised: $(jq -c 'map("\(.dependency) (\(.kind)): \(.previous_req) -> \(.current_req)")' <<< "$RAISED_FLOORS_JSON")"
         fi
     else
         log_verbose "  Tag does NOT exist - no previous release found"
@@ -396,7 +382,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON,\"manifest_moves\":$MANIFEST_MOVES_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON,\"raised_floors\":$RAISED_FLOORS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 
