@@ -13,8 +13,8 @@
 //! Rule 1 accepts an exception when the dependency carries a `# allow(workspace-deps):
 //! <justification>` comment on the line(s) directly above it.
 //!
-//! Rule 2 accepts an exception when the workspace entry carries at least one comment line directly
-//! above it explaining why the feature is enabled for every member (the explicit marker works too).
+//! Rule 2 accepts an exception when the workspace entry carries a `# allow(workspace-deps-features):
+//! <justification>` comment on the line(s) directly above it.
 //!
 //! Path dependencies are crates of this repository, not external dependencies, so they are ignored.
 
