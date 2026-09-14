@@ -15,9 +15,9 @@
 #   deferred  no commits of its own but a tag exists -- recorded with
 #             "pending_release": "true" and level "none", so the caller's libdd-*
 #             major-bump check can pull it back into the release, or drop it. Its
-#             "manifest_moves", if any, are reported and carried on the row: a floor
-#             it inherits moved, which is not a release on its own but is what its
-#             next one will be scored a minor for.
+#             "raised_floors", if any, are reported and carried on the row: a floor it
+#             resolves rose, which is not a release on its own but is what its next one
+#             will be scored a minor for.
 #   skipped   its tag is not the latest for that crate, so a newer release already
 #             exists elsewhere. Overridden by --hotfix and --bypass-standard-checks.
 #   released  semver-level.sh picks the level, cargo-release applies it.
@@ -108,24 +108,29 @@ while read -r crate; do
         VERSION=$(echo "$crate" | jq -r '.version')
         echo "No commits since last release for $NAME; deferring to the libdd-* major-bump check"
 
-        # Deferred, but not untouched: a raised [workspace.dependencies] floor it inherits
-        # moved what a consumer of it resolves without changing a file of its own. Not a
-        # release on that account -- the code is unchanged, and the requirement its
-        # published version states is still true of that code -- but said out loud here,
-        # because semver-level.sh will score it a minor whenever the crate is next
-        # released, and an operator who wants that now can pull the crate in by hand.
-        MANIFEST_MOVES=$(echo "$crate" | jq -c '.manifest_moves // []')
-        if [ "$MANIFEST_MOVES" != "[]" ]; then
-            echo "  Its resolved requirements moved even so, which its next release will carry as a minor:"
-            echo "$MANIFEST_MOVES" | jq -r '.[] | "    - \(.hash[0:8]) \(.subject)"'
+        # Deferred, but not untouched: a floor a consumer of it resolves rose, which for a
+        # crate with no commits means an inherited [workspace.dependencies] entry moved in
+        # the root manifest. Not a release on that account -- the code is unchanged, and
+        # the requirement its published version states is still true of that code -- but
+        # said out loud here, because a raised floor is what semver-level.sh scores a minor
+        # whenever the crate is next released, and an operator who wants that now can pull
+        # the crate in by hand.
+        #
+        # Only raises reach this, so the claim holds: a requirement merely widened, lowered
+        # or swapped, and a raise reverted before the release, are not in `raised_floors`
+        # and say nothing here.
+        RAISED_FLOORS=$(echo "$crate" | jq -c '.raised_floors // []')
+        if [ "$RAISED_FLOORS" != "[]" ]; then
+            echo "  A floor it resolves rose even so, which semver-level.sh scores a minor:"
+            echo "$RAISED_FLOORS" | jq -r '.[] | "    - \(.dependency) (\(.kind)): \(.previous_req) -> \(.current_req)"'
         fi
 
         append_row --arg name "$NAME" \
             --arg tag "$TAG" \
             --arg version "$VERSION" \
             --arg path "$CRATE_PATH" \
-            --argjson manifest_moves "$MANIFEST_MOVES" \
-            '. += [{"name": $name, "level": "none", "tag": $tag, "prev_tag": $tag, "version": $version, "range": "", "commits": [], "manifest_moves": $manifest_moves, "path": $path, "initial_release": "false", "pending_release": "true"}]'
+            --argjson raised_floors "$RAISED_FLOORS" \
+            '. += [{"name": $name, "level": "none", "tag": $tag, "prev_tag": $tag, "version": $version, "range": "", "commits": [], "raised_floors": $raised_floors, "path": $path, "initial_release": "false", "pending_release": "true"}]'
         continue
     fi
 
