@@ -213,13 +213,15 @@ impl IntoRawFd for SeqpacketListener {
     }
 }
 
-/// Exposes the liveness fd for the emulated `SOCK_SEQPACKET` on macos, to avoid blocking the peer 
+/// Exposes the liveness fd for the emulated `SOCK_SEQPACKET` on macos, to avoid blocking the peer
 /// on connection close.
 pub trait LivenessAware {
     fn liveness_raw_fd(&self) -> Option<RawFd> {
         None
     }
 }
+
+impl LivenessAware for OwnedFd {}
 
 /// A connected socket providing message-boundary-preserving IPC.
 ///
