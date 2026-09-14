@@ -9,6 +9,8 @@ use std::{
     time,
 };
 
+#[cfg(feature = "stats-obfuscation")]
+use crate::span_concentrator::CardinalityLimitConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 #[cfg(feature = "worker-exporter")]
 use async_trait::async_trait;
@@ -122,7 +124,7 @@ impl From<TracerMetadata> for StatsMetadata {
             git_commit_sha: m.git_commit_sha,
             process_tags: m.process_tags,
             service: m.service,
-            container_id: String::new(),
+            container_id: m.container_id,
         }
     }
 }
@@ -131,7 +133,7 @@ impl From<TracerMetadata> for StatsMetadata {
 #[derive(Debug)]
 pub struct AgentlessStatsExporter<Cap: HttpClientCapability + SleepCapability> {
     concentrator: Mutex<SpanConcentrator>,
-    sender: StatsSender<Cap, AgentlessStatsTarget>,
+    sender: StatsSender<Cap>,
 }
 
 /// Errors returned when constructing an [`AgentlessStatsExporter`].
@@ -153,6 +155,44 @@ impl std::fmt::Display for AgentlessStatsExporterError {
 
 impl std::error::Error for AgentlessStatsExporterError {}
 
+/// Create a stats concentrator for direct intake export.
+///
+/// Agentless stats always use the default eligible span kinds and resource obfuscation because no
+/// Agent processes the payload before it reaches the intake.
+///
+/// # Errors
+///
+/// Returns [`AgentlessStatsExporterError::InvalidBucketSize`] when `bucket_size` is zero.
+#[cfg(feature = "stats-obfuscation")]
+pub fn create_agentless_concentrator(
+    bucket_size: time::Duration,
+    peer_tags: Vec<String>,
+    cardinality_limits: Option<CardinalityLimitConfig>,
+    additional_metric_tag_keys: Vec<String>,
+) -> Result<SpanConcentrator, AgentlessStatsExporterError> {
+    if bucket_size.is_zero() {
+        return Err(AgentlessStatsExporterError::InvalidBucketSize);
+    }
+    let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+        .map(String::from)
+        .to_vec();
+    let obfuscation_config = Some(Arc::new(arc_swap::ArcSwap::from_pointee(
+        crate::span_concentrator::StatsComputationObfuscationConfig {
+            enabled: true,
+            ..Default::default()
+        },
+    )));
+    Ok(SpanConcentrator::new(
+        bucket_size,
+        web_time::SystemTime::now(),
+        span_kinds,
+        peer_tags,
+        cardinality_limits,
+        additional_metric_tag_keys,
+        obfuscation_config,
+    ))
+}
+
 impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
     /// Create an agentless stats exporter with client-side resource obfuscation.
     ///
@@ -168,30 +208,15 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
         peer_tags: Vec<String>,
         additional_metric_tag_keys: Vec<String>,
     ) -> Result<Self, AgentlessStatsExporterError> {
-        if bucket_size.is_zero() {
-            return Err(AgentlessStatsExporterError::InvalidBucketSize);
-        }
-        let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
-            .map(String::from)
-            .to_vec();
-        let obfuscation_config = Some(Arc::new(arc_swap::ArcSwap::from_pointee(
-            crate::span_concentrator::StatsComputationObfuscationConfig {
-                enabled: true,
-                ..Default::default()
-            },
-        )));
         Ok(Self {
-            concentrator: Mutex::new(SpanConcentrator::new(
+            concentrator: Mutex::new(create_agentless_concentrator(
                 bucket_size,
-                web_time::SystemTime::now(),
-                span_kinds,
                 peer_tags,
                 None,
                 additional_metric_tag_keys,
-                obfuscation_config,
-            )),
+            )?),
             sender: StatsSender::new(
-                target,
+                StatsDestination::Agentless(target),
                 meta,
                 capabilities,
                 #[cfg(feature = "stats-obfuscation")]
@@ -222,8 +247,8 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
 }
 
 #[derive(Debug)]
-struct StatsSender<Cap: HttpClientCapability + SleepCapability, Destination> {
-    destination: Destination,
+struct StatsSender<Cap: HttpClientCapability + SleepCapability> {
+    destination: StatsDestination,
     meta: StatsMetadata,
     sequence_id: AtomicU64,
     capabilities: Cap,
@@ -231,13 +256,12 @@ struct StatsSender<Cap: HttpClientCapability + SleepCapability, Destination> {
     supported_obfuscation_version: &'static str,
 }
 
-impl<Cap, Destination> StatsSender<Cap, Destination>
+impl<Cap> StatsSender<Cap>
 where
     Cap: HttpClientCapability + SleepCapability,
-    Destination: StatsPayloadDestination<Cap>,
 {
     fn new(
-        destination: Destination,
+        destination: StatsDestination,
         meta: StatsMetadata,
         capabilities: Cap,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
@@ -289,82 +313,32 @@ where
         }
     }
 
-    #[inline(always)]
     async fn send_payload(
         &self,
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
     ) -> anyhow::Result<()> {
-        self.destination
-            .send_payload(
-                &self.capabilities,
-                &self.meta,
-                &self.sequence_id,
-                buckets,
-                obfuscated,
-                #[cfg(feature = "stats-obfuscation")]
-                self.supported_obfuscation_version,
-            )
-            .await
-    }
-}
-
-trait StatsPayloadDestination<Cap: HttpClientCapability + SleepCapability> {
-    async fn send_payload(
-        &self,
-        capabilities: &Cap,
-        meta: &StatsMetadata,
-        sequence_id: &AtomicU64,
-        buckets: Vec<pb::ClientStatsBucket>,
-        obfuscated: bool,
-        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
-    ) -> anyhow::Result<()>;
-}
-
-impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
-    for AgentlessStatsTarget
-{
-    #[inline(always)]
-    async fn send_payload(
-        &self,
-        capabilities: &Cap,
-        meta: &StatsMetadata,
-        sequence_id: &AtomicU64,
-        buckets: Vec<pb::ClientStatsBucket>,
-        _obfuscated: bool,
-        #[cfg(feature = "stats-obfuscation")] _supported_obfuscation_version: &'static str,
-    ) -> anyhow::Result<()> {
-        send_agentless_payloads(capabilities, meta, self, sequence_id, buckets).await
-    }
-}
-
-impl<Cap: HttpClientCapability + SleepCapability> StatsPayloadDestination<Cap>
-    for StatsDestination
-{
-    #[inline(always)]
-    async fn send_payload(
-        &self,
-        capabilities: &Cap,
-        meta: &StatsMetadata,
-        sequence_id: &AtomicU64,
-        buckets: Vec<pb::ClientStatsBucket>,
-        obfuscated: bool,
-        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
-    ) -> anyhow::Result<()> {
-        match self {
+        match &self.destination {
             StatsDestination::Agentless(target) => {
-                send_agentless_payloads(capabilities, meta, target, sequence_id, buckets).await
+                send_agentless_payloads(
+                    &self.capabilities,
+                    &self.meta,
+                    target,
+                    &self.sequence_id,
+                    buckets,
+                )
+                .await
             }
             StatsDestination::Agent { endpoint } => {
                 send_agent_payloads(
-                    capabilities,
-                    meta,
-                    sequence_id,
+                    &self.capabilities,
+                    &self.meta,
+                    &self.sequence_id,
                     endpoint,
                     buckets,
                     obfuscated,
                     #[cfg(feature = "stats-obfuscation")]
-                    supported_obfuscation_version,
+                    self.supported_obfuscation_version,
                 )
                 .await
             }
@@ -384,7 +358,7 @@ pub struct StatsExporter<
     #[cfg(feature = "worker-exporter")]
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
-    sender: StatsSender<Cap, StatsDestination>,
+    sender: StatsSender<Cap>,
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
     telemetry: Option<(

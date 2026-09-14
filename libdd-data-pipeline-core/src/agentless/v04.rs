@@ -166,13 +166,9 @@ where
         },
         version,
     };
-    let mut stats_metadata = StatsMetadata::from(metadata.clone());
-    stats_metadata
-        .container_id
-        .clone_from(&metadata.container_id);
     AgentlessStatsExporter::new(
         config.bucket_size,
-        stats_metadata,
+        StatsMetadata::from(metadata.clone()),
         target,
         capabilities,
         config.peer_tags,
@@ -330,6 +326,13 @@ mod tests {
             requests[1].headers()["datadog-client-computed-top-level"],
             "true"
         );
+        #[cfg(feature = "compression")]
+        let stats_body = zstd::decode_all(requests[1].body().as_ref()).unwrap();
+        #[cfg(not(feature = "compression"))]
+        let stats_body = requests[1].body();
+        assert!(stats_body
+            .windows(b"container-1".len())
+            .any(|bytes| bytes == b"container-1"));
     }
 
     #[cfg(feature = "stats-obfuscation")]

@@ -657,12 +657,12 @@ impl StatsBucket {
         // covers the `max_entries` check in the vacant branch without a further lookup.
         let len_before_insert = self.data.len();
 
-        match self.data.raw_entry_mut().from_key(&key) {
+        match self.data.entry_ref(&key) {
             // Existing key, merge
-            hashbrown::hash_map::RawEntryMut::Occupied(mut e) => {
+            hashbrown::hash_map::EntryRef::Occupied(mut e) => {
                 e.get_mut().insert(duration, is_error, is_top_level);
             }
-            hashbrown::hash_map::RawEntryMut::Vacant(e) => {
+            hashbrown::hash_map::EntryRef::Vacant(e) => {
                 // New key over the max entry limit, collapse into the overflow
                 // sentinel.
                 if len_before_insert >= self.cardinality_limits.whole_key_limit {
@@ -674,8 +674,7 @@ impl StatsBucket {
                     return;
                 }
                 // Within the max entry limit, admit key as a new distinct entry.
-                e.insert(OwnedAggregationKey::from(&key), GroupedStats::default())
-                    .1
+                e.insert_with_key(OwnedAggregationKey::from(&key), GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
             }
         }
