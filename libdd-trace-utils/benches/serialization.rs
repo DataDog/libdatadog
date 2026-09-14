@@ -76,7 +76,8 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
                 black_box(msgpack_encoder::v04::write_to_slice_from_v04(
                     &mut vec.as_mut_slice(),
                     black_box(&data),
-                )).unwrap();
+                ))
+                .unwrap();
                 // Return the result to avoid measuring the deallocation time
                 vec
             },
