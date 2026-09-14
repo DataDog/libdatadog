@@ -213,16 +213,8 @@ impl IntoRawFd for SeqpacketListener {
     }
 }
 
-/// Exposes an optional secondary fd that should also be watched for hangup alongside a
-/// connection's primary data fd.
-///
-/// `SOCK_DGRAM` (macOS's `SOCK_SEQPACKET` emulation, see the module docs) has no connection
-/// state: unlike Linux, where the peer closing a real `SOCK_SEQPACKET` socket makes an in-flight
-/// `recv()`/`readable()` wait return immediately (EOF/ECONNRESET), a peer here can drop its end
-/// without that ever being visible on the data fd. The liveness pipe (see `SeqpacketConn`) is a
-/// side-channel built specifically to make that visible; this trait lets generic recv helpers
-/// (`recv_raw_async`, `recv_raw_blocking`) poll it without depending on the concrete connection
-/// type. The default no-op impl covers types (or platforms) with no such side-channel.
+/// Exposes the liveness fd for the emulated `SOCK_SEQPACKET` on macos, to avoid blocking the peer 
+/// on connection close.
 pub trait LivenessAware {
     fn liveness_raw_fd(&self) -> Option<RawFd> {
         None
@@ -255,8 +247,6 @@ impl LivenessAware for SeqpacketConn {
     fn liveness_raw_fd(&self) -> Option<RawFd> {
         self.liveness.as_ref().map(|l| l.as_raw_fd())
     }
-    // On Linux, SOCK_SEQPACKET already surfaces peer disconnection as ordinary readiness
-    // (EOF/ECONNRESET), so the default (no secondary fd to watch) applies.
 }
 
 impl SeqpacketConn {
@@ -415,9 +405,7 @@ impl SeqpacketConn {
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // On macOS, also watch the liveness pipe so a peer that disconnects while
                     // we're waiting for a response is detected immediately (BrokenPipe) rather
-                    // than only after the full read_timeout elapses (see
-                    // poll_readable_with_liveness's docs: SOCK_DGRAM has no connection state,
-                    // so a plain poll on the data socket alone can't see the peer is gone).
+                    // than only after the full read_timeout elapses.
                     #[cfg(target_os = "macos")]
                     self.poll_readable_with_liveness(self.read_timeout)?;
                     #[cfg(not(target_os = "macos"))]
@@ -514,10 +502,9 @@ where
     // Wrap in Option to satisfy FnMut (take() is only called on successful receive).
     let mut decode = Some(decode);
 
-    // If the connection exposes a liveness fd (see `LivenessAware`'s docs -- macOS only), watch
-    // it alongside the data fd so a peer that disconnects while we're waiting for the next
-    // message is detected immediately as `BrokenPipe`, instead of waiting forever for a message
-    // that will now never arrive.
+    // On macOS the connection exposes a liveness fd we watch alongside the data fd so a peer that
+    // disconnects while we're waiting for the next message is detected immediately as `BrokenPipe`,
+    // instead of waiting forever for a message that will now never arrive.
     let liveness_async = match fd.get_ref().liveness_raw_fd() {
         // SAFETY: `raw` is owned by `*fd.get_ref()`, which outlives this function's `fd`
         // borrow; the BorrowedFd built from it is only used (and dropped) within that same

@@ -257,17 +257,8 @@ impl SeqpacketConn {
         Ok(())
     }
 
-    /// Like [`poll_with_timeout`] for `POLLIN` on the data socket, but also watches the
-    /// liveness pipe for `POLLHUP` so a peer that disconnects *while we're waiting for a
-    /// response* is detected immediately as `BrokenPipe`, instead of only after the full
-    /// `timeout` elapses with a generic `TimedOut`.
-    ///
-    /// This matters because `SOCK_DGRAM` (macOS's SOCK_SEQPACKET emulation, see the module
-    /// docs) has no connection state: unlike Linux, where the peer closing a real
-    /// SOCK_SEQPACKET socket makes an in-flight `recv()` return immediately (EOF/ECONNRESET),
-    /// here the daemon closing its end (e.g. after failing to decode a garbled message, see
-    /// the IPC serve loop) is invisible to a plain `recv()` wait — only the liveness pipe
-    /// (checked here) reflects it.
+    /// Poll for a new message and watch the liveness probe to detect any `BrokenPipe` immediately,
+    /// instead of only after the full `timeout` elapses.
     pub(super) fn poll_readable_with_liveness(&self, timeout: Option<Duration>) -> io::Result<()> {
         let Some(ref lw) = self.liveness else {
             return poll_with_timeout(self.inner.as_raw_fd(), libc::POLLIN, timeout);
