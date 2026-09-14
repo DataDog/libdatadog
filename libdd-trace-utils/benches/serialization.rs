@@ -54,8 +54,7 @@ fn generate_trace_chunks(num_chunks: usize, num_spans: usize) -> Vec<Vec<Value>>
 }
 
 pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
-    // Generate roughly 10mb of data. This is the upper bound of payload size before a tracer
-    // flushes
+    // Generate roughly 700KB of data. This is enough to be a realistic measurement
     let data = rmp_serde::to_vec(&generate_trace_chunks(100, 20))
         .expect("Failed to serialize test spans.");
     let (data, ..) = msgpack_decoder::v04::from_slice(data.as_slice())
@@ -64,14 +63,14 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
     c.bench_function("msgpack_encoder::v04::to_vec_with_capacity_from_v04", |b| {
         b.iter_batched(
             || {},
-            |()| msgpack_encoder::v04::to_vec_with_capacity_from_v04(&data, 1_000_000),
-            criterion::BatchSize::SmallInput,
+            |()| msgpack_encoder::v04::to_vec_with_capacity_from_v04(&data, 700_000),
+            criterion::BatchSize::LargeInput,
         );
     });
 
     c.bench_function("msgpack_encoder::v04::write_to_slice_from_v04", |b| {
         b.iter_batched(
-            || vec![0u8; 1_000_000],
+            || vec![0u8; 700_000],
             |mut vec| {
                 black_box(msgpack_encoder::v04::write_to_slice_from_v04(
                     &mut vec.as_mut_slice(),
