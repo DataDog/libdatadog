@@ -8,9 +8,14 @@ use anyhow::{Context, Result};
 use std::fmt;
 use toml_edit::{ImDocument, Item, Key, TableLike};
 
-/// Marker that waives a rule for the dependency declared right below it:
-/// `# allow(workspace-deps): <justification>`.
+/// Marker that waives the inherit rule for the dependency declared right
+/// below it: `# allow(workspace-deps): <justification>`.
 pub const ALLOW_MARKER: &str = "allow(workspace-deps)";
+
+/// Marker that waives the features rule for the `[workspace.dependencies]`
+/// entry declared right below it: `# allow(workspace-deps-features):
+/// <justification>`.
+pub const ALLOW_FEATURES_MARKER: &str = "allow(workspace-deps-features)";
 
 /// The dependency tables a manifest can declare, both at the top level and
 /// under `[target.<cfg>]`.
@@ -66,7 +71,7 @@ enum Allow {
 }
 
 /// Lint `[workspace.dependencies]` of a workspace root manifest (rule 2). Checks that no feature is
-/// enabled unless there's a comment justification for it.
+/// enabled unless there's an `# allow(workspace-deps-features): <justification>` comment above it.
 pub fn lint_workspace_dependencies(file: &str, src: &str) -> Result<Vec<Violation>> {
     let doc = ImDocument::parse(src).with_context(|| format!("failed to parse {file}"))?;
     let Some(deps) = doc
@@ -91,25 +96,25 @@ pub fn lint_workspace_dependencies(file: &str, src: &str) -> Result<Vec<Violatio
         let problem = feature_problem(item)?;
         let line = key_line(src, key);
 
-        // Rule 4: a free-form comment above the entry is enough to justify
-        // enabling a feature for every member.
-        match allow_above(src, line) {
-            Allow::Justified | Allow::Comment => None,
+        // Rule 4: only the explicit marker waives this rule, so that
+        // exceptions stay greppable and carry a justification.
+        match allow_above(src, line, ALLOW_FEATURES_MARKER) {
+            Allow::Justified => None,
             Allow::MarkerWithoutJustification => Some(Violation {
                 file: file.to_owned(),
                 line,
                 dep: name.to_owned(),
                 rule: Rule::Features,
                 problem,
-                hint: format!("`{ALLOW_MARKER}` above it needs a justification: `# {ALLOW_MARKER}: <why every member gets this feature>`"),
+                hint: format!("`{ALLOW_FEATURES_MARKER}` above it needs a justification: `# {ALLOW_FEATURES_MARKER}: <why every member gets this feature>`"),
             }),
-            Allow::Absent => Some(Violation {
+            Allow::Absent | Allow::Comment => Some(Violation {
                 file: file.to_owned(),
                 line,
                 dep: name.to_owned(),
                 rule: Rule::Features,
                 problem,
-                hint: "fix: let each member pick its own features, or keep the feature and document why every member needs it in a comment directly above the entry".to_owned(),
+                hint: format!("fix: let each member pick its own features, or keep the feature and document why every member needs it with `# {ALLOW_FEATURES_MARKER}: <justification>` directly above it"),
             }),
         }
     }).collect();
@@ -148,7 +153,7 @@ pub fn lint_member(file: &str, src: &str) -> Result<Vec<Violation>> {
             let line = key_line(src, key);
             // Rule 3: only the explicit marker waives this rule, so that
             // exceptions stay greppable and carry a justification.
-            let hint = match allow_above(src, line) {
+            let hint = match allow_above(src, line, ALLOW_MARKER) {
                 Allow::Justified => return None,
                 Allow::MarkerWithoutJustification => format!(
                     "`{ALLOW_MARKER}` above it needs a justification: `# {ALLOW_MARKER}: <why this crate cannot inherit>`"
@@ -245,8 +250,8 @@ fn key_line(src: &str, key: &Key) -> usize {
 }
 
 /// Inspect the block of comment lines directly above `line`, trying to see if it's prefixed by a
-/// leading [ALLOW_MARKER] at the beginning.
-fn allow_above(src: &str, line: usize) -> Allow {
+/// leading `marker` at the beginning.
+fn allow_above(src: &str, line: usize, marker: &str) -> Allow {
     let lines: Vec<&str> = src.lines().collect();
 
     let mut allow = Allow::Absent;
@@ -258,7 +263,7 @@ fn allow_above(src: &str, line: usize) -> Allow {
             break;
         };
         let comment = comment.trim();
-        match comment.strip_prefix(ALLOW_MARKER) {
+        match comment.strip_prefix(marker) {
             Some(rest) => {
                 let justification = rest.trim_start().strip_prefix(':').unwrap_or("").trim();
                 if justification.is_empty() {
@@ -348,19 +353,32 @@ mod tests {
     }
 
     #[test]
-    fn workspace_entry_is_waived_by_a_plain_comment() {
+    fn workspace_entry_plain_comment_does_not_waive() {
         let violations = workspace_violations(&deps(
             "# Unusable without a compression backend.\nflate2 = { version = \"1.0\", default-features = false, features = [\"rust_backend\"] }\n",
         ));
-        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(violations.len(), 1);
+        assert!(
+            violations[0].hint.contains(ALLOW_FEATURES_MARKER),
+            "{}",
+            violations[0].hint
+        );
     }
 
     #[test]
     fn workspace_entry_is_waived_by_the_marker() {
         let violations = workspace_violations(&deps(
-            "# allow(workspace-deps): every member needs `std`.\nlibc = { version = \"0.2\", default-features = true }\n",
+            "# allow(workspace-deps-features): every member needs `std`.\nlibc = { version = \"0.2\", default-features = true }\n",
         ));
         assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn workspace_entry_is_not_waived_by_the_inherit_marker() {
+        let violations = workspace_violations(&deps(
+            "# allow(workspace-deps): every member needs `std`.\nlibc = { version = \"0.2\", default-features = true }\n",
+        ));
+        assert_eq!(violations.len(), 1);
     }
 
     #[test]
@@ -374,7 +392,7 @@ mod tests {
     #[test]
     fn workspace_entry_marker_without_justification_is_reported() {
         let violations = workspace_violations(&deps(
-            "# allow(workspace-deps)\nlibc = { version = \"0.2\" }\n",
+            "# allow(workspace-deps-features)\nlibc = { version = \"0.2\" }\n",
         ));
         assert_eq!(violations.len(), 1);
         assert!(

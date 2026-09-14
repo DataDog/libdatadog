@@ -83,8 +83,8 @@ Every external dependency of a workspace member is declared once in the root `Ca
 Exceptions are per dependency and must be justified in a comment:
 - a member that cannot inherit (e.g. it is pinned to a different major version) needs
   `# allow(workspace-deps): <justification>` on the line(s) directly above the dependency
-- a workspace entry that enables a feature for every member needs at least one comment line
-  directly above it explaining why (the `allow(workspace-deps)` marker works there too).
+- a workspace entry that enables a feature for every member needs
+  `# allow(workspace-deps-features): <justification>` on the line(s) directly above it.
 
 This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
 
