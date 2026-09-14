@@ -7,9 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use criterion::{
-    criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use libdd_data_pipeline::trace_buffer::{
     BufferSize, Export, TraceBuffer, TraceBufferConfig, TraceChunk,
 };
@@ -67,6 +65,7 @@ fn make_span() -> SpanBytes {
     }
 }
 
+// Export happens after the custom timer, so extra work here only slows benchmark cleanup.
 #[derive(Debug)]
 struct NoopExport;
 
@@ -98,7 +97,6 @@ fn bench_trace_buffer(c: &mut Criterion) {
     // Keep the historical group name for pairwise CI comparisons; the custom timer isolates sender
     // enqueue work.
     let mut group = c.benchmark_group("trace_buffer");
-    group.sampling_mode(SamplingMode::Flat);
 
     // (label, inter-send delay)
     let workloads: &[(&str, Option<Duration>)] = &[
@@ -109,7 +107,8 @@ fn bench_trace_buffer(c: &mut Criterion) {
 
     for &(delay_label, delay) in workloads {
         for num_senders in [1_usize, 2, 4, 8] {
-            let max_buffered_bytes = make_span().byte_size() * num_senders * CHUNKS_PER_SENDER;
+            let span = make_span();
+            let max_buffered_bytes = span.byte_size() * num_senders * CHUNKS_PER_SENDER;
             let (rt, sender) = setup_buffer(max_buffered_bytes);
 
             group.throughput(Throughput::Elements(
@@ -123,11 +122,8 @@ fn bench_trace_buffer(c: &mut Criterion) {
                         let mut elapsed = Duration::ZERO;
 
                         for _ in 0..iterations {
-                            let input = Vec::from_iter(
-                                (0..num_senders)
-                                    .map(|_| (0..CHUNKS_PER_SENDER).map(|_| vec![make_span()]))
-                                    .map(Vec::from_iter),
-                            );
+                            let input =
+                                vec![vec![vec![span.clone()]; CHUNKS_PER_SENDER]; num_senders];
                             let ready = AtomicUsize::new(0);
                             let start = AtomicBool::new(false);
                             let done = AtomicUsize::new(0);
