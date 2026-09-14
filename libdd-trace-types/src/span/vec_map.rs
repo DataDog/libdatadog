@@ -187,6 +187,11 @@ impl<K, V> VecMap<K, V> {
         self.data.is_empty()
     }
 
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     /// Return `true` if the map hasn't been extended since the last call to [Self::dedup],
     /// guaranteeing that the underlying vector doesn't have any duplicate key.
     ///

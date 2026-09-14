@@ -10,12 +10,13 @@ use libdd_data_pipeline_core::{
 };
 use libdd_trace_types::span::TraceData;
 use libdd_trace_utils::send_with_retry::{SendWithRetryError, SendWithRetryResult};
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use tracing::error;
 
 pub(crate) async fn send_agentless_traces_with_observer<T, C, F, S>(
     capabilities: &C,
-    traces: Vec<Vec<libdd_trace_types::span::v04::Span<T>>>,
+    traces: PooledChunks<'_, T>,
     metadata: &TracerMetadata,
     config: &AgentlessTraceConfig,
     client_side_stats: bool,

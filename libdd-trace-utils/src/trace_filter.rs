@@ -8,6 +8,7 @@ use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
+use crate::span::span_pool::PooledChunks;
 use crate::span::{trace_utils::get_root_span_index, trace_utils_v1};
 use libdd_trace_types::span::v1::{AttributeValue, SpanKind, TraceChunk};
 use libdd_trace_types::span::vec_map::VecMap;
@@ -276,9 +277,9 @@ impl TraceFilterer {
     }
 
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
-    pub fn filter_traces(&self, traces: &mut Vec<Vec<v04::Span<impl TraceData>>>) -> usize {
+    pub fn filter_traces<T: TraceData>(&self, traces: &mut PooledChunks<'_, T>) -> usize {
         let traces_count_before = traces.len();
-        traces.retain(|trace| {
+        traces.retain_mut(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
@@ -403,11 +404,13 @@ impl TraceFilterer {
 #[cfg(test)]
 mod tests {
     use super::TraceFilterer;
+    use crate::span::span_pool::PooledChunks;
     use libdd_trace_types::span::v04::SpanBytes;
     use libdd_trace_types::span::v1::{
         AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
     };
     use libdd_trace_types::span::vec_map::VecMap;
+    use libdd_trace_types::span::BytesData;
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -426,8 +429,8 @@ mod tests {
         }
     }
 
-    fn one_trace(s: SpanBytes) -> Vec<Vec<SpanBytes>> {
-        vec![vec![s]]
+    fn one_trace(s: SpanBytes) -> PooledChunks<'static, BytesData> {
+        PooledChunks::unpooled(vec![vec![s]])
     }
 
     fn v1_chunk_with(
@@ -704,10 +707,10 @@ mod tests {
     #[test]
     fn multiple_traces_partial_rejection() {
         let f = reject_str(&["env:prod"]);
-        let mut traces = vec![
+        let mut traces = PooledChunks::unpooled(vec![
             vec![span_with("r", &[("env", "prod")])],    // dropped
             vec![span_with("r", &[("env", "staging")])], // kept
-        ];
+        ]);
         f.filter_traces(&mut traces);
         assert_eq!(traces.len(), 1);
     }
@@ -715,10 +718,10 @@ mod tests {
     #[test]
     fn no_filters_keeps_all_traces() {
         let f = TraceFilterer::new(&[], &[], &[], &[], &[]);
-        let mut traces = vec![
+        let mut traces = PooledChunks::unpooled(vec![
             vec![span_with("r1", &[])],
             vec![span_with("r2", &[("env", "prod")])],
-        ];
+        ]);
         f.filter_traces(&mut traces);
         assert_eq!(traces.len(), 2);
     }
