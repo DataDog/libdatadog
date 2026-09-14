@@ -149,11 +149,20 @@ pub struct StatsObfuscationConfig {
 impl ObfuscationConfig {
     /// Builds the obfuscation config from environment variables.
     ///
+    /// This constructor preserves the defaults used by the serverless extension, which diverge
+    /// from the agent `Default` impls (e.g. `memcached.keep_command = true`, `credit_cards.luhn =
+    /// true`). New callers should use [`ObfuscationConfig::default`] and set fields explicitly
+    /// instead.
+    ///
     /// # Errors
     ///
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new_from_env() -> Result<Self, Box<dyn core::error::Error>> {
+    #[deprecated(
+        since = "7.0.0",
+        note = "use ObfuscationConfig::default() and set fields explicitly. This constructor preserves serverless-extension defaults that diverge from the agent Default impl"
+    )]
+    pub fn new_serverless() -> Result<Self, Box<dyn core::error::Error>> {
         use libdd_common::config::parse_env;
         use log::{debug, error};
         use std::env;
