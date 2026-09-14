@@ -25,6 +25,7 @@ libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-h
 
 [dev-dependencies]
 criterion.workspace = true
+libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
 
 [[bench]]
 name = "sampler_overhead"
