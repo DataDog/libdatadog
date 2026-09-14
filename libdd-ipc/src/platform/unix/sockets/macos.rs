@@ -283,6 +283,9 @@ impl SeqpacketConn {
             let ret =
                 unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, timeout_ms) };
             if ret > 0 {
+                if pfds[0].revents & libc::POLLIN != 0 {
+                    return Ok(());
+                }
                 if pfds[1].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
                     return Err(io::Error::from(io::ErrorKind::BrokenPipe));
                 }
@@ -456,6 +459,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_recv_blocking_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Start the receiver first, with nothing queued yet, so it actually enters
+        // poll_readable_with_liveness's blocking poll() -- then fire both events close
+        // together so poll() is likely to observe them simultaneously.
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            let (n, _) = client
+                .recv_raw_blocking(&mut buf)
+                .expect("expected the queued message, not BrokenPipe");
+            buf[..n].to_vec()
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        server
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(server);
+
+        let got = handle.join().expect("receiver thread");
+        assert_eq!(got, b"final");
+    }
+
     /// Async counterpart of `test_recv_blocking_detects_peer_disconnect_promptly`, covering
     /// `recv_raw_async` (used by the macro-generated server dispatch loop) rather than the
     /// client-side `recv_raw_blocking`. This reproduces the real-world
@@ -489,5 +524,25 @@ mod tests {
             "recv_raw_async took {elapsed:?} to notice the disconnect; \
              expected near-immediate detection via the liveness pipe, not an indefinite wait"
         );
+    }
+
+    #[tokio::test]
+    async fn test_recv_async_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        client
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(client);
+
+        let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect("expected the queued message, not BrokenPipe");
+        assert_eq!(got, b"final");
     }
 }

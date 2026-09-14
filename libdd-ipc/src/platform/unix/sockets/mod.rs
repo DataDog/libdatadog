@@ -521,6 +521,7 @@ where
         let mut guard = match &liveness_async {
             Some(liveness_async) => {
                 tokio::select! {
+                    biased;
                     guard = fd.readable() => guard?,
                     liveness = liveness_async.readable() => {
                         // Peer's liveness pipe write end closed: it disconnected. Consume the
