@@ -27,18 +27,22 @@ impl<T: SpanText> serde::Serialize for SharedDict<T> {
 }
 
 impl<T: SpanText> SharedDict<T> {
-    /// Gets the index of the interned string. If the string is not part of the dictionary it is
-    /// added and its corresponding index returned.
+    /// Gets the index of `value`, inserting it if it is not already interned.
+    ///
+    /// This method takes the dictionary's entry type by value, so the caller must create or
+    /// convert the value before the dictionary lookup. When inserting borrowed [`SpanText`] into a
+    /// [`SharedDict<BytesString>`], use [`SharedDict::get_or_insert_span_text`] to defer that
+    /// conversion until after the lookup.
     ///
     /// # Arguments:
     ///
-    /// * `str`: string to look up in the dictionary.
-    pub fn get_or_insert(&mut self, s: T) -> Result<u32, std::num::TryFromIntError> {
-        if let Some(index) = self.map.get_index_of(s.borrow()) {
+    /// * `value`: string to look up in the dictionary.
+    pub fn get_or_insert(&mut self, value: T) -> Result<u32, std::num::TryFromIntError> {
+        if let Some(index) = self.map.get_index_of(value.borrow()) {
             (index).try_into()
         } else {
             let index = self.map.len();
-            self.map.insert(s, ());
+            self.map.insert(value, ());
             index.try_into()
         }
     }
@@ -54,7 +58,12 @@ impl<T: SpanText> SharedDict<T> {
 }
 
 impl SharedDict<BytesString> {
-    /// Gets the index of borrowed span text, inserting an owned copy only when it is absent.
+    /// Gets the index of borrowed span text, inserting it as a [`BytesString`] if it is not already
+    /// interned.
+    ///
+    /// Unlike [`SharedDict::get_or_insert`], this method accepts any borrowed [`SpanText`] and
+    /// performs the lookup before converting it to the dictionary's entry type. This avoids
+    /// creating a [`BytesString`] when the text is already interned.
     pub fn get_or_insert_span_text<T: SpanText>(
         &mut self,
         value: &T,
