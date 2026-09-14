@@ -34,6 +34,7 @@ const EVP_ORIGIN_HEADER: &str = "DD-EVP-ORIGIN";
 const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
 const DEFAULT_UNAVAILABLE_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
 pub const MAX_EVP_PRODUCER_IDENTITY_LENGTH: usize = 256;
+const MAX_DNS_HOST_LENGTH: usize = 253;
 // The Agent contract guarantees that these local responses reject the request
 // before processing it, so replaying the same batch through direct intake is
 // safe. An upstream 403 does not provide that guarantee.
@@ -264,7 +265,7 @@ fn validate_direct_endpoint(endpoint: &Endpoint, intake_subdomain: &str) -> Resu
             "direct EVP endpoint host must be {intake_subdomain}.<site>"
         ));
     };
-    if !is_valid_dns_site(site) {
+    if host.len() > MAX_DNS_HOST_LENGTH || !is_valid_dns_site(site) {
         return Err("direct EVP endpoint contains an invalid Datadog site".to_owned());
     }
     let path_and_query = endpoint.url.path_and_query().map(|value| value.as_str());
@@ -296,7 +297,7 @@ fn validate_intake_subdomain(subdomain: &str) -> Result<(), String> {
 }
 
 fn is_valid_dns_site(site: &str) -> bool {
-    site.len() <= 253
+    site.len() <= MAX_DNS_HOST_LENGTH
         && site.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
@@ -1453,6 +1454,21 @@ mod tests {
         .validate()
         .is_ok());
 
+        // Custom and test Datadog sites remain valid. The client derives this
+        // authority from DD_SITE and deliberately supplies the credential for
+        // that exact host; validation binds the target label without imposing
+        // a production-domain allowlist.
+        assert!(EvpTransportConfig::prefer_local_then_direct(
+            endpoint("http://agent.internal:8126/", None),
+            Some(endpoint(
+                "https://event-platform-intake.mock-intake.invalid/",
+                Some("secret")
+            )),
+            EVP_SUBDOMAIN_VALUE,
+        )
+        .validate()
+        .is_ok());
+
         assert!(EvpTransportConfig::prefer_local_then_direct(
             endpoint("http://agent.internal:8126/", None),
             Some(endpoint(
@@ -1471,6 +1487,45 @@ mod tests {
                 Some("secret")
             )),
             "errors-intake",
+        )
+        .validate()
+        .is_err());
+
+        let longest_valid_site_for_target = [
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(39),
+        ]
+        .join(".");
+        let valid_boundary_url =
+            format!("https://{EVP_SUBDOMAIN_VALUE}.{longest_valid_site_for_target}/");
+        assert_eq!(
+            format!("{EVP_SUBDOMAIN_VALUE}.{longest_valid_site_for_target}").len(),
+            MAX_DNS_HOST_LENGTH
+        );
+        assert!(EvpTransportConfig::prefer_local_then_direct(
+            endpoint("http://agent.internal:8126/", None),
+            Some(endpoint(&valid_boundary_url, Some("secret"))),
+            EVP_SUBDOMAIN_VALUE,
+        )
+        .validate()
+        .is_ok());
+
+        let maximum_length_site = [
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61),
+        ]
+        .join(".");
+        assert_eq!(maximum_length_site.len(), MAX_DNS_HOST_LENGTH);
+        let oversized_composed_host =
+            format!("https://{EVP_SUBDOMAIN_VALUE}.{maximum_length_site}/");
+        assert!(EvpTransportConfig::prefer_local_then_direct(
+            endpoint("http://agent.internal:8126/", None),
+            Some(endpoint(&oversized_composed_host, Some("secret"))),
+            EVP_SUBDOMAIN_VALUE,
         )
         .validate()
         .is_err());

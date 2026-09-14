@@ -1,13 +1,15 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Coalesces sidecar FFE (Feature Flag Evaluation) flag evaluation batches and
-//! dispatches them through the session's shared EVP transport.
+//! Coalesces Feature Flags evaluation batches and dispatches them through the
+//! session's shared EVP transport.
 //!
-//! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
-//! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
-//! responses are logged at `warn`, network errors at `debug`, and dropped
-//! (matches dd-trace-go behaviour). No agent capability gate.
+//! The writer supplies the logical `/api/v2/flagevaluation` intake path.
+//! `AgentOnly` uses the historical local EVP v2 route.
+//! `PreferLocalThenDirect` discovers a compatible local v4-before-v2 route,
+//! requiring both EVP identity headers, and otherwise uses authenticated direct
+//! intake. Delivery is fire-and-forget; failures follow the shared selector's
+//! replay-safety rules.
 
 use crate::service::evp_transport::EvpTransport;
 use crate::service::{EvpProducerIdentity, FfeFlagEvaluationBatch, FfeTelemetryContext};

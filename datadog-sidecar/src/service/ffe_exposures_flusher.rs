@@ -1,12 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Serializes and forwards FFE (Feature Flag Evaluation) exposure events
-//! through the session's shared EVP transport.
+//! Serializes and forwards Feature Flags exposure events through the session's
+//! shared EVP transport.
 //!
-//! Protocol matches dd-trace-go / dd-trace-rb / dd-trace-py / dd-trace-js /
-//! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
-//! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
+//! The writer supplies the logical `/api/v2/exposures` intake path. `AgentOnly`
+//! uses the historical local EVP v2 route. `PreferLocalThenDirect` discovers a
+//! compatible local v4-before-v2 route, requiring both EVP identity headers,
+//! and otherwise uses authenticated direct intake.
 
 #[cfg(test)]
 use crate::service::evp_proxy::{
@@ -20,14 +21,14 @@ use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use tracing::debug;
 
-/// EVP proxy path for FFE exposure intake.
+/// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
 #[cfg(test)]
 pub(crate) const EVP_EXPOSURES_PATH: &str = "/evp_proxy/v2/api/v2/exposures";
 const EXPOSURES_INTAKE_PATH: &str = "/api/v2/exposures";
 
 const LOG_PREFIX: &str = "ffe_exposures_flusher";
 
-/// POST a structured FFE exposure batch through the session's selected EVP route.
+/// POST a structured Feature Flags exposure batch through the selected EVP route.
 /// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
 /// `debug`, and dropped (matches dd-trace-go behaviour).
 pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(

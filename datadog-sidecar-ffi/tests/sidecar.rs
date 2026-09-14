@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
@@ -12,6 +13,9 @@ macro_rules! assert_maybe_no_error {
 }
 
 use libdd_common::Endpoint;
+use libdd_common_ffi::{CharSlice, MaybeError};
+use std::path::PathBuf;
+use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]
@@ -21,6 +25,72 @@ use std::{
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
 };
+
+#[test]
+fn generated_header_exposes_native_evp_transport_abi() {
+    // Keep the Rust symbol and its exact C-facing signature under compile-time
+    // test coverage independently of cbindgen's generated declaration.
+    let _: unsafe extern "C" fn(
+        &mut Box<SidecarTransport>,
+        EvpTransportMode,
+        &Endpoint,
+        *const Endpoint,
+        CharSlice<'_>,
+        &EvpProducerIdentity<'_>,
+    ) -> MaybeError = ddog_sidecar_session_set_evp_transport;
+
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let generated = tempfile::tempdir().unwrap();
+    build_common::generate_header(
+        workspace.join("libdd-common-ffi"),
+        "common.h",
+        generated.path().to_path_buf(),
+    );
+    build_common::generate_header(
+        workspace.join("datadog-sidecar-ffi"),
+        "sidecar.h",
+        generated.path().to_path_buf(),
+    );
+
+    let include_dir = generated.path().join(build_common::HEADER_PATH);
+    let common_header = include_dir.join("common.h");
+    let sidecar_header = include_dir.join("sidecar.h");
+    tools::headers::dedup_headers(
+        common_header.to_str().unwrap(),
+        &[sidecar_header.to_str().unwrap()],
+    );
+
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let version = Command::new(rustc).arg("-vV").output().unwrap();
+    assert!(version.status.success());
+    let host = String::from_utf8(version.stdout)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap()
+        .to_owned();
+
+    cc::Build::new()
+        .cargo_metadata(false)
+        .out_dir(generated.path())
+        .host(&host)
+        .target(&host)
+        .opt_level(0)
+        .debug(false)
+        .include(include_dir)
+        .file(
+            workspace
+                .join("datadog-sidecar-ffi")
+                .join("tests/evp_transport_abi.c"),
+        )
+        .warnings(true)
+        .warnings_into_errors(true)
+        .try_compile("sidecar_evp_transport_abi")
+        .unwrap();
+}
 
 fn set_sidecar_per_process() {
     std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")

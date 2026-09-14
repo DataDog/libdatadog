@@ -1262,6 +1262,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
 }
 
 #[repr(C)]
+/// C representation of the context attached to Feature Flags telemetry.
 pub struct FfeTelemetryContext<'a> {
     pub service: CharSlice<'a>,
     pub env: CharSlice<'a>,
@@ -1359,6 +1360,7 @@ fn ddog_sidecar_session_set_evp_transport_impl(
 }
 
 #[repr(C)]
+/// C representation of a Feature Flags exposure event.
 pub struct FfeExposure<'a> {
     pub timestamp_ms: u64,
     pub flag_key: CharSlice<'a>,
@@ -1373,6 +1375,7 @@ pub struct FfeExposure<'a> {
 }
 
 #[repr(C)]
+/// C representation of a Feature Flags evaluation metric.
 pub struct FfeEvaluationMetric<'a> {
     pub flag_key: CharSlice<'a>,
     pub variant: CharSlice<'a>,
@@ -1382,6 +1385,7 @@ pub struct FfeEvaluationMetric<'a> {
 }
 
 #[repr(C)]
+/// C representation of a Feature Flags evaluation event.
 pub struct FfeFlagEvaluation<'a> {
     pub timestamp_ms: i64,
     pub flag_key: CharSlice<'a>,
@@ -1400,10 +1404,10 @@ pub struct FfeFlagEvaluation<'a> {
     pub runtime_default_used: bool,
 }
 
-/// Send structured FFE exposure events to the sidecar. The sidecar owns
-/// deduplication, JSON serialization, and Agent EVP delivery. This function is
-/// caller-driven; shared libdatadog evaluator calls do not log unless an SDK
-/// explicitly sends this action.
+/// Send structured Feature Flags exposure events to the sidecar. The sidecar owns
+/// route selection, deduplication, JSON serialization, and EVP delivery. This
+/// function is caller-driven; shared libdatadog evaluator calls do not log unless
+/// an SDK explicitly sends this action.
 ///
 /// # Safety
 /// `context` and every element in `exposures` must contain valid UTF-8
@@ -1471,9 +1475,10 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
     MaybeError::None
 }
 
-/// Send structured FFE flag evaluation events to the sidecar. The sidecar owns
-/// JSON serialization and Agent EVP delivery. This function is caller-driven;
-/// callers must aggregate and bound event cardinality before passing a batch.
+/// Send structured Feature Flags evaluation events to the sidecar. The sidecar owns
+/// route selection, JSON serialization, and EVP delivery. This function is
+/// caller-driven; callers must aggregate and bound event cardinality before passing
+/// a batch.
 ///
 /// # Safety
 /// `context` and every element in `flag_evaluations` must contain valid UTF-8
@@ -1543,7 +1548,7 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
     MaybeError::None
 }
 
-/// Send structured FFE evaluation metric events to the sidecar. The sidecar
+/// Send structured Feature Flags evaluation metric events to the sidecar. The sidecar
 /// owns aggregation, OTLP/protobuf serialization, and OTLP HTTP delivery. This
 /// function is caller-driven so SDKs with existing host-language hooks can
 /// safely coexist until they explicitly migrate.
