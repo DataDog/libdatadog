@@ -9,8 +9,8 @@
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
-use crate::service::ffe_evp_proxy::FfeEvpTransport;
-use crate::service::{FfeEvpProducerIdentity, FfeFlagEvaluationBatch, FfeTelemetryContext};
+use crate::service::evp_transport::EvpTransport;
+use crate::service::{EvpProducerIdentity, FfeFlagEvaluationBatch, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_ffe::telemetry::flagevaluation::{
     encode_flag_evaluation_payloads,
@@ -38,13 +38,13 @@ pub(crate) const FLAG_EVALUATION_REASON_PAYLOAD_LIMIT: &str = "payload_limit";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DestinationKey {
-    transport: FfeEvpTransport,
-    producer: FfeEvpProducerIdentity,
+    transport: EvpTransport,
+    producer: EvpProducerIdentity,
     context: FfeTelemetryContext,
 }
 
 impl DestinationKey {
-    fn new(transport: FfeEvpTransport, context: &FfeTelemetryContext) -> Self {
+    fn new(transport: EvpTransport, context: &FfeTelemetryContext) -> Self {
         Self {
             producer: transport.producer().clone(),
             transport,
@@ -63,7 +63,7 @@ impl FlagEvaluationCoalescer {
     pub(crate) fn enqueue(
         &self,
         client: NativeCapabilities,
-        transport: FfeEvpTransport,
+        transport: EvpTransport,
         batch: FfeFlagEvaluationBatch,
     ) {
         let destination_key = DestinationKey::new(transport, &batch.context);
@@ -114,7 +114,7 @@ impl FlagEvaluationCoalescer {
 
 async fn send_batch_with_writer_stats(
     client: &NativeCapabilities,
-    transport: &FfeEvpTransport,
+    transport: &EvpTransport,
     batch: FfeFlagEvaluationBatch,
     coalescer: &CommonFlagEvaluationEvpCoalescer<DestinationKey>,
 ) {
@@ -138,7 +138,8 @@ async fn send_batch_with_writer_stats(
             .send_payload(
                 client,
                 FLAGEVALUATION_INTAKE_PATH,
-                payload.clone(),
+                "application/json",
+                payload.clone().into(),
                 LOG_PREFIX,
                 "flag evaluation batch",
             )
@@ -151,6 +152,7 @@ async fn send_batch_with_writer_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
     use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
@@ -244,7 +246,7 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let transport = FfeEvpTransport::agent_only(base);
+        let transport = EvpTransport::agent_only(base, EVENT_PLATFORM_INTAKE_SUBDOMAIN).unwrap();
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
 
@@ -274,7 +276,7 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let transport = FfeEvpTransport::agent_only(base);
+        let transport = EvpTransport::agent_only(base, EVENT_PLATFORM_INTAKE_SUBDOMAIN).unwrap();
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
         let guard = coalescer.flush_mutex.lock().await;

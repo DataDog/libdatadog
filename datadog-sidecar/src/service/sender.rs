@@ -16,8 +16,8 @@ use crate::service::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    FfeEvpTransportConfig, FfeEvpTransportConfigWithIdentity, InstanceId, QueueId,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -25,7 +25,7 @@ use libdd_ipc::platform::ShmHandle;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{io, time::Duration};
 use tracing::trace;
 
@@ -36,7 +36,7 @@ use tracing::trace;
 #[derive(Default)]
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
-    set_session_ffe_evp_config: Option<SidecarInterfaceRequest>,
+    set_session_evp_transports: BTreeMap<String, SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
     set_session_default_service_name: Option<SidecarInterfaceRequest>,
     set_session_user_service_defined: Option<SidecarInterfaceRequest>,
@@ -48,10 +48,8 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 10] {
+    fn remaining_slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 8] {
         [
-            &mut self.set_session_config,
-            &mut self.set_session_ffe_evp_config,
             &mut self.set_session_process_tags,
             &mut self.set_session_default_service_name,
             &mut self.set_session_user_service_defined,
@@ -109,7 +107,7 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     }
     if matches!(incoming, SidecarInterfaceRequest::ShutdownSession {}) {
         outbox.set_session_config = None;
-        outbox.set_session_ffe_evp_config = None;
+        outbox.set_session_evp_transports.clear();
     }
     if let SidecarInterfaceRequest::ClearQueueId {
         ref instance_id,
@@ -128,9 +126,10 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         SidecarInterfaceRequest::SetSessionConfig { .. } => {
             outbox.set_session_config = Some(incoming);
         }
-        SidecarInterfaceRequest::SetSessionFfeEvpConfig { .. }
-        | SidecarInterfaceRequest::SetSessionFfeEvpConfigWithIdentity { .. } => {
-            outbox.set_session_ffe_evp_config = Some(incoming);
+        SidecarInterfaceRequest::SetSessionEvpTransport { ref config } => {
+            outbox
+                .set_session_evp_transports
+                .insert(config.transport.intake_subdomain.clone(), incoming);
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
@@ -194,7 +193,33 @@ impl SidecarSender {
         if self.channel.0.outstanding() >= self.max_outstanding / 2 {
             self.channel.0.drain_acks();
         }
-        for slot in self.outbox.slots_mut() {
+        if let Some(msg) = &self.outbox.set_session_config {
+            if self.channel.0.outstanding() >= self.max_outstanding
+                || !self.channel.try_send_request(msg)
+            {
+                return false;
+            }
+            self.outbox.set_session_config = None;
+        }
+
+        let targets: Vec<_> = self
+            .outbox
+            .set_session_evp_transports
+            .keys()
+            .cloned()
+            .collect();
+        for target in targets {
+            if self.channel.0.outstanding() >= self.max_outstanding {
+                return false;
+            }
+            let msg = &self.outbox.set_session_evp_transports[&target];
+            if !self.channel.try_send_request(msg) {
+                return false;
+            }
+            self.outbox.set_session_evp_transports.remove(&target);
+        }
+
+        for slot in self.outbox.remaining_slots_mut() {
             if let Some(msg) = slot {
                 if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
@@ -210,7 +235,13 @@ impl SidecarSender {
 
     /// Blocking drain of the outbox (used before blocking calls).
     fn drain_outbox_blocking(&mut self) {
-        for slot in self.outbox.slots_mut() {
+        if let Some(msg) = self.outbox.set_session_config.take() {
+            self.channel.send_request_blocking(&msg).ok();
+        }
+        for (_, msg) in std::mem::take(&mut self.outbox.set_session_evp_transports) {
+            self.channel.send_request_blocking(&msg).ok();
+        }
+        for slot in self.outbox.remaining_slots_mut() {
             if let Some(msg) = slot.take() {
                 self.channel.send_request_blocking(&msg).ok();
             }
@@ -247,21 +278,10 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    pub fn set_session_ffe_evp_config(&mut self, config: FfeEvpTransportConfig) {
+    pub fn set_session_evp_transport(&mut self, config: EvpTransportConfigWithIdentity) {
         coalesce(
             &mut self.outbox,
-            SidecarInterfaceRequest::SetSessionFfeEvpConfig { config },
-        );
-        self.try_drain_outbox();
-    }
-
-    pub fn set_session_ffe_evp_config_with_identity(
-        &mut self,
-        config: FfeEvpTransportConfigWithIdentity,
-    ) {
-        coalesce(
-            &mut self.outbox,
-            SidecarInterfaceRequest::SetSessionFfeEvpConfigWithIdentity { config },
+            SidecarInterfaceRequest::SetSessionEvpTransport { config },
         );
         self.try_drain_outbox();
     }
@@ -590,5 +610,42 @@ impl SidecarSender {
     pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::{EvpProducerIdentity, EvpTransportConfig};
+    use libdd_common::Endpoint;
+
+    fn evp_request(target: &str, version: &str) -> SidecarInterfaceRequest {
+        SidecarInterfaceRequest::SetSessionEvpTransport {
+            config: EvpTransportConfigWithIdentity::new(
+                EvpTransportConfig::agent_only(Endpoint::default(), target),
+                EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn evp_transport_updates_coalesce_per_intake_target() {
+        let mut outbox = SidecarOutbox::default();
+        coalesce(&mut outbox, evp_request("event-platform-intake", "1.0.0"));
+        coalesce(&mut outbox, evp_request("errors-intake", "1.0.0"));
+        coalesce(&mut outbox, evp_request("event-platform-intake", "2.0.0"));
+
+        assert_eq!(outbox.set_session_evp_transports.len(), 2);
+        let event_platform = &outbox.set_session_evp_transports["event-platform-intake"];
+        match event_platform {
+            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
+                assert_eq!(config.producer.version(), "2.0.0");
+            }
+            _ => unreachable!(),
+        }
+        assert!(outbox
+            .set_session_evp_transports
+            .contains_key("errors-intake"));
     }
 }

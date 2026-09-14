@@ -18,10 +18,9 @@ use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
-    FfeConfigurationSource as SidecarFfeConfigurationSource,
-    FfeEvaluationMetric as SidecarFfeEvaluationMetric,
-    FfeEvpProducerIdentity as SidecarFfeEvpProducerIdentity, FfeEvpTransportConfig,
-    FfeEvpTransportConfigWithIdentity, FfeExposure as SidecarFfeExposure,
+    EvpProducerIdentity as SidecarEvpProducerIdentity, EvpTransportConfig,
+    EvpTransportConfigWithIdentity, EvpTransportMode as SidecarEvpTransportMode,
+    FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
     FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
@@ -1269,137 +1268,93 @@ pub struct FfeTelemetryContext<'a> {
     pub version: CharSlice<'a>,
 }
 
-/// Controls whether FFE EVP traffic is fixed to the Agent or may use direct
-/// intake fallback. This is independent from the tracing transport mode.
+/// Controls whether an EVP client stays fixed to the Agent or opts into local
+/// discovery and direct-intake fallback.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FfeEvpConfigurationSource {
-    Agent,
-    Agentless,
+pub enum EvpTransportMode {
+    AgentOnly,
+    PreferLocalThenDirect,
 }
 
-/// Logical tracer identity attached to FFE EVP requests.
+/// Logical tracer identity attached to EVP requests.
 ///
 /// Both fields must be non-empty, valid HTTP header values no longer than 256
 /// bytes. This identifies the producing SDK, not the sidecar transport.
 #[repr(C)]
-pub struct FfeEvpProducerIdentity<'a> {
+pub struct EvpProducerIdentity<'a> {
     pub origin: CharSlice<'a>,
     pub version: CharSlice<'a>,
 }
 
-/// Configure the Agent-backed Feature Flags EVP network path for the current
-/// sidecar session. Agentless configuration requires the identity-bearing
-/// `ddog_sidecar_session_set_ffe_evp_config_with_identity` entry point.
-///
-/// # Safety
-/// `direct_endpoint` must be null or point to a valid `Endpoint` for the
-/// duration of this call.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_ffe_evp_config(
-    transport: &mut Box<SidecarTransport>,
-    source: FfeEvpConfigurationSource,
-    agent_endpoint: &Endpoint,
-    direct_endpoint: *const Endpoint,
-) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ddog_sidecar_session_set_ffe_evp_config_impl(
-            transport,
-            source,
-            agent_endpoint,
-            direct_endpoint,
-        )
-    }))
-    .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
-            panic,
-            "ddog_sidecar_session_set_ffe_evp_config",
-        ))
-    })
-}
-
-fn ddog_sidecar_session_set_ffe_evp_config_impl(
-    transport: &mut Box<SidecarTransport>,
-    source: FfeEvpConfigurationSource,
-    agent_endpoint: &Endpoint,
-    direct_endpoint: *const Endpoint,
-) -> MaybeError {
-    let source = match source {
-        FfeEvpConfigurationSource::Agent => SidecarFfeConfigurationSource::Agent,
-        FfeEvpConfigurationSource::Agentless => SidecarFfeConfigurationSource::Agentless,
-    };
-    let config = FfeEvpTransportConfig {
-        source,
-        agent_endpoint: agent_endpoint.clone(),
-        // SAFETY: The public FFI function requires a null pointer or a valid
-        // Endpoint for the duration of the call.
-        direct_endpoint: unsafe { direct_endpoint.as_ref() }.cloned(),
-    };
-    try_c!(config.validate_without_identity());
-    try_c!(blocking::set_session_ffe_evp_config(transport, config));
-    MaybeError::None
-}
-
-/// Configure the Feature Flags EVP network path together with the identity of
-/// the SDK that produces the events. Agentless/direct delivery is available
-/// only through this identity-bearing entry point.
+/// Configure the shared EVP network path for the current sidecar session.
+/// `AgentOnly` preserves the historical fixed EVP v2 route.
+/// `PreferLocalThenDirect` explicitly opts the client into local discovery and
+/// authenticated direct fallback.
 ///
 /// # Safety
 /// `direct_endpoint` must be null or point to a valid `Endpoint`, and all
-/// producer slices must remain valid for the duration of this call.
+/// string slices must remain valid for the duration of this call.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_session_set_ffe_evp_config_with_identity(
+pub unsafe extern "C" fn ddog_sidecar_session_set_evp_transport(
     transport: &mut Box<SidecarTransport>,
-    source: FfeEvpConfigurationSource,
+    mode: EvpTransportMode,
     agent_endpoint: &Endpoint,
     direct_endpoint: *const Endpoint,
-    producer: &FfeEvpProducerIdentity<'_>,
+    intake_subdomain: CharSlice<'_>,
+    producer: &EvpProducerIdentity<'_>,
 ) -> MaybeError {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ddog_sidecar_session_set_ffe_evp_config_with_identity_impl(
+        ddog_sidecar_session_set_evp_transport_impl(
             transport,
-            source,
+            mode,
             agent_endpoint,
             direct_endpoint,
+            intake_subdomain,
             producer,
         )
     }))
     .unwrap_or_else(|panic| {
         MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
             panic,
-            "ddog_sidecar_session_set_ffe_evp_config_with_identity",
+            "ddog_sidecar_session_set_evp_transport",
         ))
     })
 }
 
-fn ddog_sidecar_session_set_ffe_evp_config_with_identity_impl(
+fn ddog_sidecar_session_set_evp_transport_impl(
     transport: &mut Box<SidecarTransport>,
-    source: FfeEvpConfigurationSource,
+    mode: EvpTransportMode,
     agent_endpoint: &Endpoint,
     direct_endpoint: *const Endpoint,
-    producer: &FfeEvpProducerIdentity<'_>,
+    intake_subdomain: CharSlice<'_>,
+    producer: &EvpProducerIdentity<'_>,
 ) -> MaybeError {
-    let source = match source {
-        FfeEvpConfigurationSource::Agent => SidecarFfeConfigurationSource::Agent,
-        FfeEvpConfigurationSource::Agentless => SidecarFfeConfigurationSource::Agentless,
+    let mode = match mode {
+        EvpTransportMode::AgentOnly => SidecarEvpTransportMode::AgentOnly,
+        EvpTransportMode::PreferLocalThenDirect => SidecarEvpTransportMode::PreferLocalThenDirect,
     };
-    let transport_config = FfeEvpTransportConfig {
-        source,
+    let direct_endpoint = match mode {
+        SidecarEvpTransportMode::AgentOnly => None,
+        SidecarEvpTransportMode::PreferLocalThenDirect => {
+            // SAFETY: The public FFI function requires a null pointer or a
+            // valid Endpoint for the duration of the call.
+            unsafe { direct_endpoint.as_ref() }.cloned()
+        }
+    };
+    let transport_config = EvpTransportConfig {
+        mode,
         agent_endpoint: agent_endpoint.clone(),
-        // SAFETY: The public FFI function requires a null pointer or a valid
-        // Endpoint for the duration of the call.
-        direct_endpoint: unsafe { direct_endpoint.as_ref() }.cloned(),
+        direct_endpoint,
+        intake_subdomain: try_c!(char_slice_to_string(intake_subdomain)),
     };
-    let producer = try_c!(ffe_evp_producer_identity_from_ffi(producer));
-    let config = try_c!(FfeEvpTransportConfigWithIdentity::new(
+    let producer = try_c!(evp_producer_identity_from_ffi(producer));
+    let config = try_c!(EvpTransportConfigWithIdentity::new(
         transport_config,
         producer
     ));
-    try_c!(blocking::set_session_ffe_evp_config_with_identity(
-        transport, config
-    ));
+    try_c!(blocking::set_session_evp_transport(transport, config));
     MaybeError::None
 }
 
@@ -1641,12 +1596,12 @@ fn ffe_context_from_ffi(
     })
 }
 
-fn ffe_evp_producer_identity_from_ffi(
-    producer: &FfeEvpProducerIdentity<'_>,
-) -> Result<SidecarFfeEvpProducerIdentity, String> {
+fn evp_producer_identity_from_ffi(
+    producer: &EvpProducerIdentity<'_>,
+) -> Result<SidecarEvpProducerIdentity, String> {
     let origin = char_slice_to_string(producer.origin)?;
     let version = char_slice_to_string(producer.version)?;
-    SidecarFfeEvpProducerIdentity::new(origin, version).map_err(|error| error.to_string())
+    SidecarEvpProducerIdentity::new(origin, version).map_err(|error| error.to_string())
 }
 
 fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposure, String> {
@@ -2304,18 +2259,17 @@ mod tests {
     use super::*;
     use std::borrow::Cow;
 
-    fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> FfeEvpProducerIdentity<'a> {
-        FfeEvpProducerIdentity {
+    fn ffi_producer_identity<'a>(origin: &'a str, version: &'a str) -> EvpProducerIdentity<'a> {
+        EvpProducerIdentity {
             origin: CharSlice::from(origin),
             version: CharSlice::from(version),
         }
     }
 
     #[test]
-    fn ffe_producer_identity_validates_native_input() {
+    fn evp_producer_identity_validates_native_input() {
         let identity =
-            ffe_evp_producer_identity_from_ffi(&ffi_producer_identity("dd-trace-rb", "3.0.0"))
-                .unwrap();
+            evp_producer_identity_from_ffi(&ffi_producer_identity("dd-trace-rb", "3.0.0")).unwrap();
         assert_eq!(identity.origin(), "dd-trace-rb");
         assert_eq!(identity.version(), "3.0.0");
 
@@ -2324,7 +2278,7 @@ mod tests {
             ffi_producer_identity("dd-trace-rb", " "),
             ffi_producer_identity("invalid\norigin", "3.0.0"),
         ] {
-            assert!(ffe_evp_producer_identity_from_ffi(&identity).is_err());
+            assert!(evp_producer_identity_from_ffi(&identity).is_err());
         }
     }
 

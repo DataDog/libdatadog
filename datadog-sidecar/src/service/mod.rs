@@ -20,9 +20,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 // public types we want to bring up to top level of service:: scope
-pub use ffe_evp_proxy::{
-    FfeConfigurationSource, FfeEvpProducerIdentity, FfeEvpProducerIdentityError,
-    FfeEvpTransportConfig, FfeEvpTransportConfigWithIdentity, MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH,
+pub use evp_transport::{
+    EvpProducerIdentity, EvpProducerIdentityError, EvpTransportConfig,
+    EvpTransportConfigWithIdentity, EvpTransportMode, MAX_EVP_PRODUCER_IDENTITY_LENGTH,
 };
 pub use instance_id::InstanceId;
 pub use queue_id::QueueId;
@@ -40,8 +40,8 @@ pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
 pub(crate) mod evp_proxy;
+pub(crate) mod evp_transport;
 pub mod exception_hash_rate_limiter;
-pub(crate) mod ffe_evp_proxy;
 pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;

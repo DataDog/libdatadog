@@ -1,12 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared FFE EVP route selection and transport.
+//! Shared EVP route selection and transport.
 //!
-//! Agent-backed Feature Flags keep the historical fixed EVP v2 route. Agentless
-//! Feature Flags discover a compatible local receiver and use it when possible,
-//! falling back to authenticated direct intake without coupling the decision to
-//! the tracing transport mode.
+//! Consumers remain on the historical fixed Agent EVP v2 route unless they
+//! explicitly opt into local discovery and authenticated direct fallback.
 
 use crate::service::evp_proxy;
 use http::uri::PathAndQuery;
@@ -22,8 +20,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
 
-pub(crate) use evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE;
 pub(crate) use evp_proxy::SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER;
+#[cfg(test)]
+const EVP_SUBDOMAIN_VALUE: &str = evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN;
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", crate::sidecar_version!());
 const EVP_PROXY_V4_PATH: &str = "/evp_proxy/v4";
@@ -34,7 +33,7 @@ const MAX_INFO_RESPONSE_BYTES: usize = 1 << 20;
 const EVP_ORIGIN_HEADER: &str = "DD-EVP-ORIGIN";
 const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
 const DEFAULT_UNAVAILABLE_RECOVERY_COOLDOWN: Duration = Duration::from_secs(30);
-pub const MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH: usize = 256;
+pub const MAX_EVP_PRODUCER_IDENTITY_LENGTH: usize = 256;
 // The Agent contract guarantees that these local responses reject the request
 // before processing it, so replaying the same batch through direct intake is
 // safe. An upstream 403 does not provide that guarantee.
@@ -43,18 +42,18 @@ const WSAECONNREFUSED: i32 = 10061;
 
 static NEXT_TRANSPORT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// Logical SDK identity attached to FFE EVP requests.
+/// Logical SDK identity attached to EVP requests.
 ///
 /// This is deliberately distinct from the sidecar process identity: intake
 /// needs to know which tracer produced the events, not which helper sent them.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
-pub struct FfeEvpProducerIdentity {
+pub struct EvpProducerIdentity {
     origin: String,
     version: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FfeEvpProducerIdentityError {
+pub enum EvpProducerIdentityError {
     EmptyOrigin,
     EmptyVersion,
     OriginTooLong { length: usize },
@@ -63,18 +62,18 @@ pub enum FfeEvpProducerIdentityError {
     InvalidVersion,
 }
 
-impl Display for FfeEvpProducerIdentityError {
+impl Display for EvpProducerIdentityError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::EmptyOrigin => formatter.write_str("EVP producer origin must not be empty"),
             Self::EmptyVersion => formatter.write_str("EVP producer version must not be empty"),
             Self::OriginTooLong { length } => write!(
                 formatter,
-                "EVP producer origin is {length} bytes; maximum is {MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH}"
+                "EVP producer origin is {length} bytes; maximum is {MAX_EVP_PRODUCER_IDENTITY_LENGTH}"
             ),
             Self::VersionTooLong { length } => write!(
                 formatter,
-                "EVP producer version is {length} bytes; maximum is {MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH}"
+                "EVP producer version is {length} bytes; maximum is {MAX_EVP_PRODUCER_IDENTITY_LENGTH}"
             ),
             Self::InvalidOrigin => {
                 formatter.write_str("EVP producer origin is not a valid HTTP header value")
@@ -86,13 +85,13 @@ impl Display for FfeEvpProducerIdentityError {
     }
 }
 
-impl std::error::Error for FfeEvpProducerIdentityError {}
+impl std::error::Error for EvpProducerIdentityError {}
 
-impl FfeEvpProducerIdentity {
+impl EvpProducerIdentity {
     pub fn new(
         origin: impl Into<String>,
         version: impl Into<String>,
-    ) -> Result<Self, FfeEvpProducerIdentityError> {
+    ) -> Result<Self, EvpProducerIdentityError> {
         let origin = origin.into();
         validate_identity_field(&origin, true)?;
         let version = version.into();
@@ -116,36 +115,33 @@ impl FfeEvpProducerIdentity {
     }
 }
 
-fn validate_identity_field(
-    value: &str,
-    is_origin: bool,
-) -> Result<(), FfeEvpProducerIdentityError> {
+fn validate_identity_field(value: &str, is_origin: bool) -> Result<(), EvpProducerIdentityError> {
     if value.trim().is_empty() {
         return Err(if is_origin {
-            FfeEvpProducerIdentityError::EmptyOrigin
+            EvpProducerIdentityError::EmptyOrigin
         } else {
-            FfeEvpProducerIdentityError::EmptyVersion
+            EvpProducerIdentityError::EmptyVersion
         });
     }
     let length = value.len();
-    if length > MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH {
+    if length > MAX_EVP_PRODUCER_IDENTITY_LENGTH {
         return Err(if is_origin {
-            FfeEvpProducerIdentityError::OriginTooLong { length }
+            EvpProducerIdentityError::OriginTooLong { length }
         } else {
-            FfeEvpProducerIdentityError::VersionTooLong { length }
+            EvpProducerIdentityError::VersionTooLong { length }
         });
     }
     if value.trim() != value || http::HeaderValue::try_from(value).is_err() {
         return Err(if is_origin {
-            FfeEvpProducerIdentityError::InvalidOrigin
+            EvpProducerIdentityError::InvalidOrigin
         } else {
-            FfeEvpProducerIdentityError::InvalidVersion
+            EvpProducerIdentityError::InvalidVersion
         });
     }
     Ok(())
 }
 
-impl<'de> Deserialize<'de> for FfeEvpProducerIdentity {
+impl<'de> Deserialize<'de> for EvpProducerIdentity {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -161,81 +157,73 @@ impl<'de> Deserialize<'de> for FfeEvpProducerIdentity {
     }
 }
 
-/// Feature Flags configuration source controlling whether direct EVP fallback
-/// is allowed. This is deliberately independent from the tracing endpoint.
+/// Routing policy selected by an EVP consumer.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum FfeConfigurationSource {
-    /// Remote Configuration / Agent-backed Feature Flags. EVP remains Agent-only.
-    Agent,
-    /// CDN-delivered Feature Flags. EVP may fall back to direct intake.
-    Agentless,
+pub enum EvpTransportMode {
+    /// Preserve the historical fixed Agent EVP v2 route.
+    AgentOnly,
+    /// Prefer a compatible local EVP route, then fall back to direct intake.
+    PreferLocalThenDirect,
 }
 
-/// Explicit per-session FFE EVP configuration crossing the sidecar IPC boundary.
+/// Explicit per-session EVP configuration crossing the sidecar IPC boundary.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FfeEvpTransportConfig {
-    pub source: FfeConfigurationSource,
+pub struct EvpTransportConfig {
+    pub mode: EvpTransportMode,
     pub agent_endpoint: Endpoint,
     pub direct_endpoint: Option<Endpoint>,
+    pub intake_subdomain: String,
 }
 
-impl FfeEvpTransportConfig {
-    pub fn agent(agent_endpoint: Endpoint) -> Self {
+impl EvpTransportConfig {
+    pub fn agent_only(agent_endpoint: Endpoint, intake_subdomain: impl Into<String>) -> Self {
         Self {
-            source: FfeConfigurationSource::Agent,
+            mode: EvpTransportMode::AgentOnly,
             agent_endpoint,
             direct_endpoint: None,
+            intake_subdomain: intake_subdomain.into(),
         }
     }
 
-    pub fn agentless(agent_endpoint: Endpoint, direct_endpoint: Option<Endpoint>) -> Self {
+    pub fn prefer_local_then_direct(
+        agent_endpoint: Endpoint,
+        direct_endpoint: Option<Endpoint>,
+        intake_subdomain: impl Into<String>,
+    ) -> Self {
         Self {
-            source: FfeConfigurationSource::Agentless,
+            mode: EvpTransportMode::PreferLocalThenDirect,
             agent_endpoint,
             direct_endpoint,
+            intake_subdomain: intake_subdomain.into(),
         }
     }
 
-    /// Reject direct credentials unless their destination is the canonical
-    /// HTTPS Event Platform intake for a Datadog site.
+    /// Validate the target and reject direct credentials unless their
+    /// destination matches the configured canonical HTTPS intake.
     pub fn validate(&self) -> Result<(), String> {
-        if self.source != FfeConfigurationSource::Agentless {
+        validate_intake_subdomain(&self.intake_subdomain)?;
+        if self.mode != EvpTransportMode::PreferLocalThenDirect {
             return Ok(());
         }
         if let Some(endpoint) = &self.direct_endpoint {
-            validate_direct_endpoint(endpoint)?;
-        }
-        Ok(())
-    }
-
-    /// Validate configuration supplied without a logical SDK identity.
-    ///
-    /// Agentless delivery is intentionally rejected on this compatibility
-    /// path: direct intake must identify the SDK that produced the events,
-    /// rather than silently identifying the sidecar process that sent them.
-    pub fn validate_without_identity(&self) -> Result<(), String> {
-        self.validate()?;
-        if self.source == FfeConfigurationSource::Agentless {
-            return Err(
-                "Agentless EVP configuration requires a logical SDK producer identity".to_owned(),
-            );
+            validate_direct_endpoint(endpoint, &self.intake_subdomain)?;
         }
         Ok(())
     }
 }
 
-/// Additive identity-bearing configuration for logical SDK producers.
-/// Keeping this separate preserves the existing configuration message layout.
+/// Identity-bearing configuration used when a client explicitly configures
+/// the shared EVP transport.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FfeEvpTransportConfigWithIdentity {
-    pub transport: FfeEvpTransportConfig,
-    pub producer: FfeEvpProducerIdentity,
+pub struct EvpTransportConfigWithIdentity {
+    pub transport: EvpTransportConfig,
+    pub producer: EvpProducerIdentity,
 }
 
-impl FfeEvpTransportConfigWithIdentity {
+impl EvpTransportConfigWithIdentity {
     pub fn new(
-        transport: FfeEvpTransportConfig,
-        producer: FfeEvpProducerIdentity,
+        transport: EvpTransportConfig,
+        producer: EvpProducerIdentity,
     ) -> Result<Self, String> {
         transport.validate()?;
         Ok(Self {
@@ -245,7 +233,7 @@ impl FfeEvpTransportConfigWithIdentity {
     }
 }
 
-fn validate_direct_endpoint(endpoint: &Endpoint) -> Result<(), String> {
+fn validate_direct_endpoint(endpoint: &Endpoint, intake_subdomain: &str) -> Result<(), String> {
     if endpoint.api_key.as_deref().is_none_or(str::is_empty) {
         return Err("direct EVP endpoint requires a non-empty API key".to_owned());
     }
@@ -270,8 +258,11 @@ fn validate_direct_endpoint(endpoint: &Endpoint) -> Result<(), String> {
         );
     }
     let host = authority.host();
-    let Some(site) = host.strip_prefix("event-platform-intake.") else {
-        return Err("direct EVP endpoint host must be event-platform-intake.<site>".to_owned());
+    let expected_prefix = format!("{intake_subdomain}.");
+    let Some(site) = host.strip_prefix(&expected_prefix) else {
+        return Err(format!(
+            "direct EVP endpoint host must be {intake_subdomain}.<site>"
+        ));
     };
     if !is_valid_dns_site(site) {
         return Err("direct EVP endpoint contains an invalid Datadog site".to_owned());
@@ -281,6 +272,27 @@ fn validate_direct_endpoint(endpoint: &Endpoint) -> Result<(), String> {
         return Err("direct EVP endpoint must not include a path or query".to_owned());
     }
     Ok(())
+}
+
+fn validate_intake_subdomain(subdomain: &str) -> Result<(), String> {
+    let valid = !subdomain.is_empty()
+        && subdomain.len() <= 63
+        && subdomain
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && subdomain
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && subdomain
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    if valid {
+        Ok(())
+    } else {
+        Err("EVP intake subdomain must be one canonical DNS label".to_owned())
+    }
 }
 
 fn is_valid_dns_site(site: &str) -> bool {
@@ -331,23 +343,31 @@ enum Route {
     Direct,
 }
 
+struct EvpRequest<'a> {
+    intake_path: &'a str,
+    content_type: &'a str,
+    payload: Bytes,
+    log_prefix: &'a str,
+    success_name: &'a str,
+}
+
 /// A per-session selector. Clones share route state, allowing exposures and
 /// flag evaluations to make one discovery decision while distinct sessions
 /// remain isolated even when they target the same intake URL.
 #[derive(Clone)]
-pub(crate) struct FfeEvpTransport {
+pub(crate) struct EvpTransport {
     id: u64,
-    config: Arc<FfeEvpTransportConfig>,
-    producer: Arc<FfeEvpProducerIdentity>,
+    config: Arc<EvpTransportConfig>,
+    producer: Arc<EvpProducerIdentity>,
     state: Arc<AsyncMutex<RouteState>>,
     clock: Arc<dyn Fn() -> Instant + Send + Sync>,
     unavailable_recovery_cooldown: Duration,
 }
 
-impl std::fmt::Debug for FfeEvpTransport {
+impl std::fmt::Debug for EvpTransport {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("FfeEvpTransport")
+            .debug_struct("EvpTransport")
             .field("id", &self.id)
             .field("config", &self.config)
             .field("producer", &self.producer)
@@ -355,68 +375,58 @@ impl std::fmt::Debug for FfeEvpTransport {
     }
 }
 
-impl PartialEq for FfeEvpTransport {
+impl PartialEq for EvpTransport {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for FfeEvpTransport {}
+impl Eq for EvpTransport {}
 
-impl Hash for FfeEvpTransport {
+impl Hash for EvpTransport {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
 
-impl FfeEvpTransport {
-    pub(crate) fn new(config: FfeEvpTransportConfig) -> Result<Self, String> {
-        config.validate_without_identity()?;
-        Ok(Self::new_with_identity(
-            config,
-            FfeEvpProducerIdentity::legacy_sidecar(),
-        ))
-    }
-
+impl EvpTransport {
     pub(crate) fn new_with_identity(
-        mut config: FfeEvpTransportConfig,
-        producer: FfeEvpProducerIdentity,
-    ) -> Self {
+        mut config: EvpTransportConfig,
+        producer: EvpProducerIdentity,
+    ) -> Result<Self, String> {
+        config.validate()?;
+
         // A local receiver must never receive direct-intake credentials, even
         // if a caller accidentally copied them onto the Agent endpoint.
         config.agent_endpoint.api_key = None;
 
-        // Agent-backed FFE never retains direct credentials. Invalid direct
-        // configurations are also dropped when received from an untrusted IPC
-        // peer; native callers get the validation error before enqueueing.
-        if config.source == FfeConfigurationSource::Agent
-            || config
-                .direct_endpoint
-                .as_ref()
-                .is_some_and(|endpoint| validate_direct_endpoint(endpoint).is_err())
-        {
+        // Agent-only consumers never retain direct credentials.
+        if config.mode == EvpTransportMode::AgentOnly {
             config.direct_endpoint = None;
         }
 
-        let state = match config.source {
-            FfeConfigurationSource::Agent => RouteState::Local(ProxyVersion::V2),
-            FfeConfigurationSource::Agentless => RouteState::Unresolved,
+        let state = match config.mode {
+            EvpTransportMode::AgentOnly => RouteState::Local(ProxyVersion::V2),
+            EvpTransportMode::PreferLocalThenDirect => RouteState::Unresolved,
         };
 
-        Self {
+        Ok(Self {
             id: NEXT_TRANSPORT_ID.fetch_add(1, Ordering::Relaxed),
             config: Arc::new(config),
             producer: Arc::new(producer),
             state: Arc::new(AsyncMutex::new(state)),
             clock: Arc::new(Instant::now),
             unavailable_recovery_cooldown: DEFAULT_UNAVAILABLE_RECOVERY_COOLDOWN,
-        }
+        })
     }
 
-    pub(crate) fn agent_only(endpoint: Endpoint) -> Self {
+    pub(crate) fn agent_only(
+        endpoint: Endpoint,
+        intake_subdomain: impl Into<String>,
+    ) -> Result<Self, String> {
         Self::new_with_identity(
-            FfeEvpTransportConfig::agent(endpoint),
-            FfeEvpProducerIdentity::legacy_sidecar(),
+            EvpTransportConfig::agent_only(endpoint, intake_subdomain),
+            EvpProducerIdentity::legacy_sidecar(),
         )
     }
 
@@ -425,7 +435,7 @@ impl FfeEvpTransport {
         Arc::ptr_eq(&self.state, &other.state)
     }
 
-    pub(crate) fn producer(&self) -> &FfeEvpProducerIdentity {
+    pub(crate) fn producer(&self) -> &EvpProducerIdentity {
         &self.producer
     }
 
@@ -449,7 +459,7 @@ impl FfeEvpTransport {
         self
     }
 
-    /// Send one already-encoded JSON payload through the selected route.
+    /// Send one already-encoded payload through the selected route.
     ///
     /// A local 404/405 or a definitive pre-send failure replays the current
     /// payload directly. Ambiguous failures and local 403/429/5xx responses
@@ -458,26 +468,25 @@ impl FfeEvpTransport {
     pub(crate) async fn send_payload<C: HttpClientCapability + SleepCapability>(
         &self,
         client: &C,
-        intake_path: &'static str,
-        payload: String,
-        log_prefix: &'static str,
-        success_name: &'static str,
+        intake_path: &str,
+        content_type: &str,
+        payload: Bytes,
+        log_prefix: &str,
+        success_name: &str,
     ) -> bool {
+        let request = EvpRequest {
+            intake_path,
+            content_type,
+            payload,
+            log_prefix,
+            success_name,
+        };
         let Some(route) = self.resolve_route(client, log_prefix).await else {
             debug!("{log_prefix}: no compatible EVP route is available");
             return false;
         };
 
-        let first = self
-            .send_once(
-                client,
-                route,
-                intake_path,
-                payload.clone(),
-                log_prefix,
-                success_name,
-            )
-            .await;
+        let first = self.send_once(client, route, &request).await;
         let Err(failure) = first else {
             return true;
         };
@@ -501,16 +510,7 @@ impl FfeEvpTransport {
             );
 
         if switch_future && self.leave_local_route().await && replay {
-            let direct = self
-                .send_once(
-                    client,
-                    Route::Direct,
-                    intake_path,
-                    payload,
-                    log_prefix,
-                    success_name,
-                )
-                .await;
+            let direct = self.send_once(client, Route::Direct, &request).await;
             if let Err(direct_failure) = direct {
                 log_failure(log_prefix, &direct_failure);
                 return false;
@@ -525,7 +525,7 @@ impl FfeEvpTransport {
     async fn resolve_route<C: HttpClientCapability + SleepCapability>(
         &self,
         client: &C,
-        log_prefix: &'static str,
+        log_prefix: &str,
     ) -> Option<Route> {
         let mut state = self.state.lock().await;
         match *state {
@@ -557,7 +557,7 @@ impl FfeEvpTransport {
     async fn discover_local_route<C: HttpClientCapability + SleepCapability>(
         &self,
         client: &C,
-        log_prefix: &'static str,
+        log_prefix: &str,
     ) -> Option<ProxyVersion> {
         let endpoint = agent_endpoint_with_path(&self.config.agent_endpoint, INFO_PATH).ok()?;
         let request = endpoint
@@ -595,7 +595,7 @@ impl FfeEvpTransport {
     }
 
     async fn leave_local_route(&self) -> bool {
-        if self.config.source != FfeConfigurationSource::Agentless {
+        if self.config.mode != EvpTransportMode::PreferLocalThenDirect {
             return false;
         }
 
@@ -615,22 +615,19 @@ impl FfeEvpTransport {
         &self,
         client: &C,
         route: Route,
-        intake_path: &'static str,
-        payload: String,
-        log_prefix: &'static str,
-        success_name: &'static str,
+        event: &EvpRequest<'_>,
     ) -> Result<(), DeliveryFailure> {
         let endpoint = match route {
             Route::Local(version) => agent_endpoint_with_path(
                 &self.config.agent_endpoint,
-                &join_paths(version.path(), intake_path),
+                &join_paths(version.path(), event.intake_path),
             ),
             Route::Direct => self
                 .config
                 .direct_endpoint
                 .as_ref()
                 .ok_or_else(|| "direct endpoint is not configured".to_owned())
-                .and_then(|base| endpoint_with_path(base, intake_path)),
+                .and_then(|base| endpoint_with_path(base, event.intake_path)),
         }
         .map_err(DeliveryFailure::DefinitivePreSend)?;
 
@@ -638,14 +635,14 @@ impl FfeEvpTransport {
             .to_request_builder(USER_AGENT)
             .map_err(|error| DeliveryFailure::DefinitivePreSend(error.to_string()))?
             .method(Method::POST)
-            .header("Content-Type", "application/json")
+            .header("Content-Type", event.content_type)
             .header(EVP_ORIGIN_HEADER, self.producer.origin())
             .header(EVP_ORIGIN_VERSION_HEADER, self.producer.version());
         if matches!(route, Route::Local(_)) {
-            builder = builder.header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE);
+            builder = builder.header(EVP_SUBDOMAIN_HEADER, &self.config.intake_subdomain);
         }
         let request = builder
-            .body(Bytes::from(payload))
+            .body(event.payload.clone())
             .map_err(|error| DeliveryFailure::DefinitivePreSend(error.to_string()))?;
 
         let timeout = Duration::from_millis(endpoint.timeout_ms);
@@ -664,7 +661,10 @@ impl FfeEvpTransport {
             return Err(DeliveryFailure::Status(status.as_u16()));
         }
 
-        debug!("{log_prefix}: sent {success_name}, status={status}");
+        debug!(
+            "{}: sent {}, status={status}",
+            event.log_prefix, event.success_name
+        );
         Ok(())
     }
 }
@@ -759,7 +759,7 @@ fn is_definitive_connection_failure(error: &anyhow::Error) -> bool {
     })
 }
 
-fn log_failure(log_prefix: &'static str, failure: &DeliveryFailure) {
+fn log_failure(log_prefix: &str, failure: &DeliveryFailure) {
     match failure {
         DeliveryFailure::Status(status) => warn!("{log_prefix}: non-2xx response {status}"),
         DeliveryFailure::DefinitivePreSend(error) | DeliveryFailure::Ambiguous(error) => {
@@ -873,27 +873,36 @@ mod tests {
         }
     }
 
-    fn agentless(direct_key: Option<&'static str>) -> FfeEvpTransport {
-        FfeEvpTransport::new_with_identity(
-            FfeEvpTransportConfig::agentless(
+    fn agentless(direct_key: Option<&'static str>) -> EvpTransport {
+        EvpTransport::new_with_identity(
+            EvpTransportConfig::prefer_local_then_direct(
                 endpoint(
                     "http://agent.internal:8126/v0.4/traces",
                     Some("must-not-leak"),
                 ),
                 direct_key
                     .map(|key| endpoint("https://event-platform-intake.datadoghq.com/", Some(key))),
+                evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN,
             ),
-            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
         )
+        .unwrap()
     }
 
     async fn send(
-        transport: &FfeEvpTransport,
+        transport: &EvpTransport,
         client: &ScriptedCapabilities,
         path: &'static str,
     ) -> bool {
         transport
-            .send_payload(client, path, "{}".to_owned(), "test", "batch")
+            .send_payload(
+                client,
+                path,
+                "application/json",
+                Bytes::from_static(b"{}"),
+                "test",
+                "batch",
+            )
             .await
     }
 
@@ -986,8 +995,8 @@ mod tests {
             ),
             response(202, ""),
         ]);
-        let transport = FfeEvpTransport::new_with_identity(
-            FfeEvpTransportConfig::agentless(
+        let transport = EvpTransport::new_with_identity(
+            EvpTransportConfig::prefer_local_then_direct(
                 endpoint(
                     "http://agent.internal:8126/customer/proxy/v0.4/traces",
                     None,
@@ -996,9 +1005,11 @@ mod tests {
                     "https://event-platform-intake.datadoghq.com/",
                     Some("api-key"),
                 )),
+                EVP_SUBDOMAIN_VALUE,
             ),
-            FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
-        );
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
 
         assert!(send(&transport, &client, "/api/v2/exposures").await);
         let requests = client.requests();
@@ -1035,6 +1046,80 @@ mod tests {
             assert_eq!(headers.get(EVP_ORIGIN_HEADER).unwrap(), "dd-trace-rb");
             assert_eq!(headers.get(EVP_ORIGIN_VERSION_HEADER).unwrap(), "3.0.0");
         }
+    }
+
+    #[tokio::test]
+    async fn generic_target_preserves_target_content_type_and_payload() {
+        let local_client =
+            ScriptedCapabilities::new(vec![info_response(&["/evp_proxy/v4"]), response(202, "")]);
+        let local_transport = EvpTransport::new_with_identity(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                None,
+                "errors-intake",
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        assert!(
+            local_transport
+                .send_payload(
+                    &local_client,
+                    "/api/v2/logs",
+                    "application/x-protobuf",
+                    Bytes::from_static(b"local-payload"),
+                    "test",
+                    "generic batch",
+                )
+                .await
+        );
+        let local_requests = local_client.requests();
+        assert_eq!(
+            local_requests[1].1.get(EVP_SUBDOMAIN_HEADER).unwrap(),
+            "errors-intake"
+        );
+
+        let client = ScriptedCapabilities::new(vec![info_response(&[]), response(202, "")]);
+        let transport = EvpTransport::new_with_identity(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(
+                    "https://errors-intake.datadoghq.com/",
+                    Some("errors-key"),
+                )),
+                "errors-intake",
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        let payload = Bytes::from_static(b"generic-evp-payload");
+
+        assert!(
+            transport
+                .send_payload(
+                    &client,
+                    "/api/v2/logs",
+                    "application/x-protobuf",
+                    payload.clone(),
+                    "test",
+                    "generic batch",
+                )
+                .await
+        );
+
+        let script = client.inner.lock().unwrap();
+        let request = &script.requests[1];
+        assert_eq!(
+            request.uri(),
+            "https://errors-intake.datadoghq.com/api/v2/logs"
+        );
+        assert_eq!(
+            request.headers().get("content-type").unwrap(),
+            "application/x-protobuf"
+        );
+        assert_eq!(request.headers().get("dd-api-key").unwrap(), "errors-key");
+        assert!(!request.headers().contains_key(EVP_SUBDOMAIN_HEADER));
+        assert_eq!(request.body(), &payload);
     }
 
     #[tokio::test]
@@ -1229,10 +1314,14 @@ mod tests {
             ))),
         ] {
             let client = ScriptedCapabilities::new(vec![first_failure, response(202, "")]);
-            let transport = FfeEvpTransport::agent_only(endpoint(
-                "http://agent.internal:8126/v0.4/traces",
-                Some("must-not-leak"),
-            ));
+            let transport = EvpTransport::agent_only(
+                endpoint(
+                    "http://agent.internal:8126/v0.4/traces",
+                    Some("must-not-leak"),
+                ),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .unwrap();
 
             assert!(!send(&transport, &client, "/api/v2/exposures").await);
             assert!(send(&transport, &client, "/api/v2/exposures").await);
@@ -1255,13 +1344,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn agent_only_mode_discards_all_direct_credentials() {
+        let transport = EvpTransport::new_with_identity(
+            EvpTransportConfig {
+                mode: EvpTransportMode::AgentOnly,
+                agent_endpoint: endpoint(
+                    "http://agent.internal:8126/v0.4/traces",
+                    Some("agent-key-must-not-be-retained"),
+                ),
+                direct_endpoint: Some(endpoint(
+                    "https://event-platform-intake.datadoghq.com/",
+                    Some("direct-key-must-not-be-retained"),
+                )),
+                intake_subdomain: EVP_SUBDOMAIN_VALUE.to_owned(),
+            },
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+
+        assert!(transport.config.agent_endpoint.api_key.is_none());
+        assert!(transport.config.direct_endpoint.is_none());
+    }
+
     #[tokio::test]
     async fn agent_only_v2_delivery_preserves_agent_path_prefix() {
         let client = ScriptedCapabilities::new(vec![response(202, "")]);
-        let transport = FfeEvpTransport::agent_only(endpoint(
-            "http://agent.internal:8126/customer/proxy/v0.4/traces",
-            None,
-        ));
+        let transport = EvpTransport::agent_only(
+            endpoint(
+                "http://agent.internal:8126/customer/proxy/v0.4/traces",
+                None,
+            ),
+            EVP_SUBDOMAIN_VALUE,
+        )
+        .unwrap();
 
         assert!(send(&transport, &client, "/api/v2/exposures").await);
         assert_eq!(
@@ -1318,39 +1434,64 @@ mod tests {
             "https://event-platform-intake.data_doghq.com/",
             "https://event-platform-intake.DATADOGHQ.COM/",
         ] {
-            let config = FfeEvpTransportConfig::agentless(
+            let config = EvpTransportConfig::prefer_local_then_direct(
                 endpoint("http://agent.internal:8126/", None),
                 Some(endpoint(url, Some("secret"))),
+                EVP_SUBDOMAIN_VALUE,
             );
             assert!(config.validate().is_err(), "accepted direct URL {url}");
         }
 
-        assert!(FfeEvpTransportConfig::agentless(
+        assert!(EvpTransportConfig::prefer_local_then_direct(
             endpoint("http://agent.internal:8126/", None),
             Some(endpoint(
                 "https://event-platform-intake.datadoghq.eu/",
                 Some("secret")
             )),
+            EVP_SUBDOMAIN_VALUE,
         )
         .validate()
         .is_ok());
-    }
 
-    #[test]
-    fn identityless_transport_rejects_agentless_configuration() {
-        let config = FfeEvpTransportConfig::agentless(
-            endpoint("http://agent.internal:8126/v0.4/traces", None),
+        assert!(EvpTransportConfig::prefer_local_then_direct(
+            endpoint("http://agent.internal:8126/", None),
+            Some(endpoint(
+                "https://errors-intake.datadoghq.com/",
+                Some("secret")
+            )),
+            "errors-intake",
+        )
+        .validate()
+        .is_ok());
+
+        assert!(EvpTransportConfig::prefer_local_then_direct(
+            endpoint("http://agent.internal:8126/", None),
             Some(endpoint(
                 "https://event-platform-intake.datadoghq.com/",
-                Some("api-key"),
+                Some("secret")
             )),
-        );
-        assert!(config.validate().is_ok());
-        assert_eq!(
-            config.validate_without_identity().unwrap_err(),
-            "Agentless EVP configuration requires a logical SDK producer identity"
-        );
-        assert!(FfeEvpTransport::new(config).is_err());
+            "errors-intake",
+        )
+        .validate()
+        .is_err());
+
+        for subdomain in [
+            "",
+            "Event-platform-intake",
+            "event.platform.intake",
+            "-event-platform-intake",
+            "event-platform-intake-",
+            "event_platform_intake",
+        ] {
+            let config = EvpTransportConfig::agent_only(
+                endpoint("http://agent.internal:8126/", None),
+                subdomain,
+            );
+            assert!(
+                config.validate().is_err(),
+                "accepted invalid intake subdomain {subdomain:?}"
+            );
+        }
     }
 
     #[test]
@@ -1371,10 +1512,10 @@ mod tests {
 
     #[test]
     fn producer_identity_rejects_untrusted_header_values_and_wire_input() {
-        assert!(FfeEvpProducerIdentity::new("", "1.0.0").is_err());
-        assert!(FfeEvpProducerIdentity::new("dd-trace-rb", "invalid\nversion").is_err());
-        assert!(FfeEvpProducerIdentity::new(
-            "x".repeat(MAX_FFE_EVP_PRODUCER_IDENTITY_LENGTH + 1),
+        assert!(EvpProducerIdentity::new("", "1.0.0").is_err());
+        assert!(EvpProducerIdentity::new("dd-trace-rb", "invalid\nversion").is_err());
+        assert!(EvpProducerIdentity::new(
+            "x".repeat(MAX_EVP_PRODUCER_IDENTITY_LENGTH + 1),
             "1.0.0"
         )
         .is_err());
@@ -1389,6 +1530,6 @@ mod tests {
             version: "1.0.0",
         })
         .unwrap();
-        assert!(bincode::deserialize::<FfeEvpProducerIdentity>(&bytes).is_err());
+        assert!(bincode::deserialize::<EvpProducerIdentity>(&bytes).is_err());
     }
 }

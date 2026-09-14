@@ -8,9 +8,12 @@
 //! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
-use crate::service::ffe_evp_proxy::FfeEvpTransport;
 #[cfg(test)]
-use crate::service::ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+use crate::service::evp_proxy::{
+    EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE,
+    SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER,
+};
+use crate::service::evp_transport::EvpTransport;
 use crate::service::FfeExposureBatch;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
@@ -29,7 +32,7 @@ const LOG_PREFIX: &str = "ffe_exposures_flusher";
 /// `debug`, and dropped (matches dd-trace-go behaviour).
 pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     client: &C,
-    transport: &FfeEvpTransport,
+    transport: &EvpTransport,
     deduplicator: &ExposureDeduplicator,
     batch: FfeExposureBatch,
 ) {
@@ -46,7 +49,8 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
         .send_payload(
             client,
             EXPOSURES_INTAKE_PATH,
-            payload,
+            "application/json",
+            payload.into(),
             LOG_PREFIX,
             "exposure batch",
         )
@@ -106,7 +110,7 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let transport = FfeEvpTransport::agent_only(base);
+        let transport = EvpTransport::agent_only(base, EVP_SUBDOMAIN_VALUE).unwrap();
         let client = NativeCapabilities::new_client();
 
         send_batch(
@@ -136,7 +140,7 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let transport = FfeEvpTransport::agent_only(base);
+        let transport = EvpTransport::agent_only(base, EVP_SUBDOMAIN_VALUE).unwrap();
         let client = NativeCapabilities::new_client();
         send_batch(
             &client,
@@ -161,7 +165,7 @@ mod tests {
 
         send_batch(
             &HangingCapabilities,
-            &FfeEvpTransport::agent_only(endpoint),
+            &EvpTransport::agent_only(endpoint, EVP_SUBDOMAIN_VALUE).unwrap(),
             &ExposureDeduplicator::new(4),
             FfeExposureBatch {
                 context: context(),

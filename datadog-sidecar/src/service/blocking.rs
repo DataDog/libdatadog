@@ -300,23 +300,12 @@ pub fn set_session_config(
     Ok(())
 }
 
-/// Sets the explicit Feature Flags EVP transport for this session.
-pub fn set_session_ffe_evp_config(
+/// Sets the explicit EVP transport for this session.
+pub fn set_session_evp_transport(
     transport: &mut SidecarTransport,
-    config: crate::service::FfeEvpTransportConfig,
-) -> io::Result<()> {
-    config
-        .validate_without_identity()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
-    lock_sender(transport)?.set_session_ffe_evp_config(config);
-    Ok(())
-}
-
-pub fn set_session_ffe_evp_config_with_identity(
-    transport: &mut SidecarTransport,
-    config: crate::service::FfeEvpTransportConfigWithIdentity,
+    config: crate::service::EvpTransportConfigWithIdentity,
 ) -> anyhow::Result<()> {
-    lock_sender(transport)?.set_session_ffe_evp_config_with_identity(config);
+    lock_sender(transport)?.set_session_evp_transport(config);
     Ok(())
 }
 
