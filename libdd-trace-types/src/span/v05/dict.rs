@@ -31,7 +31,7 @@ impl<T: SpanText> SharedDict<T> {
     ///
     /// This method takes the dictionary's entry type by value, so the caller must create or
     /// convert the value before the dictionary lookup. When inserting borrowed [`SpanText`] into a
-    /// [`SharedDict<BytesString>`], use [`SharedDict::get_or_insert_span_text`] to defer that
+    /// [`SharedDict<BytesString>`], use [`SharedDict::get_or_insert_from_span_text`] to defer that
     /// conversion until after the lookup.
     ///
     /// # Arguments:
@@ -64,7 +64,7 @@ impl SharedDict<BytesString> {
     /// Unlike [`SharedDict::get_or_insert`], this method accepts any borrowed [`SpanText`] and
     /// performs the lookup before converting it to the dictionary's entry type. This avoids
     /// creating a [`BytesString`] when the text is already interned.
-    pub fn get_or_insert_span_text<T: SpanText>(
+    pub fn get_or_insert_from_span_text<T: SpanText>(
         &mut self,
         value: &T,
     ) -> Result<u32, std::num::TryFromIntError> {
