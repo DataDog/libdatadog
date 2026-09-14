@@ -318,31 +318,34 @@ where
         buckets: Vec<pb::ClientStatsBucket>,
         obfuscated: bool,
     ) -> anyhow::Result<()> {
-        match &self.destination {
-            StatsDestination::Agentless(target) => {
-                send_agentless_payloads(
-                    &self.capabilities,
+        let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
+        let split = groups.len() > 1;
+        let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
+        let mut errors = Vec::new();
+        for group in groups {
+            let request = match &self.destination {
+                StatsDestination::Agentless(target) => {
+                    build_agentless_request(&self.meta, sequence, group, target, split)
+                }
+                StatsDestination::Agent { endpoint } => build_agent_request(
                     &self.meta,
-                    target,
-                    &self.sequence_id,
-                    buckets,
-                )
-                .await
-            }
-            StatsDestination::Agent { endpoint } => {
-                send_agent_payloads(
-                    &self.capabilities,
-                    &self.meta,
-                    &self.sequence_id,
-                    endpoint,
-                    buckets,
+                    endpoint.clone(),
+                    sequence,
+                    group,
                     obfuscated,
                     #[cfg(feature = "stats-obfuscation")]
                     self.supported_obfuscation_version,
-                )
-                .await
+                ),
+            };
+            let result = match request {
+                Ok(request) => send_stats_request(&self.capabilities, request).await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = result {
+                errors.push(error);
             }
         }
+        payload_errors(errors)
     }
 }
 
@@ -540,38 +543,6 @@ impl<
     }
 }
 
-async fn send_agent_payloads<Cap: HttpClientCapability + SleepCapability>(
-    capabilities: &Cap,
-    meta: &StatsMetadata,
-    sequence_id: &AtomicU64,
-    endpoint: &Endpoint,
-    buckets: Vec<pb::ClientStatsBucket>,
-    obfuscated: bool,
-    #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
-) -> anyhow::Result<()> {
-    let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
-    let sequence = sequence_id.fetch_add(1, Ordering::Relaxed);
-    let mut errors = Vec::new();
-    for group in groups {
-        let result = match build_agent_request(
-            meta,
-            endpoint.clone(),
-            sequence,
-            group,
-            obfuscated,
-            #[cfg(feature = "stats-obfuscation")]
-            supported_obfuscation_version,
-        ) {
-            Ok(request) => send_stats_request(capabilities, request).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = result {
-            errors.push(error);
-        }
-    }
-    payload_errors(errors)
-}
-
 fn build_agent_request(
     meta: &StatsMetadata,
     endpoint: Endpoint,
@@ -673,29 +644,6 @@ fn build_agentless_request(
             None,
         ),
     })
-}
-
-async fn send_agentless_payloads<Cap: HttpClientCapability + SleepCapability>(
-    capabilities: &Cap,
-    meta: &StatsMetadata,
-    target: &AgentlessStatsTarget,
-    sequence_id: &AtomicU64,
-    buckets: Vec<pb::ClientStatsBucket>,
-) -> anyhow::Result<()> {
-    let groups = split_stats_buckets(buckets, MAX_GROUPED_STATS_PER_PAYLOAD);
-    let split = groups.len() > 1;
-    let sequence = sequence_id.fetch_add(1, Ordering::Relaxed);
-    let mut errors = Vec::new();
-    for group in groups {
-        let result = match build_agentless_request(meta, sequence, group, target, split) {
-            Ok(request) => send_stats_request(capabilities, request).await,
-            Err(error) => Err(error),
-        };
-        if let Err(error) = result {
-            errors.push(error);
-        }
-    }
-    payload_errors(errors)
 }
 
 async fn send_stats_request<Cap: HttpClientCapability + SleepCapability>(
