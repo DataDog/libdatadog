@@ -59,7 +59,7 @@ jobs:
     needs: detect
     if: needs.detect.outputs.has_validations == 'true'
     continue-on-error: true
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -86,17 +86,35 @@ jobs:
           path: downstream
           persist-credentials: false
 
+      - name: Checkout auxiliary downstream repository
+        if: matrix.aux_repository != ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ matrix.aux_repository }}
+          path: downstream-aux
+          persist-credentials: false
+
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
           toolchain: 1.92.0
 
       - name: Install libdatadog-dotnet Rust toolchain
-        if: matrix.build_kind == 'dotnet-package'
+        if: >-
+          matrix.build_kind == 'dotnet-package' ||
+          matrix.build_kind == 'dotnet-tracer' ||
+          matrix.build_kind == 'ddprof-cmake'
         run: |
           set -euo pipefail
           rustup toolchain install 1.87.0 --profile minimal
           sudo apt-get update
           sudo apt-get install --yes autoconf automake libtool m4
+
+      - name: Install Windows native package toolchain
+        if: matrix.build_kind == 'windows-profiler'
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup target add x86_64-pc-windows-msvc --toolchain 1.87.0
 
       - name: Cache downstream Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -122,13 +140,38 @@ jobs:
           node-version: 24
 
       - name: Set up Ruby build dependencies
-        if: matrix.build_kind == 'ruby-package'
+        if: matrix.build_kind == 'ruby-package' || matrix.build_kind == 'ruby-consumer'
         run: |
           set -euo pipefail
           ruby --version
           gem install --user-install bundler --version 2.6.9 --no-document
           ruby_gem_bin="$(ruby -e 'print Gem.user_dir')/bin"
           echo "$ruby_gem_bin" >> "$GITHUB_PATH"
+
+      - name: Set up .NET SDK
+        if: matrix.build_kind == 'dotnet-tracer'
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: downstream/global.json
+
+      - name: Set up Go
+        if: matrix.repository == 'DataDog/dd-trace-go'
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: downstream/go.mod
+
+      - name: Set up Python on Windows
+        if: matrix.build_kind == 'windows-profiler'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.x'
+
+      - name: Install native consumer build dependencies
+        if: matrix.build_kind == 'ddprof-cmake' || matrix.build_kind == 'dotnet-tracer'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes libabsl-dev libcap-dev libdw-dev libunwind-dev ninja-build
 
       - name: Install WASM build tools
         if: matrix.build_kind == 'node-wasm'
@@ -165,6 +208,7 @@ jobs:
           LIBDATADOG_BASE_ROOT: ${{ github.workspace }}/libdatadog-base
           LIBDATADOG_HEAD_ROOT: ${{ github.workspace }}/libdatadog-head
           DOWNSTREAM_ROOT: ${{ github.workspace }}/downstream
+          AUXILIARY_ROOT: ${{ github.workspace }}/downstream-aux
           DOWNSTREAM_MANIFEST: ${{ matrix.manifest }}
           BUILD_KIND: ${{ matrix.build_kind }}
           CARGO_ARGS_JSON: ${{ toJSON(matrix.cargo_args) }}
@@ -172,6 +216,8 @@ jobs:
           SUBMODULES_JSON: ${{ toJSON(matrix.submodules) }}
           SOURCE_PATH: ${{ matrix.source_path }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          VALIDATION_SCOPE: ${{ matrix.validation_scope }}
+        shell: bash
         run: |
           set -euo pipefail
           mapfile -t PATCH_SOURCES < <(jq -r '.[]' <<< "$PATCH_SOURCES_JSON")
@@ -193,6 +239,12 @@ jobs:
             dotnet-package)
               VALIDATION_COMMAND="cargo +1.87.0 install --path <libdatadog>/builder --bin release --no-default-features --features profiling,crashtracker,symbolizer,library-config --locked; release --target x86_64-unknown-linux-gnu"
               ;;
+            dotnet-tracer)
+              VALIDATION_COMMAND="release --features profiling,crashtracker,symbolizer,library-config; cmake --build <dd-trace-dotnet> --target Datadog.Profiler.Native"
+              ;;
+            ddprof-cmake)
+              VALIDATION_COMMAND="release --features profiling; cmake --build <ddprof> --target ddprof"
+              ;;
             node-wasm)
               VALIDATION_COMMAND="npm run build --prefix packages/libdatadog"
               ;;
@@ -204,6 +256,15 @@ jobs:
               ;;
             ruby-package)
               VALIDATION_COMMAND="LIBDATADOG_SOURCE=<libdatadog> bundle exec rake libdatadog:build"
+              ;;
+            ruby-consumer)
+              VALIDATION_COMMAND="build local libdatadog gem; ruby ext/libdatadog_api/extconf.rb; make"
+              ;;
+            windows-profiler)
+              VALIDATION_COMMAND="build Windows libdatadog package; cmake --build <dd-win-prof> --target dd-win-prof --config Release"
+              ;;
+            repository-contract)
+              VALIDATION_COMMAND="repository contract: ${CARGO_ARGS[0]}"
               ;;
             *)
               VALIDATION_COMMAND="unsupported build kind: $BUILD_KIND"
@@ -261,6 +322,45 @@ jobs:
             local locked_libdatadog_packages=()
             local source_target
             local package_output="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-package"
+
+            build_native_package() {
+              local features=$1
+              local builder_root="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-builder"
+              local package_version
+              export RUSTUP_TOOLCHAIN=1.87.0
+              package_version=$(cargo metadata \
+                --manifest-path "$source_target/Cargo.toml" \
+                --format-version=1 \
+                --no-deps \
+                | jq -r '.packages[] | select(.name == "builder") | .version')
+              test -n "$package_version"
+              cargo install \
+                --path "$source_target/builder" \
+                --bin release \
+                --root "$builder_root" \
+                --no-default-features \
+                --features "$features" \
+                --locked \
+                --force
+              local host_triple
+              host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
+              PROFILE=release \
+              HOST="$host_triple" \
+              TARGET="$host_triple" \
+              OUT_DIR="$CARGO_TARGET_DIR/out" \
+              OPT_LEVEL=3 \
+              DEBUG=false \
+              NUM_JOBS="$(nproc)" \
+              CARGO_PKG_VERSION="$package_version" \
+              "$builder_root/bin/release" \
+                --out "$package_output" \
+                --target x86_64-unknown-linux-gnu
+              test -s "$package_output/lib/libdatadog_profiling.so"
+              test -d "$package_output/include/datadog"
+              test -n "$(find "$package_output/include/datadog" -type f -print -quit)"
+              test -s "$package_output/LICENSE"
+              test -s "$package_output/cmake/DatadogConfig.cmake"
+            }
 
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
             git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
@@ -345,41 +445,34 @@ jobs:
                 ;;
               dotnet-package)
                 (
-                  local builder_root="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-builder"
-                  local package_version
-                  export RUSTUP_TOOLCHAIN=1.87.0
-                  package_version=$(cargo metadata \
-                    --manifest-path "$source_target/Cargo.toml" \
-                    --format-version=1 \
-                    --no-deps \
-                    | jq -r '.packages[] | select(.name == "builder") | .version')
-                  test -n "$package_version"
-                  cargo install \
-                    --path "$source_target/builder" \
-                    --bin release \
-                    --root "$builder_root" \
-                    --no-default-features \
-                    --features profiling,crashtracker,symbolizer,library-config \
-                    --locked \
-                    --force
-                  local host_triple
-                  host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
-                  PROFILE=release \
-                  HOST="$host_triple" \
-                  TARGET="$host_triple" \
-                  OUT_DIR="$CARGO_TARGET_DIR/out" \
-                  OPT_LEVEL=3 \
-                  DEBUG=false \
-                  NUM_JOBS="$(nproc)" \
-                  CARGO_PKG_VERSION="$package_version" \
-                  "$builder_root/bin/release" \
-                    --out "$package_output" \
-                    --target x86_64-unknown-linux-gnu
-                  test -s "$package_output/lib/libdatadog_profiling.so"
-                  test -d "$package_output/include/datadog"
-                  test -n "$(find "$package_output/include/datadog" -type f -print -quit)"
-                  test -s "$package_output/LICENSE"
-                  test -s "$package_output/cmake/DatadogConfig.cmake"
+                  build_native_package profiling,crashtracker,symbolizer,library-config
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              dotnet-tracer)
+                (
+                  build_native_package profiling,crashtracker,symbolizer,library-config
+                  local build_dir="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-build"
+                  cmake -S . -B "$build_dir" -G Ninja \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    "-DFETCHCONTENT_SOURCE_DIR_LIBDATADOG-INSTALL=$package_output"
+                  cmake --build "$build_dir" --target Datadog.Profiler.Native --parallel 2
+                  test -n "$(find "$build_dir" -type f -name 'Datadog.Profiler.Native.so' -print -quit)"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              ddprof-cmake)
+                (
+                  build_native_package profiling
+                  local build_dir="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-build"
+                  cmake -S . -B "$build_dir" -G Ninja \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DBUILD_DDPROF_TESTING=OFF \
+                    -DDDPROF_ENABLE_STATIC_ANALYSIS=OFF \
+                    -DDDPROF_ALLOCATOR=STANDARD \
+                    "-DDatadog_LOCAL_ROOT=$package_output"
+                  cmake --build "$build_dir" --target ddprof --parallel 2
+                  test -n "$(find "$build_dir" -type f -name ddprof -perm -111 -print -quit)"
                 ) 2>&1 | tee -a "$log_path"
                 return "${PIPESTATUS[0]}"
                 ;;
@@ -424,6 +517,84 @@ jobs:
                 ) 2>&1 | tee -a "$log_path"
                 return "${PIPESTATUS[0]}"
                 ;;
+              ruby-consumer)
+                (
+                  local aux_source="$AUXILIARY_ROOT/libdatadog"
+                  local gem_home="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-gems"
+                  git -C "$AUXILIARY_ROOT" restore --source=HEAD --worktree --staged .
+                  git -C "$AUXILIARY_ROOT" clean -ffdx
+                  ln -s "$libdatadog_root" "$aux_source"
+                  cd "$AUXILIARY_ROOT"
+                  bundle config set --local path "$GITHUB_WORKSPACE/downstream-aux-bundle"
+                  bundle install --jobs 4 --retry 3
+                  LIBDATADOG_SOURCE="$aux_source" bundle exec rake libdatadog:build
+                  bundle exec gem build libdatadog.gemspec
+                  mkdir -p "$gem_home"
+                  gem install --install-dir "$gem_home" --ignore-dependencies --no-document \
+                    "$(find . -maxdepth 1 -name 'libdatadog-*.gem' -print -quit)"
+                  export GEM_HOME="$gem_home"
+                  export GEM_PATH="$gem_home:$(ruby -e 'puts Gem.path.join(":")')"
+                  gem install datadog-ruby_core_source --no-document
+                  cd "$DOWNSTREAM_ROOT/ext/libdatadog_api"
+                  ruby extconf.rb
+                  make -j2
+                  test -n "$(find . -maxdepth 1 -type f \( -name '*.so' -o -name '*.bundle' \) -print -quit)"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              windows-profiler)
+                (
+                  local package_dir="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-windows-package"
+                  pwsh -NoProfile -File \
+                    "$LIBDATADOG_HEAD_ROOT/scripts/build-local-windows-package.ps1" \
+                    -LibdatadogRoot "$libdatadog_root" \
+                    -OutputDirectory "$package_dir"
+                  local build_dir="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-build"
+                  cmake -S . -B "$build_dir" \
+                    -G "Visual Studio 17 2022" -A x64 \
+                    "-DFETCHCONTENT_SOURCE_DIR_LIBDATADOG=$package_dir/package"
+                  cmake --build "$build_dir" --target dd-win-prof --config Release --parallel 2
+                  test -n "$(find "$build_dir" -type f -iname 'dd-win-prof.dll' -print -quit)"
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              repository-contract)
+                (
+                  case "${CARGO_ARGS[0]}" in
+                    nginx-no-runtime-dependency)
+                      test -z "$(git grep -Il libdatadog -- \
+                        ':!.gitlab/one-pipeline.locked.yml' \
+                        ':!.gitlab-ci.yml' || true)"
+                      ;;
+                    lambda-excludes-native-profiler)
+                      mapfile -t dockerfiles < <(git grep -l 'libdatadog_profiling\.so' -- \
+                        'scripts/Dockerfile*')
+                      test "${#dockerfiles[@]}" -ge 1
+                      for dockerfile in "${dockerfiles[@]}"; do
+                        if ! grep -q 'rm -f.*libdatadog_profiling\.so' "$dockerfile"; then
+                          echo "$dockerfile mentions libdatadog without excluding it."
+                          return 1
+                        fi
+                      done
+                      ;;
+                    system-tests-contracts)
+                      python3 -m compileall -q tests/parametric tests/ffe
+                      test -s utils/build/docker/ruby/parametric/README.md
+                      grep -q 'unreleased version of libdatadog' \
+                        utils/build/docker/ruby/parametric/README.md
+                      ;;
+                    go-crashtracker-contract)
+                      go test ./crashtracker
+                      grep -q 'libdatadog crashtracker schema version' crashtracker/report.go
+                      ;;
+                    *)
+                      echo "Unsupported repository contract: ${CARGO_ARGS[0]}"
+                      return 86
+                      ;;
+                  esac
+                ) 2>&1 | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
               *)
                 echo "Unsupported downstream build kind: $BUILD_KIND" | tee -a "$log_path"
                 return 86
@@ -448,7 +619,11 @@ jobs:
             echo '[]' > "$GITHUB_WORKSPACE/$ARTIFACT_NAME-new-errors.json"
             echo "new_error_count=0" >> "$GITHUB_OUTPUT"
           else
-            python3 "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
+            diagnostics_python=python3
+            if ! command -v "$diagnostics_python" >/dev/null 2>&1; then
+              diagnostics_python=python
+            fi
+            "$diagnostics_python" "$LIBDATADOG_HEAD_ROOT/scripts/compare-cargo-diagnostics.py" \
               --base "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.jsonl" \
               --head "$GITHUB_WORKSPACE/$ARTIFACT_NAME-head.jsonl" \
               --base-log "$GITHUB_WORKSPACE/$ARTIFACT_NAME-base.log" \
@@ -474,6 +649,8 @@ jobs:
           DOWNSTREAM_REPOSITORY: ${{ matrix.repository }}
           IMPACTED_COMPONENTS: ${{ matrix.components }}
           ARTIFACT_NAME: ${{ matrix.artifact_name }}
+          VALIDATION_SCOPE: ${{ matrix.validation_scope }}
+        shell: bash
         run: |
           echo "::notice title=$DOWNSTREAM_REPOSITORY compatibility::Base=$BASE_RESULT Head=$HEAD_RESULT NewErrors=${NEW_ERROR_COUNT:-unknown}"
           {
@@ -489,7 +666,25 @@ jobs:
             echo "Base: **$BASE_RESULT** — Head: **$HEAD_RESULT**"
             echo "New Cargo/compiler diagnostics: **${NEW_ERROR_COUNT:-unknown}**"
             echo
-            case "$BASE_RESULT:$HEAD_RESULT" in
+            if [ "$VALIDATION_SCOPE" = "contract" ]; then
+              case "$BASE_RESULT:$HEAD_RESULT" in
+                success:success)
+                  echo "✅ **Contract intact:** the repository's indirect packaging or protocol contract is valid."
+                  ;;
+                *:failure)
+                  echo "❌ **Contract failure (non-blocking):** the downstream repository contract check fails."
+                  ;;
+                failure:success)
+                  echo "✅ **Contract improved:** the contract check fails against the base and passes with this PR."
+                  ;;
+                *)
+                  echo "⚠️ **Inconclusive:** the contract check did not produce both results."
+                  ;;
+              esac
+              echo
+              echo "> This indirect check validates repository packaging/protocol invariants; it does not claim that the repository compiles libdatadog source directly."
+            else
+              case "$BASE_RESULT:$HEAD_RESULT" in
               success:success)
                 echo "✅ **Compatible:** the downstream product builds before and after this PR."
                 ;;
@@ -509,7 +704,8 @@ jobs:
               *)
                 echo "⚠️ **Inconclusive:** the differential validation did not produce both results."
                 ;;
-            esac
+              esac
+            fi
 
             if [ "${NEW_ERROR_COUNT:-0}" -gt 0 ]; then
               echo

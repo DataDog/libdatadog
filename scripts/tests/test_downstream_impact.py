@@ -26,6 +26,9 @@ class DownstreamImpactTest(unittest.TestCase):
 
     def test_inventory_contains_sixteen_consumers(self):
         self.assertEqual(len(self.config["consumers"]), 16)
+        self.assertTrue(
+            all("validation" in consumer for consumer in self.config["consumers"])
+        )
 
     def test_unmapped_documentation_change_has_no_impact(self):
         impact = downstream_impact.calculate_impact(
@@ -42,7 +45,7 @@ class DownstreamImpactTest(unittest.TestCase):
         self.assertIn("DataDog/ddprof", repositories)
         self.assertIn("DataDog/dd-trace-dotnet", repositories)
         self.assertNotIn("DataDog/dd-trace-go", repositories)
-        self.assertEqual(impact["validation_count"], 2)
+        self.assertEqual(impact["validation_count"], 8)
         validations = {
             item["repository"]: item
             for item in impact["validation_matrix"]["include"]
@@ -59,6 +62,19 @@ class DownstreamImpactTest(unittest.TestCase):
         )
         self.assertEqual(
             validations["DataDog/libdatadog-rb"]["source_path"], "libdatadog"
+        )
+        self.assertEqual(
+            validations["DataDog/dd-trace-dotnet"]["build_kind"], "dotnet-tracer"
+        )
+        self.assertEqual(
+            validations["DataDog/ddprof"]["build_kind"], "ddprof-cmake"
+        )
+        self.assertEqual(
+            validations["DataDog/dd-win-prof"]["runner"], "windows-2022"
+        )
+        self.assertEqual(
+            validations["DataDog/dd-trace-rb"]["aux_repository"],
+            "DataDog/libdatadog-rb",
         )
 
     def test_data_pipeline_change_builds_six_consumers(self):
@@ -77,9 +93,10 @@ class DownstreamImpactTest(unittest.TestCase):
                 "DataDog/datadog-lambda-extension",
                 "DataDog/serverless-components",
                 "DataDog/libdatadog-nodejs",
+                "DataDog/system-tests",
             },
         )
-        self.assertEqual(impact["validation_count"], 6)
+        self.assertEqual(impact["validation_count"], 7)
         by_repository = {
             item["repository"]: item for item in impact["validation_matrix"]["include"]
         }
@@ -110,7 +127,7 @@ class DownstreamImpactTest(unittest.TestCase):
     def test_workspace_change_selects_every_consumer(self):
         impact = downstream_impact.calculate_impact(self.config, ["Cargo.toml"])
         self.assertEqual(impact["impacted_count"], 16)
-        self.assertEqual(impact["validation_count"], 8)
+        self.assertEqual(impact["validation_count"], 16)
 
     def test_github_outputs_expose_product_build_matrix(self):
         impact = downstream_impact.calculate_impact(
@@ -124,9 +141,9 @@ class DownstreamImpactTest(unittest.TestCase):
                 for line in output.read_text(encoding="utf-8").splitlines()
             )
         self.assertEqual(values["has_validations"], "true")
-        self.assertEqual(values["validation_count"], "6")
+        self.assertEqual(values["validation_count"], "7")
         matrix = json.loads(values["validation_matrix"])
-        self.assertEqual(len(matrix["include"]), 6)
+        self.assertEqual(len(matrix["include"]), 7)
         self.assertNotIn("cargo_matrix", values)
 
     def test_less_common_published_component_fails_safe(self):

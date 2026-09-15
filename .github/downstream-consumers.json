@@ -170,7 +170,17 @@
         "install_protoc": true
       }
     },
-    {"repository": "DataDog/dd-trace-rb", "tier": "direct", "mode": "native-artifact"},
+    {
+      "repository": "DataDog/dd-trace-rb",
+      "tier": "direct",
+      "mode": "native-artifact",
+      "validation": {
+        "kind": "ruby-consumer",
+        "manifest": "datadog.gemspec",
+        "source_path": "libdatadog",
+        "aux_repository": "DataDog/libdatadog-rb"
+      }
+    },
     {
       "repository": "DataDog/dd-trace-rs",
       "tier": "direct",
@@ -182,9 +192,37 @@
         "patch_sources": ["crates-io"]
       }
     },
-    {"repository": "DataDog/dd-trace-dotnet", "tier": "direct", "mode": "native-artifact"},
-    {"repository": "DataDog/ddprof", "tier": "direct", "mode": "native-artifact"},
-    {"repository": "DataDog/dd-win-prof", "tier": "direct", "mode": "native-artifact"},
+    {
+      "repository": "DataDog/dd-trace-dotnet",
+      "tier": "direct",
+      "mode": "native-artifact",
+      "validation": {
+        "kind": "dotnet-tracer",
+        "manifest": "CMakeLists.txt",
+        "source_path": "libdatadog"
+      }
+    },
+    {
+      "repository": "DataDog/ddprof",
+      "tier": "direct",
+      "mode": "native-artifact",
+      "validation": {
+        "kind": "ddprof-cmake",
+        "manifest": "CMakeLists.txt",
+        "source_path": "libdatadog"
+      }
+    },
+    {
+      "repository": "DataDog/dd-win-prof",
+      "tier": "direct",
+      "mode": "native-artifact",
+      "validation": {
+        "kind": "windows-profiler",
+        "manifest": "CMakeLists.txt",
+        "runner": "windows-2022",
+        "aux_repository": "DataDog/libdatadog-dotnet"
+      }
+    },
     {
       "repository": "DataDog/datadog-lambda-extension",
       "tier": "direct",
@@ -200,7 +238,17 @@
         "install_protoc": true
       }
     },
-    {"repository": "DataDog/nginx-datadog", "tier": "direct", "mode": "native-artifact"},
+    {
+      "repository": "DataDog/nginx-datadog",
+      "tier": "direct",
+      "mode": "native-artifact",
+      "validation": {
+        "kind": "repository-contract",
+        "manifest": "CMakeLists.txt",
+        "args": ["nginx-no-runtime-dependency"],
+        "scope": "contract"
+      }
+    },
     {
       "repository": "DataDog/libdatadog-dotnet",
       "tier": "wrapper",
@@ -231,8 +279,28 @@
         "patch_sources": ["https://github.com/DataDog/libdatadog.git"]
       }
     },
-    {"repository": "DataDog/dd-trace-dotnet-aws-lambda-layer", "tier": "indirect", "mode": "packaging"},
-    {"repository": "DataDog/system-tests", "tier": "indirect", "mode": "contract-tests"},
+    {
+      "repository": "DataDog/dd-trace-dotnet-aws-lambda-layer",
+      "tier": "indirect",
+      "mode": "packaging",
+      "validation": {
+        "kind": "repository-contract",
+        "manifest": "scripts/Dockerfile",
+        "args": ["lambda-excludes-native-profiler"],
+        "scope": "contract"
+      }
+    },
+    {
+      "repository": "DataDog/system-tests",
+      "tier": "indirect",
+      "mode": "contract-tests",
+      "validation": {
+        "kind": "repository-contract",
+        "manifest": "pyproject.toml",
+        "args": ["system-tests-contracts"],
+        "scope": "contract"
+      }
+    },
     {
       "repository": "DataDog/serverless-components",
       "tier": "indirect",
@@ -245,6 +313,16 @@
         "install_protoc": true
       }
     },
-    {"repository": "DataDog/dd-trace-go", "tier": "indirect", "mode": "contract-tests"}
+    {
+      "repository": "DataDog/dd-trace-go",
+      "tier": "indirect",
+      "mode": "contract-tests",
+      "validation": {
+        "kind": "repository-contract",
+        "manifest": "go.mod",
+        "args": ["go-crashtracker-contract"],
+        "scope": "contract"
+      }
+    }
   ]
 }

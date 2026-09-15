@@ -50,11 +50,16 @@ def load_config(path: Path) -> dict[str, Any]:
             continue
         supported_kinds = {
             "cargo-build",
+            "ddprof-cmake",
             "dotnet-package",
+            "dotnet-tracer",
             "node-wasm",
             "php-sidecar",
             "python-extension",
+            "repository-contract",
             "ruby-package",
+            "ruby-consumer",
+            "windows-profiler",
         }
         if validation.get("kind") not in supported_kinds:
             raise ValueError(
@@ -68,6 +73,23 @@ def load_config(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"consumer {consumer['repository']!r} validation args must be a list"
             )
+        validation_scope = validation.get("scope", "product")
+        if validation_scope not in {"product", "contract"}:
+            raise ValueError(
+                f"consumer {consumer['repository']!r} validation scope must be product or contract"
+            )
+        if (validation.get("kind") == "repository-contract") != (
+            validation_scope == "contract"
+        ):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} repository contracts must use contract scope"
+            )
+        if validation.get("kind") == "repository-contract" and len(
+            validation.get("args", [])
+        ) != 1:
+            raise ValueError(
+                f"consumer {consumer['repository']!r} repository contract needs one contract name"
+            )
         patch_sources = validation.get("patch_sources", [])
         source_path = validation.get("source_path", "")
         if not isinstance(patch_sources, list):
@@ -78,10 +100,19 @@ def load_config(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"consumer {consumer['repository']!r} source path must be a string"
             )
-        if bool(patch_sources) == bool(source_path):
+        needs_source_strategy = validation.get("kind") not in {
+            "repository-contract",
+            "windows-profiler",
+        }
+        if needs_source_strategy and bool(patch_sources) == bool(source_path):
             raise ValueError(
                 f"consumer {consumer['repository']!r} validation needs exactly one "
                 "of patch_sources or source_path"
+            )
+        if not needs_source_strategy and (patch_sources or source_path):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} validation does not accept "
+                "patch_sources or source_path"
             )
         if source_path and (
             source_path.startswith("/") or ".." in Path(source_path).parts
@@ -92,6 +123,21 @@ def load_config(path: Path) -> dict[str, Any]:
         if not isinstance(validation.get("install_protoc", False), bool):
             raise ValueError(
                 f"consumer {consumer['repository']!r} install_protoc must be boolean"
+            )
+        auxiliary_repository = validation.get("aux_repository", "")
+        if auxiliary_repository and (
+            not isinstance(auxiliary_repository, str)
+            or auxiliary_repository.count("/") != 1
+            or auxiliary_repository.startswith("/")
+            or auxiliary_repository.endswith("/")
+        ):
+            raise ValueError(
+                f"consumer {consumer['repository']!r} auxiliary repository must be owner/name"
+            )
+        runner = validation.get("runner", "ubuntu-latest")
+        if not isinstance(runner, str) or not runner:
+            raise ValueError(
+                f"consumer {consumer['repository']!r} validation runner must be a string"
             )
         submodules = validation.get("submodules", [])
         if not isinstance(submodules, list) or any(
@@ -178,6 +224,9 @@ def calculate_impact(config: dict[str, Any], changed_files: list[str]) -> dict[s
             "source_path": item["validation"].get("source_path", ""),
             "submodules": item["validation"].get("submodules", []),
             "install_protoc": item["validation"].get("install_protoc", False),
+            "aux_repository": item["validation"].get("aux_repository", ""),
+            "runner": item["validation"].get("runner", "ubuntu-latest"),
+            "validation_scope": item["validation"].get("scope", "product"),
         }
         for entry, item in zip(matrix_entries, impacted)
         if "validation" in item
