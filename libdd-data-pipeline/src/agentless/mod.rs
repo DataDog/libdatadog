@@ -25,6 +25,7 @@
 
 pub(crate) mod config;
 pub(crate) mod exporter;
+#[cfg(feature = "stats-obfuscation")]
 pub(crate) mod stats;
 
 pub use config::AgentlessTraceConfig;

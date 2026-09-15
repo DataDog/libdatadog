@@ -74,9 +74,6 @@ intake payloads. Construction requires a non-zero bucket size and returns
 Use `create_agentless_concentrator` when another exporter owns the flush schedule
 and delivery but needs the same validated agentless aggregation configuration.
 
-The default `worker-exporter` feature adds the `SharedRuntime` worker implementation.
-Runtimes that supply their own flush triggers can disable that feature.
-
 ## Example Usage
 
 ```rust

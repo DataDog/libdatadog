@@ -1218,23 +1218,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             }
         }
 
-        // Agentless stats bypass the Agent, so nothing downstream obfuscates SQL/Redis
-        // resources. Without the `stats-obfuscation` feature the concentrator would emit
-        // raw resource names directly to the intake, inflating cardinality and retaining
-        // literal values. Reject the configuration at build time so this is a hard error
-        // rather than a silent data-quality issue.
-        #[cfg(not(feature = "stats-obfuscation"))]
-        if self.agentless_stats_endpoint.is_some() {
-            return Err(TraceExporterError::Builder(
-                BuilderErrorKind::InvalidConfiguration(
-                    "agentless stats export requires the `stats-obfuscation` crate feature; \
-                     without it, SQL/Redis resource names are sent to the intake unobfuscated. \
-                     Enable the `stats-obfuscation` feature or use the agent-assisted stats path."
-                        .to_string(),
-                ),
-            ));
-        }
-
         Ok(())
     }
 

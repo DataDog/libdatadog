@@ -12,12 +12,10 @@ use std::{
 #[cfg(feature = "stats-obfuscation")]
 use crate::span_concentrator::CardinalityLimitConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
-#[cfg(feature = "worker-exporter")]
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{Endpoint, MutexExt};
-#[cfg(feature = "worker-exporter")]
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -363,7 +361,6 @@ pub struct StatsExporter<
     Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     Con: FlushableConcentrator = SpanConcentrator,
 > {
-    #[cfg(feature = "worker-exporter")]
     flush_interval: time::Duration,
     concentrator: Arc<Mutex<Con>>,
     sender: StatsSender<Cap>,
@@ -465,8 +462,6 @@ impl<
         >,
         #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     ) -> Self {
-        #[cfg(not(feature = "worker-exporter"))]
-        let _ = flush_interval;
         #[cfg(feature = "telemetry")]
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
@@ -479,7 +474,6 @@ impl<
             (handle, key)
         });
         Self {
-            #[cfg(feature = "worker-exporter")]
             flush_interval,
             concentrator,
             sender: StatsSender::new(
@@ -696,7 +690,6 @@ fn payload_errors(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg(feature = "worker-exporter")]
 impl<
         Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
         Con: FlushableConcentrator + Send + Debug,
@@ -764,7 +757,6 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
-    #[cfg(feature = "worker-exporter")]
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::{poll_for_mock_hit, poll_for_mock_hits};
@@ -1108,7 +1100,6 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_run() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
@@ -1155,7 +1146,6 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[cfg(feature = "worker-exporter")]
     #[test]
     fn test_worker_shutdown() {
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");

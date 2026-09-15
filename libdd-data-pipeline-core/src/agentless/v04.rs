@@ -4,12 +4,9 @@
 use std::time::Duration;
 
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-#[cfg(feature = "stats-obfuscation")]
 use libdd_common::Endpoint;
-use libdd_trace_stats::stats_exporter::AgentlessStatsExporter;
-#[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::{
-    AgentlessStatsExporterError, AgentlessStatsTarget, StatsMetadata,
+    AgentlessStatsExporter, AgentlessStatsExporterError, AgentlessStatsTarget, StatsMetadata,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -42,9 +39,6 @@ pub enum AgentlessV04Error {
     /// The stats interval must be greater than zero.
     #[error("agentless stats interval must be greater than zero")]
     InvalidStatsInterval,
-    /// Agentless stats require resource obfuscation before direct intake export.
-    #[error("agentless stats require the `stats-obfuscation` feature")]
-    StatsObfuscationDisabled,
     /// Trace export failed.
     #[error(transparent)]
     Trace(#[from] AgentlessError),
@@ -97,9 +91,9 @@ where
         if let Some(stats) = &self.stats {
             stats.add_traces(&mut traces, self.traces_have_top_level);
             libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
-            if traces.is_empty() {
-                return Ok(());
-            }
+        }
+        if traces.is_empty() {
+            return Ok(());
         }
         send_agentless_traces(
             &self.capabilities,
@@ -121,24 +115,6 @@ where
     }
 }
 
-#[cfg(not(feature = "stats-obfuscation"))]
-fn create_stats_exporter<C>(
-    capabilities: C,
-    metadata: &TracerMetadata,
-    trace_config: &AgentlessTraceConfig,
-    stats_config: Option<AgentlessStatsConfig>,
-) -> Result<Option<AgentlessStatsExporter<C>>, AgentlessV04Error>
-where
-    C: HttpClientCapability + SleepCapability,
-{
-    let _ = (capabilities, metadata, trace_config);
-    match stats_config {
-        Some(_) => Err(AgentlessV04Error::StatsObfuscationDisabled),
-        None => Ok(None),
-    }
-}
-
-#[cfg(feature = "stats-obfuscation")]
 fn create_stats_exporter<C>(
     capabilities: C,
     metadata: &TracerMetadata,
@@ -191,9 +167,7 @@ mod tests {
 
     use bytes::Bytes;
     use libdd_capabilities::HttpError;
-    #[cfg(feature = "stats-obfuscation")]
     use libdd_tinybytes::BytesString;
-    #[cfg(feature = "stats-obfuscation")]
     use libdd_trace_utils::span::v04::SpanBytes;
 
     use super::*;
@@ -266,7 +240,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     fn payload_with_sampling_priority(sampling_priority: Option<f64>) -> Vec<u8> {
         let span = SpanBytes {
             name: BytesString::from_static("operation"),
@@ -284,12 +257,10 @@ mod tests {
         libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04(&[vec![span]])
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     fn payload() -> Vec<u8> {
         payload_with_sampling_priority(None)
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn sends_v04_traces_and_flushes_stats() {
         let capabilities = TestCapabilities::default();
@@ -335,7 +306,6 @@ mod tests {
             .any(|bytes| bytes == b"container-1"));
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn aggregates_and_drops_priority_zero_traces() {
         let capabilities = TestCapabilities::default();
@@ -360,7 +330,6 @@ mod tests {
         assert_eq!(requests[0].uri().path(), "/api/v0.2/stats");
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn sends_v04_traces_without_stats() {
         let capabilities = TestCapabilities::default();
@@ -381,7 +350,20 @@ mod tests {
             .contains_key("datadog-client-computed-stats"));
     }
 
-    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn skips_empty_v04_payload_without_stats() {
+        let capabilities = TestCapabilities::default();
+        let exporter =
+            AgentlessV04Exporter::new(capabilities.clone(), metadata(), trace_config(), None)
+                .unwrap();
+        let traces: Vec<Vec<SpanBytes>> = Vec::new();
+        let payload = libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04(&traces);
+
+        futures::executor::block_on(exporter.send_v04(&payload)).unwrap();
+
+        assert!(capabilities.requests.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn preserves_precomputed_stats_without_local_stats() {
         let capabilities = TestCapabilities::default();
@@ -414,36 +396,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "stats-obfuscation"))]
-    #[test]
-    fn rejects_stats_without_obfuscation_support() {
-        let result = AgentlessV04Exporter::new(
-            TestCapabilities::default(),
-            metadata(),
-            trace_config(),
-            Some(stats_config()),
-        );
-
-        assert!(matches!(
-            result,
-            Err(AgentlessV04Error::StatsObfuscationDisabled)
-        ));
-    }
-
-    #[cfg(not(feature = "stats-obfuscation"))]
-    #[test]
-    fn exports_traces_without_stats_or_obfuscation_support() {
-        let result = AgentlessV04Exporter::new(
-            TestCapabilities::default(),
-            metadata(),
-            trace_config(),
-            None,
-        );
-
-        assert!(result.is_ok());
-    }
-
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn rejects_an_invalid_stats_endpoint_before_sending() {
         for endpoint in ["/api/v0.2/stats", "ftp://stats.example.test/api/v0.2/stats"] {
@@ -463,7 +415,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn rejects_a_zero_stats_interval() {
         let mut stats = stats_config();
@@ -481,7 +432,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "stats-obfuscation")]
     #[test]
     fn rejects_an_invalid_v04_payload() {
         let exporter = AgentlessV04Exporter::new(
