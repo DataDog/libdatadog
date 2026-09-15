@@ -209,7 +209,9 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::StringValue(resource_name.to_string()),
         ));
     }
-    for (k, v) in span.meta.iter() {
+    let meta = span.meta.as_deduped_map();
+    let meta_len = meta.len();
+    for (k, v) in meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
@@ -224,7 +226,9 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::StringValue(v.borrow().to_string()),
         ));
     }
-    for (k, v) in span.metrics.iter() {
+    let metrics = span.metrics.as_deduped_map();
+    let metrics_len = metrics.len();
+    for (k, v) in metrics.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
@@ -235,7 +239,9 @@ fn collect_span_attributes<T: TraceData>(
         };
         attrs.push(proto_kv(k.borrow().to_string(), value));
     }
-    for (k, v) in span.meta_struct.iter() {
+    let meta_struct = span.meta_struct.as_deduped_map();
+    let meta_struct_len = meta_struct.len();
+    for (k, v) in meta_struct.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
@@ -263,9 +269,9 @@ fn collect_span_attributes<T: TraceData>(
             + (has_resource_name as usize)
     };
     let total = promoted
-        + (span.meta.len() - excluded_compat_tags)
-        + span.metrics.len()
-        + span.meta_struct.len();
+        + (meta_len - excluded_compat_tags)
+        + metrics_len
+        + meta_struct_len;
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }

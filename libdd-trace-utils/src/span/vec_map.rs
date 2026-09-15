@@ -56,7 +56,7 @@ impl<K, V> Default for VecMap<K, V> {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            deduped: false,
+            deduped: true,
         }
     }
 }
