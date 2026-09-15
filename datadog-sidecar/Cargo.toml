@@ -68,6 +68,9 @@ libc.workspace = true
 # watchdog and self telemetry
 memory-stats = { workspace = true, features = ["always_use_statm"] }
 
+# allow(workspace-deps): this crate is still on the windows 0.51 bindings,
+# while the workspace entry tracks 0.59 for the crashtracker crates. Moving
+# it over is an API migration that needs a Windows build to validate.
 [target.'cfg(windows)'.dependencies.windows]
 features = [
     "Win32_Foundation",
@@ -95,8 +98,8 @@ sendfd = { workspace = true, features = ["tokio"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
-windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
+winapi = { workspace = true, features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
+windows-sys = { workspace = true, features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
 microseh.workspace = true
