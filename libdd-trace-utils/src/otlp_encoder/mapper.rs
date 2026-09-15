@@ -209,7 +209,7 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::StringValue(resource_name.to_string()),
         ));
     }
-    let meta = span.meta.as_deduped_map();
+    let meta = span.meta.defensive_dedup();
     let meta_len = meta.len();
     for (k, v) in meta.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
@@ -226,7 +226,7 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::StringValue(v.borrow().to_string()),
         ));
     }
-    let metrics = span.metrics.as_deduped_map();
+    let metrics = span.metrics.defensive_dedup();
     let metrics_len = metrics.len();
     for (k, v) in metrics.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
@@ -239,7 +239,7 @@ fn collect_span_attributes<T: TraceData>(
         };
         attrs.push(proto_kv(k.borrow().to_string(), value));
     }
-    let meta_struct = span.meta_struct.as_deduped_map();
+    let meta_struct = span.meta_struct.defensive_dedup();
     let meta_struct_len = meta_struct.len();
     for (k, v) in meta_struct.iter() {
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
