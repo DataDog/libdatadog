@@ -13,10 +13,6 @@
 
 using namespace datadog::profiling;
 
-bool add_sample(Profile& profile, std::vector<Location> locations, std::vector<int64_t> values, std::vector<Label> labels) {
-    return profile.add_sample(views::sample(locations, values, labels));
-}
-
 int main() {
     try {
         std::cout << "=== Datadog Profiling CXX Bindings Example ===" << std::endl;
@@ -258,21 +254,19 @@ int main() {
                 .filename = "/usr/lib/libsplit-example.so",
                 .build_id = "split-build-id"
             };
-            if (!add_sample(
-                *split_profile,
-                {Location{
-                    .mapping = split_mapping,
-                    .function = Function{
-                        .name = "split_export_function",
-                        .system_name = "_Z21split_export_functionv",
-                        .filename = "/src/split_export.cpp"
-                    },
-                    .address = 0x30001234,
-                    .line = 77
-                }},
-                {42'000'000},
-                {Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}}
-            )) return 1;
+            std::array<Location, 1> split_locations{Location{
+                .mapping = split_mapping,
+                .function = Function{
+                    .name = "split_export_function",
+                    .system_name = "_Z21split_export_functionv",
+                    .filename = "/src/split_export.cpp"
+                },
+                .address = 0x30001234,
+                .line = 77
+            }};
+            std::array<int64_t, 1> split_values{42'000'000};
+            std::array<Label, 1> split_labels{Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}};
+            if (!split_profile->add_sample(views::sample(split_locations, split_values, split_labels))) return 1;
             if (!split_profile->add_endpoint_count("/api/split-export", 1)) return 1;
 
             auto encoded_profile_result = split_profile->serialize();

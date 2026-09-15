@@ -1,19 +1,17 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <vector>
 #include "datadog/profiling.hpp"
 
 using namespace datadog::profiling;
-
-bool add_sample(Profile& profile, std::vector<Location> locations, std::vector<std::int64_t> values, std::vector<Label> labels) {
-    return profile.add_sample(views::sample(locations, values, labels));
-}
 
 int main(int argc, char *argv[]) {
     try {
@@ -52,21 +50,19 @@ int main(int argc, char *argv[]) {
             .build_id = "abc123"
         };
 
-        if (!add_sample(
-            *profile,
-            {Location{
-                .mapping = mapping,
-                .function = Function{
-                    .name = "main",
-                    .system_name = "main",
-                    .filename = "example.cpp"
-                },
-                .address = 0x10001000,
-                .line = 42
-            }},
-            {1000000},
-            {Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}}
-        )) return 1;
+        std::array<Location, 1> locations{Location{
+            .mapping = mapping,
+            .function = Function{
+                .name = "main",
+                .system_name = "main",
+                .filename = "example.cpp"
+            },
+            .address = 0x10001000,
+            .line = 42
+        }};
+        std::array<std::int64_t, 1> values{1000000};
+        std::array<Label, 1> labels{Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}};
+        if (!profile->add_sample(views::sample(locations, values, labels))) return 1;
 
         std::cout << "✓ Added sample to profile" << std::endl;
 
@@ -139,21 +135,19 @@ int main(int argc, char *argv[]) {
         auto profile2 = profile2_result->take();
         profile2->set_error_policy(ErrorPolicy::PrintImmediately);
 
-        if (!add_sample(
-            *profile2,
-            {Location{
-                .mapping = mapping,
-                .function = Function{
-                    .name = "worker",
-                    .system_name = "worker",
-                    .filename = "worker.cpp"
-                },
-                .address = 0x10002000,
-                .line = 100
-            }},
-            {2000000},
-            {Label{.key = "thread_id", .str = "", .num = 2, .num_unit = ""}}
-        )) return 1;
+        std::array<Location, 1> profile2_locations{Location{
+            .mapping = mapping,
+            .function = Function{
+                .name = "worker",
+                .system_name = "worker",
+                .filename = "worker.cpp"
+            },
+            .address = 0x10002000,
+            .line = 100
+        }};
+        std::array<std::int64_t, 1> profile2_values{2000000};
+        std::array<Label, 1> profile2_labels{Label{.key = "thread_id", .str = "", .num = 2, .num_unit = ""}};
+        if (!profile2->add_sample(views::sample(profile2_locations, profile2_values, profile2_labels))) return 1;
 
         auto exporter2_result = ProfileExporter::create_file_exporter(
             "libdatadog-example-fork",
@@ -198,21 +192,19 @@ int main(int argc, char *argv[]) {
 
             // Child can now use the manager independently
             // Add another sample in the child
-            if (!add_sample(
-                *profile2,
-                {Location{
-                    .mapping = mapping,
-                    .function = Function{
-                        .name = "child_func",
-                        .system_name = "child_func",
-                        .filename = "child.cpp"
-                    },
-                    .address = 0x10003000,
-                    .line = 200
-                }},
-                {3000000},
-                {Label{.key = "process", .str = "child", .num = 0, .num_unit = ""}}
-            )) return 1;
+            std::array<Location, 1> child_locations{Location{
+                .mapping = mapping,
+                .function = Function{
+                    .name = "child_func",
+                    .system_name = "child_func",
+                    .filename = "child.cpp"
+                },
+                .address = 0x10003000,
+                .line = 200
+            }};
+            std::array<std::int64_t, 1> child_values{3000000};
+            std::array<Label, 1> child_labels{Label{.key = "process", .str = "child", .num = 0, .num_unit = ""}};
+            if (!profile2->add_sample(views::sample(child_locations, child_values, child_labels))) return 1;
 
             if (!manager2->queue_profile(*profile2, {}, {}, "", "", "").check_and_print()) return 1;
             std::cout << "[CHILD] ✓ Queued child-specific profile" << std::endl;
@@ -233,21 +225,19 @@ int main(int argc, char *argv[]) {
             std::cout << "[PARENT] ✓ Restarted manager (inflight requests re-queued)" << std::endl;
 
             // Parent continues profiling
-            if (!add_sample(
-                *profile2,
-                {Location{
-                    .mapping = mapping,
-                    .function = Function{
-                        .name = "parent_func",
-                        .system_name = "parent_func",
-                        .filename = "parent.cpp"
-                    },
-                    .address = 0x10004000,
-                    .line = 300
-                }},
-                {4000000},
-                {Label{.key = "process", .str = "parent", .num = 0, .num_unit = ""}}
-            )) return 1;
+            std::array<Location, 1> parent_locations{Location{
+                .mapping = mapping,
+                .function = Function{
+                    .name = "parent_func",
+                    .system_name = "parent_func",
+                    .filename = "parent.cpp"
+                },
+                .address = 0x10004000,
+                .line = 300
+            }};
+            std::array<std::int64_t, 1> parent_values{4000000};
+            std::array<Label, 1> parent_labels{Label{.key = "process", .str = "parent", .num = 0, .num_unit = ""}};
+            if (!profile2->add_sample(views::sample(parent_locations, parent_values, parent_labels))) return 1;
 
             if (!manager2->queue_profile(*profile2, {}, {}, "", "", "").check_and_print()) return 1;
             std::cout << "[PARENT] ✓ Queued parent-specific profile" << std::endl;
