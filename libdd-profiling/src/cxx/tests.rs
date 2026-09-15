@@ -293,12 +293,13 @@ fn test_profile_timestamped_sample_operations() {
 
 #[test]
 fn test_status_and_result_accessors() {
-    let status = ffi::Status::err("Test::operation", "boom");
+    let status = ffi::Status::err(errors::Operation::AddSample, "boom");
     assert!(!status.ok());
-    assert_eq!(status.operation(), "Test::operation");
+    assert_eq!(status.operation, errors::Operation::AddSample);
+    assert_eq!(status.operation_name(), "Profile::add_sample");
     assert_eq!(status.message(), "boom");
 
-    let ok_status = ffi::Status::ok_for("Test::ok");
+    let ok_status = ffi::Status::ok_for(errors::Operation::CreateProfile);
     assert!(ok_status.ok());
     assert!(ok_status.check_and_print());
 
@@ -340,7 +341,8 @@ fn test_profile_error_storage_modes() {
     assert!(!profile.add_sample(&bad_sample));
     let errors = profile.take_errors();
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].operation, "Profile::add_sample");
+    assert_eq!(errors[0].operation, errors::Operation::AddSample);
+    assert_eq!(errors[0].operation_name(), "Profile::add_sample");
     assert!(!errors[0].message.is_empty());
     assert!(profile.take_errors().is_empty());
 
@@ -405,23 +407,48 @@ fn test_profile_timestamped_identical_samples_remain_distinct() {
 fn test_profiles_dictionary_error_storage_modes() {
     let dictionary = create_test_dictionary();
 
-    dictionary.handle_error("ProfileDictionary::intern_string", "first");
-    dictionary.handle_error("ProfileDictionary::intern_string", "second");
+    dictionary.handle_error(errors::Operation::InternDictionaryString, "first");
+    dictionary.handle_error(errors::Operation::InternDictionaryString, "second");
     let errors = dictionary.take_errors();
     assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].operation, "ProfileDictionary::intern_string");
+    assert_eq!(
+        errors[0].operation,
+        errors::Operation::InternDictionaryString
+    );
+    assert_eq!(
+        errors[0].operation_name(),
+        "ProfileDictionary::intern_string"
+    );
     assert_eq!(errors[0].message, "first");
     assert!(dictionary.take_errors().is_empty());
 
     dictionary.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-    dictionary.handle_error("ProfileDictionary::intern_string", "first");
-    dictionary.handle_error("ProfileDictionary::intern_string", "second");
+    dictionary.handle_error(errors::Operation::InternDictionaryString, "first");
+    dictionary.handle_error(errors::Operation::InternDictionaryString, "second");
     assert_eq!(dictionary.take_errors().len(), 2);
     assert!(dictionary.take_errors().is_empty());
 
-    dictionary.handle_error("ProfileDictionary::intern_string", "third");
+    dictionary.handle_error(errors::Operation::InternDictionaryString, "third");
     assert_eq!(dictionary.take_errors().len(), 1);
     assert!(dictionary.take_errors().is_empty());
+}
+
+#[test]
+fn test_print_once_error_policy_tracks_operations_without_storing_errors() {
+    let mut store = errors::ErrorStore::new();
+    store.set_policy(ffi::ErrorPolicy::PrintOncePerOperation);
+
+    assert!(!store.handle_error(errors::Operation::AddSample, "first"));
+    assert_eq!(store.printed_operation_count(), 1);
+    assert!(store.take_errors().is_empty());
+
+    assert!(!store.handle_error(errors::Operation::AddSample, "second"));
+    assert_eq!(store.printed_operation_count(), 1);
+    assert!(store.take_errors().is_empty());
+
+    assert!(!store.handle_error(errors::Operation::AddEndpoint, "third"));
+    assert_eq!(store.printed_operation_count(), 2);
+    assert!(store.take_errors().is_empty());
 }
 
 #[test]
@@ -713,7 +740,10 @@ fn test_send_encoded_profile_with_attachments() {
     );
 
     assert!(!result.ok(), "Should fail when no server is available");
-    assert_eq!(result.operation(), "ProfileExporter::send_encoded_profile");
+    assert_eq!(
+        result.operation_name(),
+        "ProfileExporter::send_encoded_profile"
+    );
     assert!(!result.message().is_empty());
 }
 
@@ -819,7 +849,7 @@ fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
 
     assert!(!result.ok(), "pre-cancelled upload should fail");
     assert_eq!(
-        result.operation(),
+        result.operation_name(),
         "ProfileExporter::send_encoded_profile_with_cancellation"
     );
     assert!(

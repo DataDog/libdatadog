@@ -45,9 +45,12 @@ if (!result->check_and_print()) return false;
 auto profile = result->take_value();
 ```
 
-Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`. Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
+Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`.
+Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
+Error policies are scoped to the owning `Profile` or `ProfileDictionary`.
+Available policies are `StoreFirstPerOperation`, `StoreEveryOccurrence`, `PrintImmediately`, and `PrintOncePerOperation`.
 
-Exporter APIs send serialized profiles and return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
+Exporter APIs send serialized profiles and return `Status`, which exposes `ok()`, `operation_name()`, `message()`, and `check_and_print()`:
 
 ```cpp
 auto encoded_result = profile->serialize();

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::cancellation::CancellationToken;
-use super::errors::ProfileExporterResult;
+use super::errors::{Operation, ProfileExporterResult};
 use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
@@ -75,7 +75,7 @@ pub struct ProfileExporter {
 
 impl ProfileExporter {
     fn from_endpoint(
-        operation: &'static str,
+        operation: Operation,
         profiling_library_name: &str,
         profiling_library_version: &str,
         family: &str,
@@ -107,7 +107,7 @@ impl ProfileExporter {
         use_system_resolver: bool,
     ) -> Box<ProfileExporterResult> {
         Self::from_endpoint(
-            "ProfileExporter::create_agent_exporter",
+            Operation::CreateAgentExporter,
             profiling_library_name,
             profiling_library_version,
             family,
@@ -135,7 +135,7 @@ impl ProfileExporter {
         use_system_resolver: bool,
     ) -> Box<ProfileExporterResult> {
         Self::from_endpoint(
-            "ProfileExporter::create_agentless_exporter",
+            Operation::CreateAgentlessExporter,
             profiling_library_name,
             profiling_library_version,
             family,
@@ -154,7 +154,7 @@ impl ProfileExporter {
         output_path: &str,
     ) -> Box<ProfileExporterResult> {
         Self::from_endpoint(
-            "ProfileExporter::create_file_exporter",
+            Operation::CreateFileExporter,
             profiling_library_name,
             profiling_library_version,
             family,
@@ -175,7 +175,7 @@ impl ProfileExporter {
         info: &str,
     ) -> ffi::Status {
         ffi::Status::from_result(
-            "ProfileExporter::send_encoded_profile",
+            Operation::SendEncodedProfile,
             self.send_encoded_profile_impl(
                 encoded,
                 files_to_compress,
@@ -201,7 +201,7 @@ impl ProfileExporter {
         cancel: &CancellationToken,
     ) -> ffi::Status {
         ffi::Status::from_result(
-            "ProfileExporter::send_encoded_profile_with_cancellation",
+            Operation::SendEncodedProfileWithCancellation,
             self.send_encoded_profile_impl(
                 encoded,
                 files_to_compress,

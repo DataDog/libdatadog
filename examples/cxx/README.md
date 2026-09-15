@@ -72,7 +72,7 @@ Windows:
 - Support for attaching additional compressed files
 - Per-profile tags and metadata
 - Automatic memory management
-- Explicit error handling with result wrapper/status check helpers and object-owned errors
+- Explicit error handling with result wrapper/status check helpers, object-owned errors, and configurable error policies
 - Modern C++20 syntax with designated initializers
 
 **Core Types:**

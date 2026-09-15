@@ -3,27 +3,59 @@
 
 use super::ffi;
 
+pub(crate) use super::ffi::Operation;
+
+impl Operation {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::CreateProfile => "Profile::create",
+            Self::CreateProfileWithDictionary => "Profile::create_with_dictionary",
+            Self::AddSample => "Profile::add_sample",
+            Self::AddSampleWithTimestamp => "Profile::add_sample_with_timestamp",
+            Self::AddDictionarySample => "Profile::add_dictionary_sample",
+            Self::SetCustomSampleType => "Profile::set_custom_sample_type",
+            Self::AddEndpoint => "Profile::add_endpoint",
+            Self::AddEndpointCount => "Profile::add_endpoint_count",
+            Self::AddUpscalingRulePoisson => "Profile::add_upscaling_rule_poisson",
+            Self::AddUpscalingRulePoissonNonSampleTypeCount => {
+                "Profile::add_upscaling_rule_poisson_non_sample_type_count"
+            }
+            Self::AddUpscalingRuleProportional => "Profile::add_upscaling_rule_proportional",
+            Self::SerializeProfile => "Profile::serialize",
+            Self::CreateProfileDictionary => "ProfileDictionary::create",
+            Self::InternDictionaryString => "ProfileDictionary::intern_string",
+            Self::InternDictionaryFunction => "ProfileDictionary::intern_function",
+            Self::InternDictionaryMapping => "ProfileDictionary::intern_mapping",
+            Self::CreateAgentExporter => "ProfileExporter::create_agent_exporter",
+            Self::CreateAgentlessExporter => "ProfileExporter::create_agentless_exporter",
+            Self::CreateFileExporter => "ProfileExporter::create_file_exporter",
+            Self::SendEncodedProfile => "ProfileExporter::send_encoded_profile",
+            Self::SendEncodedProfileWithCancellation => {
+                "ProfileExporter::send_encoded_profile_with_cancellation"
+            }
+            _ => "unknown operation",
+        }
+    }
+}
+
 impl ffi::Status {
-    pub(crate) fn ok_for(operation: &'static str) -> Self {
+    pub(crate) fn ok_for(operation: Operation) -> Self {
         Self {
             success: true,
-            operation_name: operation.to_string(),
+            operation,
             details: String::new(),
         }
     }
 
-    pub(crate) fn err(operation: &'static str, err: impl std::fmt::Display) -> Self {
+    pub(crate) fn err(operation: Operation, err: impl std::fmt::Display) -> Self {
         Self {
             success: false,
-            operation_name: operation.to_string(),
+            operation,
             details: format!("{err:#}"),
         }
     }
 
-    pub(crate) fn from_result<E>(
-        operation: &'static str,
-        result: std::result::Result<(), E>,
-    ) -> Self
+    pub(crate) fn from_result<E>(operation: Operation, result: std::result::Result<(), E>) -> Self
     where
         E: std::fmt::Display,
     {
@@ -37,8 +69,8 @@ impl ffi::Status {
         self.success
     }
 
-    pub fn operation(&self) -> String {
-        self.operation_name.clone()
+    pub fn operation_name(&self) -> String {
+        self.operation.as_str().to_string()
     }
 
     pub fn message(&self) -> String {
@@ -49,7 +81,7 @@ impl ffi::Status {
         if self.success {
             return true;
         }
-        eprintln!("{} failed: {}", self.operation_name, self.details);
+        eprintln!("{} failed: {}", self.operation.as_str(), self.details);
         false
     }
 
@@ -59,8 +91,15 @@ impl ffi::Status {
         assert!(
             self.success,
             "{} failed: {}",
-            self.operation_name, self.details
+            self.operation.as_str(),
+            self.details
         );
+    }
+}
+
+impl ffi::Error {
+    pub fn operation_name(&self) -> String {
+        self.operation.as_str().to_string()
     }
 }
 
@@ -74,7 +113,7 @@ macro_rules! impl_box_result {
 
         impl $result {
             pub(crate) fn from_result(
-                operation: &'static str,
+                operation: Operation,
                 result: anyhow::Result<Box<$value>>,
             ) -> Box<Self> {
                 match result {
@@ -153,6 +192,7 @@ impl_box_result_with_message!(
 pub(crate) struct ErrorStore {
     policy: ffi::ErrorPolicy,
     errors: Vec<ffi::Error>,
+    printed_operations: Vec<Operation>,
 }
 
 impl ErrorStore {
@@ -160,12 +200,13 @@ impl ErrorStore {
         Self {
             policy: ffi::ErrorPolicy::StoreFirstPerOperation,
             errors: Vec::new(),
+            printed_operations: Vec::new(),
         }
     }
 
     pub(crate) fn handle_result(
         &mut self,
-        operation: &'static str,
+        operation: Operation,
         result: anyhow::Result<()>,
     ) -> bool {
         match result {
@@ -176,27 +217,33 @@ impl ErrorStore {
 
     pub(crate) fn handle_error(
         &mut self,
-        operation: &'static str,
+        operation: Operation,
         err: impl std::fmt::Display,
     ) -> bool {
         match self.policy {
             ffi::ErrorPolicy::PrintImmediately => {
-                eprintln!("{operation} failed: {err:#}");
+                eprintln!("{} failed: {err:#}", operation.as_str());
+            }
+            ffi::ErrorPolicy::PrintOncePerOperation => {
+                if !self.printed_operations.contains(&operation) {
+                    self.printed_operations.push(operation);
+                    eprintln!("{} failed: {err:#}", operation.as_str());
+                }
             }
             ffi::ErrorPolicy::StoreFirstPerOperation => {
                 if !self.errors.iter().any(|error| error.operation == operation) {
                     self.errors.push(ffi::Error {
-                        operation: operation.to_string(),
+                        operation,
                         message: format!("{err:#}"),
                     });
                 }
             }
             ffi::ErrorPolicy::StoreEveryOccurrence => self.errors.push(ffi::Error {
-                operation: operation.to_string(),
+                operation,
                 message: format!("{err:#}"),
             }),
             _ => {
-                eprintln!("{operation} failed: {err:#}");
+                eprintln!("{} failed: {err:#}", operation.as_str());
             }
         }
         false
@@ -208,5 +255,10 @@ impl ErrorStore {
 
     pub(crate) fn take_errors(&mut self) -> Vec<ffi::Error> {
         std::mem::take(&mut self.errors)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn printed_operation_count(&self) -> usize {
+        self.printed_operations.len()
     }
 }

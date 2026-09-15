@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::errors::{ErrorStore, ProfileDictionaryResult};
+use super::errors::{ErrorStore, Operation, ProfileDictionaryResult};
 use super::ffi;
 use super::ids::{dictionary_function_from_cxx, dictionary_mapping_from_cxx};
 use crate::profiles;
@@ -14,7 +14,7 @@ pub struct ProfileDictionary {
 impl ProfileDictionary {
     pub fn create() -> Box<ProfileDictionaryResult> {
         ProfileDictionaryResult::from_result(
-            "ProfileDictionary::create",
+            Operation::CreateProfileDictionary,
             (|| -> anyhow::Result<Box<ProfileDictionary>> {
                 let dictionary = profiles::datatypes::ProfilesDictionary::try_new()?;
                 let inner = profiles::collections::Arc::try_new(dictionary)
@@ -28,13 +28,13 @@ impl ProfileDictionary {
         )
     }
 
-    pub(crate) fn handle_error(&self, operation: &'static str, err: impl std::fmt::Display) {
+    pub(crate) fn handle_error(&self, operation: Operation, err: impl std::fmt::Display) {
         match self.errors.lock() {
             Ok(mut errors) => {
                 errors.handle_error(operation, err);
             }
             Err(_) => {
-                eprintln!("{operation} failed: {err:#}");
+                eprintln!("{} failed: {err:#}", operation.as_str());
             }
         }
     }
@@ -54,7 +54,7 @@ impl ProfileDictionary {
 
     fn write_output<T, E>(
         &self,
-        operation: &'static str,
+        operation: Operation,
         out: &mut T,
         result: std::result::Result<T, E>,
     ) -> bool
@@ -77,7 +77,7 @@ impl ProfileDictionary {
 
     pub fn intern_string(&self, value: &str, out: &mut ffi::DictionaryStringId) -> bool {
         self.write_output(
-            "ProfileDictionary::intern_string",
+            Operation::InternDictionaryString,
             out,
             self.inner.try_insert_str2(value).map(Into::into),
         )
@@ -94,7 +94,7 @@ impl ProfileDictionary {
         // this ProfileDictionary.
         let function = unsafe { dictionary_function_from_cxx(function) };
         self.write_output(
-            "ProfileDictionary::intern_function",
+            Operation::InternDictionaryFunction,
             out,
             self.inner.try_insert_function2(function).map(Into::into),
         )
@@ -111,7 +111,7 @@ impl ProfileDictionary {
         // this ProfileDictionary.
         let mapping = unsafe { dictionary_mapping_from_cxx(mapping) };
         self.write_output(
-            "ProfileDictionary::intern_mapping",
+            Operation::InternDictionaryMapping,
             out,
             self.inner.try_insert_mapping2(mapping).map(Into::into),
         )

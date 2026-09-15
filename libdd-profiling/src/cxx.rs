@@ -260,20 +260,46 @@ pub mod ffi {
     /// #[must_use] catches ignored statuses in Rust tests/helpers, but cxx does
     /// not currently translate it to C++ [[nodiscard]] in generated headers.
     #[must_use]
+    #[derive(Debug)]
+    enum Operation {
+        CreateProfile,
+        CreateProfileWithDictionary,
+        AddSample,
+        AddSampleWithTimestamp,
+        AddDictionarySample,
+        SetCustomSampleType,
+        AddEndpoint,
+        AddEndpointCount,
+        AddUpscalingRulePoisson,
+        AddUpscalingRulePoissonNonSampleTypeCount,
+        AddUpscalingRuleProportional,
+        SerializeProfile,
+        CreateProfileDictionary,
+        InternDictionaryString,
+        InternDictionaryFunction,
+        InternDictionaryMapping,
+        CreateAgentExporter,
+        CreateAgentlessExporter,
+        CreateFileExporter,
+        SendEncodedProfile,
+        SendEncodedProfileWithCancellation,
+    }
+
     struct Status {
         success: bool,
-        operation_name: String,
+        operation: Operation,
         details: String,
     }
 
     enum ErrorPolicy {
         PrintImmediately,
+        PrintOncePerOperation,
         StoreFirstPerOperation,
         StoreEveryOccurrence,
     }
 
     struct Error {
-        operation: String,
+        operation: Operation,
         message: String,
     }
 
@@ -296,8 +322,9 @@ pub mod ffi {
         type CancellationToken;
 
         fn ok(self: &Status) -> bool;
-        fn operation(self: &Status) -> String;
+        fn operation_name(self: &Status) -> String;
         fn message(self: &Status) -> String;
+        fn operation_name(self: &Error) -> String;
         /// Returns true on success. On failure, prints operation and message to stderr.
         fn check_and_print(self: &Status) -> bool;
 

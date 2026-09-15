@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::dictionary::ProfileDictionary;
-use super::errors::{EncodedProfileResult, ErrorStore, ProfileResult};
+use super::errors::{EncodedProfileResult, ErrorStore, Operation, ProfileResult};
 use super::ffi;
 use super::ids::{dictionary_location_from_cxx, dictionary_string_id_from_cxx};
 use crate::api;
@@ -31,7 +31,7 @@ impl Profile {
         }
     }
 
-    fn handle_result(&mut self, operation: &'static str, result: anyhow::Result<()>) -> bool {
+    fn handle_result(&mut self, operation: Operation, result: anyhow::Result<()>) -> bool {
         self.errors.handle_result(operation, result)
     }
 
@@ -45,7 +45,7 @@ impl Profile {
 
     pub fn create(sample_types: Vec<ffi::SampleType>, period: &ffi::Period) -> Box<ProfileResult> {
         ProfileResult::from_result(
-            "Profile::create",
+            Operation::CreateProfile,
             (|| -> anyhow::Result<Box<Profile>> {
                 // Convert (fallibly) from CXX types to API types
                 let types: Vec<api::SampleType> = sample_types
@@ -68,7 +68,7 @@ impl Profile {
         dictionary: &ProfileDictionary,
     ) -> Box<ProfileResult> {
         ProfileResult::from_result(
-            "Profile::create_with_dictionary",
+            Operation::CreateProfileWithDictionary,
             (|| -> anyhow::Result<Box<Profile>> {
                 let types: Vec<api::SampleType> = sample_types
                     .into_iter()
@@ -92,7 +92,7 @@ impl Profile {
     pub fn add_sample(&mut self, sample: &ffi::Sample) -> bool {
         // Profile interns the strings.
         let result = self.inner.try_add_sample(sample_from_cxx(sample), None);
-        self.handle_result("Profile::add_sample", result)
+        self.handle_result(Operation::AddSample, result)
     }
 
     pub fn add_sample_with_timestamp(&mut self, sample: &ffi::Sample, endtime_ns: i64) -> bool {
@@ -102,7 +102,7 @@ impl Profile {
             self.inner
                 .try_add_sample(sample_from_cxx(sample), Some(timestamp))
         })();
-        self.handle_result("Profile::add_sample_with_timestamp", result)
+        self.handle_result(Operation::AddSampleWithTimestamp, result)
     }
 
     /// Adds a dictionary-backed sample without an end timestamp.
@@ -133,7 +133,7 @@ impl Profile {
             // from the ProfileDictionary used to create this Profile.
             unsafe { self.add_dictionary_sample_result(sample, Some(timestamp)) }
         })();
-        self.handle_result("Profile::add_dictionary_sample", result)
+        self.handle_result(Operation::AddDictionarySample, result)
     }
 
     unsafe fn add_dictionary_sample_impl(
@@ -144,7 +144,7 @@ impl Profile {
         // SAFETY: The caller guarantees all non-null ids in sample came from
         // the ProfileDictionary used to create this Profile.
         let result = unsafe { self.add_dictionary_sample_result(sample, timestamp) };
-        self.handle_result("Profile::add_dictionary_sample", result)
+        self.handle_result(Operation::AddDictionarySample, result)
     }
 
     unsafe fn add_dictionary_sample_result(
@@ -194,21 +194,21 @@ impl Profile {
             self.inner
                 .set_custom_sample_type(slot, api::ValueType::new(type_, unit))
         })();
-        self.handle_result("Profile::set_custom_sample_type", result)
+        self.handle_result(Operation::SetCustomSampleType, result)
     }
 
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> bool {
         let result = self
             .inner
             .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint));
-        self.handle_result("Profile::add_endpoint", result)
+        self.handle_result(Operation::AddEndpoint, result)
     }
 
     pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> bool {
         let result = self
             .inner
             .add_endpoint_count(std::borrow::Cow::Borrowed(endpoint), value);
-        self.handle_result("Profile::add_endpoint_count", result)
+        self.handle_result(Operation::AddEndpointCount, result)
     }
 
     pub fn add_upscaling_rule_poisson(
@@ -228,7 +228,7 @@ impl Profile {
         let result =
             self.inner
                 .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info);
-        self.handle_result("Profile::add_upscaling_rule_poisson", result)
+        self.handle_result(Operation::AddUpscalingRulePoisson, result)
     }
 
     pub fn add_upscaling_rule_poisson_non_sample_type_count(
@@ -248,10 +248,7 @@ impl Profile {
         let result =
             self.inner
                 .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info);
-        self.handle_result(
-            "Profile::add_upscaling_rule_poisson_non_sample_type_count",
-            result,
-        )
+        self.handle_result(Operation::AddUpscalingRulePoissonNonSampleTypeCount, result)
     }
 
     pub fn add_upscaling_rule_proportional(
@@ -265,7 +262,7 @@ impl Profile {
         let result =
             self.inner
                 .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info);
-        self.handle_result("Profile::add_upscaling_rule_proportional", result)
+        self.handle_result(Operation::AddUpscalingRuleProportional, result)
     }
 
     pub fn serialize(&mut self) -> Box<EncodedProfileResult> {
@@ -276,7 +273,7 @@ impl Profile {
             let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
             Ok(Box::new(EncodedProfile { inner: encoded }))
         })();
-        EncodedProfileResult::from_result("Profile::serialize", result)
+        EncodedProfileResult::from_result(Operation::SerializeProfile, result)
     }
 }
 
