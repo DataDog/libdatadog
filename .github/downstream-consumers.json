@@ -12,14 +12,9 @@
       "consumers": ["*"]
     },
     {
-      "name": "contract-smoke",
+      "name": "ddprof-smoke",
       "paths": [".github/downstream-consumers.json"],
-      "consumers": [
-        "DataDog/nginx-datadog",
-        "DataDog/dd-trace-dotnet-aws-lambda-layer",
-        "DataDog/system-tests",
-        "DataDog/dd-trace-go"
-      ]
+      "consumers": ["DataDog/ddprof"]
     },
     {
       "name": "profiling",
