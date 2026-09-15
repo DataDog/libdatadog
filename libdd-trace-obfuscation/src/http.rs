@@ -117,6 +117,48 @@ fn redact_path_digits(path: &str) -> String {
         .join("/")
 }
 
+/// Whether `prefix` is an RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ). At a `:` in
+/// a URL, this is what says whether the `:` is the scheme's.
+fn is_scheme(prefix: &[u8]) -> bool {
+    prefix.first().is_some_and(u8::is_ascii_alphabetic)
+        && prefix[1..]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+}
+
+/// Whether a `:` in `region`, a URL up to its query, fails RFC 3986 parsing, which
+/// [`obfuscate_url_string`] answers with `"?"`.
+///
+/// A `:` is legal as a scheme's, as a numeric port's, and in a path segment that is not the first
+/// segment of a relative reference. Anywhere else it fails the parse: `https://example.com:port/x`,
+/// `http://foo:bar.com/x`, `:`.
+fn has_unparsable_colon(region: &str) -> bool {
+    let Some(colon) = region.find(':') else {
+        return false;
+    };
+    let rest = if is_scheme(&region.as_bytes()[..colon]) {
+        &region[colon + 1..]
+    } else if region[..colon].contains('/') {
+        // A ':' behind a path separator sits in a later segment, where RFC 3986 allows it. The
+        // authority check below still applies, because "//" holds a separator too.
+        region
+    } else {
+        // Neither a scheme's nor a later segment's: a relative reference whose first segment holds
+        // a ':' is path-noscheme, which forbids one.
+        return true;
+    };
+    let Some(authority) = rest.strip_prefix("//") else {
+        // No authority, so what is left is a path or an opaque part, and both allow a ':'.
+        return false;
+    };
+    let authority = authority.split('/').next().unwrap_or(authority);
+    // In an authority a ':' introduces the port, which has to be digits, and there is only one.
+    match authority.rsplit_once(':') {
+        Some((host, port)) => host.contains(':') || !port.bytes().all(|b| b.is_ascii_digit()),
+        None => false,
+    }
+}
+
 /// Returns whether [`obfuscate_url_string`] could change `url`, letting callers skip building the
 /// obfuscated `String` when there is nothing to do.
 ///
@@ -134,6 +176,7 @@ pub fn should_obfuscate_url(
     let bytes = url.as_bytes();
 
     // Path region.
+    let mut path_end = bytes.len();
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
@@ -144,6 +187,7 @@ pub fn should_obfuscate_url(
                 if remove_query_string {
                     return true;
                 }
+                path_end = i;
                 i += 1;
                 break;
             }
@@ -176,7 +220,11 @@ pub fn should_obfuscate_url(
         i += 1;
     }
 
-    false
+    // No byte triggers, but a URL that fails to parse is replaced with "?" whenever either option
+    // is on, and a stray ':' is the one failure this scan cannot see. With both options off a
+    // failed parse only strips userinfo, which takes an '@', a trigger already. Reaching here means
+    // no '#' was seen either, so the path region ends at the query.
+    (remove_query_string || remove_path_digits) && has_unparsable_colon(&url[..path_end])
 }
 
 /// Obfuscates an HTTP URL, returning `None` when nothing needs to change.
@@ -434,5 +482,90 @@ mod tests {
         assert!(!should_obfuscate_url("http://foo.com/path", false, false));
         // Path digit with remove_path_digits triggers obfuscation.
         assert!(should_obfuscate_url("http://foo.com/p1", false, true));
+    }
+
+    /// URLs that fail to parse are replaced with `?`, so the precheck has to admit them. The colon
+    /// they trip over is the only byte in them that is not a legal URL character.
+    #[test]
+    fn should_obfuscate_url_admits_unparsable_authorities() {
+        use super::should_obfuscate_url;
+
+        for url in [
+            "https://example.com:port/x",
+            "http://foo.com:abc/x",
+            "http://foo:bar.com/x",
+            ":",
+            "0:",
+            "$-:b",
+            "http://foo.com:8o80/x",
+            "http://a:b:c/d",
+            "//foo.com:port/x",
+        ] {
+            assert_eq!(obfuscate_url_string(url, true, false), "?", "{url}");
+            assert!(should_obfuscate_url(url, true, false), "{url}");
+            assert!(should_obfuscate_url(url, false, true), "{url}");
+            // With both options off a failed parse only strips userinfo, so there is nothing to
+            // admit: these have none.
+            assert_eq!(obfuscate_url_string(url, false, false), url, "{url}");
+            assert!(!should_obfuscate_url(url, false, false), "{url}");
+        }
+        // A scheme's colon, and a colon in a path segment or a query, still parse.
+        assert!(!should_obfuscate_url("http://foo.com/path", true, false));
+        assert!(!should_obfuscate_url(
+            "http://foo.com/path?a=b",
+            false,
+            true
+        ));
+    }
+
+    /// The precheck promises that `false` means the rewrite would not change the URL. Anything the
+    /// rewrite can reach belongs in this list.
+    #[test]
+    fn should_obfuscate_url_never_skips_a_rewrite() {
+        use super::should_obfuscate_url;
+
+        for url in [
+            "",
+            "http://foo.com/",
+            "http://foo.com/id/123/page/1?search=bar&page=2",
+            "http://user:password@foo.com/1/2/3?q=james",
+            "http://foo.com/foo%20bar/",
+            "http://foo.com/p?q=1",
+            "http://foo.com:8080/p",
+            "https://example.com:port/x",
+            "http://foo:bar.com/x",
+            "http://[::1]:8080/x",
+            "http://[fe80::1%25eth0]/1",
+            "http://foo bar.com/x",
+            "http://foo.com/items[1]",
+            "http://foo.com/x#a[b",
+            "../relative/path",
+            "a/b:c/d",
+            "mailto:someone@example.com",
+            "this is not a valid url",
+            ":",
+            "%",
+            "#",
+            "?",
+            "/",
+            "//",
+            "\u{10}",
+            "\u{10}ჸ",
+            "ჸ?ჸ#ჸ",
+            "C:#",
+            "http://example.com?email=a@b\u{0}",
+        ] {
+            for (remove_query_string, remove_path_digits) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                if !should_obfuscate_url(url, remove_query_string, remove_path_digits) {
+                    assert_eq!(
+                        obfuscate_url_string(url, remove_query_string, remove_path_digits),
+                        url,
+                        "precheck skipped a rewrite of {url:?} (query={remove_query_string}, digits={remove_path_digits})"
+                    );
+                }
+            }
+        }
     }
 }
