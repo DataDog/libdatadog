@@ -276,6 +276,18 @@ mod tests {
         assert_eq!(err, expected_error);
     }
 
+    /// The obfuscator copies keys in the order it reads them, because it is a scanner rather than a
+    /// `serde_json::Map`, which is why this crate does not need `serde_json/preserve_order` - a
+    /// feature it cannot enable without enabling it for every crate in a dependent's workspace.
+    #[test]
+    fn test_key_order_is_the_input_order() {
+        let input = r#"{"z":1,"a":{"y":2,"b":3},"m":4}"#;
+        let expected = r#"{"z":"?","a":{"y":"?","b":"?"},"m":"?"}"#;
+        let (result, err) = obf(&[]).obfuscate(input);
+        assert_eq!(err, None);
+        assert_eq!(result, expected);
+    }
+
     #[test]
     fn test_multiple_json_objects() {
         // Multiple concatenated JSON objects (elasticsearch bulk API pattern).
