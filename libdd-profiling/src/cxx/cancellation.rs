@@ -35,9 +35,4 @@ impl CancellationToken {
     pub fn cancel(&self) {
         self.inner.cancel();
     }
-
-    /// Returns true if the token has been cancelled.
-    pub fn is_cancelled(&self) -> bool {
-        self.inner.is_cancelled()
-    }
 }

@@ -25,9 +25,7 @@ fn create_test_profile() -> Box<Profile> {
 }
 
 fn serialize_test_profile_to_vec(profile: &mut Profile) -> Vec<u8> {
-    let mut serialized = Vec::new();
-    assert!(profile.serialize_to_vec(&mut serialized));
-    serialized
+    profile.serialize().unwrap().bytes()
 }
 
 fn create_test_dictionary() -> Box<ProfileDictionary> {
@@ -266,21 +264,11 @@ fn test_profile_operations() {
         "Serialized profile should be compressed"
     );
 
-    // After serialization (which resets), profile should be empty
+    // After serialization (which resets), profile should be empty.
     assert_eq!(
         profile.inner.only_for_testing_num_aggregated_samples(),
         0,
-        "Profile should be empty after serialize_to_vec"
-    );
-
-    // Add sample and test explicit reset
-    profile.add_sample(&sample);
-    assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
-    assert!(profile.reset());
-    assert_eq!(
-        profile.inner.only_for_testing_num_aggregated_samples(),
-        0,
-        "Profile should be empty after reset"
+        "Profile should be empty after serialize"
     );
 }
 
@@ -352,17 +340,12 @@ fn test_profile_timestamped_sample_rejects_zero_timestamp() {
 #[test]
 fn test_profile_error_storage_modes() {
     let mut profile = create_test_profile();
-    assert!(matches!(
-        profile.error_policy(),
-        ffi::ErrorPolicy::StoreFirstPerOperation
-    ));
     let bad_sample = ffi::Sample {
         locations: &[],
         values: &[],
         labels: &[],
     };
 
-    profile.set_error_policy(ffi::ErrorPolicy::StoreFirstPerOperation);
     assert!(!profile.add_sample(&bad_sample));
     assert!(!profile.add_sample(&bad_sample));
     let errors = profile.take_errors();
@@ -431,12 +414,7 @@ fn test_profile_timestamped_identical_samples_remain_distinct() {
 #[test]
 fn test_profiles_dictionary_error_storage_modes() {
     let dictionary = create_test_dictionary();
-    assert!(matches!(
-        dictionary.error_policy(),
-        ffi::ErrorPolicy::StoreFirstPerOperation
-    ));
 
-    dictionary.set_error_policy(ffi::ErrorPolicy::StoreFirstPerOperation);
     dictionary.handle_error("ProfileDictionary::intern_string", "first");
     dictionary.handle_error("ProfileDictionary::intern_string", "second");
     let errors = dictionary.take_errors();

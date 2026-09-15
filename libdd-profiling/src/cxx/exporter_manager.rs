@@ -37,22 +37,23 @@ impl ExporterManager {
         internal_metadata: &str,
         info: &str,
     ) -> ffi::Status {
-        let result = match prepare_profile_for_export(
+        let result = prepare_profile_for_export(
             profile,
             files_to_compress,
             additional_tags,
             process_tags,
             internal_metadata,
             info,
-        ) {
-            Ok((
+        )
+        .and_then(
+            |(
                 encoded,
                 files_to_compress_vec,
                 additional_tags_vec,
                 process_tags_opt,
                 internal_metadata_json,
                 info_json,
-            )) => {
+            )| {
                 let EncodedProfile { inner: encoded } = *encoded;
                 self.queue_encoded_profile_prepared(
                     encoded,
@@ -62,9 +63,8 @@ impl ExporterManager {
                     internal_metadata_json,
                     info_json,
                 )
-            }
-            Err(err) => Err(err),
-        };
+            },
+        );
         ffi::Status::from_result("ExporterManager::queue_profile", result)
     }
 
@@ -78,20 +78,21 @@ impl ExporterManager {
         internal_metadata: &str,
         info: &str,
     ) -> ffi::Status {
-        let result = match prepare_export_args(
+        let result = prepare_export_args(
             files_to_compress,
             additional_tags,
             process_tags,
             internal_metadata,
             info,
-        ) {
-            Ok((
+        )
+        .and_then(
+            |(
                 files_to_compress_vec,
                 additional_tags_vec,
                 process_tags_opt,
                 internal_metadata_json,
                 info_json,
-            )) => {
+            )| {
                 let EncodedProfile { inner: encoded } = *encoded;
                 self.queue_encoded_profile_prepared(
                     encoded,
@@ -101,9 +102,8 @@ impl ExporterManager {
                     internal_metadata_json,
                     info_json,
                 )
-            }
-            Err(err) => Err(err),
-        };
+            },
+        );
         ffi::Status::from_result("ExporterManager::queue_encoded_profile", result)
     }
 

@@ -206,10 +206,6 @@ impl ErrorStore {
         self.policy = policy;
     }
 
-    pub(crate) fn policy(&self) -> ffi::ErrorPolicy {
-        self.policy
-    }
-
     pub(crate) fn take_errors(&mut self) -> Vec<ffi::Error> {
         std::mem::take(&mut self.errors)
     }

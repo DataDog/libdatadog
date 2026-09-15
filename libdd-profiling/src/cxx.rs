@@ -352,22 +352,16 @@ pub mod ffi {
         fn create() -> Box<CancellationToken>;
         fn clone(self: &CancellationToken) -> Box<CancellationToken>;
         fn cancel(self: &CancellationToken);
-        fn is_cancelled(self: &CancellationToken) -> bool;
 
         // Static factory methods for Profile
         #[Self = "Profile"]
         fn create(sample_types: Vec<SampleType>, period: &Period) -> Box<ProfileResult>;
-
-        /// Create a profile without a sampling period.
-        #[Self = "Profile"]
-        fn create_no_period(sample_types: Vec<SampleType>) -> Box<ProfileResult>;
 
         // Static factory methods for ProfileDictionary
         #[Self = "ProfileDictionary"]
         fn create() -> Box<ProfileDictionaryResult>;
 
         fn set_error_policy(self: &ProfileDictionary, policy: ErrorPolicy);
-        fn error_policy(self: &ProfileDictionary) -> ErrorPolicy;
         fn take_errors(self: &ProfileDictionary) -> Vec<Error>;
 
         /// Interns value into this dictionary and writes the opaque id to out.
@@ -422,7 +416,6 @@ pub mod ffi {
 
         // Profile methods
         fn set_error_policy(self: &mut Profile, policy: ErrorPolicy);
-        fn error_policy(self: &Profile) -> ErrorPolicy;
         fn take_errors(self: &mut Profile) -> Vec<Error>;
 
         /// Adds a sample without an end timestamp.
@@ -486,20 +479,11 @@ pub mod ffi {
             scale: f64,
         ) -> bool;
 
-        fn reset(self: &mut Profile) -> bool;
-
         /// Serialize and reset the profile, returning the encoded previous
         /// profile data. The returned EncodedProfile includes the compressed
         /// pprof bytes plus metadata needed by exporters, such as endpoint
         /// counts.
         fn serialize(self: &mut Profile) -> Box<EncodedProfileResult>;
-
-        /// Serialize and reset the profile, writing only compressed pprof bytes
-        /// to out. This is a convenience/debug API; callers that intend to send
-        /// the profile should prefer Profile::serialize() plus
-        /// ProfileExporter::send_encoded_profile(). Returns false on failure;
-        /// error details are reported through the Profile.
-        fn serialize_to_vec(self: &mut Profile, out: &mut Vec<u8>) -> bool;
 
         /// Return a copy of the compressed pprof bytes.
         fn bytes(self: &EncodedProfile) -> Vec<u8>;

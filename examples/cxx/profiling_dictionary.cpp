@@ -143,8 +143,10 @@ int main() {
         std::cout << "✅ Added endpoint data" << std::endl;
 
         std::cout << "Serializing profile..." << std::endl;
-        rust::Vec<std::uint8_t> encoded;
-        if (!profile->serialize_to_vec(encoded)) return 1;
+        auto encoded_result = profile->serialize();
+        if (!encoded_result->check_and_print()) return 1;
+        auto encoded_profile = encoded_result->take_value();
+        auto encoded = encoded_profile->bytes();
         if (encoded.size() == 0) {
             throw std::runtime_error("serialized profile was empty");
         }

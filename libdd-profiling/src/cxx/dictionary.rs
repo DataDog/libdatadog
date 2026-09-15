@@ -47,13 +47,6 @@ impl ProfileDictionary {
         }
     }
 
-    pub fn error_policy(&self) -> ffi::ErrorPolicy {
-        match self.errors.lock() {
-            Ok(errors) => errors.policy(),
-            Err(_) => ffi::ErrorPolicy::StoreFirstPerOperation,
-        }
-    }
-
     pub fn take_errors(&self) -> Vec<ffi::Error> {
         match self.errors.lock() {
             Ok(mut errors) => errors.take_errors(),

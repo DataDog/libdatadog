@@ -35,10 +35,6 @@ impl Profile {
         self.errors.set_policy(policy);
     }
 
-    pub fn error_policy(&self) -> ffi::ErrorPolicy {
-        self.errors.policy()
-    }
-
     pub fn take_errors(&mut self) -> Vec<ffi::Error> {
         self.errors.take_errors()
     }
@@ -57,20 +53,6 @@ impl Profile {
                 // Profile::try_new interns the strings
                 let inner = internal::Profile::try_new(&types, Some(period_value))?;
 
-                Ok(Box::new(Profile::new(inner)))
-            })(),
-        )
-    }
-
-    pub fn create_no_period(sample_types: Vec<ffi::SampleType>) -> Box<ProfileResult> {
-        ProfileResult::from_result(
-            "Profile::create_no_period",
-            (|| -> anyhow::Result<Box<Profile>> {
-                let types: Vec<api::SampleType> = sample_types
-                    .into_iter()
-                    .map(TryInto::try_into)
-                    .collect::<Result<Vec<_>, _>>()?;
-                let inner = internal::Profile::try_new(&types, None)?;
                 Ok(Box::new(Profile::new(inner)))
             })(),
         )
@@ -120,21 +102,19 @@ impl Profile {
     }
 
     pub fn add_sample_with_timestamp(&mut self, sample: &ffi::Sample, endtime_ns: i64) -> bool {
-        let result =
-            match internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero") {
-                Ok(timestamp) => {
-                    let api_sample = api::Sample {
-                        locations: sample.locations.iter().map(Into::into).collect(),
-                        values: sample.values,
-                        labels: sample.labels.iter().map(Into::into).collect(),
-                    };
-
-                    self.inner
-                        .try_add_sample(api_sample, Some(timestamp))
-                        .context("Profile::add_sample_with_timestamp failed")
-                }
-                Err(err) => Err(err),
+        let result = (|| {
+            let timestamp =
+                internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero")?;
+            let api_sample = api::Sample {
+                locations: sample.locations.iter().map(Into::into).collect(),
+                values: sample.values,
+                labels: sample.labels.iter().map(Into::into).collect(),
             };
+
+            self.inner
+                .try_add_sample(api_sample, Some(timestamp))
+                .context("Profile::add_sample_with_timestamp failed")
+        })();
         self.handle_result("Profile::add_sample_with_timestamp", result)
     }
 
@@ -149,11 +129,11 @@ impl Profile {
         sample: &ffi::DictionarySample,
         endtime_ns: i64,
     ) -> bool {
-        let result =
-            match internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero") {
-                Ok(timestamp) => self.add_dictionary_sample_result(sample, Some(timestamp)),
-                Err(err) => Err(err),
-            };
+        let result = (|| {
+            let timestamp =
+                internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero")?;
+            self.add_dictionary_sample_result(sample, Some(timestamp))
+        })();
         self.handle_result("Profile::add_dictionary_sample", result)
     }
 
@@ -289,12 +269,6 @@ impl Profile {
         self.handle_result("Profile::add_upscaling_rule_proportional", result)
     }
 
-    pub fn reset(&mut self) -> bool {
-        // Reset and discard the old profile
-        let result = self.inner.reset_and_return_previous().map(|_| ());
-        self.handle_result("Profile::reset", result)
-    }
-
     pub fn serialize(&mut self) -> Box<EncodedProfileResult> {
         let result = (|| -> anyhow::Result<Box<EncodedProfile>> {
             // Reset the profile and get the old one to serialize.
@@ -307,26 +281,6 @@ impl Profile {
             self.handle_error("Profile::serialize", err);
         }
         EncodedProfileResult::from_result("Profile::serialize", result)
-    }
-
-    pub fn serialize_to_vec(&mut self, out: &mut Vec<u8>) -> bool {
-        match (|| -> anyhow::Result<Vec<u8>> {
-            // Reset the profile and get the old one to serialize.
-            let old_profile = self.inner.reset_and_return_previous()?;
-            let end_time = Some(std::time::SystemTime::now());
-            Ok(old_profile
-                .serialize_into_compressed_pprof(end_time, None)?
-                .buffer)
-        })() {
-            Ok(bytes) => {
-                *out = bytes;
-                true
-            }
-            Err(err) => {
-                out.clear();
-                self.handle_error("Profile::serialize_to_vec", err)
-            }
-        }
     }
 }
 

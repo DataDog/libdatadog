@@ -4,14 +4,68 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
-#include <memory>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cstdlib>
 #include "datadog/profiling.hpp"
 
 using namespace datadog::profiling;
+
+namespace {
+
+std::optional<rust::Box<ProfileExporter>> create_exporter(const char* agent_url, const char* api_key) {
+    if (api_key) {
+        // Agentless mode - send directly to Datadog intake
+        const char* site = std::getenv("DD_SITE");
+        std::string dd_site = site ? site : "datadoghq.com";
+        std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
+        auto exporter_result = ProfileExporter::create_agentless_exporter(
+            "dd-trace-cpp", "1.0.0", "native",
+            {
+                Tag{.key = "service", .value = "profiling-example"},
+                Tag{.key = "env", .value = "dev"},
+                Tag{.key = "example", .value = "cxx"}
+            },
+            dd_site.c_str(), api_key, 10000, false
+        );
+        if (!exporter_result->check_and_print()) return std::nullopt;
+        return exporter_result->take_value();
+    }
+
+    if (agent_url) {
+        // Agent mode - send to local Datadog agent
+        std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
+        auto exporter_result = ProfileExporter::create_agent_exporter(
+            "dd-trace-cpp", "1.0.0", "native",
+            {
+                Tag{.key = "service", .value = "profiling-example"},
+                Tag{.key = "env", .value = "dev"},
+                Tag{.key = "example", .value = "cxx"}
+            },
+            agent_url, 10000, false
+        );
+        if (!exporter_result->check_and_print()) return std::nullopt;
+        return exporter_result->take_value();
+    }
+
+    // File mode - dump HTTP request for debugging/testing
+    std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
+    auto exporter_result = ProfileExporter::create_file_exporter(
+        "dd-trace-cpp", "1.0.0", "native",
+        {
+            Tag{.key = "service", .value = "profiling-example"},
+            Tag{.key = "env", .value = "dev"},
+            Tag{.key = "example", .value = "cxx"}
+        },
+        "profile_dump.txt"
+    );
+    if (!exporter_result->check_and_print()) return std::nullopt;
+    return exporter_result->take_value();
+}
+
+}  // namespace
 
 int main() {
     try {
@@ -146,59 +200,9 @@ int main() {
         std::cout << "\n=== Creating Exporter ===" << std::endl;
         
         // Create appropriate exporter based on configuration
-        std::unique_ptr<rust::Box<ProfileExporter>> exporter;
         try {
-            if (api_key) {
-                // Agentless mode - send directly to Datadog intake
-                const char* site = std::getenv("DD_SITE");
-                std::string dd_site = site ? site : "datadoghq.com";
-                std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
-                auto exporter_result = ProfileExporter::create_agentless_exporter(
-                    "dd-trace-cpp", "1.0.0", "native",
-                    {
-                        Tag{.key = "service", .value = "profiling-example"},
-                        Tag{.key = "env", .value = "dev"},
-                        Tag{.key = "example", .value = "cxx"}
-                    },
-                    dd_site.c_str(), api_key, 10000, false
-                );
-                if (!exporter_result->check_and_print()) return 1;
-                exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take_value()
-                );
-            } else if (agent_url) {
-                // Agent mode - send to local Datadog agent
-                std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
-                auto exporter_result = ProfileExporter::create_agent_exporter(
-                    "dd-trace-cpp", "1.0.0", "native",
-                    {
-                        Tag{.key = "service", .value = "profiling-example"},
-                        Tag{.key = "env", .value = "dev"},
-                        Tag{.key = "example", .value = "cxx"}
-                    },
-                    agent_url, 10000, false
-                );
-                if (!exporter_result->check_and_print()) return 1;
-                exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take_value()
-                );
-            } else {
-                // File mode - dump HTTP request for debugging/testing
-                std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
-                auto exporter_result = ProfileExporter::create_file_exporter(
-                    "dd-trace-cpp", "1.0.0", "native",
-                    {
-                        Tag{.key = "service", .value = "profiling-example"},
-                        Tag{.key = "env", .value = "dev"},
-                        Tag{.key = "example", .value = "cxx"}
-                    },
-                    "profile_dump.txt"
-                );
-                if (!exporter_result->check_and_print()) return 1;
-                exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take_value()
-                );
-            }
+            auto exporter = create_exporter(agent_url, api_key);
+            if (!exporter) return 1;
             std::cout << "✅ Exporter created" << std::endl;
             
             // Create a cancellation token for the export
