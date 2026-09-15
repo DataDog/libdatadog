@@ -640,7 +640,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
             })
         });
         profile
-            .try_add_sample2(locations, values, labels_iter, timestamp)
+            .try_add_sample2(locations.iter().copied(), values, labels_iter, timestamp)
             .context("ddog_prof_Profile_add failed")
     })())
 }
@@ -961,7 +961,32 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
 
 #[cfg(test)]
 mod tests {
+    use super::super::profiles_dictionary::{
+        ddog_prof_ProfilesDictionary_drop, ddog_prof_ProfilesDictionary_insert_function,
+        ddog_prof_ProfilesDictionary_insert_mapping, ddog_prof_ProfilesDictionary_insert_str,
+        ddog_prof_ProfilesDictionary_new,
+    };
+    use super::super::utf8::Utf8Option;
     use super::*;
+    use libdd_profiling::profiles::datatypes::{
+        Function2 as DictionaryFunction2, FunctionId2, Mapping2 as DictionaryMapping2, MappingId2,
+    };
+
+    fn insert_dictionary_string(dict: Option<&ProfilesDictionary>, value: &str) -> StringId2 {
+        let mut id = StringId2::default();
+        // SAFETY: id is a valid out parameter, dict is provided by the live
+        // dictionary handle in the caller, and value is valid for this call.
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_insert_str(
+                &mut id,
+                dict,
+                CharSlice::from(value),
+                Utf8Option::Validate,
+            ))
+        }
+        .unwrap();
+        id
+    }
 
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
@@ -1086,6 +1111,108 @@ mod tests {
             result.unwrap_err();
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
+        }
+    }
+
+    #[test]
+    fn add2_with_dictionary() {
+        unsafe {
+            let mut dictionary_handle = ArcHandle::default();
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut dictionary_handle)).unwrap();
+            let dictionary = dictionary_handle.as_inner().ok();
+
+            let mapping_filename = insert_dictionary_string(dictionary, "example.so");
+            let build_id = insert_dictionary_string(dictionary, "build-id");
+            let function_name = insert_dictionary_string(dictionary, "function");
+            let system_name = insert_dictionary_string(dictionary, "system_function");
+            let file_name = insert_dictionary_string(dictionary, "example.py");
+            let label_key = insert_dictionary_string(dictionary, "pid");
+
+            let mapping = DictionaryMapping2 {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename: mapping_filename,
+                build_id,
+            };
+            let mut mapping_id = MappingId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_mapping(
+                &mut mapping_id,
+                dictionary,
+                &mapping,
+            ))
+            .unwrap();
+
+            let function = DictionaryFunction2 {
+                name: function_name,
+                system_name,
+                file_name,
+            };
+            let mut function_id = FunctionId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_function(
+                &mut function_id,
+                dictionary,
+                &function,
+            ))
+            .unwrap();
+
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = std::mem::MaybeUninit::uninit();
+            Result::from(ddog_prof_Profile_with_dictionary(
+                profile.as_mut_ptr(),
+                &dictionary_handle,
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))
+            .unwrap();
+            let mut profile = profile.assume_init();
+
+            let locations = [api2::Location2 {
+                mapping: mapping_id,
+                function: function_id,
+                address: 42,
+                line: 7,
+            }];
+            let values = [1_i64];
+            let labels = [Label2 {
+                key: label_key,
+                str: CharSlice::empty(),
+                num: 101,
+                num_unit: CharSlice::empty(),
+            }];
+            let sample = Sample2 {
+                locations: Slice::from(&locations[..]),
+                values: Slice::from(&values[..]),
+                labels: Slice::from(&labels[..]),
+            };
+
+            Result::from(ddog_prof_Profile_add2(
+                &mut profile,
+                sample,
+                std::num::NonZeroI64::new(42),
+            ))
+            .unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_timestamped_samples(),
+                1
+            );
+
+            Result::from(ddog_prof_Profile_add2(&mut profile, sample, None)).unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            ddog_prof_ProfilesDictionary_drop(&mut dictionary_handle);
         }
     }
 

@@ -63,7 +63,17 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
 
 ### Code exploration
 
-When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts
+When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts.
+
+### Output hygiene
+
+Keep tool output concise to preserve conversation context:
+- For noisy builds/tests, redirect output to a log file and print only a short pass/fail summary.
+- On failure, show the relevant error excerpt or a short tail, not full logs or long skipped-test lists.
+- Prefer quiet flags such as `-q`, `--success-output never`, or equivalent when available.
+- Avoid dumping full diffs unless explicitly requested; use `git diff --stat`, `git diff --name-only`, or targeted snippets instead.
+- Avoid inspecting generated artifacts under `target/` unless validating generated output specifically.
+- During iteration, prefer narrow checks such as `cargo check -p <crate>`; batch slower tests, examples, and linting once the intended API/code shape has settled.
 
 ## Key Conventions
 

@@ -192,16 +192,17 @@ impl Profile {
     ///
     /// All MappingId2, FunctionId2, and StringId2 values should be coming
     /// from the same profiles dictionary used by this profile internally.
-    pub unsafe fn try_add_sample2<
-        'a,
-        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
-    >(
+    pub unsafe fn try_add_sample2<'a, Locations, Labels>(
         &mut self,
-        locations: &[api2::Location2],
+        locations: Locations,
         values: &[i64],
-        labels: L,
+        labels: Labels,
         timestamp: Option<Timestamp>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        Locations: ExactSizeIterator<Item = api2::Location2>,
+        Labels: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    {
         let Some(translator) = &mut self.profiles_dictionary_translator else {
             anyhow::bail!("profiles dictionary not set");
         };
@@ -2901,7 +2902,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add to succeed");
         }
 
@@ -2912,7 +2913,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add to succeed");
         }
 
@@ -2927,7 +2928,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add with label to succeed");
         }
 
@@ -2940,7 +2941,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add with numeric label to succeed");
         }
 

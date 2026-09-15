@@ -1,11 +1,15 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <unistd.h>
 #include <sys/wait.h>
-#include "libdd-profiling/src/cxx.rs.h"
+#include "datadog/profiling.hpp"
 
 using namespace datadog::profiling;
 
@@ -22,21 +26,19 @@ int main(int argc, char *argv[]) {
         // ============================================================================
         // Example 1: Basic ExporterManager usage
         // ============================================================================
-        
+
         std::cout << "=== Example 1: Basic ExporterManager Usage ===" << std::endl;
 
         // Create a profile
-        ValueType wall_time{
-            .type_ = "wall-time",
-            .unit = "nanoseconds"
-        };
-
         Period period{
-            .value_type = wall_time,
+            .value_type = SampleType::WallTime,
             .value = 60
         };
 
-        auto profile = Profile::create({wall_time}, period);
+        auto profile_result = Profile::create({SampleType::WallTime}, period);
+        if (!profile_result->check_and_print()) return 1;
+        auto profile = profile_result->take();
+        profile->set_error_policy(ErrorPolicy::PrintImmediately);
         std::cout << "✓ Created profile" << std::endl;
 
         // Add some sample data
@@ -48,29 +50,24 @@ int main(int argc, char *argv[]) {
             .build_id = "abc123"
         };
 
-        profile->add_sample(Sample{
-            .locations = {
-                Location{
-                    .mapping = mapping,
-                    .function = Function{
-                        .name = "main",
-                        .system_name = "main",
-                        .filename = "example.cpp"
-                    },
-                    .address = 0x10001000,
-                    .line = 42
-                }
+        std::array<Location, 1> locations{Location{
+            .mapping = mapping,
+            .function = Function{
+                .name = "main",
+                .system_name = "main",
+                .filename = "example.cpp"
             },
-            .values = {1000000},
-            .labels = {
-                Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}
-            }
-        });
+            .address = 0x10001000,
+            .line = 42
+        }};
+        std::array<std::int64_t, 1> values{1000000};
+        std::array<Label, 1> labels{Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}};
+        if (!profile->add_sample(views::sample(locations, values, labels))) return 1;
 
         std::cout << "✓ Added sample to profile" << std::endl;
 
         // Create exporter
-        auto exporter = api_key 
+        auto exporter_result = api_key
             ? ProfileExporter::create_agentless_exporter(
                 "libdatadog-example",
                 "1.0.0",
@@ -94,22 +91,26 @@ int main(int argc, char *argv[]) {
                 },
                 "/tmp/exporter_manager_example_cxx.txt"
               );
+        if (!exporter_result->check_and_print()) return 1;
+        auto exporter = exporter_result->take();
 
         std::cout << "✓ Created exporter" << std::endl;
 
         // Create ExporterManager
-        auto manager = ExporterManager::new_manager(std::move(exporter));
+        auto manager_result = ExporterManager::new_manager(std::move(exporter));
+        if (!manager_result->check_and_print()) return 1;
+        auto manager = manager_result->take();
         std::cout << "✓ Created ExporterManager with background worker thread" << std::endl;
 
         // Queue the profile (this resets the profile and queues the previous data)
-        manager->queue_profile(
+        if (!manager->queue_profile(
             *profile,
             {},    // files_to_compress
             {},    // additional_tags
             "",    // process_tags
             "",    // internal_metadata
             ""     // info
-        );
+        ).check_and_print()) return 1;
 
         std::cout << "✓ Queued profile for async sending" << std::endl;
 
@@ -117,7 +118,7 @@ int main(int argc, char *argv[]) {
         sleep(1);
 
         // Abort the manager (stops worker thread)
-        manager->abort();
+        if (!manager->abort().check_and_print()) return 1;
         std::cout << "✓ Aborted manager (worker thread stopped)" << std::endl;
 
         std::cout << std::endl;
@@ -125,32 +126,30 @@ int main(int argc, char *argv[]) {
         // ============================================================================
         // Example 2: Fork-safe usage
         // ============================================================================
-        
+
         std::cout << "=== Example 2: Fork-Safe ExporterManager Usage ===" << std::endl;
 
         // Create a new profile and exporter for the fork example
-        auto profile2 = Profile::create({wall_time}, period);
-        
-        profile2->add_sample(Sample{
-            .locations = {
-                Location{
-                    .mapping = mapping,
-                    .function = Function{
-                        .name = "worker",
-                        .system_name = "worker",
-                        .filename = "worker.cpp"
-                    },
-                    .address = 0x10002000,
-                    .line = 100
-                }
-            },
-            .values = {2000000},
-            .labels = {
-                Label{.key = "thread_id", .str = "", .num = 2, .num_unit = ""}
-            }
-        });
+        auto profile2_result = Profile::create({SampleType::WallTime}, period);
+        if (!profile2_result->check_and_print()) return 1;
+        auto profile2 = profile2_result->take();
+        profile2->set_error_policy(ErrorPolicy::PrintImmediately);
 
-        auto exporter2 = ProfileExporter::create_file_exporter(
+        std::array<Location, 1> profile2_locations{Location{
+            .mapping = mapping,
+            .function = Function{
+                .name = "worker",
+                .system_name = "worker",
+                .filename = "worker.cpp"
+            },
+            .address = 0x10002000,
+            .line = 100
+        }};
+        std::array<std::int64_t, 1> profile2_values{2000000};
+        std::array<Label, 1> profile2_labels{Label{.key = "thread_id", .str = "", .num = 2, .num_unit = ""}};
+        if (!profile2->add_sample(views::sample(profile2_locations, profile2_values, profile2_labels))) return 1;
+
+        auto exporter2_result = ProfileExporter::create_file_exporter(
             "libdatadog-example-fork",
             "1.0.0",
             "native",
@@ -160,16 +159,20 @@ int main(int argc, char *argv[]) {
             },
             "/tmp/exporter_manager_fork_cxx.txt"
         );
+        if (!exporter2_result->check_and_print()) return 1;
+        auto exporter2 = exporter2_result->take();
 
-        auto manager2 = ExporterManager::new_manager(std::move(exporter2));
+        auto manager2_result = ExporterManager::new_manager(std::move(exporter2));
+        if (!manager2_result->check_and_print()) return 1;
+        auto manager2 = manager2_result->take();
         std::cout << "✓ Created ExporterManager for fork example" << std::endl;
 
         // Queue a profile before forking
-        manager2->queue_profile(*profile2, {}, {}, "", "", "");
+        if (!manager2->queue_profile(*profile2, {}, {}, "", "", "").check_and_print()) return 1;
         std::cout << "✓ Queued profile (may be inflight during fork)" << std::endl;
 
         // Call prefork before forking
-        manager2->prefork();
+        if (!manager2->prefork().check_and_print()) return 1;
         std::cout << "✓ Called prefork (worker thread stopped, ready to fork)" << std::endl;
 
         pid_t pid = fork();
@@ -184,69 +187,59 @@ int main(int argc, char *argv[]) {
             std::cout << "[CHILD] ✓ In child process (PID: " << getpid() << ")" << std::endl;
 
             // Call postfork_child to restart the manager
-            manager2->postfork_child();
+            if (!manager2->postfork_child().check_and_print()) return 1;
             std::cout << "[CHILD] ✓ Restarted manager (inflight requests discarded)" << std::endl;
 
             // Child can now use the manager independently
             // Add another sample in the child
-            profile2->add_sample(Sample{
-                .locations = {
-                    Location{
-                        .mapping = mapping,
-                        .function = Function{
-                            .name = "child_func",
-                            .system_name = "child_func",
-                            .filename = "child.cpp"
-                        },
-                        .address = 0x10003000,
-                        .line = 200
-                    }
+            std::array<Location, 1> child_locations{Location{
+                .mapping = mapping,
+                .function = Function{
+                    .name = "child_func",
+                    .system_name = "child_func",
+                    .filename = "child.cpp"
                 },
-                .values = {3000000},
-                .labels = {
-                    Label{.key = "process", .str = "child", .num = 0, .num_unit = ""}
-                }
-            });
+                .address = 0x10003000,
+                .line = 200
+            }};
+            std::array<std::int64_t, 1> child_values{3000000};
+            std::array<Label, 1> child_labels{Label{.key = "process", .str = "child", .num = 0, .num_unit = ""}};
+            if (!profile2->add_sample(views::sample(child_locations, child_values, child_labels))) return 1;
 
-            manager2->queue_profile(*profile2, {}, {}, "", "", "");
+            if (!manager2->queue_profile(*profile2, {}, {}, "", "", "").check_and_print()) return 1;
             std::cout << "[CHILD] ✓ Queued child-specific profile" << std::endl;
 
             sleep(1);
 
-            manager2->abort();
+            if (!manager2->abort().check_and_print()) return 1;
             std::cout << "[CHILD] ✓ Cleaned up and exiting" << std::endl;
-            
+
             exit(0);
         } else {
             // Parent process
-            std::cout << "[PARENT] ✓ In parent process (PID: " << getpid() 
+            std::cout << "[PARENT] ✓ In parent process (PID: " << getpid()
                       << ", child PID: " << pid << ")" << std::endl;
 
             // Call postfork_parent to restart the manager with inflight requests
-            manager2->postfork_parent();
+            if (!manager2->postfork_parent().check_and_print()) return 1;
             std::cout << "[PARENT] ✓ Restarted manager (inflight requests re-queued)" << std::endl;
 
             // Parent continues profiling
-            profile2->add_sample(Sample{
-                .locations = {
-                    Location{
-                        .mapping = mapping,
-                        .function = Function{
-                            .name = "parent_func",
-                            .system_name = "parent_func",
-                            .filename = "parent.cpp"
-                        },
-                        .address = 0x10004000,
-                        .line = 300
-                    }
+            std::array<Location, 1> parent_locations{Location{
+                .mapping = mapping,
+                .function = Function{
+                    .name = "parent_func",
+                    .system_name = "parent_func",
+                    .filename = "parent.cpp"
                 },
-                .values = {4000000},
-                .labels = {
-                    Label{.key = "process", .str = "parent", .num = 0, .num_unit = ""}
-                }
-            });
+                .address = 0x10004000,
+                .line = 300
+            }};
+            std::array<std::int64_t, 1> parent_values{4000000};
+            std::array<Label, 1> parent_labels{Label{.key = "process", .str = "parent", .num = 0, .num_unit = ""}};
+            if (!profile2->add_sample(views::sample(parent_locations, parent_values, parent_labels))) return 1;
 
-            manager2->queue_profile(*profile2, {}, {}, "", "", "");
+            if (!manager2->queue_profile(*profile2, {}, {}, "", "", "").check_and_print()) return 1;
             std::cout << "[PARENT] ✓ Queued parent-specific profile" << std::endl;
 
             // Wait for child to finish
@@ -256,7 +249,7 @@ int main(int argc, char *argv[]) {
 
             sleep(1);
 
-            manager2->abort();
+            if (!manager2->abort().check_and_print()) return 1;
             std::cout << "[PARENT] ✓ Cleaned up" << std::endl;
         }
 
