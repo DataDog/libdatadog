@@ -22,9 +22,9 @@
 mod span;
 mod span_v1;
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
-use crate::span::TraceData;
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::v1::TracerPayload;
+use libdd_trace_types::span::TraceData;
 use span::LogSpan;
 use span_v1::{ChunkContextV1, LogSpanV1};
 use std::io::Write;
@@ -64,8 +64,8 @@ pub struct EncodeStats {
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v04::SpanSlice;
 /// use libdd_trace_utils::json_log_encoder::encode_traces;
-/// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
 ///     service: "my-fn".into(),
@@ -147,7 +147,7 @@ pub fn encode_traces<T: TraceData>(
 /// Encodes a v1 [`TracerPayload`] into newline-delimited JSON "log exporter" lines,
 /// writing them to `out`. Same framing, packing, and oversized-span dropping behavior as
 /// [`encode_traces`] — see its docs — but takes v1
-/// [`TracerPayload`]/[`crate::span::v1::Span`] input and downgrades each span's unified
+/// [`TracerPayload`]/[`libdd_trace_types::span::v1::Span`] input and downgrades each span's unified
 /// attribute model back to the `meta`/`metrics`-shaped wire span via
 /// [`span_v1::LogSpanV1`], since the JSON log wire contract (consumed by the Datadog
 /// Forwarder Lambda) is unchanged by the v1 migration. Payload-level `env`/`app_version`/
@@ -248,7 +248,7 @@ fn flush_line(out: &mut impl Write, line: &mut Vec<u8>) -> std::io::Result<()> {
 #[allow(clippy::useless_conversion)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanSlice;
+    use libdd_trace_types::span::v04::SpanSlice;
     use serde_json::Value;
 
     const MAX: usize = 64 * 1024;
@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn span_links_and_events_emitted_when_present() {
-        use crate::span::v04::{SpanEvent, SpanLink};
+        use libdd_trace_types::span::v04::{SpanEvent, SpanLink};
 
         let span = SpanSlice {
             span_id: 1,
@@ -533,7 +533,7 @@ mod tests {
         // The internal "explicitly set" sentinel (bit 31) must never appear in the emitted
         // JSON log, which downstream consumers treat as the real W3C trace-flags value.
         // Covers both sentinel states: kept (0x8000_0001) and explicitly dropped (0x8000_0000).
-        use crate::span::v04::SpanLink;
+        use libdd_trace_types::span::v04::SpanLink;
 
         fn encoded_flags(flags: u32) -> Value {
             let span = SpanSlice {

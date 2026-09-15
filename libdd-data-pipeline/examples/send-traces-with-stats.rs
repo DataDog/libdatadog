@@ -16,10 +16,9 @@ mod example {
     };
     use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::{
-        span_pool::PooledChunks,
-        v04::{Span, SpanBytes, VecMap},
-    };
+    use libdd_trace_types::span::v04::{Span, SpanBytes};
+    use libdd_trace_types::span::vec_map::VecMap;
+    use libdd_trace_utils::span::span_pool::PooledChunks;
     use std::{
         sync::Arc,
         time::{Duration, UNIX_EPOCH},

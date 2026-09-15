@@ -25,7 +25,7 @@ use libdd_trace_protobuf::pb::{
     attribute_array_value::AttributeArrayValueType, AttributeAnyValue, AttributeArray,
     AttributeArrayValue, Span, SpanEvent,
 };
-use libdd_trace_utils::span::{
+use libdd_trace_types::span::{
     v04::{
         AttributeAnyValue as V04AttributeAnyValue, AttributeArrayValue as V04AttributeArrayValue,
         SpanBytes, SpanEventBytes, SpanLinkBytes,

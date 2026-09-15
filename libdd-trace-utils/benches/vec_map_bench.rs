@@ -10,7 +10,7 @@
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use libdd_tinybytes::BytesString;
-use libdd_trace_utils::span::vec_map::VecMap;
+use libdd_trace_types::span::vec_map::VecMap;
 use std::hint::black_box;
 
 /// Representative map sizes: the small end is the common case (a span carries a handful of tags),

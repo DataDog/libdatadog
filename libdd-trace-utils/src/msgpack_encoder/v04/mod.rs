@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
-use crate::span::TraceData;
 use libdd_common::ResultInfallibleExt;
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::v1::TracerPayload;
+use libdd_trace_types::span::TraceData;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {
@@ -110,8 +110,8 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v04::SpanSlice;
 /// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice_from_v04;
-/// use libdd_trace_utils::span::v04::SpanSlice;
 /// use std::borrow::Cow;
 ///
 /// let mut buffer = vec![0u8; 1024];
@@ -143,8 +143,8 @@ pub fn write_to_slice_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v04::SpanSlice;
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
-/// use libdd_trace_utils::span::v04::SpanSlice;
 /// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
@@ -174,8 +174,8 @@ pub fn to_vec_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v04::SpanSlice;
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity_from_v04;
-/// use libdd_trace_utils::span::v04::SpanSlice;
 /// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
@@ -214,8 +214,8 @@ pub fn to_vec_with_capacity_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
+/// use libdd_trace_types::span::v04::SpanSlice;
 /// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len_from_v04;
-/// use libdd_trace_utils::span::v04::SpanSlice;
 /// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {

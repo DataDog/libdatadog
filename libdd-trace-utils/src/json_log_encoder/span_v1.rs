@@ -1,8 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Serialization of a [`crate::span::v1::Span`] into the same Datadog Forwarder log exporter
-//! JSON shape (APM v0.2 span schema) produced for v0.4 by [`super::span::LogSpan`].
+//! Serialization of a [`libdd_trace_types::span::v1::Span`] into the same Datadog Forwarder log
+//! exporter JSON shape (APM v0.2 span schema) produced for v0.4 by [`super::span::LogSpan`].
 //!
 //! The wire contract is unchanged by the v1 migration — the Forwarder still expects
 //! `meta`/`metrics`-shaped spans — only the input type is v1. So a v1 span's unified
@@ -17,9 +17,12 @@
 //! see [`crate::msgpack_encoder::v04::span_v1`]'s mapping table for the msgpack-side sibling
 //! of this convention.
 
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
-use crate::span::vec_map::{DedupedVecMap, VecMap};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
+use libdd_trace_types::span::v1::{
+    AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk,
+};
+use libdd_trace_types::span::vec_map::{DedupedVecMap, VecMap};
+use libdd_trace_types::span::TraceData;
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;
@@ -609,12 +612,12 @@ mod tests {
     //! set of `TraceChunk`s via [`super::super::encode_traces_v1`] and parses the single
     //! emitted line as `serde_json::Value` to assert on the resulting shape.
     use super::super::encode_traces_v1;
-    use crate::span::v1::{
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
     };
-    use crate::span::vec_map::VecMap;
-    use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::vec_map::VecMap;
     use serde_json::Value;
 
     const MAX: usize = 64 * 1024;

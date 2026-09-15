@@ -6,9 +6,10 @@
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
 use libdd_tinybytes::BytesString;
+use libdd_trace_types::span::v04::{Span, SpanLink};
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_types::span::BytesData;
 use libdd_trace_utils::agentless_encoder::encode_payload;
-use libdd_trace_utils::span::v04::{Span, SpanLink, VecMap};
-use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 const NUM_TRACES: usize = 20;

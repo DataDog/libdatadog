@@ -4,8 +4,9 @@
 use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_VALUE};
 
 use super::*;
-use libdd_trace_utils::span::v04::VecMap;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
+use libdd_trace_types::span::v04::SpanSlice;
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use rand::{thread_rng, Rng};
 use std::borrow::Cow;
 

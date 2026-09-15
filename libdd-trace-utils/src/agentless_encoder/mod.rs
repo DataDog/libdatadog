@@ -27,10 +27,13 @@
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
 use crate::hex::{hex_low_u64, hex_u128, hex_u64};
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-use crate::span::v1;
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
 use crate::tracer_metadata::TracerMetadata;
+use libdd_trace_types::span::v04::{
+    AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink,
+};
+use libdd_trace_types::span::v1;
+use libdd_trace_types::span::TraceData;
 use serde::{
     ser::{SerializeMap, SerializeSeq},
     Serialize, Serializer,
@@ -934,7 +937,7 @@ fn encode_span_link_v1<T: TraceData, S: Serializer>(
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a libdd_trace_types::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter() {
                     let key: &str = k.borrow();
@@ -1020,7 +1023,7 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a libdd_trace_types::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter().filter(|(_, v)| is_supported_event_attr_v1(v)) {
                     let key: &str = k.borrow();

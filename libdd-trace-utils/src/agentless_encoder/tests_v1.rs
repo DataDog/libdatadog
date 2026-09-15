@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload_from_v1;
-use crate::span::v1::{
+use crate::tracer_metadata::TracerMetadata;
+use libdd_tinybytes::BytesString;
+use libdd_trace_types::span::v1::{
     AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
     TraceChunkBytes,
 };
-use crate::span::vec_map::VecMap;
-use crate::tracer_metadata::TracerMetadata;
-use libdd_tinybytes::BytesString;
+use libdd_trace_types::span::vec_map::VecMap;
 use serde_json::Value;
 
 fn bs(s: &str) -> BytesString {

@@ -12,8 +12,8 @@ use libdd_data_pipeline::trace_exporter::{
 };
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 use libdd_tinybytes::BytesString;
-use libdd_trace_utils::span::v04::SpanBytes;
-use libdd_trace_utils::span::vec_map::VecMap;
+use libdd_trace_types::span::v04::SpanBytes;
+use libdd_trace_types::span::vec_map::VecMap;
 
 // Number of chunks each sender thread sends per benchmark iteration.
 const CHUNKS_PER_SENDER: usize = 900;

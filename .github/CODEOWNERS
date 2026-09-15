@@ -66,6 +66,7 @@ libdd-trace-normalization            @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-obfuscation              @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-stats                    @DataDog/apm-common-components-core
+libdd-trace-types                    @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-utils                    @DataDog/serverless @DataDog/libdatadog-apm
 libdd-tracer-flare                   @DataDog/libdatadog-apm
 LICENSE*                             @DataDog/libdatadog

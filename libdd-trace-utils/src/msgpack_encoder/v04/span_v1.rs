@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Downgrade encoder: `crate::span::v1::Span` → v0.4 msgpack wire.
+//! Downgrade encoder: `libdd_trace_types::span::v1::Span` → v0.4 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 //!
 //! Used when the receiving agent does not advertise the `/v1.0/traces` endpoint and the tracer
@@ -30,9 +30,9 @@
 //! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) is
 //! dropped: the dedicated field always wins, so each key is written at most once.
 
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
-use crate::span::vec_map::{DedupedVecMap, VecMap};
-use crate::span::TraceData;
+use libdd_trace_types::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
+use libdd_trace_types::span::vec_map::{DedupedVecMap, VecMap};
+use libdd_trace_types::span::TraceData;
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint,
     write_str, write_u32, write_u64, write_u8, RmpWrite, ValueWriteError,
@@ -209,7 +209,7 @@ fn flatten_attr_into<T: TraceData>(
     }
 }
 
-/// Encodes a [`v1::Span`](crate::span::v1::Span) into the v0.4 msgpack wire format
+/// Encodes a [`v1::Span`](libdd_trace_types::span::v1::Span) into the v0.4 msgpack wire format
 /// (downgrade: v1 input → v0.4 output). Chunk-level context (`trace_id`, `origin`, `priority`,
 /// `sampling_mechanism`, chunk attributes) is injected into the span's `meta` / `metrics` /
 /// `meta_struct` maps since v0.4 has no chunk concept.
@@ -444,8 +444,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
+/// Encodes [`v1::SpanLink`](libdd_trace_types::span::v1::SpanLink)s into the v0.4 msgpack wire
+/// format (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
 /// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings;
 /// non-string-coercible variants are dropped because v0.4 link attributes are `String → String`
 /// only.
@@ -512,8 +512,8 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes [`v1::SpanEvent`](crate::span::v1::SpanEvent)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). Typed attributes are downgraded to the v0.4
+/// Encodes [`v1::SpanEvent`](libdd_trace_types::span::v1::SpanEvent)s into the v0.4 msgpack wire
+/// format (downgrade: v1 input → v0.4 output). Typed attributes are downgraded to the v0.4
 /// `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes` and
 /// `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
 fn encode_span_events<W: RmpWrite, T: TraceData>(
@@ -683,12 +683,12 @@ mod tests {
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
-    use crate::span::v1::{
+    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
     };
-    use crate::span::vec_map::VecMap;
-    use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_types::span::vec_map::VecMap;
     use rmpv::Value;
     use thin_vec::ThinVec;
 
