@@ -219,10 +219,14 @@ int main() {
 })";
             std::vector<uint8_t> metadata_bytes(app_metadata.begin(), app_metadata.end());
             
-            // Export the profile (unified code path)
-            std::cout << "Exporting profile with additional metadata..." << std::endl;
-            if (!(*exporter)->send_profile_with_cancellation(
-                *profile,
+            // Serialize/reset the profile before uploading it. This keeps
+            // potentially blocking I/O separate from profile mutation.
+            std::cout << "Serializing and exporting profile with additional metadata..." << std::endl;
+            auto encoded_result = profile->serialize();
+            if (!encoded_result->check_and_print()) return 1;
+            auto encoded = encoded_result->take_value();
+            if (!(*exporter)->send_encoded_profile_with_cancellation(
+                std::move(encoded),
                 // Files to compress and attach
                 {AttachmentFile{
                     .name = "app_metadata.json",
@@ -243,9 +247,7 @@ int main() {
             ).check_and_print()) return 1;
             std::cout << "✅ Profile exported successfully!" << std::endl;
 
-            // Split serialize/send flow: useful when callers need to reset the
-            // profile under their own lock, release that lock, and upload the
-            // already-encoded profile later.
+            // A second send using the non-cancellable encoded-profile API.
             std::cout << "Exporting a second profile with split serialize/send..." << std::endl;
             auto split_profile_result = Profile::create({SampleType::WallTime}, period);
             if (!split_profile_result->check_and_print()) return 1;

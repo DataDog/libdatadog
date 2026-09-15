@@ -47,10 +47,13 @@ auto profile = result->take_value();
 
 Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`. Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
 
-Exporter APIs return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
+Exporter APIs send serialized profiles and return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
 
 ```cpp
-if (!exporter->send_profile(...).check_and_print()) return false;
+auto encoded_result = profile->serialize();
+if (!encoded_result->check_and_print()) return false;
+auto encoded = encoded_result->take_value();
+if (!exporter->send_encoded_profile(std::move(encoded), ...).check_and_print()) return false;
 ```
 
 The existing release builder packages the C ABI artifacts. CXX consumers should use the cargo-built CXX bridge artifacts produced with the `cxx` feature.

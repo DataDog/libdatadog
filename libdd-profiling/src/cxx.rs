@@ -528,71 +528,7 @@ pub mod ffi {
         ) -> Box<ProfileExporterResult>;
 
         // ProfileExporter methods
-        /// Sends a profile to Datadog.
-        ///
-        /// **Important**: This method resets the profile and sends the *previous* profile data.
-        /// After calling this, the profile will be empty and ready for new samples.
-        ///
-        /// # Arguments
-        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
-        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
-        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
-        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
-        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
-        ///   string "" if not needed
-        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
-        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
-        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
-        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
-        ///   if not needed
-        fn send_profile(
-            self: &mut ProfileExporter,
-            profile: &mut Profile,
-            files_to_compress: Vec<AttachmentFile>,
-            additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
-        ) -> Status;
-
-        /// Sends a profile to Datadog with cancellation support.
-        ///
-        /// This is the same as `send_profile`, but allows cancelling the operation from another
-        /// thread using a cancellation token.
-        ///
-        /// **Important**: This method resets the profile and sends the *previous* profile data.
-        /// After calling this, the profile will be empty and ready for new samples.
-        ///
-        /// # Arguments
-        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
-        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
-        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
-        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
-        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
-        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
-        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
-        ///   string "" if not needed
-        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
-        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
-        ///   if not needed
-        /// * `cancel` - Cancellation token to cancel the send operation
-        #[allow(clippy::too_many_arguments)]
-        fn send_profile_with_cancellation(
-            self: &mut ProfileExporter,
-            profile: &mut Profile,
-            files_to_compress: Vec<AttachmentFile>,
-            additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
-            cancel: &CancellationToken,
-        ) -> Status;
-
         /// Sends a previously serialized profile to Datadog.
-        ///
-        /// This is the split form of send_profile(). It allows callers to
-        /// serialize/reset a Profile under their own lock, then release that
-        /// lock before performing blocking I/O.
         ///
         /// # Arguments
         /// * `encoded` - EncodedProfile previously returned by Profile::serialize().
@@ -613,8 +549,6 @@ pub mod ffi {
 
         /// Sends a previously serialized profile to Datadog with cancellation
         /// support.
-        ///
-        /// This is the split form of send_profile_with_cancellation().
         #[allow(clippy::too_many_arguments)]
         fn send_encoded_profile_with_cancellation(
             self: &mut ProfileExporter,
