@@ -242,6 +242,7 @@ impl BlockingRuntime for ForkSafeRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared_runtime::runtime_identity_refresh::discard_worker_without_flush;
     use async_trait::async_trait;
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
@@ -330,6 +331,52 @@ mod tests {
         assert_eq!(last, -1);
     }
 
+    #[test]
+    fn test_runtime_identity_refresh_discard_does_not_shutdown() {
+        #[derive(Debug)]
+        struct DiscardWorker(Sender<i32>);
+
+        #[async_trait]
+        impl Worker for DiscardWorker {
+            async fn run(&mut self) {}
+
+            async fn trigger(&mut self) {
+                std::future::pending::<()>().await;
+            }
+
+            fn reset(&mut self) {
+                let _ = self.0.send(-2);
+            }
+
+            async fn shutdown(&mut self) {
+                let _ = self.0.send(-1);
+            }
+        }
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (sender, receiver) = channel();
+
+        let handle = shared_runtime
+            .spawn_worker(DiscardWorker(sender), true)
+            .unwrap();
+
+        rt.block_on(async {
+            assert!(discard_worker_without_flush(handle).await.is_ok());
+        });
+
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("discard did not run"),
+            -2
+        );
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "discard must not run shutdown"
+        );
+    }
     #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = ForkSafeRuntime::new().unwrap();

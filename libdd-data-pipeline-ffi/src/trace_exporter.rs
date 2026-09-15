@@ -886,6 +886,44 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
 }
 
+/// Discards runtime-identity-bound state without sending buffered data, then frees the exporter.
+///
+/// Why this exists: SDKs that restore from a process snapshot, such as dd-trace-py in a MicroVM
+/// `/run` hook, can inherit buffered stats, telemetry state, and cached agent `/info` responses
+/// from the snapshotted runtime. The normal [`ddog_trace_exporter_free`] path flushes before
+/// freeing, which is correct for ordinary shutdown but wrong when the SDK is discarding inherited
+/// state and immediately constructing a fresh exporter for the restored runtime identity.
+///
+/// This function gives those snapshot-aware callers an explicit no-flush teardown API. Ordinary
+/// non-snapshot shutdown callers should continue using [`ddog_trace_exporter_free`].
+///
+/// Returns `None` when the inherited state was discarded. Once a non-null handle is accepted,
+/// `*handle` is always set to null, including when an ordinary error is returned.
+///
+/// # Arguments
+///
+/// * handle - A non-null pointer to the TraceExporter handle. The pointee must be non-null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_free_without_flush(
+    handle: &mut *mut TraceExporter,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        {
+            let Some(exporter) = NonNull::new(*handle) else {
+                return gen_error!(ErrorCode::InvalidArgument);
+            };
+            let exporter = Box::from_raw(exporter.as_ptr());
+            *handle = std::ptr::null_mut();
+
+            match exporter.shutdown_without_flush() {
+                Ok(()) => None,
+                Err(err) => Some(Box::new(ExporterError::from(err))),
+            }
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Send traces to the Datadog Agent.
 ///
 /// # Arguments
@@ -1332,6 +1370,28 @@ mod tests {
             assert_eq!(ret, None);
 
             ddog_trace_exporter_free(exporter);
+            ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn exporter_free_without_flush_test() {
+        unsafe {
+            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
+            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
+            let cfg = config.assume_init();
+
+            let mut exporter: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+            let error = ddog_trace_exporter_new(
+                NonNull::new_unchecked(&mut exporter).cast(),
+                Some(cfg.borrow()),
+            );
+            assert!(error.is_none());
+
+            let mut exporter = Box::into_raw(exporter.assume_init());
+            assert!(ddog_trace_exporter_free_without_flush(&mut exporter).is_none());
+            assert!(exporter.is_null());
             ddog_trace_exporter_config_free(cfg);
         }
     }
