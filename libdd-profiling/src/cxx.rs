@@ -479,18 +479,24 @@ pub mod ffi {
         fn take_errors(self: &mut Profile) -> Vec<Error>;
         fn clear_errors(self: &mut Profile);
 
+        /// Adds a sample without an end timestamp.
         fn add_sample(self: &mut Profile, sample: &Sample) -> bool;
+
+        /// Adds a sample with an end timestamp in nanoseconds.
+        #[cxx_name = "add_sample"]
         fn add_sample_with_timestamp(self: &mut Profile, sample: &Sample, endtime_ns: i64) -> bool;
 
-        /// Adds a dictionary-backed sample.
+        /// Adds a dictionary-backed sample without an end timestamp.
         ///
         /// Null/default ids in sample represent empty or unknown values. All
         /// non-null ids in sample must have been produced by the
         /// ProfileDictionary used to create this Profile. The sample slices are
-        /// borrowed only for the duration of this call. endtime_ns is an
-        /// optional end timestamp in nanoseconds; pass 0 to record the sample
-        /// without a timestamp.
-        fn add_dictionary_sample(
+        /// borrowed only for the duration of this call.
+        fn add_dictionary_sample(self: &mut Profile, sample: &DictionarySample) -> bool;
+
+        /// Adds a dictionary-backed sample with an end timestamp in nanoseconds.
+        #[cxx_name = "add_dictionary_sample"]
+        fn add_dictionary_sample_with_timestamp(
             self: &mut Profile,
             sample: &DictionarySample,
             endtime_ns: i64,
@@ -1279,25 +1285,24 @@ impl ErrorStore {
     }
 
     fn handle_error(&mut self, operation: &'static str, err: impl std::fmt::Display) -> bool {
-        let message = format!("{err:#}");
         match self.policy {
             ffi::ErrorPolicy::PrintImmediately => {
-                eprintln!("{operation} failed: {message}");
+                eprintln!("{operation} failed: {err:#}");
             }
             ffi::ErrorPolicy::StoreFirstPerOperation => {
                 if !self.errors.iter().any(|error| error.operation == operation) {
                     self.errors.push(ffi::Error {
                         operation: operation.to_string(),
-                        message,
+                        message: format!("{err:#}"),
                     });
                 }
             }
             ffi::ErrorPolicy::StoreEveryOccurrence => self.errors.push(ffi::Error {
                 operation: operation.to_string(),
-                message,
+                message: format!("{err:#}"),
             }),
             _ => {
-                eprintln!("{operation} failed: {message}");
+                eprintln!("{operation} failed: {err:#}");
             }
         }
         false
@@ -1605,53 +1610,69 @@ impl Profile {
         self.handle_result("Profile::add_sample_with_timestamp", result)
     }
 
-    /// Adds a dictionary-backed sample.
-    ///
-    /// Null/default ids in sample represent empty or unknown values. All
-    /// non-null ids in sample must have been produced by the same
-    /// ProfileDictionary used to create this Profile. The caller must keep the
-    /// provided slices valid for the duration of this call. An endtime_ns value
-    /// of 0 records the sample without a timestamp.
-    pub fn add_dictionary_sample(
+    /// Adds a dictionary-backed sample without an end timestamp.
+    pub fn add_dictionary_sample(&mut self, sample: &ffi::DictionarySample) -> bool {
+        self.add_dictionary_sample_impl(sample, None)
+    }
+
+    /// Adds a dictionary-backed sample with an end timestamp in nanoseconds.
+    pub fn add_dictionary_sample_with_timestamp(
         &mut self,
         sample: &ffi::DictionarySample,
         endtime_ns: i64,
     ) -> bool {
-        let result = {
-            let timestamp = internal::Timestamp::new(endtime_ns);
-            let locations_iter = sample.locations.iter().map(|location| {
-                // SAFETY: The CXX API contract requires all non-null dictionary ids in
-                // sample to come from the same ProfileDictionary used to create
-                // this Profile. Null/default ids represent unknown values.
-                unsafe { dictionary_location_from_cxx(location) }
-            });
-            let labels_iter =
-                sample
-                    .labels
-                    .iter()
-                    .map(|label| -> anyhow::Result<api2::Label<'_>> {
-                        Ok(api2::Label {
-                            // SAFETY: The CXX API contract requires all non-null dictionary
-                            // ids in sample to come from the same ProfileDictionary
-                            // used to create this Profile. Null/default keys represent
-                            // the empty string.
-                            key: unsafe { dictionary_string_id_from_cxx(&label.key) },
-                            str: label.str,
-                            num: label.num,
-                            num_unit: label.num_unit,
-                        })
-                    });
-
-            // SAFETY: The CXX API contract requires all non-null dictionary ids in sample
-            // to come from the same ProfileDictionary used to create this Profile.
-            // Null/default ids represent empty or unknown values.
-            unsafe {
-                self.inner
-                    .try_add_sample2(locations_iter, sample.values, labels_iter, timestamp)
-                    .context("Profile::add_dictionary_sample failed")
-            }
-        };
+        let result =
+            match internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero") {
+                Ok(timestamp) => self.add_dictionary_sample_result(sample, Some(timestamp)),
+                Err(err) => Err(err),
+            };
         self.handle_result("Profile::add_dictionary_sample", result)
+    }
+
+    fn add_dictionary_sample_impl(
+        &mut self,
+        sample: &ffi::DictionarySample,
+        timestamp: Option<internal::Timestamp>,
+    ) -> bool {
+        let result = self.add_dictionary_sample_result(sample, timestamp);
+        self.handle_result("Profile::add_dictionary_sample", result)
+    }
+
+    fn add_dictionary_sample_result(
+        &mut self,
+        sample: &ffi::DictionarySample,
+        timestamp: Option<internal::Timestamp>,
+    ) -> anyhow::Result<()> {
+        let locations_iter = sample.locations.iter().map(|location| {
+            // SAFETY: The CXX API contract requires all non-null dictionary ids in
+            // sample to come from the same ProfileDictionary used to create
+            // this Profile. Null/default ids represent unknown values.
+            unsafe { dictionary_location_from_cxx(location) }
+        });
+        let labels_iter = sample
+            .labels
+            .iter()
+            .map(|label| -> anyhow::Result<api2::Label<'_>> {
+                Ok(api2::Label {
+                    // SAFETY: The CXX API contract requires all non-null dictionary
+                    // ids in sample to come from the same ProfileDictionary
+                    // used to create this Profile. Null/default keys represent
+                    // the empty string.
+                    key: unsafe { dictionary_string_id_from_cxx(&label.key) },
+                    str: label.str,
+                    num: label.num,
+                    num_unit: label.num_unit,
+                })
+            });
+
+        // SAFETY: The CXX API contract requires all non-null dictionary ids in sample
+        // to come from the same ProfileDictionary used to create this Profile.
+        // Null/default ids represent empty or unknown values.
+        unsafe {
+            self.inner
+                .try_add_sample2(locations_iter, sample.values, labels_iter, timestamp)
+                .context("Profile::add_dictionary_sample failed")
+        }
     }
 
     pub fn set_custom_sample_type(
@@ -2964,7 +2985,7 @@ mod tests {
             labels: &labels,
         };
 
-        profile.add_dictionary_sample(&sample, 42);
+        profile.add_dictionary_sample_with_timestamp(&sample, 42);
 
         let serialized = serialize_test_profile_to_vec(&mut profile);
         assert!(
@@ -2987,7 +3008,7 @@ mod tests {
             labels: &labels,
         };
 
-        profile.add_dictionary_sample(&sample, 42);
+        profile.add_dictionary_sample_with_timestamp(&sample, 42);
 
         let serialized = serialize_test_profile_to_vec(&mut profile);
         assert!(serialized.len() > 100);
@@ -3005,7 +3026,7 @@ mod tests {
             labels: &labels,
         };
 
-        profile.add_dictionary_sample(&sample, 42);
+        profile.add_dictionary_sample_with_timestamp(&sample, 42);
 
         let serialized = serialize_test_profile_to_vec(&mut profile);
         let pprof = deserialize_compressed_pprof(&serialized).unwrap();
@@ -3038,8 +3059,8 @@ mod tests {
             labels: &labels,
         };
 
-        profile.add_dictionary_sample(&sample, 42);
-        profile.add_dictionary_sample(&sample, 43);
+        profile.add_dictionary_sample_with_timestamp(&sample, 42);
+        profile.add_dictionary_sample_with_timestamp(&sample, 43);
 
         let serialized = serialize_test_profile_to_vec(&mut profile);
         let pprof = deserialize_compressed_pprof(&serialized).unwrap();
@@ -3057,7 +3078,7 @@ mod tests {
     }
 
     #[test]
-    fn test_profile_add_dictionary_sample_accepts_zero_timestamp_as_none() {
+    fn test_profile_add_dictionary_sample_without_timestamp() {
         let dictionary = create_test_dictionary();
         let mut profile = create_test_profile_with_dictionary(&dictionary);
         let (location, values, labels) = create_test_dictionary_sample_parts(&dictionary);
@@ -3068,7 +3089,7 @@ mod tests {
             labels: &labels,
         };
 
-        profile.add_dictionary_sample(&sample, 0);
+        profile.add_dictionary_sample(&sample);
         assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
         assert_eq!(profile.inner.only_for_testing_num_timestamped_samples(), 0);
 
@@ -3081,6 +3102,25 @@ mod tests {
             .any(|label| string_table_fetch(&pprof, label.key) == "end_timestamp_ns");
 
         assert!(!has_timestamp_label);
+    }
+
+    #[test]
+    fn test_profile_add_dictionary_sample_rejects_zero_timestamp() {
+        let dictionary = create_test_dictionary();
+        let mut profile = create_test_profile_with_dictionary(&dictionary);
+        let (location, values, labels) = create_test_dictionary_sample_parts(&dictionary);
+        let locations = vec![location];
+        let sample = ffi::DictionarySample {
+            locations: &locations,
+            values: &values,
+            labels: &labels,
+        };
+
+        profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
+        assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 0));
+        let errors = profile.errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("endtime_ns must be non-zero"));
     }
 
     #[test]
@@ -3267,7 +3307,7 @@ mod tests {
         };
 
         profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-        assert!(!profile.add_dictionary_sample(&sample, 42));
+        assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
         assert!(!profile.errors().is_empty());
     }
 
@@ -3284,7 +3324,7 @@ mod tests {
         };
 
         profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-        assert!(!profile.add_dictionary_sample(&sample, 42));
+        assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
         assert!(profile.errors()[0]
             .message
             .contains("profiles dictionary not set"));

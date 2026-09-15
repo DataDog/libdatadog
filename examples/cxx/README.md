@@ -73,7 +73,7 @@ Windows:
 - Per-profile tags and metadata
 - Automatic memory management
 - Explicit error handling with result wrapper/status check helpers and object-owned errors
-- Modern C++20 syntax with designated initializers and `std::format`
+- Modern C++20 syntax with designated initializers
 
 **Core Types:**
 - `Profile` - Profile builder for collecting samples
@@ -123,8 +123,8 @@ Windows:
 - Dictionary-backed `DictionaryMapping`, `DictionaryFunction`, `DictionaryLocation`, `DictionaryLabel`, and `DictionarySample`
 - `Profile::create_with_dictionary`
 - `bool` hot-path calls such as `ProfileDictionary::intern_string` and `Profile::add_dictionary_sample`
-- Timestamped samples via nonzero `endtime_ns`
-- Non-timestamped samples via `endtime_ns == 0`
+- Timestamped samples via the `Profile::add_dictionary_sample(sample, endtime_ns)` overload
+- Non-timestamped samples via the `Profile::add_dictionary_sample(sample)` overload
 - Pprof serialization to `profile_dictionary.pprof`
 
 See [`profiling_dictionary.cpp`](profiling_dictionary.cpp) for a focused dictionary-backed sample creation and serialization example.

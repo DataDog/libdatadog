@@ -127,11 +127,9 @@ int main() {
 
             auto sample = views::dictionary_sample(locations, values, labels);
 
-            // Exercise both timestamp modes:
-            // - 0 means no timestamp.
-            // - nonzero records an end_timestamp_ns label.
+            // Exercise both overloads: without an end timestamp, and with one.
             if (i % 2 == 0) {
-                if (!profile->add_dictionary_sample(sample, 0)) return 1;
+                if (!profile->add_dictionary_sample(sample)) return 1;
             } else {
                 if (!profile->add_dictionary_sample(sample, 42 + i)) return 1;
             }
