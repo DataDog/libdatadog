@@ -9,6 +9,7 @@
 
 pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 
 use super::add_path;
 use super::TracerMetadata;
@@ -18,7 +19,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-pub(crate) use libdd_trace_stats::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS;
+pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
@@ -119,7 +120,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
         .info
         .span_kinds_stats_computed
         .clone()
-        .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
+        .unwrap_or_else(default_stats_eligible_span_kinds)
 }
 
 /// Start the stats exporter and enable stats computation
@@ -310,10 +311,15 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
     client_computed_top_level: bool,
 ) {
-    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+    if !client_computed_top_level {
+        for trace in traces.iter_mut() {
+            compute_top_level_span(trace);
+        }
+    }
 
-    for trace in traces {
-        stats_concentrator.add_trace(trace, client_computed_top_level);
+    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+    for span in traces.iter().flatten() {
+        stats_concentrator.add_span(span);
     }
 }
 

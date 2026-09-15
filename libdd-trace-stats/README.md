@@ -92,8 +92,7 @@ let mut concentrator = SpanConcentrator::new(
     vec!["example.key".to_string()], // additional metric tag keys
 );
 
-// Add one span, or use add_trace() to compute missing top-level tags and add
-// all spans from a decoded v0.4 trace.
+// Add one span
 // concentrator.add_span(&span);
 
 // Flush statistics

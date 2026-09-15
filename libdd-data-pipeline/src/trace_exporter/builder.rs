@@ -912,10 +912,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             use crate::otlp::OtlpStatsExporter;
             use libdd_trace_stats::span_concentrator::SpanConcentrator;
             use std::sync::Mutex;
-            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            let span_kinds = crate::trace_exporter::stats::default_stats_eligible_span_kinds();
             let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
                 bucket_size,
                 web_time::SystemTime::now(),

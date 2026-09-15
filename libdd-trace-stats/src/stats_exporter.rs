@@ -23,6 +23,7 @@ use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
 };
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::stats_payload_encoder::{
     build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
     MAX_GROUPED_STATS_PER_PAYLOAD,
@@ -173,9 +174,7 @@ pub fn create_agentless_concentrator(
     if bucket_size.is_zero() {
         return Err(AgentlessStatsExporterError::InvalidBucketSize);
     }
-    let span_kinds = crate::span_concentrator::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
-        .map(String::from)
-        .to_vec();
+    let span_kinds = crate::span_concentrator::default_stats_eligible_span_kinds();
     let obfuscation_config = Some(Arc::new(arc_swap::ArcSwap::from_pointee(
         crate::span_concentrator::StatsComputationObfuscationConfig {
             enabled: true,
@@ -231,9 +230,15 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
         traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
         client_computed_top_level: bool,
     ) {
+        if !client_computed_top_level {
+            for trace in traces.iter_mut() {
+                compute_top_level_span(trace);
+            }
+        }
+
         let mut concentrator = self.concentrator.lock_or_panic();
-        for trace in traces {
-            concentrator.add_trace(trace, client_computed_top_level);
+        for span in traces.iter().flatten() {
+            concentrator.add_span(span);
         }
     }
 
@@ -818,6 +823,48 @@ mod tests {
             Vec::new(),
         )
         .is_ok());
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_agentless_stats_exporter_adds_traces() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/v0.2/stats");
+                then.status(202).body("");
+            })
+            .await;
+        let target = AgentlessStatsTarget {
+            endpoint: Endpoint::from_slice(&server.url("/api/v0.2/stats")),
+            version: String::new(),
+        };
+        let exporter = AgentlessStatsExporter::new(
+            BUCKETS_DURATION,
+            get_test_metadata(),
+            target,
+            NativeCapabilities::new_client(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        for client_computed_top_level in [false, true] {
+            let mut traces = vec![vec![SpanSlice {
+                service: Cow::Borrowed("libdatadog-test"),
+                duration: 1,
+                ..Default::default()
+            }]];
+            if client_computed_top_level {
+                trace_utils::compute_top_level_span(&mut traces[0]);
+            }
+
+            exporter.add_traces(&mut traces, client_computed_top_level);
+            assert!(exporter.send(true).await.unwrap());
+        }
+
+        mock.assert_calls_async(2).await;
     }
 
     fn get_test_metadata() -> StatsMetadata {
