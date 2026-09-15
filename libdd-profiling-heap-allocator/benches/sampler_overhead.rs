@@ -14,6 +14,7 @@ criterion::criterion_main!(linux_bench::benches);
 #[cfg(target_os = "linux")]
 mod linux_bench {
     use criterion::{criterion_group, BenchmarkId, Criterion};
+    use libdd_common::bench_utils::ThreadCpuTime;
     use libdd_profiling_heap_allocator::SampledAllocator;
     use libdd_profiling_heap_sampler::{dd_test_set_profiler_active, dd_tl_state_get_or_init};
     use std::alloc::{GlobalAlloc, Layout, System};
@@ -90,8 +91,8 @@ mod linux_bench {
     // ── Baseline ───────────────────────────────────────────────────────────
     // Pure system allocator cost with no sampler in the picture.
 
-    fn bench_system_alloc_free(c: &mut Criterion) {
-        let mut group = c.benchmark_group("alloc_free/system");
+    fn bench_system_alloc_free(c: &mut Criterion<ThreadCpuTime>) {
+        let mut group = c.benchmark_group("thread_cpu/alloc_free/system");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
@@ -117,9 +118,9 @@ mod linux_bench {
     // every iteration. The USDT probe fires (into a NOP since no real
     // consumer is attached to the uprobe).
 
-    fn bench_fast_path_system(c: &mut Criterion) {
+    fn bench_fast_path_system(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(System);
-        let mut group = c.benchmark_group("profiler_attached/fast_path_system");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_system");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
@@ -136,9 +137,9 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_fast_path_noop(c: &mut Criterion) {
+    fn bench_fast_path_noop(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(NoopAllocator);
-        let mut group = c.benchmark_group("profiler_attached/fast_path_noop");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_noop");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
@@ -155,9 +156,9 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_slow_path_system(c: &mut Criterion) {
+    fn bench_slow_path_system(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(System);
-        let mut group = c.benchmark_group("profiler_attached/slow_path_system");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_system");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
@@ -174,9 +175,9 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_slow_path_noop(c: &mut Criterion) {
+    fn bench_slow_path_noop(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(NoopAllocator);
-        let mut group = c.benchmark_group("profiler_attached/slow_path_noop");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_noop");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
@@ -195,13 +196,12 @@ mod linux_bench {
 
     // ── Short-circuit regression (semaphore OFF) ─────────────────────────
     // Single benchmark with the semaphore off (no profiler attached).
-    // The semaphore check in dd_allocation_requested short-circuits before
-    // any TLS access or sampling logic. This validates that the
-    // short-circuit path stays near-zero cost.
+    // The no-op allocator keeps the system allocator from obscuring the
+    // semaphore check this benchmark is intended to validate.
 
-    fn bench_short_circuit(c: &mut Criterion) {
-        let alloc = SampledAllocator::new(System);
-        let mut group = c.benchmark_group("no_profiler/short_circuit");
+    fn bench_short_circuit(c: &mut Criterion<ThreadCpuTime>) {
+        let alloc = SampledAllocator::new(NoopAllocator);
+        let mut group = c.benchmark_group("thread_cpu/no_profiler/short_circuit_noop");
         // Semaphore is off by default - don't flip it on.
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
@@ -216,13 +216,15 @@ mod linux_bench {
         group.finish();
     }
 
-    criterion_group!(
-        benches,
-        bench_system_alloc_free,
-        bench_fast_path_system,
-        bench_fast_path_noop,
-        bench_slow_path_system,
-        bench_slow_path_noop,
-        bench_short_circuit,
-    );
+    criterion_group! {
+        name = benches;
+        config = Criterion::default().with_measurement(ThreadCpuTime);
+        targets =
+            bench_system_alloc_free,
+            bench_fast_path_system,
+            bench_fast_path_noop,
+            bench_slow_path_system,
+            bench_slow_path_noop,
+            bench_short_circuit,
+    }
 } // mod linux_bench
