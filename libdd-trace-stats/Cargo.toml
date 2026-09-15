@@ -26,7 +26,6 @@ http = { workspace = true, features = ["std"] }
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros", "time"] }
-tokio-util.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 # Cross-platform `SystemTime`; `std::time::SystemTime::now()` panics on wasm32.

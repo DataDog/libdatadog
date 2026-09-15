@@ -17,7 +17,6 @@ stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline
 [dependencies]
 anyhow = { workspace = true, default-features = true }
 arc-swap = { workspace = true, optional = true }
-arrayref.workspace = true
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
@@ -37,13 +36,11 @@ libdd-tinybytes = { path = "../libdd-tinybytes" }
 futures.workspace = true
 manual_future.workspace = true
 http = { workspace = true, features = ["std"] }
-http-body-util.workspace = true
 
 libdd-ipc = { path = "../libdd-ipc", features = ["tiny-bytes"] }
 libdd-ipc-macros = { path = "../libdd-ipc-macros" }
 
 rand = { workspace = true, default-features = true }
-rmp-serde.workspace = true
 serde = { workspace = true, default-features = true, features = ["derive", "rc"] }
 serde_with = { workspace = true, default-features = true }
 bincode.workspace = true
@@ -68,14 +65,6 @@ libc.workspace = true
 # watchdog and self telemetry
 memory-stats = { workspace = true, features = ["always_use_statm"] }
 
-[target.'cfg(windows)'.dependencies.windows]
-features = [
-    "Win32_Foundation",
-    "Wdk_Storage_FileSystem",
-    "Win32_System_IO",
-    "Win32_System_WindowsProgramming",
-]
-version = "0.51.0"
 
 # unstable-only feature
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies]
@@ -90,16 +79,12 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["socket", "mman"] }
-sendfd = { workspace = true, features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
-windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 
-[target.'cfg(windows_seh_wrapper)'.dependencies]
-microseh.workspace = true
 
 [dev-dependencies]
 libc.workspace = true

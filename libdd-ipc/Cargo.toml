@@ -14,7 +14,6 @@ rust-version.workspace = true
 anyhow.workspace = true
 zwohash.workspace = true
 bincode.workspace = true
-futures.workspace = true
 io-lifetimes = { workspace = true, features = ["close"] }
 page_size.workspace = true
 memfd.workspace = true
@@ -32,8 +31,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
-# Unused in this crate's sources; kept with defaults (the crate needs its own `std` to compile).
-pretty_assertions = { workspace = true, default-features = true }
 tempfile.workspace = true
 tokio = { workspace = true, features = [
     "macros",
@@ -43,14 +40,10 @@ tokio = { workspace = true, features = [
     "fs",
     "io-util",
 ] }
-# Both appear unused in this crate's tests/benches; keep them with no default features.
-tracing.workspace = true
-tracing-subscriber.workspace = true
 spawn_worker = { path = "../spawn_worker" }
 
 [target.'cfg(not(windows))'.dependencies]
 nix = { workspace = true, features = ["fs", "mman", "process", "poll", "socket", "uio", "user"] }
-sendfd = { workspace = true, features = ["tokio"] }
 tokio = { workspace = true, features = ["sync", "io-util"] }
 
 [target.'cfg(target_env = "gnu")'.build-dependencies]
