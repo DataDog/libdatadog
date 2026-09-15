@@ -18,7 +18,16 @@ use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
-use crate::service::{InstanceId, QueueId, RuntimeInfo};
+use crate::service::ffe_evp_proxy::FfeEvpTransport;
+use crate::service::{
+    FfeEvpTransportConfig, FfeEvpTransportConfigWithIdentity, InstanceId, QueueId, RuntimeInfo,
+};
+
+#[derive(Clone, Default)]
+struct FfeEvpTransportState {
+    explicitly_configured: bool,
+    transport: Option<FfeEvpTransport>,
+}
 
 /// `SessionInfo` holds information about a session.
 ///
@@ -49,6 +58,7 @@ pub(crate) struct SessionInfo {
     pub(crate) user_service_defined: Arc<Mutex<bool>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
     otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
+    ffe_evp_transport: Arc<Mutex<FfeEvpTransportState>>,
 }
 
 impl SessionInfo {
@@ -181,6 +191,46 @@ impl SessionInfo {
         F: FnOnce(&mut Option<Endpoint>),
     {
         f(&mut self.get_otlp_metrics_endpoint());
+    }
+
+    /// Install the legacy Agent-only transport unless the SDK has already
+    /// provided an explicit FFE source and direct-intake configuration.
+    pub(crate) fn set_default_ffe_evp_transport(&self, endpoint: Endpoint) {
+        let mut state = self.ffe_evp_transport.lock_or_panic();
+        if !state.explicitly_configured {
+            state.transport = if endpoint.api_key.is_none() {
+                Some(FfeEvpTransport::agent_only(endpoint))
+            } else {
+                None
+            };
+        }
+    }
+
+    pub(crate) fn set_ffe_evp_transport(
+        &self,
+        config: FfeEvpTransportConfig,
+    ) -> Result<(), String> {
+        let transport = FfeEvpTransport::new(config)?;
+        let mut state = self.ffe_evp_transport.lock_or_panic();
+        state.explicitly_configured = true;
+        state.transport = Some(transport);
+        Ok(())
+    }
+
+    pub(crate) fn set_ffe_evp_transport_with_identity(
+        &self,
+        config: FfeEvpTransportConfigWithIdentity,
+    ) {
+        let mut state = self.ffe_evp_transport.lock_or_panic();
+        state.explicitly_configured = true;
+        state.transport = Some(FfeEvpTransport::new_with_identity(
+            config.transport,
+            config.producer,
+        ));
+    }
+
+    pub(crate) fn get_ffe_evp_transport(&self) -> Option<FfeEvpTransport> {
+        self.ffe_evp_transport.lock_or_panic().transport.clone()
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
@@ -378,5 +428,82 @@ mod tests {
             .lock()
             .unwrap()
             .contains_key(&runtime_id2));
+    }
+
+    #[test]
+    fn explicit_ffe_transport_is_shared_and_not_overwritten_by_legacy_config() {
+        let session = SessionInfo::default();
+        let agent_endpoint = Endpoint {
+            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("session-key".into()),
+            ..Endpoint::default()
+        };
+
+        session.set_ffe_evp_transport_with_identity(
+            FfeEvpTransportConfigWithIdentity::new(
+                FfeEvpTransportConfig::agentless(agent_endpoint, Some(direct_endpoint)),
+                crate::service::FfeEvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            )
+            .unwrap(),
+        );
+        let exposure_transport = session.get_ffe_evp_transport().unwrap();
+        let flag_evaluation_transport = session.get_ffe_evp_transport().unwrap();
+        assert!(exposure_transport.shares_route_state(&flag_evaluation_transport));
+        assert_eq!(exposure_transport.producer().origin(), "dd-trace-rb");
+        assert_eq!(exposure_transport.producer().version(), "3.0.0");
+
+        session.set_default_ffe_evp_transport(Endpoint::default());
+        let after_legacy_config = session.get_ffe_evp_transport().unwrap();
+        assert!(exposure_transport.shares_route_state(&after_legacy_config));
+    }
+
+    #[test]
+    fn identityless_agentless_configuration_is_rejected_without_changing_session_state() {
+        let session = SessionInfo::default();
+        let agent_endpoint = Endpoint {
+            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("session-key".into()),
+            ..Endpoint::default()
+        };
+
+        assert!(session
+            .set_ffe_evp_transport(FfeEvpTransportConfig::agentless(
+                agent_endpoint.clone(),
+                Some(direct_endpoint),
+            ))
+            .is_err());
+        assert!(session.get_ffe_evp_transport().is_none());
+
+        session.set_default_ffe_evp_transport(agent_endpoint);
+        assert!(session.get_ffe_evp_transport().is_some());
+    }
+
+    #[test]
+    fn legacy_api_key_endpoint_disables_ffe_transport_including_after_local_config() {
+        let session = SessionInfo::default();
+        session.set_default_ffe_evp_transport(Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        });
+        assert!(session.get_ffe_evp_transport().is_some());
+
+        session.set_default_ffe_evp_transport(Endpoint {
+            url: "https://trace.agent.datadoghq.com/".parse().unwrap(),
+            api_key: Some("legacy-agentless-key".into()),
+            ..Endpoint::default()
+        });
+        assert!(session.get_ffe_evp_transport().is_none());
     }
 }

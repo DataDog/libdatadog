@@ -2,27 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Coalesces sidecar FFE (Feature Flag Evaluation) flag evaluation batches and
-//! dispatches them through the shared `libdd-ffe` EVP sender.
+//! dispatches them through the session's shared EVP transport.
 //!
 //! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
-use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
+use crate::service::ffe_evp_proxy::FfeEvpTransport;
+use crate::service::{FfeEvpProducerIdentity, FfeFlagEvaluationBatch, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_ffe::telemetry::flagevaluation::{
-    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
-    FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpSendConfig,
-    FlagEvaluationEvpWriterStats,
+    encode_flag_evaluation_payloads,
+    FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpWriterStats,
+    EVP_PAYLOAD_SIZE_LIMIT,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::{debug, warn};
 
-const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
+const FLAGEVALUATION_INTAKE_PATH: &str = "/api/v2/flagevaluation";
+const LOG_PREFIX: &str = "ffe_flagevaluation_flusher";
 
 pub(crate) const FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC: &str =
     "flagevaluation.evaluations.dropped";
@@ -36,14 +38,16 @@ pub(crate) const FLAG_EVALUATION_REASON_PAYLOAD_LIMIT: &str = "payload_limit";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DestinationKey {
-    endpoint: Endpoint,
+    transport: FfeEvpTransport,
+    producer: FfeEvpProducerIdentity,
     context: FfeTelemetryContext,
 }
 
 impl DestinationKey {
-    fn new(endpoint: Endpoint, context: &FfeTelemetryContext) -> Self {
+    fn new(transport: FfeEvpTransport, context: &FfeTelemetryContext) -> Self {
         Self {
-            endpoint,
+            producer: transport.producer().clone(),
+            transport,
             context: context.clone(),
         }
     }
@@ -59,10 +63,10 @@ impl FlagEvaluationCoalescer {
     pub(crate) fn enqueue(
         &self,
         client: NativeCapabilities,
-        endpoint: Endpoint,
+        transport: FfeEvpTransport,
         batch: FfeFlagEvaluationBatch,
     ) {
-        let destination_key = DestinationKey::new(endpoint, &batch.context);
+        let destination_key = DestinationKey::new(transport, &batch.context);
         if self.inner.enqueue(destination_key, batch) {
             let coalescer = self.clone();
             tokio::spawn(async move {
@@ -82,7 +86,7 @@ impl FlagEvaluationCoalescer {
             let client = client.clone();
             let coalescer = self.inner.clone();
             async move {
-                send_batch_with_writer_stats(&client, &destination.endpoint, batch, &coalescer)
+                send_batch_with_writer_stats(&client, &destination.transport, batch, &coalescer)
                     .await
             }
         }))
@@ -108,24 +112,40 @@ impl FlagEvaluationCoalescer {
     }
 }
 
-/// Build the FFE flagevaluation endpoint from a session's agent base endpoint.
-/// Overrides only the path (`/evp_proxy/v2/api/v2/flagevaluation`), preserving
-/// scheme, authority, timeout, and test_token.
-/// Returns `None` for agentless mode because EVP proxy routing is agent-only.
-pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
-    flagevaluation_agent_proxy_endpoint(base)
-}
-
 async fn send_batch_with_writer_stats(
     client: &NativeCapabilities,
-    endpoint: &Endpoint,
+    transport: &FfeEvpTransport,
     batch: FfeFlagEvaluationBatch,
     coalescer: &CommonFlagEvaluationEvpCoalescer<DestinationKey>,
 ) {
-    let config = FlagEvaluationEvpSendConfig::new(USER_AGENT);
-    if let Some(result) = send_flag_evaluation_batch(client, endpoint, batch, &config).await {
-        coalescer.record_payload_build_result(&result);
+    let result = match encode_flag_evaluation_payloads(batch, EVP_PAYLOAD_SIZE_LIMIT) {
+        Ok(result) => result,
+        Err(error) => {
+            debug!("{LOG_PREFIX}: failed to encode batch payload: {error:?}");
+            return;
+        }
+    };
+
+    if result.dropped_oversized_rows > 0 {
+        warn!(
+            "{LOG_PREFIX}: dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
+            result.dropped_oversized_rows, EVP_PAYLOAD_SIZE_LIMIT
+        );
     }
+
+    for payload in &result.payloads {
+        transport
+            .send_payload(
+                client,
+                FLAGEVALUATION_INTAKE_PATH,
+                payload.clone(),
+                LOG_PREFIX,
+                "flag evaluation batch",
+            )
+            .await;
+    }
+
+    coalescer.record_payload_build_result(&result);
 }
 
 #[cfg(test)]
@@ -135,6 +155,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_common::Endpoint;
     use libdd_ffe::telemetry::flagevaluation::{
         FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, EVP_FLAGEVALUATION_PATH,
     };
@@ -223,12 +244,12 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
+        let transport = FfeEvpTransport::agent_only(base);
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
 
-        coalescer.enqueue(client.clone(), ep.clone(), batch());
-        coalescer.enqueue(client.clone(), ep, batch());
+        coalescer.enqueue(client.clone(), transport.clone(), batch());
+        coalescer.enqueue(client.clone(), transport, batch());
 
         for _ in 0..100 {
             if mock.calls_async().await == 1 {
@@ -253,12 +274,12 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
+        let transport = FfeEvpTransport::agent_only(base);
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
         let guard = coalescer.flush_mutex.lock().await;
 
-        coalescer.enqueue(client.clone(), ep, batch());
+        coalescer.enqueue(client.clone(), transport, batch());
 
         let mut flush = tokio::spawn({
             let coalescer = coalescer.clone();
@@ -278,29 +299,5 @@ mod tests {
         drop(guard);
         flush.await.unwrap();
         mock.assert_calls_async(1).await;
-    }
-
-    #[test]
-    fn endpoint_preserves_authority_overrides_path() {
-        let base = Endpoint {
-            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let ep = flagevaluation_endpoint(&base).unwrap();
-        assert_eq!(ep.url.scheme_str(), Some("http"));
-        assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
-        assert_eq!(ep.url.path(), EVP_FLAGEVALUATION_PATH);
-    }
-
-    #[test]
-    fn endpoint_rejects_agentless() {
-        let base = Endpoint {
-            url: "https://trace.agent.datadoghq.com/v0.4/traces"
-                .parse()
-                .unwrap(),
-            api_key: Some("api-key".into()),
-            ..Endpoint::default()
-        };
-        assert!(flagevaluation_endpoint(&base).is_none());
     }
 }

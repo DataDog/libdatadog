@@ -16,7 +16,8 @@ use crate::service::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    FfeEvpTransportConfig, FfeEvpTransportConfigWithIdentity, InstanceId, QueueId,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -35,6 +36,7 @@ use tracing::trace;
 #[derive(Default)]
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
+    set_session_ffe_evp_config: Option<SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
     set_session_default_service_name: Option<SidecarInterfaceRequest>,
     set_session_user_service_defined: Option<SidecarInterfaceRequest>,
@@ -46,9 +48,10 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 9] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 10] {
         [
             &mut self.set_session_config,
+            &mut self.set_session_ffe_evp_config,
             &mut self.set_session_process_tags,
             &mut self.set_session_default_service_name,
             &mut self.set_session_user_service_defined,
@@ -106,6 +109,7 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     }
     if matches!(incoming, SidecarInterfaceRequest::ShutdownSession {}) {
         outbox.set_session_config = None;
+        outbox.set_session_ffe_evp_config = None;
     }
     if let SidecarInterfaceRequest::ClearQueueId {
         ref instance_id,
@@ -123,6 +127,10 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     match incoming {
         SidecarInterfaceRequest::SetSessionConfig { .. } => {
             outbox.set_session_config = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionFfeEvpConfig { .. }
+        | SidecarInterfaceRequest::SetSessionFfeEvpConfigWithIdentity { .. } => {
+            outbox.set_session_ffe_evp_config = Some(incoming);
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
@@ -235,6 +243,25 @@ impl SidecarSender {
                 config,
                 is_fork,
             },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_ffe_evp_config(&mut self, config: FfeEvpTransportConfig) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionFfeEvpConfig { config },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_ffe_evp_config_with_identity(
+        &mut self,
+        config: FfeEvpTransportConfigWithIdentity,
+    ) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionFfeEvpConfigWithIdentity { config },
         );
         self.try_drain_outbox();
     }

@@ -1,46 +1,40 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Serializes and forwards FFE (Feature Flag Evaluation) exposure events to
-//! the Datadog Agent's EVP proxy.
+//! Serializes and forwards FFE (Feature Flag Evaluation) exposure events
+//! through the session's shared EVP transport.
 //!
 //! Protocol matches dd-trace-go / dd-trace-rb / dd-trace-py / dd-trace-js /
 //! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
-use crate::service::ffe_evp_proxy;
-use crate::service::FfeExposureBatch;
+use crate::service::ffe_evp_proxy::FfeEvpTransport;
 #[cfg(test)]
-use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+use crate::service::ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+use crate::service::FfeExposureBatch;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
-use libdd_ffe::telemetry::exposures::encode_exposure_batch;
+use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use tracing::debug;
 
 /// EVP proxy path for FFE exposure intake.
+#[cfg(test)]
 pub(crate) const EVP_EXPOSURES_PATH: &str = "/evp_proxy/v2/api/v2/exposures";
+const EXPOSURES_INTAKE_PATH: &str = "/api/v2/exposures";
 
 const LOG_PREFIX: &str = "ffe_exposures_flusher";
 
-/// Build the FFE exposure endpoint from a session's agent base endpoint.
-/// Overrides only the path (`/evp_proxy/v2/api/v2/exposures`), preserving
-/// scheme, authority, timeout, and test_token.
-/// Returns `None` for agentless mode because EVP proxy routing is agent-only.
-pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
-    ffe_evp_proxy::endpoint(base, EVP_EXPOSURES_PATH)
-}
-
-/// POST a structured FFE exposure batch to the agent EVP proxy.
+/// POST a structured FFE exposure batch through the session's selected EVP route.
 /// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
 /// `debug`, and dropped (matches dd-trace-go behaviour).
 pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     client: &C,
-    endpoint: &Endpoint,
+    transport: &FfeEvpTransport,
     deduplicator: &ExposureDeduplicator,
     batch: FfeExposureBatch,
 ) {
-    let payload = match encode_exposure_batch(deduplicator, batch) {
+    let deduplication_scope = transport.deduplication_scope();
+    let payload = match encode_exposure_batch_in_scope(deduplicator, &deduplication_scope, batch) {
         Ok(Some(payload)) => payload,
         Ok(None) => return,
         Err(e) => {
@@ -48,7 +42,15 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
             return;
         }
     };
-    ffe_evp_proxy::send_payload(client, endpoint, payload, LOG_PREFIX, "exposure batch").await;
+    transport
+        .send_payload(
+            client,
+            EXPOSURES_INTAKE_PATH,
+            payload,
+            LOG_PREFIX,
+            "exposure batch",
+        )
+        .await;
 }
 
 #[cfg(test)]
@@ -58,6 +60,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::{Bytes, HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_common::Endpoint;
     use std::future;
     use std::time::Duration;
 
@@ -103,12 +106,12 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let ep = exposure_endpoint(&base).unwrap();
+        let transport = FfeEvpTransport::agent_only(base);
         let client = NativeCapabilities::new_client();
 
         send_batch(
             &client,
-            &ep,
+            &transport,
             &ExposureDeduplicator::new(4),
             FfeExposureBatch {
                 context: context(),
@@ -133,11 +136,11 @@ mod tests {
             .await;
 
         let base = endpoint_for(&server);
-        let ep = exposure_endpoint(&base).unwrap();
+        let transport = FfeEvpTransport::agent_only(base);
         let client = NativeCapabilities::new_client();
         send_batch(
             &client,
-            &ep,
+            &transport,
             &ExposureDeduplicator::new(4),
             FfeExposureBatch {
                 context: context(),
@@ -150,7 +153,7 @@ mod tests {
     #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
-        let ep = Endpoint {
+        let endpoint = Endpoint {
             url: "http://localhost:8126".parse().unwrap(),
             timeout_ms: 1,
             ..Endpoint::default()
@@ -158,7 +161,7 @@ mod tests {
 
         send_batch(
             &HangingCapabilities,
-            &ep,
+            &FfeEvpTransport::agent_only(endpoint),
             &ExposureDeduplicator::new(4),
             FfeExposureBatch {
                 context: context(),
@@ -166,31 +169,6 @@ mod tests {
             },
         )
         .await;
-    }
-
-    #[test]
-    fn endpoint_preserves_authority_overrides_path() {
-        let base = Endpoint {
-            url: "http://agent.internal:8126/v0.4/traces".parse().unwrap(),
-            ..Endpoint::default()
-        };
-        let ep = exposure_endpoint(&base).unwrap();
-        assert_eq!(ep.url.scheme_str(), Some("http"));
-        assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
-        assert_eq!(ep.url.path(), EVP_EXPOSURES_PATH);
-    }
-
-    #[test]
-    fn endpoint_rejects_agentless() {
-        let base = Endpoint {
-            url: "https://trace.agent.datadoghq.com/v0.4/traces"
-                .parse()
-                .unwrap(),
-            api_key: Some("api-key".into()),
-            ..Endpoint::default()
-        };
-
-        assert!(exposure_endpoint(&base).is_none());
     }
 
     #[derive(Clone, Debug)]
