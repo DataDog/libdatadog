@@ -25,7 +25,7 @@ fn create_test_profile() -> Box<Profile> {
 }
 
 fn serialize_test_profile_to_vec(profile: &mut Profile) -> Vec<u8> {
-    profile.serialize().unwrap().bytes()
+    profile.serialize().unwrap().bytes().to_vec()
 }
 
 fn create_test_dictionary() -> Box<ProfileDictionary> {
@@ -1079,7 +1079,7 @@ fn test_send_profile_with_attachments() {
 #[test]
 fn test_exporter_manager_create_and_abort() {
     let exporter = create_test_exporter();
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     // Abort immediately
     manager.abort().unwrap();
@@ -1088,7 +1088,7 @@ fn test_exporter_manager_create_and_abort() {
 #[test]
 fn test_exporter_manager_queue_and_abort() {
     let exporter = create_test_exporter();
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     // Queue a profile
     let mut profile = create_test_profile();
@@ -1109,7 +1109,7 @@ fn test_exporter_manager_queue_and_abort() {
 #[cfg_attr(miri, ignore)]
 fn test_exporter_manager_queue_encoded_profile_writes_file_export() {
     let (exporter, file_path) = create_test_file_exporter("cxx_queue_encoded_profile");
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     let mut profile = create_test_profile();
     profile.add_sample(&create_test_sample());
@@ -1152,7 +1152,7 @@ fn test_exporter_manager_queue_encoded_profile_writes_file_export() {
 #[test]
 fn test_exporter_manager_prefork_and_postfork() {
     let exporter = create_test_exporter();
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     // Queue some work
     let mut profile = create_test_profile();
@@ -1177,7 +1177,7 @@ fn test_exporter_manager_prefork_and_postfork() {
 #[test]
 fn test_exporter_manager_postfork_child() {
     let exporter = create_test_exporter();
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     // Queue some work
     let mut profile = create_test_profile();
@@ -1206,7 +1206,7 @@ fn test_exporter_manager_postfork_child() {
 #[test]
 fn test_exporter_manager_cannot_use_after_abort() {
     let exporter = create_test_exporter();
-    let mut manager = ExporterManager::new_manager(exporter).unwrap();
+    let mut manager = ExporterManager::create(exporter).unwrap();
 
     // Abort the manager
     manager.abort().unwrap();

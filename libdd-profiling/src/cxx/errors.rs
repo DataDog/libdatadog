@@ -64,7 +64,7 @@ macro_rules! impl_box_result {
     ($result:ident, $value:ty) => {
         #[must_use]
         pub struct $result {
-            pub(crate) status: ffi::Status,
+            status: ffi::Status,
             value: Option<Box<$value>>,
         }
 
@@ -140,7 +140,7 @@ impl_box_result_with_message!(
     ProfileDictionaryResult,
     super::dictionary::ProfileDictionary
 );
-impl_box_result!(EncodedProfileResult, super::profile::EncodedProfile);
+impl_box_result_with_message!(EncodedProfileResult, super::profile::EncodedProfile);
 impl_box_result_with_message!(
     ProfileExporterResult,
     super::profile_exporter::ProfileExporter

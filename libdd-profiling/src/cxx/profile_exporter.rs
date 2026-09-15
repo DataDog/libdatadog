@@ -79,7 +79,7 @@ pub(super) fn prepare_profile_for_export<'a>(
     Option<serde_json::Value>,
 )> {
     let mut encoded_result = profile.serialize();
-    anyhow::ensure!(encoded_result.ok(), encoded_result.status.message());
+    anyhow::ensure!(encoded_result.ok(), encoded_result.message());
     let encoded = encoded_result.take_value();
     let (
         files_to_compress_vec,

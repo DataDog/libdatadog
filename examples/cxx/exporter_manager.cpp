@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
         std::cout << "✓ Created exporter" << std::endl;
 
         // Create ExporterManager
-        auto manager_result = ExporterManager::new_manager(std::move(exporter));
+        auto manager_result = ExporterManager::create(std::move(exporter));
         if (!manager_result->check_and_print()) return 1;
         auto manager = manager_result->take_value();
         std::cout << "✓ Created ExporterManager with background worker thread" << std::endl;
@@ -162,7 +162,7 @@ int main(int argc, char *argv[]) {
         if (!exporter2_result->check_and_print()) return 1;
         auto exporter2 = exporter2_result->take_value();
 
-        auto manager2_result = ExporterManager::new_manager(std::move(exporter2));
+        auto manager2_result = ExporterManager::create(std::move(exporter2));
         if (!manager2_result->check_and_print()) return 1;
         auto manager2 = manager2_result->take_value();
         std::cout << "✓ Created ExporterManager for fork example" << std::endl;

@@ -15,6 +15,14 @@ pub struct Profile {
     errors: ErrorStore,
 }
 
+fn sample_from_cxx<'a>(sample: &ffi::Sample<'a>) -> api::Sample<'a> {
+    api::Sample {
+        locations: sample.locations.iter().map(Into::into).collect(),
+        values: sample.values,
+        labels: sample.labels.iter().map(Into::into).collect(),
+    }
+}
+
 impl Profile {
     fn new(inner: internal::Profile) -> Self {
         Self {
@@ -25,10 +33,6 @@ impl Profile {
 
     fn handle_result(&mut self, operation: &'static str, result: anyhow::Result<()>) -> bool {
         self.errors.handle_result(operation, result)
-    }
-
-    fn handle_error(&mut self, operation: &'static str, err: impl std::fmt::Display) -> bool {
-        self.errors.handle_error(operation, err)
     }
 
     pub fn set_error_policy(&mut self, policy: ffi::ErrorPolicy) {
@@ -79,25 +83,15 @@ impl Profile {
                     &types,
                     Some(period_value),
                     dictionary,
-                )
-                .context("Profile::create_with_dictionary failed")?;
+                )?;
                 Ok(Box::new(Profile::new(inner)))
             })(),
         )
     }
 
     pub fn add_sample(&mut self, sample: &ffi::Sample) -> bool {
-        let api_sample = api::Sample {
-            locations: sample.locations.iter().map(Into::into).collect(),
-            values: sample.values,
-            labels: sample.labels.iter().map(Into::into).collect(),
-        };
-
-        // Profile interns the strings
-        let result = self
-            .inner
-            .try_add_sample(api_sample, None)
-            .context("Profile::add_sample failed");
+        // Profile interns the strings.
+        let result = self.inner.try_add_sample(sample_from_cxx(sample), None);
         self.handle_result("Profile::add_sample", result)
     }
 
@@ -105,15 +99,8 @@ impl Profile {
         let result = (|| {
             let timestamp =
                 internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero")?;
-            let api_sample = api::Sample {
-                locations: sample.locations.iter().map(Into::into).collect(),
-                values: sample.values,
-                labels: sample.labels.iter().map(Into::into).collect(),
-            };
-
             self.inner
-                .try_add_sample(api_sample, Some(timestamp))
-                .context("Profile::add_sample_with_timestamp failed")
+                .try_add_sample(sample_from_cxx(sample), Some(timestamp))
         })();
         self.handle_result("Profile::add_sample_with_timestamp", result)
     }
@@ -179,7 +166,6 @@ impl Profile {
         unsafe {
             self.inner
                 .try_add_sample2(locations_iter, sample.values, labels_iter, timestamp)
-                .context("Profile::add_dictionary_sample failed")
         }
     }
 
@@ -189,12 +175,11 @@ impl Profile {
         type_: &str,
         unit: &str,
     ) -> bool {
-        let result = match slot.try_into() {
-            Ok(slot) => self
-                .inner
-                .set_custom_sample_type(slot, api::ValueType::new(type_, unit)),
-            Err(err) => Err(err),
-        };
+        let result = (|| {
+            let slot = slot.try_into()?;
+            self.inner
+                .set_custom_sample_type(slot, api::ValueType::new(type_, unit))
+        })();
         self.handle_result("Profile::set_custom_sample_type", result)
     }
 
@@ -277,9 +262,6 @@ impl Profile {
             let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
             Ok(Box::new(EncodedProfile { inner: encoded }))
         })();
-        if let Err(err) = &result {
-            self.handle_error("Profile::serialize", err);
-        }
         EncodedProfileResult::from_result("Profile::serialize", result)
     }
 }
@@ -293,7 +275,7 @@ pub struct EncodedProfile {
 }
 
 impl EncodedProfile {
-    pub fn bytes(&self) -> Vec<u8> {
-        self.inner.buffer.clone()
+    pub fn bytes(&self) -> &[u8] {
+        &self.inner.buffer
     }
 }

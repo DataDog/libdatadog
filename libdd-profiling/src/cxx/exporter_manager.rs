@@ -13,9 +13,9 @@ pub struct ExporterManager {
 }
 
 impl ExporterManager {
-    pub fn new_manager(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult> {
+    pub fn create(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult> {
         ExporterManagerResult::from_result(
-            "ExporterManager::new_manager",
+            "ExporterManager::create",
             (|| -> anyhow::Result<Box<ExporterManager>> {
                 let inner = exporter::ExporterManager::new(exporter.inner)?;
                 Ok(Box::new(ExporterManager { inner }))

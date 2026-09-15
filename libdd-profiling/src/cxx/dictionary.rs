@@ -5,7 +5,6 @@ use super::errors::{ErrorStore, ProfileDictionaryResult};
 use super::ffi;
 use super::ids::{dictionary_function_from_cxx, dictionary_mapping_from_cxx};
 use crate::profiles;
-use anyhow::Context;
 
 pub struct ProfileDictionary {
     pub(crate) inner: profiles::collections::Arc<profiles::datatypes::ProfilesDictionary>,
@@ -17,8 +16,7 @@ impl ProfileDictionary {
         ProfileDictionaryResult::from_result(
             "ProfileDictionary::create",
             (|| -> anyhow::Result<Box<ProfileDictionary>> {
-                let dictionary = profiles::datatypes::ProfilesDictionary::try_new()
-                    .context("ProfileDictionary::create failed")?;
+                let dictionary = profiles::datatypes::ProfilesDictionary::try_new()?;
                 let inner = profiles::collections::Arc::try_new(dictionary)
                     .map_err(|_| anyhow::anyhow!("failed to allocate ProfileDictionary"))?;
 

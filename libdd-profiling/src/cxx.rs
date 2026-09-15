@@ -320,6 +320,7 @@ pub mod ffi {
         /// on a failed result or calling it more than once aborts the process.
         fn take_value(self: &mut ProfileExporterResult) -> Box<ProfileExporter>;
         fn ok(self: &EncodedProfileResult) -> bool;
+        fn message(self: &EncodedProfileResult) -> String;
         fn check_and_print(self: &EncodedProfileResult) -> bool;
         /// Takes the encoded profile from a successful result.
         ///
@@ -485,8 +486,8 @@ pub mod ffi {
         /// counts.
         fn serialize(self: &mut Profile) -> Box<EncodedProfileResult>;
 
-        /// Return a copy of the compressed pprof bytes.
-        fn bytes(self: &EncodedProfile) -> Vec<u8>;
+        /// Return the compressed pprof bytes.
+        fn bytes(self: &EncodedProfile) -> &[u8];
 
         // Static factory methods for ProfileExporter
         #[Self = "ProfileExporter"]
@@ -625,7 +626,7 @@ pub mod ffi {
         // ExporterManager methods
         /// Creates a new ExporterManager with a background worker thread
         #[Self = "ExporterManager"]
-        fn new_manager(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult>;
+        fn create(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult>;
 
         /// Queue a profile to be sent asynchronously by the worker thread
         ///
