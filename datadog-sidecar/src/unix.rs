@@ -33,10 +33,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
-    if let Err(err) = nix::unistd::setsid() {
-        error!("Error calling setsid(): {err}")
-    }
-
     #[cfg(target_os = "linux")]
     let _ = prctl::set_name("dd-ipc-helper");
 

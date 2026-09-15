@@ -7,6 +7,26 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
+    if target_os != "windows" {
+        println!("cargo:rerun-if-changed=src/fork_shim.c");
+        let mut builder = cc::Build::new();
+        builder
+            .file("src/fork_shim.c")
+            .warnings(true)
+            .warnings_into_errors(true)
+            .emit_rerun_if_env_changed(true);
+        if target_os == "macos" && std::env::var_os("MACOSX_DEPLOYMENT_TARGET").is_none() {
+            let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+            let minimum_version = if target_arch == "aarch64" {
+                "11.0"
+            } else {
+                "10.12"
+            };
+            builder.flag(format!("-mmacosx-version-min={minimum_version}"));
+        }
+        builder.compile("ddog_spawn_worker_fork");
+    }
+
     // Compile the ELF entry point for the shared library (direct exec by ld.so).
     if target_os == "linux" {
         let mut builder = cc::Build::new();
