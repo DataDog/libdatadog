@@ -10,21 +10,10 @@ use libdd_common_ffi::slice::CharSlice;
 use libdd_trace_utils::span::v04::SpanBytes;
 use std::ffi::c_char;
 
-fn new_vector_item<T: Default>(vec: &mut Vec<T>) -> &mut T {
-    vec.push(T::default());
-    // Safety: we just pushed a value to the vector, so `last_mut()` returns `Some`
-    unsafe { vec.last_mut().unwrap_unchecked() }
-}
-
 // ------------------ TracesBytes ------------------
 
 pub type TraceBytes = Vec<SpanBytes>;
 pub type TracesBytes = Vec<TraceBytes>;
-
-#[no_mangle]
-pub extern "C" fn ddog_get_traces() -> Box<TracesBytes> {
-    Box::default()
-}
 
 #[no_mangle]
 pub extern "C" fn ddog_free_traces(_traces: Box<TracesBytes>) {}
@@ -40,13 +29,6 @@ pub extern "C" fn ddog_get_trace(
     index: usize,
 ) -> Option<&mut TraceBytes> {
     traces.get_mut(index)
-}
-
-// ------------------ TraceBytes ------------------
-
-#[no_mangle]
-pub extern "C" fn ddog_traces_new_trace(traces: &mut TracesBytes) -> &mut TraceBytes {
-    new_vector_item(traces)
 }
 
 // ------------------- Serialization / export helpers -------------------
