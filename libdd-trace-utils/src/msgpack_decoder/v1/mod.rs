@@ -6,7 +6,7 @@ pub(super) mod span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
-use crate::span::DeserializableTraceData;
+use crate::span::{DeserializableTraceData, DeserializableTraceDataLt};
 use rmp::decode;
 use std::borrow::Borrow;
 
@@ -196,7 +196,7 @@ pub fn from_slice(data: &[u8]) -> Result<(TracerPayloadSlice<'_>, usize), Decode
 }
 
 /// Generic over the deserialization mode (owned `BytesData` or borrowed `SliceData`).
-pub fn from_buffer<T: DeserializableTraceData>(
+pub fn from_buffer<'x, T: DeserializableTraceDataLt<'x>>(
     data: &mut Buffer<T>,
 ) -> Result<(TracerPayload<T>, usize), DecodeError>
 where
@@ -216,7 +216,7 @@ where
 /// Any inline string encountered while skipping (at any nesting depth) is interned into `table`,
 /// same as a recognized field would: skipping a value must not desync later back-references to
 /// strings that happen to also appear inside it.
-pub(super) fn skip_unknown_value<T: DeserializableTraceData>(
+pub(super) fn skip_unknown_value<'x, T: DeserializableTraceDataLt<'x>>(
     buf: &mut Buffer<T>,
     table: &mut StringTable<T>,
 ) -> Result<(), DecodeError>
@@ -225,10 +225,11 @@ where
 {
     // Snapshot the buffer's owning handle *before* advancing past the skipped value: any string
     // found inside it will be a substring of this exact allocation, so this is what
-    // `T::intern_skipped_str` must derive ownership from. Cloning is cheap (a refcount bump for
-    // `T::Bytes = Bytes`), unaffected by the lied `'static` lifetime `as_mut_slice` exposes.
+    // `T::intern_skipped_str_lt` must derive ownership from. Cloning is cheap (a refcount bump
+    // for `T::Bytes = Bytes`) and, for `SliceData`, `value`'s `'x` below is the buffer's real
+    // lifetime rather than a lie, so `owner` only matters for the `BytesData` case.
     let owner = buf.bytes().clone();
-    let value = rmpv::decode::read_value_ref(buf.as_mut_slice())
+    let value = rmpv::decode::read_value_ref(buf.as_mut_slice_lt())
         .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;
     record_strings_in_value_ref::<T>(&value, &owner, table);
     Ok(())
@@ -239,11 +240,11 @@ where
 /// [`read_interned_string`]'s own encoder-side counterpart, so they can't be the target of a
 /// later back-reference either.
 ///
-/// `owner` must be a snapshot of the buffer taken before it was advanced past `value`: the
-/// strings inside `value` report a lied `'static` lifetime (see `Buffer::as_mut_slice`) but
-/// really borrow from `owner`'s memory.
-fn record_strings_in_value_ref<T: DeserializableTraceData>(
-    value: &rmpv::ValueRef<'static>,
+/// `owner` must be a snapshot of the buffer taken before it was advanced past `value`. Unlike the
+/// `'static`-erased version, `value`'s lifetime `'x` here is genuine: for `SliceData<'a>`, `'x` is
+/// `'a` itself, not a lie.
+fn record_strings_in_value_ref<'x, T: DeserializableTraceDataLt<'x>>(
+    value: &rmpv::ValueRef<'x>,
     owner: &T::Bytes,
     table: &mut StringTable<T>,
 ) where
@@ -252,7 +253,7 @@ fn record_strings_in_value_ref<T: DeserializableTraceData>(
     match value {
         rmpv::ValueRef::String(s) => {
             if let Some(s) = (*s).into_str() {
-                table.record(&T::intern_skipped_str(owner, s));
+                table.record(&T::intern_skipped_str_lt(owner, s));
             }
         }
         rmpv::ValueRef::Array(items) => {
@@ -271,7 +272,7 @@ fn record_strings_in_value_ref<T: DeserializableTraceData>(
 }
 
 /// Decodes the top-level V1 payload map: tracer metadata fields + chunks array.
-fn decode_payload<T: DeserializableTraceData>(
+fn decode_payload<'x, T: DeserializableTraceDataLt<'x>>(
     buf: &mut Buffer<T>,
     table: &mut StringTable<T>,
 ) -> Result<TracerPayload<T>, DecodeError>
@@ -319,7 +320,7 @@ where
     Ok(payload)
 }
 
-fn decode_chunks<T: DeserializableTraceData>(
+fn decode_chunks<'x, T: DeserializableTraceDataLt<'x>>(
     buf: &mut Buffer<T>,
     table: &mut StringTable<T>,
 ) -> Result<Vec<TraceChunk<T>>, DecodeError>
@@ -335,7 +336,7 @@ where
     Ok(chunks)
 }
 
-fn decode_chunk<T: DeserializableTraceData>(
+fn decode_chunk<'x, T: DeserializableTraceDataLt<'x>>(
     buf: &mut Buffer<T>,
     table: &mut StringTable<T>,
 ) -> Result<TraceChunk<T>, DecodeError>
