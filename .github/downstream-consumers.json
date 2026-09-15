@@ -12,9 +12,9 @@
       "consumers": ["*"]
     },
     {
-      "name": "ddprof-smoke",
+      "name": "dotnet-tracer-smoke",
       "paths": [".github/downstream-consumers.json"],
-      "consumers": ["DataDog/ddprof"]
+      "consumers": ["DataDog/dd-trace-dotnet"]
     },
     {
       "name": "profiling",
