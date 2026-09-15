@@ -370,10 +370,8 @@ impl SidecarServer {
     /// tracers when it can't decode the body, and populating them only on the agent side would
     /// leave a gap whenever a tracer is upgraded ahead of its agent.
     ///
-    /// Sends a V1-encoded trace payload, negotiating the wire format with the agent (see
-    /// [`Self::agent_supports_v1`]). When the agent advertises `/v1.0/traces` — or the session is
-    /// agentless — sends V1 to `v1_target`; otherwise downgrades to v0.4 and sends to `v04_target`,
-    /// so old agents keep working while the tracer always emits V1.
+    /// Sends a V1 payload, negotiating with the agent (see [`Self::agent_supports_v1`]): V1 to
+    /// `v1_target` when the agent advertises `/v1.0/traces` or agentless, else downgrade to v0.4.
     #[allow(clippy::too_many_arguments)]
     fn send_trace_v1(
         &self,
@@ -453,9 +451,9 @@ impl SidecarServer {
         }
     }
 
-    /// Whether the agent accepts V1 (non-blocking). Fails closed to v0.4 until the agent's `/info`
-    /// advertises `/v1.0/traces` (mirrors `TraceExporter::effective_output_format`), so we never
-    /// send V1 to an agent that can't decode it. Agentless intake (`api_key` set) is always V1.
+    /// Whether the agent accepts V1 (non-blocking). Fails closed to v0.4 until `/info` advertises
+    /// `/v1.0/traces`, so we never send V1 to an agent that can't decode it. Agentless is always
+    /// V1.
     fn agent_supports_v1(&self, v04_target: &Endpoint) -> bool {
         if v04_target.api_key.is_some() {
             return true;

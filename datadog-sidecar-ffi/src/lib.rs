@@ -7,8 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-pub mod span_v04;
 pub mod span;
+pub mod span_v04;
 
 use crate::span::{populate_payload_metadata, TracerPayloadV1Builder};
 use crate::span_v04::TracesBytes;
@@ -2065,12 +2065,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // );
 }
 
-/// V1 counterpart of `ddog_send_traces_to_sidecar`: sends the native V1 payload from the
-/// [`crate::span`] builder to the agent's `/v1.0/traces`. Consumes `builder`.
-///
-/// Payload-level metadata is sourced at send time from `parameters.tracer_headers_tags` (lang etc.,
-/// container_id) and `metadata`; lang_interpreter/lang_vendor go as HTTP header tags, not on the
-/// wire.
+/// V1 counterpart of `ddog_send_traces_to_sidecar`: sends the [`crate::span`] builder's native V1
+/// payload to the agent's `/v1.0/traces`. Consumes `builder`. Payload metadata comes at send time
+/// from `parameters.tracer_headers_tags` and `metadata`; lang_interpreter/lang_vendor go as
+/// headers.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
@@ -2189,12 +2187,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
 }
 
 /// Downgrades a native V1 builder to the in-memory v0.4 collection for the in-process `coms.c`
-/// sender (PHP <= 8.2). Consumes `builder`, encodes to v0.4 msgpack, decodes back to the
-/// collection.
-///
-/// Returns the collection (not one whole-payload CharSlice) so `auto_flush` can frame each trace
-/// individually for the background sender; a single CharSlice would silently drop extra traces of a
-/// multi-trace payload. Empty collection on error; free with [`crate::span_v04::ddog_free_traces`].
+/// sender (PHP <= 8.2). Consumes `builder`. Returns the collection (not one whole-payload
+/// CharSlice) so `auto_flush` can frame each trace individually; a single CharSlice would drop
+/// extra traces of a multi-trace payload. Empty collection on error; free with
+/// [`crate::span_v04::ddog_free_traces`].
 #[no_mangle]
 pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
     builder: Box<TracerPayloadV1Builder>,

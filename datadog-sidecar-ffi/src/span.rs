@@ -5,10 +5,9 @@
 //! ([`libdd_trace_utils::span::v1::TracerPayload`]), storing readable [`BytesString`]s directly.
 //!
 //! Index-based (not pointer-based) so every mutation routes through a single
-//! `&mut TracerPayloadV1Builder`: a `&mut` into the payload is never handed to C, which would alias
-//! under Stacked Borrows. No intern table — the V1 encoder dedups strings at encode time, so one
-//! here would only cost and block introspection. Payload-level metadata is applied at send time,
-//! not through this builder (see [`populate_payload_metadata`]).
+//! `&mut TracerPayloadV1Builder`, never handing a `&mut` into the payload to C (which would alias
+//! under Stacked Borrows). Payload-level metadata is applied at send time (see
+//! [`populate_payload_metadata`]).
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_tinybytes::BytesString;
@@ -911,9 +910,8 @@ pub extern "C" fn ddog_v1_get_event_attr_bool(
 
 // ------------------- Payload-level metadata -------------------
 
-/// Populates payload-level metadata from send-time values (`TracerMetadataV1` +
-/// `tracer_headers_tags`). Empty strings are omitted; `git_commit_sha` becomes the payload
-/// attribute `_dd.git.commit.sha`.
+/// Populates payload-level metadata from send-time values. Empty strings are omitted;
+/// `git_commit_sha` becomes the payload attribute `_dd.git.commit.sha`.
 #[allow(clippy::too_many_arguments)]
 pub fn populate_payload_metadata(
     payload: &mut TracerPayloadBytes,
@@ -1021,7 +1019,7 @@ fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> Strin
 
 /// Renders the span at `chunk`/`span` for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line
 /// (out-of-range index yields an empty slice). The returned owned slice must be freed with
-/// [`ddog_free_charslice`], as for the v0.4 variant.
+/// [`ddog_free_charslice`].
 #[no_mangle]
 pub extern "C" fn ddog_v1_span_debug_log(
     builder: &TracerPayloadV1Builder,
@@ -1033,7 +1031,8 @@ pub extern "C" fn ddog_v1_span_debug_log(
         None => String::new(),
     };
     // An empty (or NUL-containing, hence unrepresentable) render owns no allocation: return a
-    // borrowed empty slice so a zero length always means "nothing to free" in `ddog_free_charslice`.
+    // borrowed empty slice so a zero length always means "nothing to free" in
+    // `ddog_free_charslice`.
     let cstring = match CString::new(debug_str) {
         Ok(c) if !c.as_bytes().is_empty() => c,
         _ => return CharSlice::empty(),
@@ -1047,14 +1046,11 @@ pub extern "C" fn ddog_v1_span_debug_log(
 
 // ------------------- Shared free helper -------------------
 
-/// Frees an owned [`CharSlice`]. Note that some functions of this API return borrowed slices that
-/// must NOT be freed. Only a few selected functions return slices that must be freed, and this is
-/// mentioned explicitly in their documentation (the V1 [`ddog_v1_span_debug_log`] and the v0.4
-/// [`crate::span_v04::ddog_serialize_trace_into_charslice`]).
-///
-/// Every owned slice returned by this API allocates `len + 1` bytes (the payload plus a trailing
-/// NUL terminator) via the global allocator, so it is reclaimed here with that exact shape. A
-/// zero-length slice is always a borrowed/empty slice that owns no allocation.
+/// Frees an owned [`CharSlice`]. Only the few functions that document it return owned slices (the
+/// V1 [`ddog_v1_span_debug_log`] and the v0.4
+/// [`crate::span_v04::ddog_serialize_trace_into_charslice`]); borrowed slices must NOT be passed
+/// here. An owned slice allocates `len + 1` bytes (payload + NUL), reclaimed here with that exact
+/// shape; a zero-length slice is always borrowed and owns nothing.
 ///
 /// # Safety
 ///

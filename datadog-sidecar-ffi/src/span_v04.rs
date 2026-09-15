@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! In-memory v0.4 trace collection (`TracesBytes`), kept only as the downgrade target of the native
-//! V1 builder for the in-process (`coms.c`) sender. The standalone v0.4 builder that used to live
-//! here is gone (the tracer builds V1 directly, see [`crate::span`]); this is just the surface
-//! [`crate::ddog_downgrade_v1_builder_to_v04_traces`] needs to serialize each downgraded trace.
+//! V1 builder for the in-process (`coms.c`) sender (the tracer builds V1 directly, see
+//! [`crate::span`]).
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_trace_utils::span::v04::SpanBytes;

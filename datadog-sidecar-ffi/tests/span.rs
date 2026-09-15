@@ -98,11 +98,7 @@ fn ddog_v1_set_chunk_sampling_mechanism(
     }
 }
 
-fn ddog_v1_set_chunk_dropped_trace(
-    b: &mut TracerPayloadV1Builder,
-    chunk: usize,
-    dropped: bool,
-) {
+fn ddog_v1_set_chunk_dropped_trace(b: &mut TracerPayloadV1Builder, chunk: usize, dropped: bool) {
     if let Some(c) = b.chunk_mut(chunk) {
         c.dropped_trace = dropped;
     }
@@ -154,12 +150,7 @@ fn ddog_v1_set_span_env(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: C
 fn ddog_v1_set_span_version(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
     set_span_string(b, c, s, v, |sp| &mut sp.version);
 }
-fn ddog_v1_set_span_component(
-    b: &mut TracerPayloadV1Builder,
-    c: usize,
-    s: usize,
-    v: CharSlice,
-) {
+fn ddog_v1_set_span_component(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: CharSlice) {
     set_span_string(b, c, s, v, |sp| &mut sp.component);
 }
 
@@ -258,12 +249,7 @@ fn ddog_v1_add_span_attr_bytes(
     add_span_attr(b, c, s, key, AttributeValueBytes::Bytes(bytes));
 }
 
-fn ddog_v1_has_span_attr(
-    b: &TracerPayloadV1Builder,
-    c: usize,
-    s: usize,
-    key: CharSlice,
-) -> bool {
+fn ddog_v1_has_span_attr(b: &TracerPayloadV1Builder, c: usize, s: usize, key: CharSlice) -> bool {
     let key = to_bytes_string(key);
     b.span(c, s)
         .is_some_and(|sp| sp.attributes.contains_key(&key))
@@ -337,13 +323,7 @@ fn ddog_v1_set_link_span_id(
         l.span_id = v;
     }
 }
-fn ddog_v1_set_link_flags(
-    b: &mut TracerPayloadV1Builder,
-    c: usize,
-    s: usize,
-    link: usize,
-    v: u32,
-) {
+fn ddog_v1_set_link_flags(b: &mut TracerPayloadV1Builder, c: usize, s: usize, link: usize, v: u32) {
     if let Some(l) = b.link_mut(c, s, link) {
         l.flags = v;
     }
@@ -433,8 +413,8 @@ fn builds_span_with_promoted_and_typed_attributes() {
 
     // trace_id big-endian 16 bytes present
     let expected_tid = [
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
-        0xcd, 0xef,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd,
+        0xef,
     ];
     assert!(encoded.windows(16).any(|w| w == expected_tid));
     for s in &[b"svc" as &[u8], b"op", b"res", b"k_str", b"v_str", b"k_int"] {
@@ -677,8 +657,8 @@ fn builds_links_and_events() {
     }
     // link trace_id low half 0xbb present in the 16-byte BE id
     let expected_link_tid = [
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0xbb,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xbb,
     ];
     assert!(encoded.windows(16).any(|w| w == expected_link_tid));
 }
