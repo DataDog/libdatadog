@@ -12,11 +12,6 @@
       "consumers": ["*"]
     },
     {
-      "name": "windows-profiler-smoke",
-      "paths": [".github/downstream-consumers.json"],
-      "consumers": ["DataDog/dd-win-prof"]
-    },
-    {
       "name": "profiling",
       "paths": [
         "libdd-profiling/**",
