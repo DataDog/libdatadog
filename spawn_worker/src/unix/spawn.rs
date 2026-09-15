@@ -91,7 +91,7 @@ use std::{
 
 use io_lifetimes::OwnedFd;
 
-use nix::{sys::wait::WaitStatus, unistd::Pid};
+use nix::{errno::Errno, sys::wait::WaitStatus, unistd::Pid};
 
 use crate::fork::{fork, Fork};
 use nix::libc;
@@ -312,8 +312,12 @@ impl SpawnWorker {
             None => return Ok(()),
         };
 
-        nix::sys::wait::waitpid(Some(pid), None)?;
-        Ok(())
+        // SIGCHLD may be ignored, causing the kernel to reap the child automatically and
+        // waitpid() to return ECHILD after the child terminates.
+        match nix::sys::wait::waitpid(Some(pid), None) {
+            Ok(_) | Err(Errno::ECHILD) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub fn wait_spawn(&mut self) -> anyhow::Result<()> {
