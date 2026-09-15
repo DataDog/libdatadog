@@ -2,7 +2,9 @@
 
 This directory contains C++ examples demonstrating the CXX bindings for libdatadog components.
 
-CXX bindings provide a safer and more idiomatic C++ API compared to the traditional C FFI bindings, with automatic memory management and exception handling.
+CXX bindings provide a safer and more idiomatic C++ API compared to the traditional C FFI bindings, with automatic memory management and explicit error handling.
+
+Profiling examples include `datadog/profiling.hpp`, a small convenience header shipped by `libdd-profiling`. It includes the generated CXX bridge header and provides helper utilities under `datadog::profiling::views`, such as `views::slice(...)`, `views::sample(...)`, and `views::dictionary_sample(...)`, without adding generic helper names directly to `datadog::profiling`.
 
 ## Examples
 
@@ -27,7 +29,7 @@ Windows:
 - Support for stack traces, frames, and metadata
 - Process and OS information
 - Automatic memory management
-- Exception-based error handling
+- Explicit error handling
 
 **Core Types:**
 - `CrashInfoBuilder` - Builder for constructing crash information
@@ -70,7 +72,7 @@ Windows:
 - Support for attaching additional compressed files
 - Per-profile tags and metadata
 - Automatic memory management
-- Exception-based error handling
+- Explicit error handling with result wrapper/status check helpers and object-owned errors
 - Modern C++20 syntax with designated initializers and `std::format`
 
 **Core Types:**
@@ -97,35 +99,35 @@ By default, the example saves the profile to `profile.pprof`. To export to Datad
 
 See [`profiling.cpp`](profiling.cpp) for a complete example showing profile creation, sample collection, and exporting to Datadog with optional attachments and metadata.
 
-### Profiling api2 (`profiling_api2.cpp`)
+### Profiling dictionary-backed API (`profiling_dictionary.cpp`)
 
-Demonstrates building profiling data with the dictionary-backed api2 CXX API.
+Demonstrates building profiling data with the dictionary-backed CXX API.
 This is closer to the low-overhead profiler hot path used by language tracers:
-strings, functions, and mappings are inserted into a `ProfilesDictionary`, and
+strings, functions, and mappings are interned into a `ProfileDictionary`, and
 samples carry opaque ids instead of string payloads for locations and label keys.
 
 **Build and run:**
 
 Unix (Linux/macOS):
 ```bash
-./build-profiling-api2.sh
+./build-profiling-dictionary.sh
 ```
 
 Windows:
 ```powershell
-.\build-profiling-api2.ps1
+.\build-profiling-dictionary.ps1
 ```
 
 **Key features:**
-- `ProfilesDictionary` creation and dictionary string insertion
-- Dictionary-backed `Mapping2`, `Function2`, `Location2`, `Label2`, and `Sample2`
+- `ProfileDictionary` creation and dictionary string interning
+- Dictionary-backed `DictionaryMapping`, `DictionaryFunction`, `DictionaryLocation`, `DictionaryLabel`, and `DictionarySample`
 - `Profile::create_with_dictionary`
-- `Status` / typed-result hot-path calls such as `ProfilesDictionary::insert_string` and `Profile::add_sample2`
+- `bool` hot-path calls such as `ProfileDictionary::intern_string` and `Profile::add_dictionary_sample`
 - Timestamped samples via nonzero `endtime_ns`
 - Non-timestamped samples via `endtime_ns == 0`
-- Pprof serialization to `profile_api2.pprof`
+- Pprof serialization to `profile_dictionary.pprof`
 
-See [`profiling_api2.cpp`](profiling_api2.cpp) for a focused dictionary-backed api2 sample creation and serialization example.
+See [`profiling_dictionary.cpp`](profiling_dictionary.cpp) for a focused dictionary-backed sample creation and serialization example.
 
 **Requirements:**
 - C++20 compiler
@@ -142,7 +144,7 @@ The examples use a consolidated build system:
 Convenience wrappers are provided for each example:
 - `build-and-run-crashinfo.sh` / `build-and-run-crashinfo.ps1`
 - `build-profiling.sh` / `build-profiling.ps1`
-- `build-profiling-api2.sh` / `build-profiling-api2.ps1`
+- `build-profiling-dictionary.sh` / `build-profiling-dictionary.ps1`
 
 ## Requirements
 

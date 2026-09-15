@@ -1,22 +1,20 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <fstream>
 #include <string>
 #include <vector>
 #include <cstdlib>
-#include "libdd-profiling/src/cxx.rs.h"
+#include "datadog/profiling.hpp"
 
 using namespace datadog::profiling;
 
-bool check_status(const Status& status, const char* operation) {
-    if (status.ok) {
-        return true;
-    }
-    std::cerr << "❌ " << operation << " failed: " << std::string(status.message) << std::endl;
-    return false;
+bool add_sample(Profile& profile, std::vector<Location> locations, std::vector<int64_t> values, std::vector<Label> labels) {
+    return profile.add_sample(views::sample(locations, values, labels));
 }
 
 int main() {
@@ -33,30 +31,31 @@ int main() {
         // not yet in SampleType, use Custom1..Custom5 and configure the slot
         // with Profile::set_custom_sample_type before serialization.
         auto profile_result = Profile::create({SampleType::WallTime}, period);
-        if (!check_status(profile_result->status(), "Profile::create")) return 1;
+        if (!profile_result->check_and_print()) return 1;
         auto profile = profile_result->take();
+        profile->set_error_policy(ErrorPolicy::PrintImmediately);
         std::cout << "✅ Profile created" << std::endl;
         
         std::cout << "Adding upscaling rules..." << std::endl;
         
         // Poisson upscaling for sampled data
         std::vector<size_t> value_offsets = {0};
-        if (!check_status(profile->add_upscaling_rule_poisson(
+        if (!profile->add_upscaling_rule_poisson(
             {value_offsets.data(), value_offsets.size()},
             "thread_id",
             "0",
             0,
             0,
             1000000
-        ), "add_upscaling_rule_poisson")) return 1;
+        )) return 1;
         
         // Proportional upscaling (scale by factor)
-        if (!check_status(profile->add_upscaling_rule_proportional(
+        if (!profile->add_upscaling_rule_proportional(
             {value_offsets.data(), value_offsets.size()},
             "thread_id",
             "1",
             100.0
-        ), "add_upscaling_rule_proportional")) return 1;
+        )) return 1;
         
         std::cout << "✅ Added upscaling rules" << std::endl;
         
@@ -79,109 +78,69 @@ int main() {
             
             auto wall_time_value = 1000000 + (i % 1000) * 1000;
             
+            std::vector<Location> locations{
+                Location{
+                    .mapping = mapping,
+                    .function = Function{
+                        .name = string_storage[0],
+                        .system_name = string_storage[1],
+                        .filename = "/src/hot_path.cpp"
+                    },
+                    .address = uint64_t(0x10003000 + (i % 3) * 0x100),
+                    .line = 100 + (i % 3) * 10
+                },
+                Location{
+                    .mapping = mapping,
+                    .function = Function{
+                        .name = string_storage[2],
+                        .system_name = string_storage[3],
+                        .filename = "/src/handler.cpp"
+                    },
+                    .address = uint64_t(0x10002000 + (i % 5) * 0x80),
+                    .line = 50 + (i % 5) * 5
+                },
+                Location{
+                    .mapping = mapping,
+                    .function = Function{
+                        .name = "main",
+                        .system_name = "main",
+                        .filename = "/src/main.cpp"
+                    },
+                    .address = 0x10001000,
+                    .line = 42
+                },
+            };
             if (i % 7 == 0) {
-                if (!check_status(profile->add_sample(Sample{
-                    .locations = {
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = string_storage[0],
-                                .system_name = string_storage[1],
-                                .filename = "/src/hot_path.cpp"
-                            },
-                            .address = uint64_t(0x10003000 + (i % 3) * 0x100),
-                            .line = 100 + (i % 3) * 10
-                        },
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = string_storage[2],
-                                .system_name = string_storage[3],
-                                .filename = "/src/handler.cpp"
-                            },
-                            .address = uint64_t(0x10002000 + (i % 5) * 0x80),
-                            .line = 50 + (i % 5) * 5
-                        },
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = "main",
-                                .system_name = "main",
-                                .filename = "/src/main.cpp"
-                            },
-                            .address = 0x10001000,
-                            .line = 42
-                        },
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = "worker_loop",
-                                .system_name = "_Z11worker_loopv",
-                                .filename = "/src/worker.cpp"
-                            },
-                            .address = 0x10000500,
-                            .line = 25
-                        }
+                locations.push_back(Location{
+                    .mapping = mapping,
+                    .function = Function{
+                        .name = "worker_loop",
+                        .system_name = "_Z11worker_loopv",
+                        .filename = "/src/worker.cpp"
                     },
-                    .values = {wall_time_value},
-                    .labels = {
-                        Label{.key = "thread_id", .str = "", .num = int64_t(i % 4), .num_unit = ""},
-                        Label{.key = "sample_id", .str = "", .num = int64_t(i), .num_unit = ""}
-                    }
-                }), "add_sample")) return 1;
-            } else {
-                if (!check_status(profile->add_sample(Sample{
-                    .locations = {
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = string_storage[0],
-                                .system_name = string_storage[1],
-                                .filename = "/src/hot_path.cpp"
-                            },
-                            .address = uint64_t(0x10003000 + (i % 3) * 0x100),
-                            .line = 100 + (i % 3) * 10
-                        },
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = string_storage[2],
-                                .system_name = string_storage[3],
-                                .filename = "/src/handler.cpp"
-                            },
-                            .address = uint64_t(0x10002000 + (i % 5) * 0x80),
-                            .line = 50 + (i % 5) * 5
-                        },
-                        Location{
-                            .mapping = mapping,
-                            .function = Function{
-                                .name = "main",
-                                .system_name = "main",
-                                .filename = "/src/main.cpp"
-                            },
-                            .address = 0x10001000,
-                            .line = 42
-                        }
-                    },
-                    .values = {wall_time_value},
-                    .labels = {
-                        Label{.key = "thread_id", .str = "", .num = int64_t(i % 4), .num_unit = ""},
-                        Label{.key = "sample_id", .str = "", .num = int64_t(i), .num_unit = ""}
-                    }
-                }), "add_sample")) return 1;
+                    .address = 0x10000500,
+                    .line = 25
+                });
             }
+
+            std::array<int64_t, 1> values{wall_time_value};
+            std::array<Label, 2> labels{
+                Label{.key = "thread_id", .str = "", .num = int64_t(i % 4), .num_unit = ""},
+                Label{.key = "sample_id", .str = "", .num = int64_t(i), .num_unit = ""},
+            };
+            if (!profile->add_sample(views::sample(locations, values, labels))) return 1;
         }
         
         std::cout << "✅ Added 100 samples" << std::endl;
         
         std::cout << "Adding endpoint mappings..." << std::endl;
-        if (!check_status(profile->add_endpoint(12345, "/api/users"), "add_endpoint")) return 1;
-        if (!check_status(profile->add_endpoint(67890, "/api/orders"), "add_endpoint")) return 1;
-        if (!check_status(profile->add_endpoint(11111, "/api/products"), "add_endpoint")) return 1;
+        if (!profile->add_endpoint(12345, "/api/users")) return 1;
+        if (!profile->add_endpoint(67890, "/api/orders")) return 1;
+        if (!profile->add_endpoint(11111, "/api/products")) return 1;
         
-        if (!check_status(profile->add_endpoint_count("/api/users", 150), "add_endpoint_count")) return 1;
-        if (!check_status(profile->add_endpoint_count("/api/orders", 75), "add_endpoint_count")) return 1;
-        if (!check_status(profile->add_endpoint_count("/api/products", 200), "add_endpoint_count")) return 1;
+        if (!profile->add_endpoint_count("/api/users", 150)) return 1;
+        if (!profile->add_endpoint_count("/api/orders", 75)) return 1;
+        if (!profile->add_endpoint_count("/api/products", 200)) return 1;
         std::cout << "✅ Added endpoint mappings and counts" << std::endl;
         
         // Create exporter based on environment variables
@@ -207,7 +166,7 @@ int main() {
                     },
                     dd_site.c_str(), api_key, 10000, false
                 );
-                if (!check_status(exporter_result->status(), "ProfileExporter::create_agentless_exporter")) return 1;
+                if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
                     exporter_result->take()
                 );
@@ -223,7 +182,7 @@ int main() {
                     },
                     agent_url, 10000, false
                 );
-                if (!check_status(exporter_result->status(), "ProfileExporter::create_agent_exporter")) return 1;
+                if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
                     exporter_result->take()
                 );
@@ -239,7 +198,7 @@ int main() {
                     },
                     "profile_dump.txt"
                 );
-                if (!check_status(exporter_result->status(), "ProfileExporter::create_file_exporter")) return 1;
+                if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
                     exporter_result->take()
                 );
@@ -248,8 +207,8 @@ int main() {
             
             // Create a cancellation token for the export
             // In a real application, you could clone this and cancel from another thread
-            // Example: auto token_clone = cancel_token->clone_token(); token_clone->cancel();
-            auto cancel_token = new_cancellation_token();
+            // Example: auto token_clone = cancel_token->clone(); token_clone->cancel();
+            auto cancel_token = CancellationToken::create();
             
             // Prepare metadata (same for all export modes)
             std::string app_metadata = R"({
@@ -262,7 +221,7 @@ int main() {
             
             // Export the profile (unified code path)
             std::cout << "Exporting profile with additional metadata..." << std::endl;
-            if (!check_status((*exporter)->send_profile_with_cancellation(
+            if (!(*exporter)->send_profile_with_cancellation(
                 *profile,
                 // Files to compress and attach
                 {AttachmentFile{
@@ -281,7 +240,7 @@ int main() {
                 // System info (JSON string)
                 R"({"os": "macos", "arch": "arm64", "cores": 8})",
                 *cancel_token
-            ), "send_profile_with_cancellation")) return 1;
+            ).check_and_print()) return 1;
             std::cout << "✅ Profile exported successfully!" << std::endl;
 
             // Split serialize/send flow: useful when callers need to reset the
@@ -289,8 +248,9 @@ int main() {
             // already-encoded profile later.
             std::cout << "Exporting a second profile with split serialize/send..." << std::endl;
             auto split_profile_result = Profile::create({SampleType::WallTime}, period);
-            if (!check_status(split_profile_result->status(), "Profile::create")) return 1;
+            if (!split_profile_result->check_and_print()) return 1;
             auto split_profile = split_profile_result->take();
+            split_profile->set_error_policy(ErrorPolicy::PrintImmediately);
             Mapping split_mapping{
                 .memory_start = 0x30000000,
                 .memory_limit = 0x40000000,
@@ -298,40 +258,37 @@ int main() {
                 .filename = "/usr/lib/libsplit-example.so",
                 .build_id = "split-build-id"
             };
-            if (!check_status(split_profile->add_sample(Sample{
-                .locations = {
-                    Location{
-                        .mapping = split_mapping,
-                        .function = Function{
-                            .name = "split_export_function",
-                            .system_name = "_Z21split_export_functionv",
-                            .filename = "/src/split_export.cpp"
-                        },
-                        .address = 0x30001234,
-                        .line = 77
-                    }
-                },
-                .values = {42'000'000},
-                .labels = {
-                    Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}
-                }
-            }), "add_sample")) return 1;
-            if (!check_status(split_profile->add_endpoint_count("/api/split-export", 1), "add_endpoint_count")) return 1;
+            if (!add_sample(
+                *split_profile,
+                {Location{
+                    .mapping = split_mapping,
+                    .function = Function{
+                        .name = "split_export_function",
+                        .system_name = "_Z21split_export_functionv",
+                        .filename = "/src/split_export.cpp"
+                    },
+                    .address = 0x30001234,
+                    .line = 77
+                }},
+                {42'000'000},
+                {Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}}
+            )) return 1;
+            if (!split_profile->add_endpoint_count("/api/split-export", 1)) return 1;
 
             auto encoded_profile_result = split_profile->serialize();
-            if (!check_status(encoded_profile_result->status(), "Profile::serialize")) return 1;
+            if (!encoded_profile_result->ok()) return 1;
             auto encoded_profile = encoded_profile_result->take();
             auto encoded_bytes = encoded_profile->bytes();
             std::cout << "ℹ️  Split profile serialized to " << encoded_bytes.size() << " compressed bytes" << std::endl;
 
-            if (!check_status((*exporter)->send_encoded_profile(
+            if (!(*exporter)->send_encoded_profile(
                 std::move(encoded_profile),
                 {},
                 {Tag{.key = "export_flow", .value = "split"}},
                 "language:cpp,profiler_version:1.0,runtime:native",
                 R"({"profiler_version": "1.0", "export_flow": "split"})",
                 R"({"os": "macos", "arch": "arm64", "cores": 8})"
-            ), "send_encoded_profile")) return 1;
+            ).check_and_print()) return 1;
             std::cout << "✅ Split profile exported successfully!" << std::endl;
             
             // Print mode-specific info
