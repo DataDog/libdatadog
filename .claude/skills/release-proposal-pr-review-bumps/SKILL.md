@@ -76,9 +76,9 @@ A crate is safe to duplicate (two majors can coexist harmlessly) **only if both*
    Hits on real globals, FFI exported symbols, ctors, fork/signal/atexit handlers, or native objects / `links =` metadata = duplication is unsafe (two copies fight over the same process resource or clash at link time, especially inside the single FFI/C `builder` artifact). Comments and instance-scoped registration (e.g. `AtomicWaker::register`, "worker registered *on a SharedRuntime instance*") do NOT count — confirm the constructor is an instance method (`Foo::new()`), not a global accessor (`fn global() -> &'static Foo`). For a native hit, confirm it is real linkage rather than a `static inline` helper in a header: check whether the symbol has external linkage and whether `build.rs` actually compiles the file.
 
 **(b) No shared types/traits crossing a crate boundary.** Even a globally-stateless crate is unsafe to duplicate if its types or **traits** are part of the *integration contract* between two other crates — because v1's type/trait is a different type from v2's, so a value/impl from a v1-built crate won't satisfy a v2 bound. Check the dependents, not just the dependency:
-   - Does dependent X **expose the dep's type in its public API** (re-export, `pub fn` arg/return, `pub` field)? e.g. `pub fn set_shared_runtime(_: Arc<SharedRuntime>)`.
-   - Does dependent X **implement a trait from the dep on one of X's public types**? A foreign-trait impl on a public type *is* public API. e.g. `impl libdd_shared_runtime::Worker for TelemetryWorker` — even though `SharedRuntime` never appears in telemetry's signatures, consumers rely on `TelemetryWorker: Worker`.
-   - Does some *other* crate Y then **consume that across the boundary**? e.g. data-pipeline calls `shared_runtime.spawn_worker(telemetry_worker)` (production, `trace_exporter/builder.rs`), which requires `TelemetryWorker: <data-pipeline's shared_runtime>::Worker`. If telemetry is on `shared-runtime ^1` and data-pipeline on `^2`, the trait impl targets the wrong major → **hard compile error**, not just redundant copies.
+   - Does dependent X **expose the dep's type or trait in its public API** (re-export, `pub fn` arg/return, `pub` field, **or a generic bound on a public type**)? e.g. `pub struct TraceExporterBuilder<R: SharedRuntime>` with `pub fn set_shared_runtime(&mut self, shared_runtime: Arc<R>) -> &mut Self` (`libdd-data-pipeline/src/trace_exporter/builder.rs:62,436`) — the `SharedRuntime` *trait* is part of data-pipeline's public contract even though no concrete runtime type appears in the signature.
+   - Does dependent X **implement a trait from the dep on one of X's public types**? A foreign-trait impl on a public type *is* public API. e.g. `impl … Worker for StatsExporter<Cap, Con>` (`libdd-trace-stats/src/stats_exporter.rs:520`, on the `pub struct StatsExporter` at `:134`) — even though no shared-runtime type appears in trace-stats' signatures, consumers rely on `StatsExporter: Worker`. Same shape: `TraceExporterWorker` (`libdd-data-pipeline/src/trace_buffer/mod.rs:873,925`) and `MetricSinkWorker` (`libdd-dogstatsd-client/src/client/shared_runtime_sink.rs:60,76`).
+   - Does some *other* crate Y then **consume that across the boundary**? e.g. data-pipeline calls `.spawn_worker(stats_exporter, self.restart_after_fork)` (production, `libdd-data-pipeline/src/trace_exporter/builder.rs:1048`, also `trace_exporter/stats.rs:182`), which requires `StatsExporter: <data-pipeline's shared_runtime>::Worker`. Both crates currently depend on `libdd-shared-runtime 4.0.0`; if trace-stats were on `shared-runtime ^4` and data-pipeline on `^5`, the trait impl would target the wrong major → **hard compile error**, not just redundant copies.
    ```bash
    # type in dependent's public API:
    grep -rnE 'pub use .*<dep>|pub fn .*<Type>|pub .*: &?(mut )?<Type>|-> .*<Type>' <dependent>/src --include=*.rs | grep -v cfg.test
@@ -88,7 +88,7 @@ A crate is safe to duplicate (two majors can coexist harmlessly) **only if both*
    grep -rnE '<consume_fn>\(' <consumer>/src --include=*.rs | grep -v cfg.test
    ```
 
-Worked example (`libdd-shared-runtime`): passes (a) — instance-based `SharedRuntime::new()`, zero globals — but **fails (b)**: `TelemetryWorker` implements its `Worker` trait and data-pipeline spawns that worker on a `SharedRuntime` in production. So telemetry, data-pipeline, and any `^`-range consumer (e.g. dd-trace-rs) must all agree on one shared-runtime major → the cascade is a genuine correctness requirement here, not conservative over-bumping.
+Worked example (`libdd-shared-runtime`): passes (a) — `SharedRuntime` is a **trait** (`src/shared_runtime/{basic,local,fork_safe}.rs`) whose implementations are instance-constructed values (`BasicRuntime`, `LocalRuntime`, `ForkSafeRuntime`), and check (a)'s grep over its `src` returns zero hits: no globals, no exported symbols. But it **fails (b)**: `libdd-trace-stats` implements its `Worker` trait on the public `StatsExporter`, and data-pipeline spawns that worker on a runtime in production (`trace_exporter/builder.rs:1048`). So trace-stats, data-pipeline, and any `^`-range consumer (e.g. dd-trace-rs) must all agree on one shared-runtime major → the cascade is a genuine correctness requirement here, not conservative over-bumping.
 
 ### Classifying the dependent's bump once duplication is unsafe
 
@@ -217,8 +217,11 @@ the PR's base ref:
   --list` (`--explain <lint>` for detail). Read its `type` column carefully — it is the
   semver update the lint *reports* (`major`/`minor`), **not** whether a violation fails the
   run. A lint can list as `major` and still be warn-level, printing the violation while
-  exiting 0; neither `--list` nor `--explain` shows it, and 0.47.0 has no `--deny`/`--warn`
-  override flag to force the issue (re-check `--help` for the pinned version).
+  exiting 0; neither `--list` nor `--explain` shows it, and neither the CI-pinned 0.48.0 nor
+  the 0.47.0 commonly installed locally offers a `--deny`/`--warn` override flag to force the
+  issue (re-check `--help` against the version actually installed — such a flag may land in a
+  later release, and `cargo semver-checks --version` is worth confirming since a local install
+  often lags the CI pin).
   So the only local way to settle a "does the script see it?" question is a
   minimal two-crate repro plus `echo $?` on the actual invocation the script uses
   (`cargo semver-checks -p <crate> --color=never --all-features --baseline-rev <rev>`).
