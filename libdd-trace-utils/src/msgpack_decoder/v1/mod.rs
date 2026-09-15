@@ -6,8 +6,9 @@ pub(super) mod span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
-use crate::span::{BytesData, DeserializableTraceData, SliceData};
-use rmp::{decode, decode::RmpRead, Marker};
+use crate::span::{BytesData, DeserializableTraceData, SliceData, TraceData};
+use rmp::decode;
+use rmpv::decode::read_value_ref;
 use std::borrow::Borrow;
 
 // Integer keys used by the V1 wire format. Kept in sync with the encoder side
@@ -91,14 +92,14 @@ pub(super) const TRACE_ID_LEN: u32 = 16;
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
 /// msgpack `uint` reference on every subsequent occurrence. ID 0 is reserved for the empty
 /// string and is pre-inserted on construction.
-pub(super) struct StringTable<T: DeserializableTraceData>
+pub(super) struct StringTable<T: TraceData>
 where
     T::Text: Clone,
 {
     seen: Vec<T::Text>,
 }
 
-impl<T: DeserializableTraceData> StringTable<T>
+impl<T: TraceData> StringTable<T>
 where
     T::Text: Clone,
 {
@@ -132,15 +133,14 @@ where
 /// Decides based on the next msgpack marker:
 /// - `str`/`fixstr` → read and intern, return the value
 /// - any unsigned int marker → resolve the table reference
-pub(super) fn read_interned_string<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_interned_string<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<T::Text, DecodeError>
 where
     T::Text: Clone,
 {
-    let slice: &[u8] = buf.as_slice();
-    let marker_byte = *slice.first().ok_or_else(|| {
+    let marker_byte = *buf.first().ok_or_else(|| {
         DecodeError::InvalidFormat(
             "Unexpected end of V1 buffer when reading interned string".to_owned(),
         )
@@ -186,18 +186,18 @@ where
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(TracerPayloadBytes, usize), DecodeError> {
-    from_buffer(&mut Buffer::<BytesData>::new(&data))
+    from_buffer(&mut Buffer::<BytesData>::from(&data))
 }
 
 /// Decodes a V1 msgpack payload from a borrowed slice into a [`TracerPayloadSlice`].
 /// The resulting payload borrows from the input buffer (same lifetime).
 pub fn from_slice(data: &[u8]) -> Result<(TracerPayloadSlice<'_>, usize), DecodeError> {
-    from_buffer(&mut Buffer::<SliceData>::new(data))
+    from_buffer(&mut Buffer::<SliceData>::from(data))
 }
 
 /// Generic over the deserialization mode (owned `BytesData` or borrowed `SliceData`).
-pub fn from_buffer<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+pub fn from_buffer<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
 ) -> Result<(TracerPayload<T>, usize), DecodeError>
 where
     T::Text: Clone,
@@ -209,13 +209,6 @@ where
     Ok((payload, consumed))
 }
 
-/// Maximum nesting depth accepted while skipping an unknown V1 value. Mirrors the depth guard
-/// rmpv's `read_value_ref` used to apply: a hostile payload must not be able to exhaust the
-/// stack through deeply nested arrays/maps.
-pub(super) const MAX_SKIP_DEPTH: u32 = 1024;
-
-const SKIP_MSG: &str = "Failed to skip unknown V1 value";
-
 /// Consumes and discards the msgpack value at the current buffer position, regardless of its
 /// type. Used to skip unknown keys for forward compatibility: if the V1 format gains new fields,
 /// older decoders shouldn't reject the whole payload just because they don't recognize a key.
@@ -223,220 +216,63 @@ const SKIP_MSG: &str = "Failed to skip unknown V1 value";
 /// Any inline string encountered while skipping (at any nesting depth) is interned into `table`,
 /// same as a recognized field would: skipping a value must not desync later back-references to
 /// strings that happen to also appear inside it.
-pub(super) fn skip_unknown_value<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn skip_unknown_value<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<(), DecodeError>
 where
     T::Text: Clone,
 {
-    skip_value(buf, table, 0)
-}
-
-/// Skips `bytes` bytes of opaque data, failing if the buffer is truncated.
-fn skip_bytes<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
-    bytes: usize,
-) -> Result<(), DecodeError> {
-    if buf.advance(bytes) {
-        Ok(())
-    } else {
-        Err(DecodeError::InvalidFormat(format!("{SKIP_MSG}: truncated")))
-    }
-}
-
-/// Slices a skipped string out of the buffer and interns it into `table`. Invalid UTF-8 is
-/// ignored: it can never have been produced by [`read_interned_string`]'s encoder-side
-/// counterpart, so it can't be the target of a later back-reference either.
-fn harvest_string<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
-    table: &mut StringTable<T>,
-    len: u32,
-) -> Result<(), DecodeError>
-where
-    T::Text: Clone,
-{
-    let bytes = buf
-        .try_slice_and_advance(len as usize)
-        .ok_or_else(|| DecodeError::InvalidFormat(format!("{SKIP_MSG}: truncated")))?;
-    if let Some(s) = T::intern_skipped_bytes(buf.bytes(), &bytes) {
-        table.record(&s);
-    }
+    // `read_value_ref` consumes the whole value through the buffer's `Read`/`BorrowRead`
+    // implementations and enforces its own nesting depth limit (`rmpv::decode::MAX_DEPTH`),
+    // so a hostile payload can't exhaust the stack. The decoded `ValueRef` borrows every
+    // string straight from the source payload at its honest lifetime.
+    let value = read_value_ref(&mut *buf)
+        .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;
+    record_strings_in_value_ref(&value, buf.source(), table);
     Ok(())
 }
 
-fn skip_value<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+/// Recursively walks a skipped [`rmpv::ValueRef`], interning every string it contains into
+/// `table`.
+fn record_strings_in_value_ref<'a, T: DeserializableTraceData<'a>>(
+    value: &rmpv::ValueRef<'a>,
+    source: &'a T::Source,
     table: &mut StringTable<T>,
-    depth: u32,
-) -> Result<(), DecodeError>
-where
+) where
     T::Text: Clone,
 {
-    if depth > MAX_SKIP_DEPTH {
-        return Err(DecodeError::InvalidFormat(format!(
-            "{SKIP_MSG}: nesting deeper than {MAX_SKIP_DEPTH}"
-        )));
+    match value {
+        rmpv::ValueRef::String(s) => {
+            // `into_str` hands the string back at the payload's honest lifetime `'a`. Invalid
+            // UTF-8 yields `None` and is ignored: it can never have been produced by
+            // [`read_interned_string`]'s encoder-side counterpart, so it can't be the target
+            // of a later back-reference either.
+            if let Some(interned) = (*s)
+                .into_str()
+                .and_then(|s| T::intern_skipped_str(source, s))
+            {
+                table.record(&interned);
+            }
+        }
+        rmpv::ValueRef::Array(items) => {
+            for item in items {
+                record_strings_in_value_ref(item, source, table);
+            }
+        }
+        rmpv::ValueRef::Map(entries) => {
+            for (key, val) in entries {
+                record_strings_in_value_ref(key, source, table);
+                record_strings_in_value_ref(val, source, table);
+            }
+        }
+        _ => {}
     }
-
-    let marker = decode::read_marker(buf.as_mut_slice())
-        .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-    match marker {
-        // Scalars with no additional data.
-        Marker::Null | Marker::True | Marker::False | Marker::FixPos(_) | Marker::FixNeg(_) => {}
-        // Fixed-width scalar data: skip the data bytes.
-        Marker::U8 | Marker::I8 => skip_bytes(buf, 1)?,
-        Marker::U16 | Marker::I16 => skip_bytes(buf, 2)?,
-        Marker::U32 | Marker::I32 | Marker::F32 => skip_bytes(buf, 4)?,
-        Marker::U64 | Marker::I64 | Marker::F64 => skip_bytes(buf, 8)?,
-        // Strings: harvest into the intern table (the V1 encoder emits inline strings on first
-        // occurrence, so a later field may back-reference one found inside a skipped value).
-        Marker::FixStr(len) => harvest_string(buf, table, u32::from(len))?,
-        Marker::Str8 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u8()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            harvest_string(buf, table, len)?;
-        }
-        Marker::Str16 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u16()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            harvest_string(buf, table, len)?;
-        }
-        Marker::Str32 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u32()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            harvest_string(buf, table, len)?;
-        }
-        // Binary: skip the data.
-        Marker::Bin8 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u8()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            skip_bytes(buf, len as usize)?;
-        }
-        Marker::Bin16 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u16()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            skip_bytes(buf, len as usize)?;
-        }
-        Marker::Bin32 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u32()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            skip_bytes(buf, len as usize)?;
-        }
-        // Containers: recurse into every element (both key and value for maps).
-        Marker::FixArray(len) => {
-            for _ in 0..u32::from(len) {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        Marker::Array16 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u16()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            for _ in 0..len {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        Marker::Array32 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u32()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            for _ in 0..len {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        Marker::FixMap(len) => {
-            for _ in 0..(u64::from(len) * 2) {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        Marker::Map16 => {
-            let len = u32::from(
-                buf.as_mut_slice()
-                    .read_data_u16()
-                    .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?,
-            );
-            for _ in 0..(u64::from(len) * 2) {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        Marker::Map32 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u32()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            for _ in 0..(u64::from(len) * 2) {
-                skip_value(buf, table, depth + 1)?;
-            }
-        }
-        // Extensions: one type byte + fixed or length-prefixed data.
-        Marker::FixExt1 => skip_bytes(buf, 2)?,
-        Marker::FixExt2 => skip_bytes(buf, 3)?,
-        Marker::FixExt4 => skip_bytes(buf, 5)?,
-        Marker::FixExt8 => skip_bytes(buf, 9)?,
-        Marker::FixExt16 => skip_bytes(buf, 17)?,
-        Marker::Ext8 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u8()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            skip_bytes(buf, usize::from(len) + 1)?;
-        }
-        Marker::Ext16 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u16()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            skip_bytes(buf, usize::from(len) + 1)?;
-        }
-        Marker::Ext32 => {
-            let len = buf
-                .as_mut_slice()
-                .read_data_u32()
-                .map_err(|_| DecodeError::InvalidFormat(SKIP_MSG.to_owned()))?;
-            // `len` can be `u32::MAX`, which overflows `usize` on 32-bit targets: the checked
-            // add turns that into a decode error instead of a panic.
-            let bytes = usize::try_from(len)
-                .ok()
-                .and_then(|len| len.checked_add(1))
-                .ok_or_else(|| {
-                    DecodeError::InvalidFormat(
-                        "Failed to skip unknown V1 value: invalid ext length".to_owned(),
-                    )
-                })?;
-            skip_bytes(buf, bytes)?;
-        }
-        Marker::Reserved => {
-            return Err(DecodeError::InvalidFormat(
-                "Failed to skip unknown V1 value: reserved marker".to_owned(),
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// Decodes the top-level V1 payload map: tracer metadata fields + chunks array.
-fn decode_payload<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_payload<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<TracerPayload<T>, DecodeError>
 where
@@ -483,8 +319,8 @@ where
     Ok(payload)
 }
 
-fn decode_chunks<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_chunks<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<Vec<TraceChunk<T>>, DecodeError>
 where
@@ -499,8 +335,8 @@ where
     Ok(chunks)
 }
 
-fn decode_chunk<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_chunk<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<TraceChunk<T>, DecodeError>
 where

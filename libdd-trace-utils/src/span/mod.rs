@@ -8,11 +8,10 @@ pub mod v05;
 pub mod v1;
 pub mod vec_map;
 
-use crate::msgpack_decoder::decode::buffer::{read_string_ref_nomut, Buffer, RmpCursor};
+use crate::msgpack_decoder::decode::buffer::{read_string_ref_nomut, Buffer};
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
-use rmp::decode;
 use serde::Serialize;
 use std::borrow::{Borrow, Cow};
 use std::fmt;
@@ -102,29 +101,31 @@ pub trait TraceData: Default + Clone + Debug + PartialEq {
     type Bytes: SpanBytes;
 }
 
-pub trait DeserializableTraceData: TraceData {
-    /// `rmp` read cursor over the buffer's payload, at the payload's honest data lifetime
-    /// (`decode::Bytes<'a>` for both modes, but the parameter lets each mode pick the lifetime
-    /// it can prove: the borrowed slice's `'a` for `SliceData`, the buffer's payload borrow
-    /// for `BytesData`).
-    type Cursor<'s>: RmpCursor;
+/// Implemented by the two deserialization modes, parameterized by `'a`, the buffer's data
+/// lifetime: `SliceData<'a>` implements it at the slice's real lifetime, `BytesData` at the
+/// caller's payload borrow. This ties `Buffer<'a, T>`'s cursor to the lifetime the mode's
+/// types can actually prove, so decoded values borrow from the payload honestly.
+pub trait DeserializableTraceData<'a>: TraceData {
+    /// The borrowed input backing store. This is separate from `TraceData::Bytes`, which is
+    /// the representation stored in the decoded payload.
+    type Source: ?Sized;
 
-    /// Slices `bytes` bytes at the cursor, advances the cursor past them, and returns an
-    /// owning handle over the sliced range. Returns `None` (without advancing) if fewer than
-    /// `bytes` bytes remain.
-    fn try_slice_and_advance(buf: &mut Buffer<'_, Self>, bytes: usize) -> Option<Self::Bytes>;
+    /// Slices `bytes` bytes at the buffer's cursor, advances the buffer past them, and returns
+    /// an owning handle over the sliced range. Returns `None` (without advancing) if fewer
+    /// than `bytes` bytes remain.
+    fn try_slice_and_advance(buf: &mut Buffer<'a, Self>, bytes: usize) -> Option<Self::Bytes>;
 
-    /// Reads a msgpack string at the cursor, advances the cursor past it, and returns the
-    /// string interned against the buffer's owning handle.
-    fn read_string(buf: &mut Buffer<'_, Self>) -> Result<Self::Text, DecodeError>;
+    /// Reads a msgpack string at the buffer's cursor, advances the buffer past it, and returns
+    /// the string interned against the buffer's input source.
+    fn read_string(buf: &mut Buffer<'a, Self>) -> Result<Self::Text, DecodeError>;
 
-    /// Interns a string harvested while skipping an unrecognized V1 field for forward
-    /// compatibility. `bytes` is the skipped string's byte range at the payload's honest
-    /// lifetime: implementations must derive `Self::Text` from it and `owner` so a refcounted
-    /// backing allocation isn't freed out from under the interned string. Returns `None` when
-    /// the bytes are not valid UTF-8 (ignored: the V1 encoder never produces such strings, so
-    /// they can never be the target of a later back-reference).
-    fn intern_skipped_bytes(owner: &Self::Bytes, bytes: &Self::Bytes) -> Option<Self::Text>;
+    /// Interns a string harvested while skipping an unrecognized V1 field, for forward
+    /// compatibility: a later field may back-reference a string that first appeared inline
+    /// inside the skipped value, so skipping must not desync the string table. Both `source`
+    /// and `s` borrow from the payload at its honest lifetime `'a`. Returns `None` when the
+    /// string cannot be interned (ignored: the V1 encoder never emits strings that would fail
+    /// this, so they can never be the target of a later back-reference).
+    fn intern_skipped_str(source: &'a Self::Source, s: &'a str) -> Option<Self::Text>;
 }
 
 /// TraceData implementation using `Bytes` and `BytesString`.
@@ -135,34 +136,35 @@ impl TraceData for BytesData {
     type Bytes = Bytes;
 }
 
-impl DeserializableTraceData for BytesData {
-    type Cursor<'s> = decode::Bytes<'s>;
+impl<'a> DeserializableTraceData<'a> for BytesData {
+    type Source = Bytes;
 
     #[inline]
-    fn try_slice_and_advance(buf: &mut Buffer<'_, Self>, bytes: usize) -> Option<Bytes> {
-        // The cursor's remaining bytes are a subslice of the full `owner` payload, so
-        // `slice_ref` cannot fail: it hands out a refcounted handle over the same range.
-        let slice = buf.as_mut_slice().remaining_slice().get(..bytes)?;
-        let data = buf.bytes().slice_ref(slice)?;
+    fn try_slice_and_advance(buf: &mut Buffer<'a, Self>, bytes: usize) -> Option<Bytes> {
+        // The remaining bytes are a subslice of the full source payload, so `slice_ref`
+        // hands out a refcounted handle over the same allocation.
+        let slice = buf.remaining().get(..bytes)?;
+        let data = buf.source().slice_ref(slice)?;
         buf.advance(bytes);
         Some(data)
     }
 
     #[inline]
-    fn read_string(buf: &mut Buffer<'_, Self>) -> Result<BytesString, DecodeError> {
-        let (s, rest) = read_string_ref_nomut(buf.as_mut_slice().remaining_slice())?;
-        // `s` is a subslice of the full `owner` payload, so interning cannot fail.
-        let string = BytesString::from_bytes_slice(buf.bytes(), s);
-        *buf.as_mut_slice() = decode::Bytes::new(rest);
+    fn read_string(buf: &mut Buffer<'a, Self>) -> Result<BytesString, DecodeError> {
+        let remaining = buf.remaining();
+        let (s, rest) = read_string_ref_nomut(remaining)?;
+        // `s` is a subslice of the source payload, so interning is zero-copy and cannot fail.
+        let string = BytesString::from_bytes_slice(buf.source(), s);
+        buf.advance(remaining.len() - rest.len());
         Ok(string)
     }
 
     #[inline]
-    fn intern_skipped_bytes(owner: &Bytes, bytes: &Bytes) -> Option<BytesString> {
-        // The lifetime of `s` doesn't matter: `from_bytes_slice` validates containment and
-        // hands out a handle holding its own refcount on the payload allocation.
-        let s = std::str::from_utf8(bytes.as_ref()).ok()?;
-        Some(BytesString::from_bytes_slice(owner, s))
+    fn intern_skipped_str(source: &'a Bytes, s: &'a str) -> Option<BytesString> {
+        // `try_from_bytes_slice` validates that `s` points into `source` and hands out a
+        // handle holding its own refcount on the payload allocation, so the interned string
+        // outlives the buffer itself.
+        BytesString::try_from_bytes_slice(source, s)
     }
 }
 
@@ -174,29 +176,29 @@ impl<'a> TraceData for SliceData<'a> {
     type Bytes = &'a [u8];
 }
 
-impl<'a> DeserializableTraceData for SliceData<'a> {
-    type Cursor<'s> = decode::Bytes<'a>;
+impl<'a> DeserializableTraceData<'a> for SliceData<'a> {
+    type Source = [u8];
 
     #[inline]
-    fn try_slice_and_advance(buf: &mut Buffer<'_, Self>, bytes: usize) -> Option<&'a [u8]> {
+    fn try_slice_and_advance(buf: &mut Buffer<'a, Self>, bytes: usize) -> Option<&'a [u8]> {
         // The cursor views the payload at its real lifetime `'a`.
-        let slice = buf.as_mut_slice().remaining_slice().get(..bytes)?;
+        let slice = buf.remaining().get(..bytes)?;
         buf.advance(bytes);
         Some(slice)
     }
 
     #[inline]
-    fn read_string(buf: &mut Buffer<'_, Self>) -> Result<Cow<'a, str>, DecodeError> {
-        let (s, rest) = read_string_ref_nomut(buf.as_mut_slice().remaining_slice())?;
-        *buf.as_mut_slice() = decode::Bytes::new(rest);
+    fn read_string(buf: &mut Buffer<'a, Self>) -> Result<Cow<'a, str>, DecodeError> {
+        let remaining = buf.remaining();
+        let (s, rest) = read_string_ref_nomut(remaining)?;
+        buf.advance(remaining.len() - rest.len());
         Ok(Cow::Borrowed(s))
     }
 
     #[inline]
-    fn intern_skipped_bytes(_owner: &&'a [u8], bytes: &&'a [u8]) -> Option<Cow<'a, str>> {
-        // No refcounted allocation to preserve here: the bytes borrow from a plain slice
-        // the caller owns for `'a`.
-        std::str::from_utf8(bytes).ok().map(Cow::Borrowed)
+    fn intern_skipped_str(_source: &'a [u8], s: &'a str) -> Option<Cow<'a, str>> {
+        // Nothing to preserve here: `s` already borrows from the source slice at `'a`.
+        Some(Cow::Borrowed(s))
     }
 }
 

@@ -15,8 +15,8 @@ const NULL_MARKER: &u8 = &0xc0;
 /// # Errors
 /// Fails if the buffer doesn't contain a valid utf8 msgpack string or a null marker.
 #[inline]
-pub fn read_nullable_string<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_nullable_string<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<T::Text, DecodeError> {
     if handle_null_marker(buf) {
         Ok(T::Text::default())
@@ -33,8 +33,8 @@ pub fn read_nullable_string<T: DeserializableTraceData>(
 /// valid utf8 msgpack string.
 /// Null values are skipped.
 #[inline]
-pub fn read_str_map_to_vecmap<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_str_map_to_vecmap<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     let len = decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
@@ -58,8 +58,8 @@ pub fn read_str_map_to_vecmap<T: DeserializableTraceData>(
 /// or if any key or value is not a valid utf8 msgpack string.
 /// Null values are skipped (key not inserted into vec).
 #[inline]
-pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_nullable_str_map_to_strings<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(VecMap::new());
@@ -71,8 +71,8 @@ pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
 /// Read a hashmap of (string, string) from the slices `buf`.
 /// Used for SpanLink/SpanEvent attributes which remain as HashMap.
 #[inline]
-pub fn read_str_map_to_hashmap<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_str_map_to_hashmap<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<std::collections::HashMap<T::Text, T::Text>, DecodeError>
 where
     T::Text: std::hash::Hash + Eq,
@@ -97,7 +97,7 @@ where
 /// # Returns
 /// A boolean indicating whether the next value is null or not.
 #[inline]
-pub fn handle_null_marker<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> bool {
+pub fn handle_null_marker<'a, T: DeserializableTraceData<'a>>(buf: &mut Buffer<'a, T>) -> bool {
     if buf.first() == Some(NULL_MARKER) {
         buf.advance(1);
         true
