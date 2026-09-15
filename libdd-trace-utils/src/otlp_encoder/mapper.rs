@@ -268,10 +268,7 @@ fn collect_span_attributes<T: TraceData>(
             + (has_span_type as usize)
             + (has_resource_name as usize)
     };
-    let total = promoted
-        + (meta_len - excluded_compat_tags)
-        + metrics_len
-        + meta_struct_len;
+    let total = promoted + (meta_len - excluded_compat_tags) + metrics_len + meta_struct_len;
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)
 }

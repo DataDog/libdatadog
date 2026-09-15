@@ -489,9 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn is_deduped_false_initially() {
+    fn is_deduped_true_initially() {
         let m: VecMap<&str, i32> = VecMap::new();
-        assert!(!m.is_deduped());
+        assert!(m.is_deduped());
     }
 
     #[test]

@@ -971,8 +971,8 @@ impl<
 
         if let Some(otlp) = &self.otlp {
             // Unlike the agent path, there is no downstream agent to drop unsampled traces,
-            // if client-side-stats is enabled, we have already dropped chunks after performing stat computations
-            // otherwise drop here
+            // if client-side-stats is enabled, we have already dropped chunks after performing stat
+            // computations otherwise drop here
             if !client_side_stats {
                 libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             }
