@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::DeserializableTraceData;
+use crate::span::{BytesData, DeserializableTraceData, SliceData};
 use rmp::decode;
 use rmp::decode::DecodeStringError;
-
-use std::borrow::Borrow;
+use rmpv::decode::value_ref::BorrowRead;
+use std::io::Read;
 use std::ops::Deref;
 
 /// Read a string from `buf`.
@@ -26,33 +26,84 @@ pub fn read_string_ref_nomut(buf: &[u8]) -> Result<(&str, &[u8]), DecodeError> {
     })
 }
 
-/// Internal Buffer used to wrap msgpack data for decoding.
-/// Provides a couple accessors to extract data from the buffer.
-pub struct Buffer<T: DeserializableTraceData>(T::Bytes);
+/// Internal buffer used to decode a msgpack payload.
+///
+/// `source` borrows the full input backing store. It never advances and is used to derive
+/// decoded strings and byte ranges with the correct ownership (`BytesString` / refcounted
+/// slicing for `BytesData`, borrowed values for `SliceData`). `reader` is the single source
+/// of decoding position over that input.
+///
+/// The buffer exposes two reading surfaces over the same position:
+/// - [`Buffer::as_mut_slice`]: `rmp` implements its sealed [`rmp::decode::RmpRead`] natively for
+///   the underlying zero-copy reader, which is what the decode hot path uses.
+/// - [`std::io::Read`] and [`BorrowRead`], so [`rmpv::decode::read_value_ref`] can decode a whole
+///   value from the buffer while borrowing strings directly from the payload at its honest lifetime
+///   (no `'static` lie, no unsafe).
+///
+/// `T: DeserializableTraceData<'a>` ties `'a` to the mode's input source: `&'a [u8]` for
+/// `SliceData<'a>`, `&'a Bytes` for `BytesData`.
+pub struct Buffer<'a, T: DeserializableTraceData<'a>> {
+    source: &'a T::Source,
+    /// `rmp`'s reader over the remaining bytes. Its position is only used for rmp's error
+    /// messages, which the decoder discards.
+    reader: decode::Bytes<'a>,
+}
 
-impl<T: DeserializableTraceData> Buffer<T> {
-    pub fn new(data: T::Bytes) -> Self {
-        Buffer(data)
+impl<'a> From<&'a [u8]> for Buffer<'a, SliceData<'a>> {
+    fn from(source: &'a [u8]) -> Self {
+        Self {
+            source,
+            reader: decode::Bytes::new(source),
+        }
+    }
+}
+
+impl<'a> From<&'a libdd_tinybytes::Bytes> for Buffer<'a, BytesData> {
+    fn from(source: &'a libdd_tinybytes::Bytes) -> Self {
+        Self {
+            source,
+            reader: decode::Bytes::new(source.as_ref()),
+        }
+    }
+}
+
+impl<'a, T: DeserializableTraceData<'a>> Buffer<'a, T> {
+    /// Returns a mutable handle to the buffer's `rmp` reader. `rmp`'s read functions advance
+    /// it in place (zero copy), which advances the buffer.
+    pub fn as_mut_slice(&mut self) -> &mut decode::Bytes<'a> {
+        &mut self.reader
     }
 
-    /// Returns a mutable reference to the underlying slice.
-    pub fn as_mut_slice(&mut self) -> &mut &'static [u8] {
-        T::get_mut_slice(&mut self.0)
+    /// Returns the full input backing store.
+    #[must_use]
+    pub fn source(&self) -> &'a T::Source {
+        self.source
     }
 
-    /// Returns an immutable reference to the underlying slice, without advancing the buffer.
-    pub fn as_slice(&self) -> &[u8] {
-        self.0.borrow()
+    /// Returns the unconsumed bytes at the payload's honest lifetime without advancing.
+    #[must_use]
+    pub fn remaining(&self) -> &'a [u8] {
+        self.reader.remaining_slice()
     }
 
-    /// Returns the underlying owned bytes buffer.
-    pub fn bytes(&self) -> &T::Bytes {
-        &self.0
+    /// Advances the buffer by `bytes` without producing a value. Returns `false` (and leaves
+    /// the buffer untouched) if fewer than `bytes` bytes remain.
+    pub fn advance(&mut self, bytes: usize) -> bool {
+        match self.remaining().get(bytes..) {
+            Some(rest) => {
+                // Rebuild the reader over the new position: O(1), no data movement. Its
+                // position (only used for rmp error reporting, which the decoder discards)
+                // resets to zero.
+                self.reader = decode::Bytes::new(rest);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Tries to extract a slice of `bytes` from the buffer and advances the buffer.
     pub fn try_slice_and_advance(&mut self, bytes: usize) -> Option<T::Bytes> {
-        T::try_slice_and_advance(&mut self.0, bytes)
+        T::try_slice_and_advance(self, bytes)
     }
 
     /// Read a string from the slices `buf`.
@@ -60,7 +111,7 @@ impl<T: DeserializableTraceData> Buffer<T> {
     /// # Errors
     /// Fails if the buffer doesn't contain a valid utf8 msgpack string.
     pub fn read_string(&mut self) -> Result<T::Text, DecodeError> {
-        T::read_string(&mut self.0)
+        T::read_string(self)
     }
 
     /// Caps a decoded element count at the bytes remaining in the buffer. Each msgpack
@@ -72,10 +123,85 @@ impl<T: DeserializableTraceData> Buffer<T> {
     }
 }
 
-impl<T: DeserializableTraceData> Deref for Buffer<T> {
+/// Required by rmpv's [`BorrowRead`] supertrait and by rmp's sealed `RmpRead` blanket
+/// implementation for the marker and scalar reads performed inside `read_value_ref`.
+impl<'a, T: DeserializableTraceData<'a>> Read for Buffer<'a, T> {
+    #[inline]
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.remaining();
+        let n = out.len().min(remaining.len());
+        out[..n].copy_from_slice(&remaining[..n]);
+        self.advance(n);
+        Ok(n)
+    }
+}
+
+/// Lets rmpv decode a zero-copy [`rmpv::ValueRef`] directly from the buffer.
+impl<'a, T: DeserializableTraceData<'a>> BorrowRead<'a> for Buffer<'a, T> {
+    #[inline]
+    fn fill_buf(&self) -> &'a [u8] {
+        self.remaining()
+    }
+
+    #[inline]
+    fn consume(&mut self, len: usize) {
+        // rmpv only consumes lengths it has first checked against `fill_buf`, so the advance
+        // always succeeds here.
+        self.advance(len);
+    }
+}
+
+impl<'a, T: DeserializableTraceData<'a>> Deref for Buffer<'a, T> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.0.borrow()
+        self.remaining()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn buffer_advance_respects_bounds() {
+        let bytes = [1, 2, 3];
+        let mut buffer = Buffer::<SliceData>::from(&bytes[..]);
+        assert!(buffer.advance(2));
+        assert_eq!(buffer.remaining(), &[3][..]);
+        assert!(!buffer.advance(2), "advancing past the end must fail");
+        assert_eq!(
+            buffer.remaining(),
+            &[3][..],
+            "and leave the buffer untouched"
+        );
+        assert!(buffer.advance(1));
+        assert!(buffer.remaining().is_empty());
+    }
+
+    #[test]
+    fn buffer_is_usable_by_rmp_and_rmpv() {
+        // fixstr "hi" followed by a positive fixint 42: rmpv must decode the string straight
+        // from the buffer (borrowed, no copy) and rmp must read the int after it.
+        let bytes = [0xa2, b'h', b'i', 42];
+        let mut buffer = Buffer::<SliceData>::from(&bytes[..]);
+        let value =
+            rmpv::decode::read_value_ref(&mut buffer).expect("rmpv must read from the buffer");
+        assert_eq!(value, rmpv::ValueRef::String("hi".into()));
+        let n: u8 = decode::read_int(buffer.as_mut_slice())
+            .expect("rmp must read the int from the buffer's reader");
+        assert_eq!(n, 42);
+        assert!(buffer.remaining().is_empty());
+    }
+
+    #[test]
+    fn rmp_reader_and_borrow_read_advance_the_same_buffer() {
+        // Both reading surfaces must share the buffer's position: a marker read through the
+        // rmp reader must be visible to `remaining` (and vice versa).
+        let bytes = [0xc0, 42];
+        let mut buffer = Buffer::<SliceData>::from(&bytes[..]);
+        let marker = decode::read_marker(buffer.as_mut_slice()).expect("marker read");
+        assert_eq!(marker, rmp::Marker::Null);
+        assert_eq!(buffer.remaining(), &[42]);
     }
 }

@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
-use rmp::{decode::RmpRead, Marker};
+use rmp::Marker;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -148,7 +148,7 @@ impl TryFrom<Number> for f64 {
     }
 }
 
-fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
+fn read_num<R: rmp::decode::RmpRead>(buf: &mut R, allow_null: bool) -> Result<Number, DecodeError> {
     match rmp::decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for number".to_owned()))?
     {
@@ -196,15 +196,19 @@ fn read_num(buf: &mut &[u8], allow_null: bool) -> Result<Number, DecodeError> {
 }
 
 /// Read a msgpack encoded number from `buf`.
-pub fn read_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Buffer<T>,
+pub fn read_number<'a, T: DeserializableTraceData<'a>, R: TryFrom<Number, Error = DecodeError>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<R, DecodeError> {
     read_num(buf.as_mut_slice(), false)?.try_into()
 }
 
 /// Read a msgpack encoded number from `buf` and return 0 if null.
-pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error = DecodeError>>(
-    buf: &mut Buffer<T>,
+pub fn read_nullable_number<
+    'a,
+    T: DeserializableTraceData<'a>,
+    R: TryFrom<Number, Error = DecodeError>,
+>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<R, DecodeError> {
     read_num(buf.as_mut_slice(), true)?.try_into()
 }
@@ -222,7 +226,7 @@ mod tests {
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: u8 = read_number(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
@@ -233,7 +237,7 @@ mod tests {
         let expected_value = 42;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: i8 = read_number(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
@@ -244,7 +248,7 @@ mod tests {
         let expected_value = 42.98;
         let val = json!(expected_value);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: f64 = read_number(&mut slice).unwrap();
         assert_eq!(result, expected_value);
     }
@@ -254,7 +258,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: Result<u8, DecodeError> = read_number(&mut slice);
         assert!(matches!(result, Err(DecodeError::InvalidType(_))));
 
@@ -269,7 +273,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: u8 = read_nullable_number(&mut slice).unwrap();
         assert_eq!(result, 0);
     }
@@ -279,7 +283,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: i8 = read_nullable_number(&mut slice).unwrap();
         assert_eq!(result, 0);
     }
@@ -289,7 +293,7 @@ mod tests {
         let mut buf = Vec::new();
         let val = json!(null);
         rmp_serde::encode::write_named(&mut buf, &val).unwrap();
-        let mut slice = Buffer::<SliceData>::new(buf.as_slice());
+        let mut slice = Buffer::<SliceData>::from(buf.as_slice());
         let result: f64 = read_nullable_number(&mut slice).unwrap();
         assert_eq!(result, 0.0);
     }

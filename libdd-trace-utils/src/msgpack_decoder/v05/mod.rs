@@ -7,7 +7,7 @@ use crate::msgpack_decoder::decode::{
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::vec_map::VecMap;
-use crate::span::DeserializableTraceData;
+use crate::span::{BytesData, DeserializableTraceData, SliceData};
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
@@ -69,7 +69,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<BytesData>::from(&data))
 }
 
 /// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
@@ -127,12 +127,12 @@ pub fn from_bytes(
 /// assert_eq!("", decoded_span.name);
 /// ```
 pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<SliceData>::from(data))
 }
 
 #[allow(clippy::type_complexity)]
-fn from_buffer<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+fn from_buffer<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
 ) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError>
 where
     T::Text: Clone,
@@ -168,8 +168,8 @@ where
     Ok((traces, start_len - data.len()))
 }
 
-fn deserialize_dict<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+fn deserialize_dict<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
 ) -> Result<Vec<T::Text>, DecodeError> {
     let dict_len = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
@@ -182,8 +182,8 @@ fn deserialize_dict<T: DeserializableTraceData>(
     Ok(dict)
 }
 
-fn deserialize_span<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+fn deserialize_span<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
     dict: &[T::Text],
 ) -> Result<Span<T>, DecodeError>
 where
@@ -221,8 +221,8 @@ where
     Ok(span)
 }
 
-fn get_from_dict<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+fn get_from_dict<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
     dict: &[T::Text],
 ) -> Result<T::Text, DecodeError>
 where
@@ -237,8 +237,8 @@ where
     }
 }
 
-fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn read_indexed_map_to_bytes_strings<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     dict: &[T::Text],
 ) -> Result<VecMap<T::Text, T::Text>, DecodeError>
 where
@@ -256,8 +256,8 @@ where
     Ok(map)
 }
 
-fn read_metrics<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn read_metrics<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     dict: &[T::Text],
 ) -> Result<VecMap<T::Text, f64>, DecodeError>
 where
@@ -281,7 +281,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SliceData;
     use std::collections::HashMap;
 
     type V05Span = (
@@ -320,7 +319,7 @@ mod tests {
     fn deserialize_dict_test() {
         let dict = vec!["foo", "bar", "baz"];
         let mpack = rmp_serde::to_vec(&dict).unwrap();
-        let mut payload = Buffer::<SliceData>::new(mpack.as_ref());
+        let mut payload = Buffer::<SliceData>::from(mpack.as_ref());
 
         let result = deserialize_dict(&mut payload).unwrap();
         assert_eq!(dict, result);
