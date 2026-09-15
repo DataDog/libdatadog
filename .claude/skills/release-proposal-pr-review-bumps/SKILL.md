@@ -8,7 +8,7 @@ description: Review a libdatadog (or similar Rust workspace) release-proposal PR
 A release-proposal PR (usually authored by the release bot, e.g. `chore(release): proposal for ...`) bumps several crates at once. Each crate's bump is derived from the commits since its last release. The reviewer's job has **two layers**:
 
 1. **Per-crate:** confirm each crate's bump matches the **real public-API change in that specific crate** (the bulk of this skill).
-2. **Workspace-level:** confirm the bumps are *consistent across the dependency graph* — specifically that every major bump has cascaded through its reverse-dependency closure (see "The major-version cascade" below). The release bot routinely gets this wrong: it bumps/releases only crates that have their own commits, while silently rewriting path-dependency requirements everywhere else. That produces under-bumped dependents that force a new major of a shared crate onto consumers without a version bump — the single most damaging defect in these PRs. **Always run this check; it is easy to miss because the under-bumped crate's own diff looks innocent.**
+2. **Workspace-level:** confirm the bumps are *consistent across the dependency graph* — specifically that every major bump **of a crate that is unsafe to duplicate** has cascaded through its reverse-dependency closure (see "The major-version cascade" below, which gates the cascade on that test — a safe-to-duplicate crate does not cascade). The release bot routinely gets this wrong: it bumps/releases only crates that have their own commits, while silently rewriting path-dependency requirements everywhere else. That produces under-bumped dependents that force a new major of a shared crate onto consumers without a version bump — the single most damaging defect in these PRs. **Always run this check; it is easy to miss because the under-bumped crate's own diff looks innocent.**
 
 ## The core principle
 
@@ -19,8 +19,17 @@ A commit marked breaking (`!` in its conventional-commit title, e.g. `feat(data-
 
 Bump rules (per crate, based on the highest-severity change):
 - **major** — a breaking public-API change: removed/renamed/signature-changed `pub` item; changed `pub` struct field type; changed/removed enum variant; removed trait method; dropped public trait impl (e.g. a `derive` removed in default builds); **plus any of the additive-but-breaking forms below**.
-- **minor** — additive *and* checked non-breaking: new `pub` items, nothing removed or changed, **and none of the additions is one of the additive-but-breaking forms below**. (Promoting a `pub(crate)`/private item to `pub`, or renaming a non-`pub` item, counts as additive — it was never externally visible.)
-- **patch** — internal only: private code, `#[cfg(test)]`/`mod tests`, benches, `[dev-dependencies]`, comments, bug fixes with no public-API change.
+- **minor** — additive *and* checked non-breaking: new `pub` items, nothing removed or changed, **and none of the additions is one of the additive-but-breaking forms below**. (Promoting a `pub(crate)`/private item to `pub` counts as additive — it was never externally visible.)
+- **patch** — internal only: private code (including *renaming* a private item — that has no public-API delta at all), `#[cfg(test)]`/`mod tests`, benches, `[dev-dependencies]`, comments, bug fixes with no public-API change.
+
+> **`pub` is not the reachability test.** Classify a rename or removal by whether the item is
+> *externally reachable*, never by the presence of the `pub` token:
+> - A `#[macro_export] macro_rules!` item carries no `pub` yet **is** public API — e.g.
+>   `libdd-common`'s `tag!` (`src/tag.rs`), `cstr!` and `cstr_u8!` (`src/cstr.rs`). Renaming or
+>   removing one breaks every consumer: **major**.
+> - Conversely, a rename confined to a genuinely private item — or to a `pub` item inside a
+>   non-`pub` module that nothing re-exports with `pub use` — has no public delta: **patch**, not
+>   minor.
 
 ### Additive-but-breaking: "new `pub` item" is NOT automatically minor
 
@@ -38,7 +47,7 @@ A new item can break every downstream compile without removing or changing anyth
 1. **Sub-major bump carrying a `!` commit** (minor/patch crate that includes a breaking-marked commit) — the highest-priority thing to verify. Confirm the breaking part is NOT in this crate.
 2. **Transitive breakage** — a crate that re-exports, or uses in a `pub` signature, a type from a dependency that changed. If the changed type leaks into the crate's public API, the crate breaks too. If it's only used internally / behind a trait with stable signatures, it does not.
    - Check: does the crate `pub use` the changed type? Does any `pub fn`/struct field expose it directly (vs. being generic over a trait whose method signatures are unchanged)?
-3. **Feature-gated breaks** — a breaking change behind a non-default Cargo feature is weaker justification for a major under strict default-feature semver. Note it, but a default-surface break elsewhere still independently justifies major.
+3. **Feature-gated breaks are still breaks** — a breaking change behind a non-default Cargo feature **requires major**, unless that feature is explicitly documented as outside the crate's compatibility guarantees (experimental/internal). A consumer who enables the feature stops compiling after a `cargo update` picks up what was labelled a patch or minor. This repo treats feature surfaces as in scope for the compatibility review: `scripts/semver-level.sh` deliberately runs `cargo semver-checks` with `--all-features`. Two caveats: the `cargo public-api` pass runs *default* features only, so a signature change behind a non-default feature is seen by neither pass (see "What the automated level cannot see" #4) and must be checked by hand; and a default-surface break elsewhere independently justifies major regardless of what the gated surface does.
 4. **Forced-major dependency bumps are often breaking** (do NOT reflexively treat as patch). When crate A goes **major**, every dependent's `Cargo.toml` requirement on A is rewritten to A's new major (`^1` → `^2`), forcing A's new major onto the dependent's consumers. Whether that obliges the dependent to *also* go major depends on whether A is **safe to duplicate** — run the two-part test in "The major-version cascade". Short version: if A is a public dependency of the dependent (exposed type, or a foreign-trait-impl on a public type) **or** A is unsafe to duplicate (singleton/global state, single-artifact link) and consumers use `^` ranges, the dependent must go **major** too. (The older guidance "dep bump = patch" is wrong for these.) Minor/patch dependency bumps of A (same major) never cascade — `^1.2` already unifies with `1.3.0`.
 5. **Initial releases** (e.g. `1.0.0`, CHANGELOG newly added, previously `publish = false`/unpublished) — nothing to semver-diff against; just confirm the version is sane and the crate was genuinely unpublished.
 6. **Test/bench-only commits** — patch is the safe, conservative choice even when arguably no bump was needed.
@@ -52,11 +61,19 @@ Two semver-incompatible majors of the same crate can be resolved into a single d
 
 A crate is safe to duplicate (two majors can coexist harmlessly) **only if both** of these hold. Failing *either* one makes duplication harmful and forces the cascade. Checking only the first is the classic mistake.
 
-**(a) No process-global / singleton state.** Grep the crate's `src` for anything that must be unique per process:
+**(a) No process-global / singleton state.** Scan the crate for anything that must be unique per process — **and do not stop at `*.rs`**. A crate can hold its singleton state, or export its symbols, in C/C++, and can arrange single-artifact linking from `build.rs`; an `*.rs`-only grep would declare such a crate safe to duplicate and wrongly suppress a required cascade. Concrete shape in this repo: `libdd-profiling-heap-sampler` (publishable) keeps `_Atomic uint64_t dd_sampling_interval_override` and `_Thread_local` storage in `src/tl_state.c`, and its `build.rs` compiles native shims and emits `cargo:rustc-link-lib`.
    ```bash
-   grep -rnE 'static |lazy_static|once_cell|OnceLock|OnceCell|Lazy|thread_local|#\[no_mangle\]|#\[export_name|#\[ctor|atexit|pthread_atfork|signal\(' <crate>/src --include=*.rs
+   # Rust globals, exported symbols, ctors, fork/signal/atexit handlers (build.rs included;
+   # 2>/dev/null so a crate with no build.rs is silent rather than warning)
+   grep -rnE 'static |lazy_static|once_cell|OnceLock|OnceCell|Lazy|thread_local|#\[no_mangle\]|#\[export_name|#\[ctor|atexit|pthread_atfork|signal\(' <crate>/src <crate>/build.rs --include=*.rs 2>/dev/null
+   # the same, in native sources and headers compiled into the crate. `^static [^(]+(=|;)`
+   # deliberately matches file-scope static *variables* only — a bare `static ` would bury the
+   # signal under every file-local C function and `static inline` header helper.
+   grep -rnE '_Atomic|_Thread_local|__thread|__declspec\(thread\)|__attribute__\(\(constructor|atexit|pthread_atfork|signal\(|^static [^(]+(=|;)' <crate> --include=*.c --include=*.cc --include=*.cpp --include=*.h --include=*.hpp
+   # native build + linking metadata: one shared native artifact means two majors clash at link time
+   grep -rnE 'cc::Build|\.file\(|rustc-link-lib|rustc-link-arg|rustc-link-search|^links[[:space:]]*=' <crate>/build.rs <crate>/Cargo.toml 2>/dev/null
    ```
-   Hits on real globals, FFI exported symbols, ctors, or fork/signal/atexit handlers = duplication is unsafe (two copies fight over the same process resource or clash at link time, especially inside the single FFI/C `builder` artifact). Comments and instance-scoped registration (e.g. `AtomicWaker::register`, "worker registered *on a SharedRuntime instance*") do NOT count — confirm the constructor is an instance method (`Foo::new()`), not a global accessor (`fn global() -> &'static Foo`).
+   Hits on real globals, FFI exported symbols, ctors, fork/signal/atexit handlers, or native objects / `links =` metadata = duplication is unsafe (two copies fight over the same process resource or clash at link time, especially inside the single FFI/C `builder` artifact). Comments and instance-scoped registration (e.g. `AtomicWaker::register`, "worker registered *on a SharedRuntime instance*") do NOT count — confirm the constructor is an instance method (`Foo::new()`), not a global accessor (`fn global() -> &'static Foo`). For a native hit, confirm it is real linkage rather than a `static inline` helper in a header: check whether the symbol has external linkage and whether `build.rs` actually compiles the file.
 
 **(b) No shared types/traits crossing a crate boundary.** Even a globally-stateless crate is unsafe to duplicate if its types or **traits** are part of the *integration contract* between two other crates — because v1's type/trait is a different type from v2's, so a value/impl from a v1-built crate won't satisfy a v2 bound. Check the dependents, not just the dependency:
    - Does dependent X **expose the dep's type in its public API** (re-export, `pub fn` arg/return, `pub` field)? e.g. `pub fn set_shared_runtime(_: Arc<SharedRuntime>)`.
@@ -89,7 +106,18 @@ Rules of thumb:
 
 ## Workflow
 
-1. **Fetch the PR** with `gh pr view <N> --json title,body,headRefName,baseRefName,files,commits`. The body lists each crate, its next version, the bump type, and the attributed commits. (Base ref may be another `release/...` branch in a stacked release — review only the crates in the body.)
+1. **Fetch the PR** with `gh pr view <N> --json title,body,headRefOid,baseRefOid,headRefName,baseRefName,files,commits`. The body lists each crate, its next version, the bump type, and the attributed commits. (Base ref may be another `release/...` branch in a stacked release — review only the crates in the body.)
+
+   **Resolve the refs before any `git show`.** `gh pr view` only *reports* PR information — it checks out and fetches nothing. A PR from a fork, or any branch you simply have not fetched, has no local ref under its `headRefName`, so every `git show "$HEAD_REF:…"` would fail. Use the **OIDs**, fetch them, and verify both are readable before continuing:
+   ```bash
+   HEAD_REF=$(gh pr view <N> --json headRefOid --jq .headRefOid)
+   BASE_REF=$(gh pr view <N> --json baseRefOid --jq .baseRefOid)
+   git fetch origin "$HEAD_REF" "$BASE_REF" 2>/dev/null || git fetch --all
+   for r in "$HEAD_REF" "$BASE_REF"; do
+     git cat-file -e "$r^{commit}" 2>/dev/null || { echo "FATAL: $r unavailable locally" >&2; exit 1; }
+   done
+   ```
+   Never let a ref-lookup failure degrade into an empty result: an empty dependency graph reads as "no cascade defects", which is the exact opposite of an unverified one.
 2. **Resolve commits locally.** For each PR number in the body: `git log --oneline --all --grep="(#<pr>)" -1`. Confirm all are present.
 3. **Map each commit's crate footprint** so you know which commits are multi-crate sweeps:
    ```
@@ -103,15 +131,28 @@ Rules of thumb:
    - **Before returning `minor`, walk the additive-but-breaking list.** For every added `pub` item, say which form it is and why it is exempt: new enum variant → quote the enum's `#[non_exhaustive]` at the *base* ref; new trait method → quote its default body or the sealing mechanism; new struct field → quote the pre-existing private field or `#[non_exhaustive]`; new trait impl / shadowing inherent method → state the inference risk explicitly. "Nothing was removed" is not evidence for minor.
    - Check transitive breakage via re-exports and `pub` signatures (point 2 above) and `Cargo.toml` dep changes.
    - Return a verdict: is the proposed bump correct, too low, or too high — with cited evidence.
-6. **Run the major-version cascade check** (workspace-level — do this whenever ANY crate in the proposal gets a *major* bump). For each major-bumped crate, compute its reverse-dependency closure among publishable workspace crates and confirm every crate in it is also bumped **major**. A helper to build the closure and surface under-bumped crates against the proposal head/base refs:
+6. **Run the major-version cascade check** (workspace-level — do this whenever ANY crate in the proposal gets a *major* bump). First run the "safe to duplicate" test on each major-bumped crate: **only the crates that FAIL it cascade.** Then, for those crates only, compute the reverse-dependency closure among publishable workspace crates and confirm every crate in it is also bumped **major**. A helper to build the closure and surface under-bumped crates against the proposal head/base refs:
    ```bash
    python3 - "$HEAD_REF" "$BASE_REF" <<'PY'
    import subprocess, re, sys, os
    head, base = sys.argv[1], sys.argv[2]
-   MAJOR_BUMPED = {"libdd-shared-runtime","libdd-trace-utils","libdd-data-pipeline"}  # set to the crates getting a MAJOR bump in this proposal
+   # Seed with ONLY the major-bumped crates that FAILED the safe-to-duplicate test above.
+   # A major-bumped crate passing both (a) and (b) does not cascade (see "Classifying the
+   # dependent's bump" -> "no cascade"); seeding it here manufactures false defects for
+   # every one of its publishable reverse dependents.
+   MAJOR_BUMPED = {"libdd-shared-runtime","libdd-trace-utils","libdd-data-pipeline"}
+   # A ref we cannot read must abort, never silently yield an empty graph: that would print a
+   # clean table and be misread as "cascade verified".
+   for r in (head, base):
+       if subprocess.call(["git","cat-file","-e",f"{r}^{{commit}}"],stderr=subprocess.DEVNULL)!=0:
+           sys.exit(f"FATAL: ref {r!r} unavailable locally - fetch it first (workflow step 1)")
    def manifest(ref,d):
-       try: return subprocess.check_output(["git","show",f"{ref}:{d}/Cargo.toml"],stderr=subprocess.DEVNULL).decode()
-       except Exception: return ""
+       p=subprocess.run(["git","show",f"{ref}:{d}/Cargo.toml"],capture_output=True)
+       if p.returncode==0: return p.stdout.decode()
+       err=p.stderr.decode().strip()
+       if "does not exist in" in err or "exists on disk, but not in" in err:
+           return ""                 # path genuinely absent at this ref (new crate) - expected
+       sys.exit(f"FATAL: git show {ref}:{d}/Cargo.toml failed: {err}")
    def parse(ref,d):
        t=manifest(ref,d)
        if not t: return None
@@ -134,12 +175,19 @@ Rules of thumb:
    print(f"{'crate':28} {'pub':4} {'base_ver':10} {'head_ver':10} bumped? deps-on-major")
    for d in sorted(targets - MAJOR_BUMPED):
        m=info[d]; b=parse(base,d)
-       bumped = "MAJOR" if (b and b['ver'].split('.')[0]!=m['ver'].split('.')[0]) else "** NOT-MAJOR **"
+       if b is None:
+           # No manifest at base: a genuine initial release. It has no previous public contract
+           # and no old dependency requirement to preserve, so the cascade cannot apply to it.
+           bumped="INITIAL n/a"
+       elif b['ver'].split('.')[0]!=m['ver'].split('.')[0]:
+           bumped="MAJOR"
+       else:
+           bumped="** NOT-MAJOR **"
        direct=sorted(m["deps"] & MAJOR_BUMPED)
-       print(f"{d:28} {'PUB' if m['publish'] else '-':4} {(b['ver'] if b else '?'):10} {m['ver']:10} {bumped:16} {direct}")
+       print(f"{d:28} {'PUB' if m['publish'] else '-':4} {(b['ver'] if b else '-'):10} {m['ver']:10} {bumped:16} {direct}")
    PY
    ```
-   Any `PUB` crate flagged `** NOT-MAJOR **` is a defect: it either needs adding to the release as a major bump, or (if already in the list) its bump needs raising to major. Remember the intra-closure requirement edges must also move to the new majors (e.g. `crashtracker → telemetry ^N`).
+   Any `PUB` crate flagged `** NOT-MAJOR **` is a defect: it either needs adding to the release as a major bump, or (if already in the list) its bump needs raising to major. Remember the intra-closure requirement edges must also move to the new majors (e.g. `crashtracker → telemetry ^N`). Two rows that are **not** defects: `INITIAL n/a` (no base manifest — first release of that crate, nothing to preserve; just sanity-check the starting version per subtle case 5), and every row produced when `MAJOR_BUMPED` was seeded with a crate that actually passed the safe-to-duplicate test — if you find yourself explaining away a whole column, re-check the seed.
 7. **Synthesize** a verdict table (crate | proposed | correct? | why) plus the cascade findings and any non-blocking notes (changelog accuracy, feature-gated breaks).
 
 ## What the automated level cannot see
