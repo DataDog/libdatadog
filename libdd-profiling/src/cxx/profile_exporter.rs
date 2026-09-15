@@ -7,7 +7,7 @@ use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
 use crate::internal;
-use libdd_common::Endpoint;
+use libdd_common::{parse_uri, Endpoint};
 
 struct PreparedExportArgs<'a> {
     files_to_compress: Vec<exporter::File<'a>>,
@@ -113,7 +113,7 @@ impl ProfileExporter {
             family,
             tags,
             (|| {
-                let endpoint = exporter::config::agent(agent_url.parse()?)?;
+                let endpoint = exporter::config::agent(parse_uri(agent_url)?)?;
                 Ok(apply_timeout_and_resolver(
                     endpoint,
                     timeout_ms,

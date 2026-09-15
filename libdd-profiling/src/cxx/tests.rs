@@ -984,6 +984,24 @@ fn test_exporter_create() {
     .is_ok());
 }
 
+#[cfg(unix)]
+#[test]
+fn test_exporter_create_accepts_unix_socket_agent_url() {
+    let result = ProfileExporter::create_agent_exporter(
+        TEST_LIB_NAME,
+        TEST_LIB_VERSION,
+        TEST_FAMILY,
+        vec![ffi::Tag {
+            key: "service",
+            value: "test",
+        }],
+        "unix:///var/run/datadog/apm.socket",
+        0,
+        false,
+    );
+    assert!(result.ok(), "{}", result.message());
+}
+
 #[test]
 fn test_type_conversions() {
     // AttachmentFile conversion
