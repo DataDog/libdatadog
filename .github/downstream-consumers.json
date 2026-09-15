@@ -14,7 +14,6 @@
     {
       "name": "profiling",
       "paths": [
-        ".github/downstream-consumers.json",
         "libdd-profiling/**",
         "libdd-profiling-ffi/**",
         "libdd-profiling-protobuf/**",
