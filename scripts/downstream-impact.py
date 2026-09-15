@@ -50,6 +50,7 @@ def load_config(path: Path) -> dict[str, Any]:
             continue
         supported_kinds = {
             "cargo-build",
+            "dotnet-package",
             "node-wasm",
             "php-sidecar",
             "python-extension",

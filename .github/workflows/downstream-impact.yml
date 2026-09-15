@@ -90,6 +90,14 @@ jobs:
         with:
           toolchain: 1.92.0
 
+      - name: Install libdatadog-dotnet Rust toolchain
+        if: matrix.build_kind == 'dotnet-package'
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          sudo apt-get update
+          sudo apt-get install --yes autoconf automake libtool m4
+
       - name: Cache downstream Cargo sources
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -182,6 +190,9 @@ jobs:
                 VALIDATION_COMMAND+=" $escaped_arg"
               done
               ;;
+            dotnet-package)
+              VALIDATION_COMMAND="cargo +1.87.0 install --path <libdatadog>/builder --bin release --no-default-features --features profiling,crashtracker,symbolizer,library-config --locked; release --target x86_64-unknown-linux-gnu"
+              ;;
             node-wasm)
               VALIDATION_COMMAND="npm run build --prefix packages/libdatadog"
               ;;
@@ -249,6 +260,7 @@ jobs:
             local locked_packages_file="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-locked-packages.txt"
             local locked_libdatadog_packages=()
             local source_target
+            local package_output="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-package"
 
             generate_patch_config "$libdatadog_root" "$patch_config" "$packages"
             git -C "$DOWNSTREAM_ROOT" restore --source=HEAD --worktree --staged .
@@ -329,6 +341,46 @@ jobs:
                   | tee "$messages_path" \
                   | jq -r 'select(.reason == "compiler-message") | .message.rendered // empty' \
                   | tee -a "$log_path"
+                return "${PIPESTATUS[0]}"
+                ;;
+              dotnet-package)
+                (
+                  local builder_root="$GITHUB_WORKSPACE/$ARTIFACT_NAME-$label-builder"
+                  local package_version
+                  export RUSTUP_TOOLCHAIN=1.87.0
+                  package_version=$(cargo metadata \
+                    --manifest-path "$source_target/Cargo.toml" \
+                    --format-version=1 \
+                    --no-deps \
+                    | jq -r '.packages[] | select(.name == "builder") | .version')
+                  test -n "$package_version"
+                  cargo install \
+                    --path "$source_target/builder" \
+                    --bin release \
+                    --root "$builder_root" \
+                    --no-default-features \
+                    --features profiling,crashtracker,symbolizer,library-config \
+                    --locked \
+                    --force
+                  local host_triple
+                  host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
+                  PROFILE=release \
+                  HOST="$host_triple" \
+                  TARGET="$host_triple" \
+                  OUT_DIR="$CARGO_TARGET_DIR/out" \
+                  OPT_LEVEL=3 \
+                  DEBUG=false \
+                  NUM_JOBS="$(nproc)" \
+                  CARGO_PKG_VERSION="$package_version" \
+                  "$builder_root/bin/release" \
+                    --out "$package_output" \
+                    --target x86_64-unknown-linux-gnu
+                  test -s "$package_output/lib/libdatadog_profiling.so"
+                  test -d "$package_output/include/datadog"
+                  test -n "$(find "$package_output/include/datadog" -type f -print -quit)"
+                  test -s "$package_output/LICENSE"
+                  test -s "$package_output/cmake/DatadogConfig.cmake"
+                ) 2>&1 | tee -a "$log_path"
                 return "${PIPESTATUS[0]}"
                 ;;
               node-wasm)
