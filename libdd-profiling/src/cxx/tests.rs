@@ -51,7 +51,8 @@ fn intern_test_mapping(
     mapping: &ffi::DictionaryMapping,
 ) -> ffi::DictionaryMappingId {
     let mut id = ffi::DictionaryMappingId::default();
-    assert!(dictionary.intern_mapping(mapping, &mut id));
+    // SAFETY: Test helpers only pass ids created by this dictionary.
+    assert!(unsafe { dictionary.intern_mapping(mapping, &mut id) });
     id
 }
 
@@ -60,7 +61,8 @@ fn intern_test_function(
     function: &ffi::DictionaryFunction,
 ) -> ffi::DictionaryFunctionId {
     let mut id = ffi::DictionaryFunctionId::default();
-    assert!(dictionary.intern_function(function, &mut id));
+    // SAFETY: Test helpers only pass ids created by this dictionary.
+    assert!(unsafe { dictionary.intern_function(function, &mut id) });
     id
 }
 
@@ -471,16 +473,19 @@ fn test_profiles_dictionary_status_operations() {
     assert!(!build_id.is_null());
 
     let mut mapping = ffi::DictionaryMappingId::default();
-    assert!(dictionary.intern_mapping(
-        &ffi::DictionaryMapping {
-            memory_start: 1,
-            memory_limit: 2,
-            file_offset: 3,
-            filename,
-            build_id,
-        },
-        &mut mapping,
-    ));
+    // SAFETY: filename and build_id were interned by this dictionary.
+    assert!(unsafe {
+        dictionary.intern_mapping(
+            &ffi::DictionaryMapping {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename,
+                build_id,
+            },
+            &mut mapping,
+        )
+    });
     assert!(!mapping.is_null());
 
     let mut function_name = ffi::DictionaryStringId::default();
@@ -488,16 +493,20 @@ fn test_profiles_dictionary_status_operations() {
     let mut function_file_name = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string("example.py", &mut function_file_name));
     let mut function = ffi::DictionaryFunctionId::default();
-    assert!(dictionary.intern_function(
-        &ffi::DictionaryFunction {
-            name: function_name,
-            system_name: ffi::DictionaryStringId {
-                handle: std::ptr::null_mut(),
+    // SAFETY: function_name and function_file_name were interned by this
+    // dictionary; system_name is the null/default id.
+    assert!(unsafe {
+        dictionary.intern_function(
+            &ffi::DictionaryFunction {
+                name: function_name,
+                system_name: ffi::DictionaryStringId {
+                    handle: std::ptr::null_mut(),
+                },
+                filename: function_file_name,
             },
-            filename: function_file_name,
-        },
-        &mut function,
-    ));
+            &mut function,
+        )
+    });
     assert!(!function.is_null());
 }
 
@@ -513,7 +522,8 @@ fn test_profile_add_dictionary_sample_serializes() {
         labels: &labels,
     };
 
-    profile.add_dictionary_sample_with_timestamp(&sample, 42);
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) };
 
     let serialized = serialize_test_profile_to_vec(&mut profile);
     assert!(
@@ -536,7 +546,8 @@ fn test_profile_add_dictionary_sample_profile_holds_dictionary_alive() {
         labels: &labels,
     };
 
-    profile.add_dictionary_sample_with_timestamp(&sample, 42);
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) };
 
     let serialized = serialize_test_profile_to_vec(&mut profile);
     assert!(serialized.len() > 100);
@@ -554,7 +565,8 @@ fn test_profile_add_dictionary_sample_serializes_dictionary_label_and_timestamp(
         labels: &labels,
     };
 
-    profile.add_dictionary_sample_with_timestamp(&sample, 42);
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) };
 
     let serialized = serialize_test_profile_to_vec(&mut profile);
     let pprof = deserialize_compressed_pprof(&serialized).unwrap();
@@ -587,8 +599,10 @@ fn test_profile_add_dictionary_sample_identical_timestamped_samples_remain_disti
         labels: &labels,
     };
 
-    profile.add_dictionary_sample_with_timestamp(&sample, 42);
-    profile.add_dictionary_sample_with_timestamp(&sample, 43);
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) };
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 43) };
 
     let serialized = serialize_test_profile_to_vec(&mut profile);
     let pprof = deserialize_compressed_pprof(&serialized).unwrap();
@@ -617,7 +631,8 @@ fn test_profile_add_dictionary_sample_without_timestamp() {
         labels: &labels,
     };
 
-    profile.add_dictionary_sample(&sample);
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    unsafe { profile.add_dictionary_sample(&sample) };
     assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
     assert_eq!(profile.inner.only_for_testing_num_timestamped_samples(), 0);
 
@@ -645,7 +660,8 @@ fn test_profile_add_dictionary_sample_rejects_zero_timestamp() {
     };
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-    assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 0));
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    assert!(!unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 0) });
     let errors = profile.take_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].message.contains("endtime_ns must be non-zero"));
@@ -834,7 +850,8 @@ fn test_profile_add_dictionary_sample_rejects_wrong_value_count() {
     };
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-    assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    assert!(!unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) });
     assert!(!profile.take_errors().is_empty());
 }
 
@@ -851,7 +868,8 @@ fn test_profile_add_dictionary_sample_requires_dictionary_profile() {
     };
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
-    assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
+    // SAFETY: sample ids were produced by the dictionary used to create profile.
+    assert!(!unsafe { profile.add_dictionary_sample_with_timestamp(&sample, 42) });
     let errors = profile.take_errors();
     assert!(errors[0].message.contains("profiles dictionary not set"));
 }

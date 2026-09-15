@@ -373,7 +373,10 @@ pub mod ffi {
         /// empty strings. Non-null ids in function must have been produced by
         /// this dictionary. The returned id must only be used with this
         /// dictionary or Profiles created from it.
-        fn intern_function(
+        ///
+        /// # Safety
+        /// All non-null ids in function must have been produced by this dictionary.
+        unsafe fn intern_function(
             self: &ProfileDictionary,
             function: &DictionaryFunction,
             out: &mut DictionaryFunctionId,
@@ -386,7 +389,10 @@ pub mod ffi {
         /// empty strings. Non-null ids in mapping must have been produced by
         /// this dictionary. The returned id must only be used with this
         /// dictionary or Profiles created from it.
-        fn intern_mapping(
+        ///
+        /// # Safety
+        /// All non-null ids in mapping must have been produced by this dictionary.
+        unsafe fn intern_mapping(
             self: &ProfileDictionary,
             mapping: &DictionaryMapping,
             out: &mut DictionaryMappingId,
@@ -422,11 +428,19 @@ pub mod ffi {
         /// non-null ids in sample must have been produced by the
         /// ProfileDictionary used to create this Profile. The sample slices are
         /// borrowed only for the duration of this call.
-        fn add_dictionary_sample(self: &mut Profile, sample: &DictionarySample) -> bool;
+        ///
+        /// # Safety
+        /// All non-null ids in sample must have been produced by the
+        /// ProfileDictionary used to create this Profile.
+        unsafe fn add_dictionary_sample(self: &mut Profile, sample: &DictionarySample) -> bool;
 
         /// Adds a dictionary-backed sample with an end timestamp in nanoseconds.
+        ///
+        /// # Safety
+        /// All non-null ids in sample must have been produced by the
+        /// ProfileDictionary used to create this Profile.
         #[cxx_name = "add_dictionary_sample"]
-        fn add_dictionary_sample_with_timestamp(
+        unsafe fn add_dictionary_sample_with_timestamp(
             self: &mut Profile,
             sample: &DictionarySample,
             endtime_ns: i64,

@@ -83,13 +83,15 @@ impl ProfileDictionary {
         )
     }
 
-    pub fn intern_function(
+    /// # Safety
+    /// All non-null ids in function must have been produced by this dictionary.
+    pub unsafe fn intern_function(
         &self,
         function: &ffi::DictionaryFunction,
         out: &mut ffi::DictionaryFunctionId,
     ) -> bool {
-        // SAFETY: The CXX API contract requires all ids in function to come
-        // from this ProfileDictionary.
+        // SAFETY: The caller guarantees all non-null ids in function came from
+        // this ProfileDictionary.
         let function = unsafe { dictionary_function_from_cxx(function) };
         self.write_output(
             "ProfileDictionary::intern_function",
@@ -98,13 +100,15 @@ impl ProfileDictionary {
         )
     }
 
-    pub fn intern_mapping(
+    /// # Safety
+    /// All non-null ids in mapping must have been produced by this dictionary.
+    pub unsafe fn intern_mapping(
         &self,
         mapping: &ffi::DictionaryMapping,
         out: &mut ffi::DictionaryMappingId,
     ) -> bool {
-        // SAFETY: The CXX API contract requires all ids in mapping to come
-        // from this ProfileDictionary.
+        // SAFETY: The caller guarantees all non-null ids in mapping came from
+        // this ProfileDictionary.
         let mapping = unsafe { dictionary_mapping_from_cxx(mapping) };
         self.write_output(
             "ProfileDictionary::intern_mapping",

@@ -56,7 +56,11 @@ impl ffi::Status {
     #[cfg(test)]
     #[track_caller]
     pub fn unwrap(self) {
-        assert!(self.success, "{}", self.details);
+        assert!(
+            self.success,
+            "{} failed: {}",
+            self.operation_name, self.details
+        );
     }
 }
 

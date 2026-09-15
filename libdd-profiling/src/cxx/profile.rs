@@ -106,12 +106,22 @@ impl Profile {
     }
 
     /// Adds a dictionary-backed sample without an end timestamp.
-    pub fn add_dictionary_sample(&mut self, sample: &ffi::DictionarySample) -> bool {
-        self.add_dictionary_sample_impl(sample, None)
+    ///
+    /// # Safety
+    /// All non-null ids in sample must have been produced by the
+    /// ProfileDictionary used to create this Profile.
+    pub unsafe fn add_dictionary_sample(&mut self, sample: &ffi::DictionarySample) -> bool {
+        // SAFETY: The caller guarantees all non-null ids in sample came from
+        // the ProfileDictionary used to create this Profile.
+        unsafe { self.add_dictionary_sample_impl(sample, None) }
     }
 
     /// Adds a dictionary-backed sample with an end timestamp in nanoseconds.
-    pub fn add_dictionary_sample_with_timestamp(
+    ///
+    /// # Safety
+    /// All non-null ids in sample must have been produced by the
+    /// ProfileDictionary used to create this Profile.
+    pub unsafe fn add_dictionary_sample_with_timestamp(
         &mut self,
         sample: &ffi::DictionarySample,
         endtime_ns: i64,
@@ -119,21 +129,25 @@ impl Profile {
         let result = (|| {
             let timestamp =
                 internal::Timestamp::new(endtime_ns).context("endtime_ns must be non-zero")?;
-            self.add_dictionary_sample_result(sample, Some(timestamp))
+            // SAFETY: The caller guarantees all non-null ids in sample came
+            // from the ProfileDictionary used to create this Profile.
+            unsafe { self.add_dictionary_sample_result(sample, Some(timestamp)) }
         })();
         self.handle_result("Profile::add_dictionary_sample", result)
     }
 
-    fn add_dictionary_sample_impl(
+    unsafe fn add_dictionary_sample_impl(
         &mut self,
         sample: &ffi::DictionarySample,
         timestamp: Option<internal::Timestamp>,
     ) -> bool {
-        let result = self.add_dictionary_sample_result(sample, timestamp);
+        // SAFETY: The caller guarantees all non-null ids in sample came from
+        // the ProfileDictionary used to create this Profile.
+        let result = unsafe { self.add_dictionary_sample_result(sample, timestamp) };
         self.handle_result("Profile::add_dictionary_sample", result)
     }
 
-    fn add_dictionary_sample_result(
+    unsafe fn add_dictionary_sample_result(
         &mut self,
         sample: &ffi::DictionarySample,
         timestamp: Option<internal::Timestamp>,
