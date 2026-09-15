@@ -28,7 +28,7 @@ int main() {
         // with Profile::set_custom_sample_type before serialization.
         auto profile_result = Profile::create({SampleType::WallTime}, period);
         if (!profile_result->check_and_print()) return 1;
-        auto profile = profile_result->take();
+        auto profile = profile_result->take_value();
         profile->set_error_policy(ErrorPolicy::PrintImmediately);
         std::cout << "✅ Profile created" << std::endl;
         
@@ -164,7 +164,7 @@ int main() {
                 );
                 if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take()
+                    exporter_result->take_value()
                 );
             } else if (agent_url) {
                 // Agent mode - send to local Datadog agent
@@ -180,7 +180,7 @@ int main() {
                 );
                 if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take()
+                    exporter_result->take_value()
                 );
             } else {
                 // File mode - dump HTTP request for debugging/testing
@@ -196,7 +196,7 @@ int main() {
                 );
                 if (!exporter_result->check_and_print()) return 1;
                 exporter = std::make_unique<rust::Box<ProfileExporter>>(
-                    exporter_result->take()
+                    exporter_result->take_value()
                 );
             }
             std::cout << "✅ Exporter created" << std::endl;
@@ -245,7 +245,7 @@ int main() {
             std::cout << "Exporting a second profile with split serialize/send..." << std::endl;
             auto split_profile_result = Profile::create({SampleType::WallTime}, period);
             if (!split_profile_result->check_and_print()) return 1;
-            auto split_profile = split_profile_result->take();
+            auto split_profile = split_profile_result->take_value();
             split_profile->set_error_policy(ErrorPolicy::PrintImmediately);
             Mapping split_mapping{
                 .memory_start = 0x30000000,
@@ -271,7 +271,7 @@ int main() {
 
             auto encoded_profile_result = split_profile->serialize();
             if (!encoded_profile_result->ok()) return 1;
-            auto encoded_profile = encoded_profile_result->take();
+            auto encoded_profile = encoded_profile_result->take_value();
             auto encoded_bytes = encoded_profile->bytes();
             std::cout << "ℹ️  Split profile serialized to " << encoded_bytes.size() << " compressed bytes" << std::endl;
 

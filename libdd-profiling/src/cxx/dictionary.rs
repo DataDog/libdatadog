@@ -3,10 +3,7 @@
 
 use super::errors::{ErrorStore, ProfileDictionaryResult};
 use super::ffi;
-use super::ids::{
-    dictionary_function_from_cxx, dictionary_mapping_from_cxx, null_dictionary_function_id,
-    null_dictionary_mapping_id, null_dictionary_string_id,
-};
+use super::ids::{dictionary_function_from_cxx, dictionary_mapping_from_cxx};
 use crate::profiles;
 use anyhow::Context;
 
@@ -57,13 +54,6 @@ impl ProfileDictionary {
         }
     }
 
-    pub fn errors(&self) -> Vec<ffi::Error> {
-        match self.errors.lock() {
-            Ok(errors) => errors.errors(),
-            Err(_) => Vec::new(),
-        }
-    }
-
     pub fn take_errors(&self) -> Vec<ffi::Error> {
         match self.errors.lock() {
             Ok(mut errors) => errors.take_errors(),
@@ -71,29 +61,35 @@ impl ProfileDictionary {
         }
     }
 
-    pub fn clear_errors(&self) {
-        if let Ok(mut errors) = self.errors.lock() {
-            errors.clear_errors();
+    fn write_output<T, E>(
+        &self,
+        operation: &'static str,
+        out: &mut T,
+        result: std::result::Result<T, E>,
+    ) -> bool
+    where
+        T: Default,
+        E: std::fmt::Display,
+    {
+        match result {
+            Ok(value) => {
+                *out = value;
+                true
+            }
+            Err(err) => {
+                *out = T::default();
+                self.handle_error(operation, &err);
+                false
+            }
         }
     }
 
     pub fn intern_string(&self, value: &str, out: &mut ffi::DictionaryStringId) -> bool {
-        match self
-            .inner
-            .try_insert_str2(value)
-            .map(Into::into)
-            .context("ProfileDictionary::intern_string failed")
-        {
-            Ok(id) => {
-                *out = id;
-                true
-            }
-            Err(err) => {
-                *out = null_dictionary_string_id();
-                self.handle_error("ProfileDictionary::intern_string", &err);
-                false
-            }
-        }
+        self.write_output(
+            "ProfileDictionary::intern_string",
+            out,
+            self.inner.try_insert_str2(value).map(Into::into),
+        )
     }
 
     pub fn intern_function(
@@ -104,22 +100,11 @@ impl ProfileDictionary {
         // SAFETY: The CXX API contract requires all ids in function to come
         // from this ProfileDictionary.
         let function = unsafe { dictionary_function_from_cxx(function) };
-        match self
-            .inner
-            .try_insert_function2(function)
-            .map(Into::into)
-            .context("ProfileDictionary::intern_function failed")
-        {
-            Ok(id) => {
-                *out = id;
-                true
-            }
-            Err(err) => {
-                *out = null_dictionary_function_id();
-                self.handle_error("ProfileDictionary::intern_function", &err);
-                false
-            }
-        }
+        self.write_output(
+            "ProfileDictionary::intern_function",
+            out,
+            self.inner.try_insert_function2(function).map(Into::into),
+        )
     }
 
     pub fn intern_mapping(
@@ -130,21 +115,10 @@ impl ProfileDictionary {
         // SAFETY: The CXX API contract requires all ids in mapping to come
         // from this ProfileDictionary.
         let mapping = unsafe { dictionary_mapping_from_cxx(mapping) };
-        match self
-            .inner
-            .try_insert_mapping2(mapping)
-            .map(Into::into)
-            .context("ProfileDictionary::intern_mapping failed")
-        {
-            Ok(id) => {
-                *out = id;
-                true
-            }
-            Err(err) => {
-                *out = null_dictionary_mapping_id();
-                self.handle_error("ProfileDictionary::intern_mapping", &err);
-                false
-            }
-        }
+        self.write_output(
+            "ProfileDictionary::intern_mapping",
+            out,
+            self.inner.try_insert_mapping2(mapping).map(Into::into),
+        )
     }
 }

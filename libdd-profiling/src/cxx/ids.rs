@@ -5,21 +5,27 @@ use super::ffi;
 use crate::api2;
 use crate::profiles;
 
-pub(crate) fn null_dictionary_string_id() -> ffi::DictionaryStringId {
-    ffi::DictionaryStringId {
-        handle: std::ptr::null_mut(),
+impl Default for ffi::DictionaryStringId {
+    fn default() -> Self {
+        Self {
+            handle: std::ptr::null_mut(),
+        }
     }
 }
 
-pub(crate) fn null_dictionary_function_id() -> ffi::DictionaryFunctionId {
-    ffi::DictionaryFunctionId {
-        handle: std::ptr::null_mut(),
+impl Default for ffi::DictionaryFunctionId {
+    fn default() -> Self {
+        Self {
+            handle: std::ptr::null_mut(),
+        }
     }
 }
 
-pub(crate) fn null_dictionary_mapping_id() -> ffi::DictionaryMappingId {
-    ffi::DictionaryMappingId {
-        handle: std::ptr::null_mut(),
+impl Default for ffi::DictionaryMappingId {
+    fn default() -> Self {
+        Self {
+            handle: std::ptr::null_mut(),
+        }
     }
 }
 

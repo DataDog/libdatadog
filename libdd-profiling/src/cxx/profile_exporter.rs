@@ -80,7 +80,7 @@ pub(super) fn prepare_profile_for_export<'a>(
 )> {
     let mut encoded_result = profile.serialize();
     anyhow::ensure!(encoded_result.ok(), encoded_result.status.message());
-    let encoded = encoded_result.take();
+    let encoded = encoded_result.take_value();
     let (
         files_to_compress_vec,
         additional_tags_vec,

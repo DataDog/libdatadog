@@ -37,17 +37,17 @@ std::vector<Label> labels{label};
 Sample sample = views::sample(locations, values, labels);
 ```
 
-Factory APIs return result wrappers with `ok()`, `message()`, `check_and_print()`, `check_and_store_first_per_operation(...)`, `check_and_store_every_occurrence(...)`, and `take()`. `take()` must be called at most once and only after a successful check.
+Factory APIs return result wrappers with `ok()`, `message()`, `check_and_print()`, and `take_value()`. `take_value()` must be called at most once and only after a successful check.
 
 ```cpp
 auto result = Profile::create({SampleType::WallTime}, period);
 if (!result->check_and_print()) return false;
-auto profile = result->take();
+auto profile = result->take_value();
 ```
 
-Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are available from the owning object via `errors()` or `take_errors()`. Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
+Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`. Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
 
-Exporter and manager APIs return `Status`, which exposes the same check helpers:
+Exporter and manager APIs return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
 
 ```cpp
 if (!exporter->send_profile(...).check_and_print()) return false;

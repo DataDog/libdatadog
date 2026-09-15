@@ -39,16 +39,8 @@ impl Profile {
         self.errors.policy()
     }
 
-    pub fn errors(&self) -> Vec<ffi::Error> {
-        self.errors.errors()
-    }
-
     pub fn take_errors(&mut self) -> Vec<ffi::Error> {
         self.errors.take_errors()
-    }
-
-    pub fn clear_errors(&mut self) {
-        self.errors.clear_errors();
     }
 
     pub fn create(sample_types: Vec<ffi::SampleType>, period: &ffi::Period) -> Box<ProfileResult> {

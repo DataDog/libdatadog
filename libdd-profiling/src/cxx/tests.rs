@@ -44,7 +44,7 @@ fn create_test_profile_with_dictionary(dictionary: &ProfileDictionary) -> Box<Pr
 }
 
 fn intern_test_string(dictionary: &ProfileDictionary, value: &str) -> ffi::DictionaryStringId {
-    let mut id = null_dictionary_string_id();
+    let mut id = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string(value, &mut id));
     id
 }
@@ -53,7 +53,7 @@ fn intern_test_mapping(
     dictionary: &ProfileDictionary,
     mapping: &ffi::DictionaryMapping,
 ) -> ffi::DictionaryMappingId {
-    let mut id = null_dictionary_mapping_id();
+    let mut id = ffi::DictionaryMappingId::default();
     assert!(dictionary.intern_mapping(mapping, &mut id));
     id
 }
@@ -62,7 +62,7 @@ fn intern_test_function(
     dictionary: &ProfileDictionary,
     function: &ffi::DictionaryFunction,
 ) -> ffi::DictionaryFunctionId {
-    let mut id = null_dictionary_function_id();
+    let mut id = ffi::DictionaryFunctionId::default();
     assert!(dictionary.intern_function(function, &mut id));
     id
 }
@@ -314,25 +314,15 @@ fn test_profile_timestamped_sample_operations() {
 }
 
 #[test]
-fn test_status_check_helpers() {
+fn test_status_and_result_accessors() {
     let status = ffi::Status::err("Test::operation", "boom");
     assert!(!status.ok());
     assert_eq!(status.operation(), "Test::operation");
     assert_eq!(status.message(), "boom");
 
-    let mut errors = Vec::new();
-    assert!(!status.check_and_store_first_per_operation(&mut errors));
-    assert!(!status.check_and_store_first_per_operation(&mut errors));
-    assert_eq!(errors.len(), 1);
-    assert_eq!(errors[0].operation, "Test::operation");
-    assert_eq!(errors[0].message, "boom");
-
-    assert!(!status.check_and_store_every_occurrence(&mut errors));
-    assert_eq!(errors.len(), 2);
-
     let ok_status = ffi::Status::ok_for("Test::ok");
-    assert!(ok_status.check_and_store_every_occurrence(&mut errors));
-    assert_eq!(errors.len(), 2);
+    assert!(ok_status.ok());
+    assert!(ok_status.check_and_print());
 
     let result = ProfileExporter::create_agent_exporter(
         TEST_LIB_NAME,
@@ -343,14 +333,8 @@ fn test_status_check_helpers() {
         0,
         false,
     );
-    let mut result_errors = Vec::new();
-    assert!(!result.check_and_store_first_per_operation(&mut result_errors));
-    assert_eq!(result_errors.len(), 1);
-    assert_eq!(
-        result_errors[0].operation,
-        "ProfileExporter::create_agent_exporter"
-    );
-    assert!(!result_errors[0].message.is_empty());
+    assert!(!result.ok());
+    assert!(!result.message().is_empty());
 }
 
 #[test]
@@ -360,7 +344,7 @@ fn test_profile_timestamped_sample_rejects_zero_timestamp() {
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     assert!(!profile.add_sample_with_timestamp(&sample, 0));
-    let errors = profile.errors();
+    let errors = profile.take_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].message.contains("endtime_ns must be non-zero"));
 }
@@ -381,24 +365,21 @@ fn test_profile_error_storage_modes() {
     profile.set_error_policy(ffi::ErrorPolicy::StoreFirstPerOperation);
     assert!(!profile.add_sample(&bad_sample));
     assert!(!profile.add_sample(&bad_sample));
-    let errors = profile.errors();
+    let errors = profile.take_errors();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].operation, "Profile::add_sample");
     assert!(!errors[0].message.is_empty());
-
-    let taken_errors = profile.take_errors();
-    assert_eq!(taken_errors.len(), 1);
-    assert!(profile.errors().is_empty());
+    assert!(profile.take_errors().is_empty());
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     assert!(!profile.add_sample(&bad_sample));
     assert!(!profile.add_sample(&bad_sample));
     assert_eq!(profile.take_errors().len(), 2);
-    assert!(profile.errors().is_empty());
+    assert!(profile.take_errors().is_empty());
 
     assert!(!profile.add_sample(&bad_sample));
-    profile.clear_errors();
-    assert!(profile.errors().is_empty());
+    assert_eq!(profile.take_errors().len(), 1);
+    assert!(profile.take_errors().is_empty());
 }
 
 #[test]
@@ -458,24 +439,21 @@ fn test_profiles_dictionary_error_storage_modes() {
     dictionary.set_error_policy(ffi::ErrorPolicy::StoreFirstPerOperation);
     dictionary.handle_error("ProfileDictionary::intern_string", "first");
     dictionary.handle_error("ProfileDictionary::intern_string", "second");
-    let errors = dictionary.errors();
+    let errors = dictionary.take_errors();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].operation, "ProfileDictionary::intern_string");
     assert_eq!(errors[0].message, "first");
-
-    let taken_errors = dictionary.take_errors();
-    assert_eq!(taken_errors.len(), 1);
-    assert!(dictionary.errors().is_empty());
+    assert!(dictionary.take_errors().is_empty());
 
     dictionary.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     dictionary.handle_error("ProfileDictionary::intern_string", "first");
     dictionary.handle_error("ProfileDictionary::intern_string", "second");
     assert_eq!(dictionary.take_errors().len(), 2);
-    assert!(dictionary.errors().is_empty());
+    assert!(dictionary.take_errors().is_empty());
 
     dictionary.handle_error("ProfileDictionary::intern_string", "third");
-    dictionary.clear_errors();
-    assert!(dictionary.errors().is_empty());
+    assert_eq!(dictionary.take_errors().len(), 1);
+    assert!(dictionary.take_errors().is_empty());
 }
 
 #[test]
@@ -514,19 +492,19 @@ fn test_profiles_dictionary_operations() {
 fn test_profiles_dictionary_status_operations() {
     let dictionary = create_test_dictionary();
 
-    assert!(null_dictionary_string_id().is_null());
-    assert!(null_dictionary_function_id().is_null());
-    assert!(null_dictionary_mapping_id().is_null());
+    assert!(ffi::DictionaryStringId::default().is_null());
+    assert!(ffi::DictionaryFunctionId::default().is_null());
+    assert!(ffi::DictionaryMappingId::default().is_null());
 
-    let mut filename = null_dictionary_string_id();
+    let mut filename = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string("example.py", &mut filename));
     assert!(!filename.is_null());
 
-    let mut build_id = null_dictionary_string_id();
+    let mut build_id = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string("build-id", &mut build_id));
     assert!(!build_id.is_null());
 
-    let mut mapping = null_dictionary_mapping_id();
+    let mut mapping = ffi::DictionaryMappingId::default();
     assert!(dictionary.intern_mapping(
         &ffi::DictionaryMapping {
             memory_start: 1,
@@ -539,11 +517,11 @@ fn test_profiles_dictionary_status_operations() {
     ));
     assert!(!mapping.is_null());
 
-    let mut function_name = null_dictionary_string_id();
+    let mut function_name = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string("function", &mut function_name));
-    let mut function_file_name = null_dictionary_string_id();
+    let mut function_file_name = ffi::DictionaryStringId::default();
     assert!(dictionary.intern_string("example.py", &mut function_file_name));
-    let mut function = null_dictionary_function_id();
+    let mut function = ffi::DictionaryFunctionId::default();
     assert!(dictionary.intern_function(
         &ffi::DictionaryFunction {
             name: function_name,
@@ -702,7 +680,7 @@ fn test_profile_add_dictionary_sample_rejects_zero_timestamp() {
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 0));
-    let errors = profile.errors();
+    let errors = profile.take_errors();
     assert_eq!(errors.len(), 1);
     assert!(errors[0].message.contains("endtime_ns must be non-zero"));
 }
@@ -891,7 +869,7 @@ fn test_profile_add_dictionary_sample_rejects_wrong_value_count() {
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
-    assert!(!profile.errors().is_empty());
+    assert!(!profile.take_errors().is_empty());
 }
 
 #[test]
@@ -908,9 +886,8 @@ fn test_profile_add_dictionary_sample_requires_dictionary_profile() {
 
     profile.set_error_policy(ffi::ErrorPolicy::StoreEveryOccurrence);
     assert!(!profile.add_dictionary_sample_with_timestamp(&sample, 42));
-    assert!(profile.errors()[0]
-        .message
-        .contains("profiles dictionary not set"));
+    let errors = profile.take_errors();
+    assert!(errors[0].message.contains("profiles dictionary not set"));
 }
 
 #[test]

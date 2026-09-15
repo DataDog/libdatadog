@@ -37,7 +37,7 @@ int main(int argc, char *argv[]) {
 
         auto profile_result = Profile::create({SampleType::WallTime}, period);
         if (!profile_result->check_and_print()) return 1;
-        auto profile = profile_result->take();
+        auto profile = profile_result->take_value();
         profile->set_error_policy(ErrorPolicy::PrintImmediately);
         std::cout << "✓ Created profile" << std::endl;
 
@@ -92,14 +92,14 @@ int main(int argc, char *argv[]) {
                 "/tmp/exporter_manager_example_cxx.txt"
               );
         if (!exporter_result->check_and_print()) return 1;
-        auto exporter = exporter_result->take();
+        auto exporter = exporter_result->take_value();
 
         std::cout << "✓ Created exporter" << std::endl;
 
         // Create ExporterManager
         auto manager_result = ExporterManager::new_manager(std::move(exporter));
         if (!manager_result->check_and_print()) return 1;
-        auto manager = manager_result->take();
+        auto manager = manager_result->take_value();
         std::cout << "✓ Created ExporterManager with background worker thread" << std::endl;
 
         // Queue the profile (this resets the profile and queues the previous data)
@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
         // Create a new profile and exporter for the fork example
         auto profile2_result = Profile::create({SampleType::WallTime}, period);
         if (!profile2_result->check_and_print()) return 1;
-        auto profile2 = profile2_result->take();
+        auto profile2 = profile2_result->take_value();
         profile2->set_error_policy(ErrorPolicy::PrintImmediately);
 
         std::array<Location, 1> profile2_locations{Location{
@@ -160,11 +160,11 @@ int main(int argc, char *argv[]) {
             "/tmp/exporter_manager_fork_cxx.txt"
         );
         if (!exporter2_result->check_and_print()) return 1;
-        auto exporter2 = exporter2_result->take();
+        auto exporter2 = exporter2_result->take_value();
 
         auto manager2_result = ExporterManager::new_manager(std::move(exporter2));
         if (!manager2_result->check_and_print()) return 1;
-        auto manager2 = manager2_result->take();
+        auto manager2 = manager2_result->take_value();
         std::cout << "✓ Created ExporterManager for fork example" << std::endl;
 
         // Queue a profile before forking

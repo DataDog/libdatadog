@@ -23,7 +23,7 @@ int main() {
         std::cout << "Creating ProfileDictionary..." << std::endl;
         auto dictionary_result = ProfileDictionary::create();
         if (!dictionary_result->check_and_print()) return 1;
-        auto dictionary = dictionary_result->take();
+        auto dictionary = dictionary_result->take_value();
         dictionary->set_error_policy(ErrorPolicy::PrintImmediately);
 
         // Intern dictionary strings once and reuse opaque ids on every sample.
@@ -85,7 +85,7 @@ int main() {
         std::cout << "Creating dictionary-backed Profile..." << std::endl;
         auto profile_result = Profile::create_with_dictionary({SampleType::WallTime}, period, *dictionary);
         if (!profile_result->check_and_print()) return 1;
-        auto profile = profile_result->take();
+        auto profile = profile_result->take_value();
         profile->set_error_policy(ErrorPolicy::PrintImmediately);
         std::cout << "✅ Profile created" << std::endl;
 

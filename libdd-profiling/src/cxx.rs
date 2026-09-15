@@ -302,88 +302,46 @@ pub mod ffi {
         fn message(self: &Status) -> String;
         /// Returns true on success. On failure, prints operation and message to stderr.
         fn check_and_print(self: &Status) -> bool;
-        /// Returns true on success. On failure, stores this error only if errors
-        /// does not already contain an error for the same operation.
-        fn check_and_store_first_per_operation(self: &Status, errors: &mut Vec<Error>) -> bool;
-        /// Returns true on success. On failure, appends this error to errors.
-        fn check_and_store_every_occurrence(self: &Status, errors: &mut Vec<Error>) -> bool;
 
         fn ok(self: &ProfileResult) -> bool;
         fn message(self: &ProfileResult) -> String;
         fn check_and_print(self: &ProfileResult) -> bool;
-        fn check_and_store_first_per_operation(
-            self: &ProfileResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
-        fn check_and_store_every_occurrence(self: &ProfileResult, errors: &mut Vec<Error>) -> bool;
         /// Takes the profile from a successful result.
         ///
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
-        fn take(self: &mut ProfileResult) -> Box<Profile>;
+        fn take_value(self: &mut ProfileResult) -> Box<Profile>;
         fn ok(self: &ProfileExporterResult) -> bool;
         fn message(self: &ProfileExporterResult) -> String;
         fn check_and_print(self: &ProfileExporterResult) -> bool;
-        fn check_and_store_first_per_operation(
-            self: &ProfileExporterResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
-        fn check_and_store_every_occurrence(
-            self: &ProfileExporterResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
         /// Takes the exporter from a successful result.
         ///
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
-        fn take(self: &mut ProfileExporterResult) -> Box<ProfileExporter>;
+        fn take_value(self: &mut ProfileExporterResult) -> Box<ProfileExporter>;
         fn ok(self: &EncodedProfileResult) -> bool;
         fn check_and_print(self: &EncodedProfileResult) -> bool;
-        fn check_and_store_first_per_operation(
-            self: &EncodedProfileResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
-        fn check_and_store_every_occurrence(
-            self: &EncodedProfileResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
         /// Takes the encoded profile from a successful result.
         ///
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
-        fn take(self: &mut EncodedProfileResult) -> Box<EncodedProfile>;
+        fn take_value(self: &mut EncodedProfileResult) -> Box<EncodedProfile>;
         fn ok(self: &ExporterManagerResult) -> bool;
         fn message(self: &ExporterManagerResult) -> String;
         fn check_and_print(self: &ExporterManagerResult) -> bool;
-        fn check_and_store_first_per_operation(
-            self: &ExporterManagerResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
-        fn check_and_store_every_occurrence(
-            self: &ExporterManagerResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
         /// Takes the manager from a successful result.
         ///
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
-        fn take(self: &mut ExporterManagerResult) -> Box<ExporterManager>;
+        fn take_value(self: &mut ExporterManagerResult) -> Box<ExporterManager>;
         fn ok(self: &ProfileDictionaryResult) -> bool;
         fn message(self: &ProfileDictionaryResult) -> String;
         fn check_and_print(self: &ProfileDictionaryResult) -> bool;
-        fn check_and_store_first_per_operation(
-            self: &ProfileDictionaryResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
-        fn check_and_store_every_occurrence(
-            self: &ProfileDictionaryResult,
-            errors: &mut Vec<Error>,
-        ) -> bool;
         /// Takes the dictionary from a successful result.
         ///
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
-        fn take(self: &mut ProfileDictionaryResult) -> Box<ProfileDictionary>;
+        fn take_value(self: &mut ProfileDictionaryResult) -> Box<ProfileDictionary>;
 
         fn is_null(self: &DictionaryStringId) -> bool;
         fn is_null(self: &DictionaryFunctionId) -> bool;
@@ -410,9 +368,7 @@ pub mod ffi {
 
         fn set_error_policy(self: &ProfileDictionary, policy: ErrorPolicy);
         fn error_policy(self: &ProfileDictionary) -> ErrorPolicy;
-        fn errors(self: &ProfileDictionary) -> Vec<Error>;
         fn take_errors(self: &ProfileDictionary) -> Vec<Error>;
-        fn clear_errors(self: &ProfileDictionary);
 
         /// Interns value into this dictionary and writes the opaque id to out.
         ///
@@ -467,9 +423,7 @@ pub mod ffi {
         // Profile methods
         fn set_error_policy(self: &mut Profile, policy: ErrorPolicy);
         fn error_policy(self: &Profile) -> ErrorPolicy;
-        fn errors(self: &Profile) -> Vec<Error>;
         fn take_errors(self: &mut Profile) -> Vec<Error>;
-        fn clear_errors(self: &mut Profile);
 
         /// Adds a sample without an end timestamp.
         fn add_sample(self: &mut Profile, sample: &Sample) -> bool;
@@ -755,11 +709,6 @@ pub use self::errors::{
 pub use self::exporter_manager::ExporterManager;
 pub use self::profile::{EncodedProfile, Profile};
 pub use self::profile_exporter::ProfileExporter;
-
-#[cfg(test)]
-pub(crate) use self::ids::{
-    null_dictionary_function_id, null_dictionary_mapping_id, null_dictionary_string_id,
-};
 
 #[cfg(test)]
 mod tests;

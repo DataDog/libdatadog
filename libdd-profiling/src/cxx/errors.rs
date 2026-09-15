@@ -53,33 +53,6 @@ impl ffi::Status {
         false
     }
 
-    pub fn check_and_store_first_per_operation(&self, errors: &mut Vec<ffi::Error>) -> bool {
-        if self.success {
-            return true;
-        }
-        if !errors
-            .iter()
-            .any(|error| error.operation == self.operation_name)
-        {
-            errors.push(ffi::Error {
-                operation: self.operation_name.clone(),
-                message: self.details.clone(),
-            });
-        }
-        false
-    }
-
-    pub fn check_and_store_every_occurrence(&self, errors: &mut Vec<ffi::Error>) -> bool {
-        if self.success {
-            return true;
-        }
-        errors.push(ffi::Error {
-            operation: self.operation_name.clone(),
-            message: self.details.clone(),
-        });
-        false
-    }
-
     #[cfg(test)]
     #[track_caller]
     pub fn unwrap(self) {
@@ -120,18 +93,7 @@ macro_rules! impl_box_result {
                 self.status.check_and_print()
             }
 
-            pub fn check_and_store_first_per_operation(
-                &self,
-                errors: &mut Vec<ffi::Error>,
-            ) -> bool {
-                self.status.check_and_store_first_per_operation(errors)
-            }
-
-            pub fn check_and_store_every_occurrence(&self, errors: &mut Vec<ffi::Error>) -> bool {
-                self.status.check_and_store_every_occurrence(errors)
-            }
-
-            pub fn take(&mut self) -> Box<$value> {
+            pub fn take_value(&mut self) -> Box<$value> {
                 match self.value.take() {
                     Some(value) => value,
                     None => std::process::abort(),
@@ -248,21 +210,7 @@ impl ErrorStore {
         self.policy
     }
 
-    pub(crate) fn errors(&self) -> Vec<ffi::Error> {
-        self.errors
-            .iter()
-            .map(|error| ffi::Error {
-                operation: error.operation.clone(),
-                message: error.message.clone(),
-            })
-            .collect()
-    }
-
     pub(crate) fn take_errors(&mut self) -> Vec<ffi::Error> {
         std::mem::take(&mut self.errors)
-    }
-
-    pub(crate) fn clear_errors(&mut self) {
-        self.errors.clear();
     }
 }
