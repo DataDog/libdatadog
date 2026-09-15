@@ -27,11 +27,11 @@ sanity-check = ["dep:elf", "dep:anyhow"]
 
 # Only used by the `sanity-check` feature; the crate has no runtime deps otherwise.
 [dependencies]
-anyhow = { version = "1.0", optional = true }
+anyhow = { workspace = true, default-features = true, optional = true }
 elf = { workspace = true, features = ["std"], optional = true }
 
 [build-dependencies]
-cc = "1.1.31"
+cc.workspace = true
 # `bindgen` is only *invoked* when the env var LIBDD_PROFILING_HEAP_SAMPLER_REGEN
 # is set (see build.rs); it is otherwise pulled in as a build-dep so
 # that regen works without a cargo feature. Cargo features would be
@@ -39,4 +39,6 @@ cc = "1.1.31"
 # which would silently trigger a bindgen regen on hosts that lack
 # libclang. An env var side-steps
 # that (see README's "Regenerating bindings" section).
-bindgen = "0.71"
+# bindgen is only invoked when LIBDD_PROFILING_HEAP_SAMPLER_REGEN is set
+# (see above); `logging` is purely diagnostic output and is dropped.
+bindgen = { workspace = true, default-features = true }

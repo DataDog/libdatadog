@@ -8,7 +8,8 @@ publish = false
 bench = false
 
 [dependencies]
-object = {version = "0.31.0"}
+# Reads ELF/Mach-O symbol tables.
+object = { workspace = true, default-features = true }
 
 [[bin]]
 name = "sidecar_mockgen"
