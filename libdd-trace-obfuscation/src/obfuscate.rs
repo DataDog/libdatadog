@@ -664,10 +664,16 @@ mod v04_tests {
     #[cfg_attr(miri, ignore)]
     fn test_replace_span_tags() {
         let mut span = test_span();
-        span.meta.insert(bs("custom.tag"), bs("/foo/bar/foo"));
+        span.meta
+            .insert(bs("custom.tag"), bs("x βeta /foo/bar/foo"));
 
         let parsed_rules = replacer::parse_rules_from_string(
-            r#"[{"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}]"#,
+            r#"[
+                {"name": "custom.tag", "pattern": "absent", "repl": "bad"},
+                {"name": "custom.tag", "pattern": "x", "repl": "X"},
+                {"name": "custom.tag", "pattern": "βeta", "repl": "unicode"},
+                {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
+            ]"#,
         )
         .unwrap();
         let obf_config = ObfuscationConfig {
@@ -679,7 +685,7 @@ mod v04_tests {
 
         assert_eq!(
             span.meta.get("custom.tag").unwrap().as_str(),
-            "/foo/bar/extra"
+            "X unicode /foo/bar/extra"
         );
     }
 

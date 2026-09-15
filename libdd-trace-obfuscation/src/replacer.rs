@@ -195,6 +195,10 @@ fn replace_all(
     haystack: &mut String,
     scratch_space: &mut String,
 ) {
+    if !has_required_literal(re, haystack) {
+        return;
+    }
+
     // If we know that the replacement doesn't have any capture expansions,
     // then we can use the fast path. The fast path can make a tremendous
     // difference:
@@ -247,6 +251,10 @@ fn replace_all_opt(
     no_expansion: bool,
     haystack: &str,
 ) -> Option<String> {
+    if !has_required_literal(re, haystack) {
+        return None;
+    }
+
     if no_expansion {
         let mut it = re.find_iter(haystack).peekable();
         it.peek()?;
@@ -277,12 +285,56 @@ fn replace_all_opt(
     }
 }
 
+fn has_required_literal(re: &Regex, haystack: &str) -> bool {
+    let pattern = re.as_str();
+    // RegexBuilder flags are absent from `as_str()`. Preserve possible case-insensitive matches,
+    // and leave Unicode or verbose-mode-sensitive patterns to the regex engine.
+    !is_literal_pattern(pattern)
+        || haystack.contains(pattern)
+        || !pattern.is_ascii()
+        || !haystack.is_ascii()
+        || haystack
+            .as_bytes()
+            .windows(pattern.len())
+            .any(|candidate| candidate.eq_ignore_ascii_case(pattern.as_bytes()))
+}
+
+fn is_literal_pattern(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    bytes.len() >= 2
+        && !is_regex_meta(bytes[0])
+        && !is_regex_meta(bytes[bytes.len() - 1])
+        && !bytes[1..bytes.len() - 1].iter().copied().any(is_regex_meta)
+}
+
+const fn is_regex_meta(byte: u8) -> bool {
+    byte.is_ascii_whitespace()
+        || matches!(
+            byte,
+            b'#' | b'\\'
+                | b'.'
+                | b'+'
+                | b'*'
+                | b'?'
+                | b'('
+                | b')'
+                | b'|'
+                | b'['
+                | b']'
+                | b'{'
+                | b'}'
+                | b'^'
+                | b'$'
+        )
+}
+
 #[cfg(test)]
 mod tests {
 
     use super::Regex;
     use crate::replacer;
     use duplicate::duplicate_item;
+    use libdd_common::regex_engine::RegexBuilder;
     use libdd_trace_protobuf::pb;
     use std::collections::HashMap;
 
@@ -355,6 +407,33 @@ mod tests {
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
+    [test_replace_tags_with_literal_boundaries] [r#"[
+                        {"name": "custom.tag", "pattern": "absent", "repl": "bad"},
+                        {"name": "custom.tag", "pattern": "x", "repl": "X"},
+                        {"name": "custom.tag", "pattern": "βeta", "repl": "unicode"},
+                        {"name": "custom.tag", "pattern": "foo|bar", "repl": "regex"},
+                        {"name": "custom.tag", "pattern": "^X", "repl": "start"},
+                        {"name": "custom.tag", "pattern": "regex$", "repl": "end"}
+                    ]"#] [
+                        HashMap::from([
+                            ("custom.tag", "x βeta foo"),
+                        ])
+                    ] [
+                        HashMap::from([
+                            ("custom.tag", "start unicode end"),
+                        ])
+                    ];
+    [test_replace_tags_with_empty_pattern] [r#"[
+                        {"name": "custom.tag", "pattern": "", "repl": "-"}
+                    ]"#] [
+                        HashMap::from([
+                            ("custom.tag", "ab"),
+                        ])
+                    ] [
+                        HashMap::from([
+                            ("custom.tag", "-a-b-"),
+                        ])
+                    ];
     )]
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -376,6 +455,38 @@ mod tests {
                 assert_eq!(val, trace[1].meta.get(key).unwrap());
             }
         }
+    }
+
+    #[test]
+    #[allow(clippy::trivial_regex)]
+    fn test_replace_tags_with_regex_builder_flags() {
+        let mut case_insensitive = RegexBuilder::new("foo");
+        case_insensitive.case_insensitive(true);
+        let mut ignore_whitespace = RegexBuilder::new("foo bar");
+        ignore_whitespace.ignore_whitespace(true);
+        let rules = [
+            replacer::ReplaceRule {
+                name: "case".to_string(),
+                re: case_insensitive.build().unwrap(),
+                repl: "match".to_string(),
+                no_expansion: true,
+            },
+            replacer::ReplaceRule {
+                name: "whitespace".to_string(),
+                re: ignore_whitespace.build().unwrap(),
+                repl: "match".to_string(),
+                no_expansion: true,
+            },
+        ];
+        let mut trace = [new_test_span_with_tags(HashMap::from([
+            ("case", "FOO"),
+            ("whitespace", "foobar"),
+        ]))];
+
+        replacer::replace_trace_tags(&mut trace, &rules);
+
+        assert_eq!(trace[0].meta.get("case").unwrap(), "match");
+        assert_eq!(trace[0].meta.get("whitespace").unwrap(), "match");
     }
 
     #[test]
