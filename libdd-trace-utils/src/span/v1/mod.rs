@@ -180,6 +180,62 @@ pub type AttributeValueSlice<'a> = AttributeValue<SliceData<'a>>;
 pub type TraceChunkSlice<'a> = TraceChunk<SliceData<'a>>;
 pub type TracerPayloadSlice<'a> = TracerPayload<SliceData<'a>>;
 
+/// Dedup an attribute map (and every nested map in its values), leaving the map's deduped flag
+/// set. Nested values are deduped first because [`VecMap::iter_mut`] re-dirties the flag, so the
+/// map's own [`VecMap::dedup`] must run last to leave the invariant the encoder relies on.
+fn dedup_attribute_map<T: TraceData>(map: &mut VecMap<T::Text, AttributeValue<T>>) {
+    for (_, v) in map.iter_mut() {
+        v.dedup();
+    }
+    map.dedup();
+}
+
+impl<T: TraceData> AttributeValue<T> {
+    /// Recursively dedup the nested attribute maps carried by `KeyValue`/`List` values. Scalar
+    /// variants carry no map and are a no-op.
+    fn dedup(&mut self) {
+        match self {
+            AttributeValue::KeyValue(map) => dedup_attribute_map(map),
+            AttributeValue::List(list) => list.iter_mut().for_each(AttributeValue::dedup),
+            _ => {}
+        }
+    }
+}
+
+impl<T: TraceData> Span<T> {
+    /// Dedup this span's attribute map and those of its links and events. See [`VecMap::dedup`].
+    pub fn dedup(&mut self) {
+        dedup_attribute_map(&mut self.attributes);
+        for link in &mut self.span_links {
+            dedup_attribute_map(&mut link.attributes);
+        }
+        for event in &mut self.span_events {
+            dedup_attribute_map(&mut event.attributes);
+        }
+    }
+}
+
+impl<T: TraceData> TraceChunk<T> {
+    /// Dedup the chunk-level attribute map and every span it carries. See [`VecMap::dedup`].
+    pub fn dedup(&mut self) {
+        dedup_attribute_map(&mut self.attributes);
+        for span in &mut self.spans {
+            span.dedup();
+        }
+    }
+}
+
+impl<T: TraceData> TracerPayload<T> {
+    /// Dedup every attribute map in the payload so a subsequent encode finds the deduped invariant
+    /// already satisfied, avoiding the encoder's per-encode on-the-fly dedup (and its warning).
+    pub fn dedup(&mut self) {
+        dedup_attribute_map(&mut self.attributes);
+        for chunk in &mut self.chunks {
+            chunk.dedup();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

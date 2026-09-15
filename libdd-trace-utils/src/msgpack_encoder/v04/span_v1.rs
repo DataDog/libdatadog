@@ -24,7 +24,7 @@
 //! | Chunk `attributes`                    | Applied to every span in the chunk          |
 //! | Payload `env` / `app_version`         | Fallback for `meta["env"]` / `meta["version"]` when the span leaves them unset |
 //! | Payload `attributes`                  | Applied to every span, lowest precedence (span > chunk > payload) |
-//! | Chunk `dropped_trace: true`           | Forces `metrics["_sampling_priority_v1"] = -1` (USER_REJECT) unless the chunk's own priority is already negative |
+//! | Chunk `dropped_trace: true`           | Preserves the chunk's `metrics["_sampling_priority_v1"]`, defaulting to `-1` (USER_REJECT) only when no priority is set |
 //!
 //! An attribute sharing a name with one of the dedicated fields above (`env`, `version`,
 //! `component`, `span.kind`, `_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) is
@@ -396,8 +396,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }
         if let Some(mechanism) = chunk.sampling_mechanism {
             write_const_msgpack_str!(writer, "_dd.p.dm")?;
-            let mut buf = itoa::Buffer::new();
-            write_str(writer, buf.format(-(mechanism as i64)))?;
+            // Always emit a leading '-' so mechanism 0 serializes as "-0", not "0".
+            write_str(writer, &format!("-{mechanism}"))?;
         }
         for (k, v) in &meta_leaves {
             write_str(writer, k)?;
@@ -1123,6 +1123,26 @@ mod tests {
     }
 
     #[test]
+    fn sampling_mechanism_zero_encodes_as_negative_zero() {
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                sampling_mechanism: Some(0),
+                spans: vec![minimal_span()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta carries sampling_mechanism");
+        assert_eq!(
+            map_get(meta, "_dd.p.dm").unwrap().as_str(),
+            Some("-0"),
+            "mechanism 0 must serialize as `-0`, not `0`, per the agent's convention"
+        );
+    }
+
+    #[test]
     fn chunk_attributes_are_propagated_to_every_span_in_chunk() {
         let mut chunk_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         chunk_attrs.insert(bs("region"), AttributeValue::String(bs("us-east-1")));
@@ -1215,7 +1235,29 @@ mod tests {
     }
 
     #[test]
-    fn dropped_trace_forces_user_reject_priority() {
+    fn dropped_trace_preserves_priority() {
+        // A dropped_trace chunk keeps its own priority: AUTO_REJECT `0` stays `0`.
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                dropped_trace: true,
+                priority: Some(0),
+                spans: vec![minimal_span()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let metrics = map_get(&traces[0][0], "metrics").expect("metrics present");
+        assert_eq!(
+            map_get(metrics, "_sampling_priority_v1").unwrap().as_f64(),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn dropped_trace_without_priority_defaults_to_user_reject() {
+        // With no priority set, a dropped_trace chunk defaults to `-1` (USER_REJECT).
         let payload = TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
                 trace_id: [0u8; 16],

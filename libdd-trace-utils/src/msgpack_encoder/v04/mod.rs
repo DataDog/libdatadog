@@ -253,12 +253,11 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; the closest historical signal
-        // is `USER_REJECT` (priority -1), which tells the agent the sampler rejected this trace
-        // without dropping the spans themselves. Only force it when the chunk doesn't already
-        // carry a negative (reject-like) priority.
+        // v0.4 has no wire-level equivalent of `dropped_trace`; preserve the chunk's own
+        // sampling priority (so AUTO_REJECT `0` stays `0`) and default to `-1` only when the
+        // chunk carries no priority at all.
         let priority = if chunk.dropped_trace {
-            Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
+            chunk.priority.or(Some(-1))
         } else {
             chunk.priority
         };
