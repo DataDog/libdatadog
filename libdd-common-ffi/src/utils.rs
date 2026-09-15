@@ -6,7 +6,7 @@ use std::panic::catch_unwind;
 
 /// Wraps a C-FFI function in standard form
 /// Expects the function to return a result type that implements into and to be decorated with
-/// #[named].
+/// `#[named]`.
 #[macro_export]
 macro_rules! wrap_with_ffi_result {
     ($body:block) => {{
@@ -36,7 +36,7 @@ macro_rules! wrap_with_ffi_result_no_catch {
 }
 
 /// Wraps a C-FFI function in standard form.
-/// Expects the function to return a VoidResult and to be decorated with #[named].
+/// Expects the function to return a VoidResult and to be decorated with `#[named]`.
 #[macro_export]
 macro_rules! wrap_with_void_ffi_result {
     ($body:block) => {{
