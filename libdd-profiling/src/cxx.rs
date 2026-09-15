@@ -288,8 +288,6 @@ pub mod ffi {
         type ProfileExporterResult;
         type EncodedProfile;
         type EncodedProfileResult;
-        type ExporterManager;
-        type ExporterManagerResult;
         type ProfileDictionary;
         type ProfileDictionaryResult;
         type DictionaryStringIdOpaque;
@@ -327,14 +325,6 @@ pub mod ffi {
         /// Call this at most once and only after ok() returns true. Calling it
         /// on a failed result or calling it more than once aborts the process.
         fn take_value(self: &mut EncodedProfileResult) -> Box<EncodedProfile>;
-        fn ok(self: &ExporterManagerResult) -> bool;
-        fn message(self: &ExporterManagerResult) -> String;
-        fn check_and_print(self: &ExporterManagerResult) -> bool;
-        /// Takes the manager from a successful result.
-        ///
-        /// Call this at most once and only after ok() returns true. Calling it
-        /// on a failed result or calling it more than once aborts the process.
-        fn take_value(self: &mut ExporterManagerResult) -> Box<ExporterManager>;
         fn ok(self: &ProfileDictionaryResult) -> bool;
         fn message(self: &ProfileDictionaryResult) -> String;
         fn check_and_print(self: &ProfileDictionaryResult) -> bool;
@@ -623,56 +613,6 @@ pub mod ffi {
             cancel: &CancellationToken,
         ) -> Status;
 
-        // ExporterManager methods
-        /// Creates a new ExporterManager with a background worker thread
-        #[Self = "ExporterManager"]
-        fn create(exporter: Box<ProfileExporter>) -> Box<ExporterManagerResult>;
-
-        /// Queue a profile to be sent asynchronously by the worker thread
-        ///
-        /// **Important**: This method resets the profile and queues the *previous* profile data.
-        /// After calling this, the profile will be empty and ready for new samples.
-        #[allow(clippy::too_many_arguments)]
-        fn queue_profile(
-            self: &mut ExporterManager,
-            profile: &mut Profile,
-            files_to_compress: Vec<AttachmentFile>,
-            additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
-        ) -> Status;
-
-        /// Queue a previously serialized profile to be sent asynchronously by
-        /// the background worker thread.
-        ///
-        /// This is the split form of queue_profile().
-        #[allow(clippy::too_many_arguments)]
-        fn queue_encoded_profile(
-            self: &mut ExporterManager,
-            encoded: Box<EncodedProfile>,
-            files_to_compress: Vec<AttachmentFile>,
-            additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
-        ) -> Status;
-
-        /// Abort the manager, stopping the worker thread
-        /// Transitions the manager from Active to Suspended state
-        fn abort(self: &mut ExporterManager) -> Status;
-
-        /// Prefork: suspend the manager before forking
-        /// Transitions the manager from Active to Suspended state
-        fn prefork(self: &mut ExporterManager) -> Status;
-
-        /// Postfork child: reinitialize manager in child process, discarding inflight requests
-        /// Transitions the manager from Suspended to Active state
-        fn postfork_child(self: &mut ExporterManager) -> Status;
-
-        /// Postfork parent: reinitialize manager in parent process and re-queue inflight requests
-        /// Transitions the manager from Suspended to Active state
-        fn postfork_parent(self: &mut ExporterManager) -> Status;
     }
 }
 
@@ -680,7 +620,6 @@ mod cancellation;
 mod conversions;
 mod dictionary;
 mod errors;
-mod exporter_manager;
 mod ids;
 mod profile;
 mod profile_exporter;
@@ -688,10 +627,8 @@ mod profile_exporter;
 pub use self::cancellation::CancellationToken;
 pub use self::dictionary::ProfileDictionary;
 pub use self::errors::{
-    EncodedProfileResult, ExporterManagerResult, ProfileDictionaryResult, ProfileExporterResult,
-    ProfileResult,
+    EncodedProfileResult, ProfileDictionaryResult, ProfileExporterResult, ProfileResult,
 };
-pub use self::exporter_manager::ExporterManager;
 pub use self::profile::{EncodedProfile, Profile};
 pub use self::profile_exporter::ProfileExporter;
 

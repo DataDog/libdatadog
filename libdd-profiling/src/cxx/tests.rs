@@ -9,7 +9,6 @@ use libdd_common::test_utils::{
     create_temp_file_path, parse_http_request_sync, HttpRequest, TempFileGuard,
 };
 use serde_json::json;
-use std::time::{Duration, Instant};
 
 const TEST_LIB_NAME: &str = "dd-trace-test";
 const TEST_LIB_VERSION: &str = "1.0.0";
@@ -185,17 +184,6 @@ fn read_dumped_request_and_event(file_path: &std::path::Path) -> (HttpRequest, s
     let event_json = serde_json::from_slice(&event_part.content).expect("parse event.json");
 
     (request, event_json)
-}
-
-fn wait_for_request(file_path: &std::path::Path, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if file_path.exists() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    file_path.exists()
 }
 
 #[test]
@@ -1074,153 +1062,4 @@ fn test_send_profile_with_attachments() {
     profile.add_sample(&create_test_sample());
     let result2 = exporter.send_profile(&mut profile, vec![], vec![], "", "", "");
     assert!(!result2.ok(), "Should fail with empty optional params too");
-}
-
-#[test]
-fn test_exporter_manager_create_and_abort() {
-    let exporter = create_test_exporter();
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    // Abort immediately
-    manager.abort().unwrap();
-}
-
-#[test]
-fn test_exporter_manager_queue_and_abort() {
-    let exporter = create_test_exporter();
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    // Queue a profile
-    let mut profile = create_test_profile();
-    profile.add_sample(&create_test_sample());
-
-    manager
-        .queue_profile(&mut profile, vec![], vec![], "", "", "")
-        .unwrap();
-
-    // Give worker thread time to process
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Verify profile was reset
-    assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 0);
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_exporter_manager_queue_encoded_profile_writes_file_export() {
-    let (exporter, file_path) = create_test_file_exporter("cxx_queue_encoded_profile");
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    let mut profile = create_test_profile();
-    profile.add_sample(&create_test_sample());
-    profile.add_endpoint_count("/queued", 11);
-    let encoded = profile.serialize().unwrap();
-
-    manager
-        .queue_encoded_profile(
-            encoded,
-            vec![],
-            vec![ffi::Tag {
-                key: "profile_type",
-                value: "wall",
-            }],
-            "runtime:rust",
-            r#"{"queued": true}"#,
-            r#"{"worker": "background"}"#,
-        )
-        .unwrap();
-
-    assert!(
-        wait_for_request(file_path.as_ref(), Duration::from_secs(5)),
-        "queued encoded profile should be exported"
-    );
-    let (_request, event_json) = read_dumped_request_and_event(file_path.as_ref());
-    assert_eq!(event_json["attachments"], json!(["profile.pprof"]));
-    assert_eq!(event_json["endpoint_counts"], json!({ "/queued": 11 }));
-    assert_eq!(event_json["process_tags"], "runtime:rust");
-    assert_eq!(event_json["internal"]["queued"], true);
-    assert_eq!(event_json["info"]["worker"], "background");
-    assert!(event_json["tags_profiler"]
-        .as_str()
-        .unwrap()
-        .split(',')
-        .any(|tag| tag == "profile_type:wall"));
-
-    manager.abort().unwrap();
-}
-
-#[test]
-fn test_exporter_manager_prefork_and_postfork() {
-    let exporter = create_test_exporter();
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    // Queue some work
-    let mut profile = create_test_profile();
-    profile.add_sample(&create_test_sample());
-    manager
-        .queue_profile(&mut profile, vec![], vec![], "", "", "")
-        .unwrap();
-
-    // Prefork
-    manager.prefork().unwrap();
-
-    // Postfork parent - should re-queue inflight
-    manager.postfork_parent().unwrap();
-
-    // Give time for processing
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
-    // Abort parent
-    manager.abort().unwrap();
-}
-
-#[test]
-fn test_exporter_manager_postfork_child() {
-    let exporter = create_test_exporter();
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    // Queue some work
-    let mut profile = create_test_profile();
-    profile.add_sample(&create_test_sample());
-    manager
-        .queue_profile(&mut profile, vec![], vec![], "", "", "")
-        .unwrap();
-
-    // Prefork
-    manager.prefork().unwrap();
-
-    // Postfork child - should discard inflight
-    manager.postfork_child().unwrap();
-
-    // Child can queue its own work
-    let mut child_profile = create_test_profile();
-    child_profile.add_sample(&create_test_sample());
-    manager
-        .queue_profile(&mut child_profile, vec![], vec![], "", "", "")
-        .unwrap();
-
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    manager.abort().unwrap();
-}
-
-#[test]
-fn test_exporter_manager_cannot_use_after_abort() {
-    let exporter = create_test_exporter();
-    let mut manager = ExporterManager::create(exporter).unwrap();
-
-    // Abort the manager
-    manager.abort().unwrap();
-
-    // Trying to queue after abort should fail
-    let mut profile = create_test_profile();
-    profile.add_sample(&create_test_sample());
-
-    let result = manager.queue_profile(&mut profile, vec![], vec![], "", "", "");
-    assert!(!result.ok(), "Should fail to queue after abort");
-    assert_eq!(result.operation(), "ExporterManager::queue_profile");
-    assert!(
-        result.message().contains("Suspended") || result.message().contains("state"),
-        "Error message should indicate manager is in Suspended state, got: {}",
-        result.message()
-    );
 }

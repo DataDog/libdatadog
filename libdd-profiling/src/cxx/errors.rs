@@ -145,10 +145,6 @@ impl_box_result_with_message!(
     ProfileExporterResult,
     super::profile_exporter::ProfileExporter
 );
-impl_box_result_with_message!(
-    ExporterManagerResult,
-    super::exporter_manager::ExporterManager
-);
 
 pub(crate) struct ErrorStore {
     policy: ffi::ErrorPolicy,

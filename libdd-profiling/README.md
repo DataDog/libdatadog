@@ -47,7 +47,7 @@ auto profile = result->take_value();
 
 Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`. Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
 
-Exporter and manager APIs return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
+Exporter APIs return `Status`, which exposes `ok()`, `operation()`, `message()`, and `check_and_print()`:
 
 ```cpp
 if (!exporter->send_profile(...).check_and_print()) return false;
