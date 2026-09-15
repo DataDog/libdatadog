@@ -22,17 +22,68 @@
 //! - Success → live server.  `ECONNRESET` → stale socket file.
 
 use super::{
-    create_unix_socket, max_message_size, sendmsg, set_nonblocking, ControlMessage, MsgFlags,
-    SeqpacketConn, SeqpacketListener, UnixAddr,
+    create_unix_socket, max_message_size, poll_with_timeout, sendmsg, set_nonblocking,
+    ControlMessage, MsgFlags, SeqpacketConn, SeqpacketListener, UnixAddr,
 };
 use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
 use std::os::fd::RawFd;
 use std::{
+    ffi::CString,
     io,
-    os::unix::io::{AsRawFd, FromRawFd, OwnedFd},
+    os::unix::{
+        ffi::OsStrExt,
+        io::{AsRawFd, FromRawFd, OwnedFd},
+    },
     path::Path,
+    time::Duration,
 };
+use tracing::error;
+
+/// macOS `sockaddr_un::sun_path` is only 104 bytes (103 usable). When the socket path
+/// exceeds that, cd to the socket's parent directory for the operation using the
+/// thread-local `pthread_chdir_np` (unlike `chdir`, this does not affect other threads),
+/// then restore via `pthread_fchdir_np`.
+fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> io::Result<T> {
+    const SUN_PATH_MAX: usize = 103;
+    if path.as_os_str().len() <= SUN_PATH_MAX {
+        return f(path);
+    }
+    extern "C" {
+        fn pthread_chdir_np(path: *const libc::c_char) -> libc::c_int;
+        fn pthread_fchdir_np(fd: libc::c_int) -> libc::c_int;
+    }
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "socket path has no filename")
+    })?;
+    // Save the calling thread's CWD as an fd so we can restore it unconditionally.
+    let saved = unsafe { libc::open(c".".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    if saved < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let saved_owned = unsafe { OwnedFd::from_raw_fd(saved) };
+    let dir_cstr = CString::new(dir.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "socket dir path contains NUL"))?;
+    let chdir_err = unsafe { pthread_chdir_np(dir_cstr.as_ptr()) };
+    if chdir_err != 0 {
+        return Err(io::Error::from_raw_os_error(chdir_err));
+    }
+    let result = f(Path::new(name));
+    let restore_err = unsafe { pthread_fchdir_np(saved_owned.as_raw_fd()) };
+    if restore_err != 0 {
+        // The calling thread's CWD is now left pointing at `dir`, which would silently corrupt
+        // any later relative-path resolution on this thread; surface that instead of the
+        // (possibly successful) callback result.
+        error!(
+            "pthread_fchdir_np failed to restore thread CWD after socket op: errno {restore_err}"
+        );
+        if result.is_ok() {
+            return Err(io::Error::from_raw_os_error(restore_err));
+        }
+    }
+    result
+}
 
 fn create_dgram_socket() -> io::Result<OwnedFd> {
     create_unix_socket(SockType::Datagram)
@@ -63,10 +114,14 @@ impl SeqpacketListener {
     ///
     /// Removes any stale socket file before binding (standard Unix practice).
     pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
-        let _ = std::fs::remove_file(path.as_ref());
+        let path = path.as_ref();
+        let _ = std::fs::remove_file(path);
         let fd = create_dgram_socket()?;
-        let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
-        bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
+        set_dgram_buffers(fd.as_raw_fd())?;
+        with_short_path(path, |short| {
+            let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+            bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)
+        })?;
         Ok(Self { inner: fd })
     }
 
@@ -76,9 +131,26 @@ impl SeqpacketListener {
     /// Silently discards messages without SCM_RIGHTS (liveness probes from `is_listening`).
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            let mut buf = [0u8; 1];
-            let (_, owned_fds) =
-                super::recvmsg_raw(self.inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)?;
+            // Use an 8-byte buffer rather than 1 byte: macOS SOCK_DGRAM uses
+            // non-truncating semantics and returns EMSGSIZE if the data doesn't
+            // fit, even for fractionally larger-than-expected payloads.
+            let mut buf = [0u8; 8];
+            let (_, owned_fds) = match super::recvmsg_raw(
+                self.inner.as_raw_fd(),
+                &mut buf,
+                MsgFlags::MSG_DONTWAIT,
+            ) {
+                // macOS SOCK_DGRAM returns EMSGSIZE when the received datagram exceeds
+                // the caller's iov or cmsg buffer — the kernel discards the message.
+                // Treat it as a discarded handshake: log and continue so the accept loop
+                // does not die. The client will retry via the reconnect mechanism.
+                Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                    // Shouldn't occur with our larger buffers, but guard defensively.
+                    tracing::warn!("rendezvous socket: oversized datagram discarded (EMSGSIZE), client will retry");
+                    continue;
+                }
+                other => other?,
+            };
             let mut it = owned_fds.into_iter();
             if let Some(client_fd) = it.next() {
                 // The second fd (if present) is the liveness pipe read end from `connect()`.
@@ -147,18 +219,20 @@ impl SeqpacketConn {
         // A fresh unconnected DGRAM socket is required for the handshake sendmsg.
         // fd_client is already "connected" to fd_server and cannot reach the rendezvous path.
         let handshake_fd = create_dgram_socket()?;
-        let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
         let server_raw = fd_server.as_raw_fd();
         let liveness_r_raw = liveness_read.as_raw_fd();
         let iov = [std::io::IoSlice::new(&[0u8])];
-        sendmsg::<UnixAddr>(
-            handshake_fd.as_raw_fd(),
-            &iov,
-            &[ControlMessage::ScmRights(&[server_raw, liveness_r_raw])],
-            MsgFlags::empty(),
-            Some(&addr),
-        )
-        .map_err(io::Error::from)?;
+        with_short_path(path.as_ref(), |short| {
+            let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+            sendmsg::<UnixAddr>(
+                handshake_fd.as_raw_fd(),
+                &iov,
+                &[ControlMessage::ScmRights(&[server_raw, liveness_r_raw])],
+                MsgFlags::empty(),
+                Some(&addr),
+            )
+            .map_err(io::Error::from)
+        })?;
         // liveness_read was sent via SCM_RIGHTS; drop our local copy (daemon has the reference).
         drop(liveness_read);
         // Keep fd_server (_peer) to prevent EINVAL: on macOS, closing the local fd for the
@@ -181,6 +255,50 @@ impl SeqpacketConn {
             }
         }
         Ok(())
+    }
+
+    /// Poll for a new message and watch the liveness probe to detect any `BrokenPipe` immediately,
+    /// instead of only after the full `timeout` elapses.
+    pub(super) fn poll_readable_with_liveness(&self, timeout: Option<Duration>) -> io::Result<()> {
+        let Some(ref lw) = self.liveness else {
+            return poll_with_timeout(self.inner.as_raw_fd(), libc::POLLIN, timeout);
+        };
+        let timeout_ms: i32 = match timeout {
+            None => -1,
+            Some(d) => d.as_millis().min(i32::MAX as u128) as i32,
+        };
+        let mut pfds = [
+            libc::pollfd {
+                fd: self.inner.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: lw.as_raw_fd(),
+                events: libc::POLLHUP as libc::c_short,
+                revents: 0,
+            },
+        ];
+        loop {
+            let ret =
+                unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, timeout_ms) };
+            if ret > 0 {
+                if pfds[0].revents & libc::POLLIN != 0 {
+                    return Ok(());
+                }
+                if pfds[1].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                    return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                }
+                return Ok(());
+            }
+            if ret == 0 {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
     }
 
     /// Create from a connected fd plus a peer fd that must be kept alive.
@@ -220,9 +338,13 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
         None,
     )
     .map_err(io::Error::from)?;
-    let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
     let iov = [std::io::IoSlice::new(&[0u8])];
-    Ok(sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr)).is_ok())
+    Ok(with_short_path(path.as_ref(), |short| {
+        let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+        sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr))
+            .map_err(io::Error::from)
+    })
+    .is_ok())
 }
 
 pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
@@ -294,5 +416,133 @@ mod tests {
             conn0.try_send_raw(&mut vec![42u8; 10], &[]).is_err(),
             "expected send error after dropping peer on macOS"
         );
+    }
+
+    /// A peer that disconnects while we're blocked in `recv_raw_blocking` must be detected
+    /// immediately (via the liveness pipe) rather than only once the whole read_timeout
+    /// elapses. This reproduces the real-world scenario in `broken_pipe.phpt`: the daemon
+    /// closes its connection after failing to decode a garbled message (see the IPC serve
+    /// loop's `Ok((Err(_), _)) => break` arm), and the client is waiting on a `call()`'s
+    /// `recv_raw_blocking` for the response that will now never arrive. Before this fix,
+    /// `recv_raw_blocking` only polled the data socket, so it had no way to learn the peer
+    /// was gone and just blocked for the full timeout, then returned a generic `TimedOut`
+    /// (which `with_retry` treats as non-reconnectable) instead of `BrokenPipe`.
+    #[test]
+    fn test_recv_blocking_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        // Generous timeout: if the fix regresses, this test would otherwise have to wait out
+        // this whole duration before failing, so keep it well above scheduling jitter but far
+        // below what a CI timeout would tolerate for a passing run.
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Simulate the daemon closing its connection (e.g. after a decode failure).
+        drop(server);
+
+        let start = std::time::Instant::now();
+        let err = client
+            .recv_raw_blocking(&mut [0u8; 64])
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_blocking took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not a timeout wait"
+        );
+    }
+
+    #[test]
+    fn test_recv_blocking_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Start the receiver first, with nothing queued yet, so it actually enters
+        // poll_readable_with_liveness's blocking poll() -- then fire both events close
+        // together so poll() is likely to observe them simultaneously.
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            let (n, _) = client
+                .recv_raw_blocking(&mut buf)
+                .expect("expected the queued message, not BrokenPipe");
+            buf[..n].to_vec()
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        server
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(server);
+
+        let got = handle.join().expect("receiver thread");
+        assert_eq!(got, b"final");
+    }
+
+    /// Async counterpart of `test_recv_blocking_detects_peer_disconnect_promptly`, covering
+    /// `recv_raw_async` (used by the macro-generated server dispatch loop) rather than the
+    /// client-side `recv_raw_blocking`. This reproduces the real-world
+    /// `pcntl_fork_thread_mode_orphan.phpt` hang: in thread mode, the main PHP thread connects
+    /// to its own in-process sidecar listener as a worker, and `datadog_sidecar_shutdown()`
+    /// drops that connection from the client side. Before this fix, the server-side task
+    /// handling that connection only polled the data socket via `fd.readable()`, so it never
+    /// learned the client was gone and awaited forever instead of the listener's shutdown
+    /// completing (`shutdown_complete_rx` never resolved).
+    #[tokio::test]
+    async fn test_recv_async_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        // Simulate the client (e.g. the main PHP thread) disconnecting.
+        drop(client);
+
+        let start = std::time::Instant::now();
+        let err = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_async took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not an indefinite wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recv_async_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        client
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(client);
+
+        let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect("expected the queued message, not BrokenPipe");
+        assert_eq!(got, b"final");
     }
 }
