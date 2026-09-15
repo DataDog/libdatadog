@@ -263,24 +263,19 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
-        // FIXME(APMSP-3720): there is more than this to obfuscation config
-        let sql_obfuscation_mode = (|| {
-            Some(
-                agent_info
-                    .info
-                    .config
-                    .as_ref()?
-                    .obfuscation
-                    .as_ref()?
-                    .sql_obfuscation_mode,
-            )
-        })()
-        .unwrap_or_default();
+        let obfuscation_config = (|| agent_info.info.config.as_ref()?.obfuscation.as_ref())();
+        let mut sql_obfuscation_config = obfuscation_config
+            .and_then(|cfg| cfg.sql.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        sql_obfuscation_config.obfuscation_mode = obfuscation_config
+            .map(|cfg| cfg.sql_obfuscation_mode)
+            .unwrap_or_default();
         client_side_stats
             .obfuscation_config
             .store(Arc::new(StatsComputationObfuscationConfig {
                 enabled: obfuscation_active,
-                sql_obfuscation_mode,
+                obfuscation_config: sql_obfuscation_config,
             }));
     }
 }
