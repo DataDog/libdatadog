@@ -130,5 +130,4 @@ pub enum RemoteConfigCapabilities {
     FfeFlagConfigurationRules = 46,
     DdDataStreamsTransactionExtractors = 47,
     LlmObsActivation = 48,
-    AsmRawResponseBody = 49,
 }
