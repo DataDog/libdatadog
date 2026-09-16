@@ -31,7 +31,7 @@ fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws
 
 [dependencies]
 bytes = { workspace = true, features = ["std"] }
-thiserror = "2"
+thiserror = { workspace = true, default-features = true }
 fastrand = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["rt", "time"] }
 reqwest = { workspace = true, optional = true }
@@ -45,5 +45,5 @@ http-body-util = { workspace = true, optional = true }
 [dev-dependencies]
 httpmock.workspace = true
 rustls = { workspace = true, features = ["ring"] }
-tokio = { version = "1.23", features = ["rt", "macros", "io-util", "net"] }
+tokio = { workspace = true, features = ["rt", "macros", "io-util", "net"] }
 tempfile.workspace = true

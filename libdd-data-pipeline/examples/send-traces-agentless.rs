@@ -20,7 +20,10 @@ use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
-use libdd_trace_utils::span::v04::{SpanBytes, SpanEvent, SpanLink, VecMap};
+use libdd_trace_utils::span::{
+    span_pool::PooledChunks,
+    v04::{SpanBytes, SpanEvent, SpanLink, VecMap},
+};
 use rand::random;
 use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
 
@@ -108,7 +111,7 @@ fn main() {
     let traces = vec![trace];
 
     exporter
-        .send_trace_chunks(traces, None)
+        .send_trace_chunks(PooledChunks::unpooled(traces), None)
         .expect("Failed to send traces");
     println!("Trace sent to agentless intake at {intake_url}");
 

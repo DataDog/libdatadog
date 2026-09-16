@@ -16,8 +16,8 @@ anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 percent-encoding = { workspace = true, features = ["std"] }
-log = "0.4"
-fluent-uri = "0.4.1"
+log.workspace = true
+fluent-uri.workspace = true
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
@@ -29,7 +29,7 @@ fips = ["libdd-common/fips", "libdd-trace-utils/fips"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [dev-dependencies]
-duplicate = "0.4.1"
+duplicate = { workspace = true, default-features = true }
 criterion = { workspace = true, features = ["csv_output"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 libdd-tinybytes = { version = "1.1.3", path = "../libdd-tinybytes" }

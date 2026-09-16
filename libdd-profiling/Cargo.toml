@@ -28,26 +28,29 @@ harness = false
 [dependencies]
 allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
-bitmaps = "3.2.0"
-byteorder = { version = "1.5", features = ["std"] }
+bitmaps = { workspace = true, default-features = true }
+# std is byteorder's only default feature; the workspace disables default
+# features, so enable std explicitly.
+byteorder = { workspace = true, features = ["std"] }
 bytes = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["std", "clock"] }
-crossbeam-channel = "0.5.15"
-crossbeam-utils = { version = "0.8.21" }
-cxx = { version = "1.0", optional = true }
+crossbeam-channel = { workspace = true, default-features = true }
+crossbeam-utils = { workspace = true, default-features = true }
+cxx = { workspace = true, default-features = true, optional = true }
 futures.workspace = true
-hashbrown = { version = "0.16", default-features = false }
+hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
 http-body-util.workspace = true
 httparse = { workspace = true, features = ["std"] }
-indexmap = "2.11"
+indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime.workspace = true
-parking_lot = { version = "0.12", default-features = false }
-prost = "0.14.1"
-rand = "0.8"
+parking_lot.workspace = true
+# Only the prost::Message trait is used here; the Message derives live in
+# libdd-profiling-protobuf (which enables prost/derive for its generated code).
+prost = { workspace = true, features = ["std"] }
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
@@ -57,13 +60,13 @@ rand = "0.8"
 # backend. We install the ring provider explicitly via tls.rs / libdd-common instead.
 reqwest = { workspace = true, features = ["multipart", "rustls-no-provider", "hickory-dns"] }
 rustls-platform-verifier.workspace = true
-rustc-hash = { version = "2.1", default-features = false }
+rustc-hash.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-target-triple = "0.1.4"
-thiserror = "2"
-tokio = {version = "1.23", features = ["rt", "macros", "net", "io-util", "fs"]}
-tokio-util = { version = "0.7.1", default-features = false }
+target-triple.workspace = true
+thiserror = { workspace = true, default-features = true }
+tokio = { workspace = true, features = ["rt", "macros", "net", "io-util", "fs"] }
+tokio-util.workspace = true
 # ring is the crypto provider for non-FIPS builds on all platforms.
 # FIPS builds activate aws-lc-rs via the rustls/fips feature instead.
 rustls = { workspace = true, features = ["ring"] }
@@ -72,15 +75,19 @@ rustls = { workspace = true, features = ["ring"] }
 zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-zrip = { version = "=0.6.0", default-features = false, features = ["frame"] }
+zrip = { workspace = true, features = ["frame"] }
 
 [dev-dependencies]
 bolero = { workspace = true, features = ["std"] }
 criterion.workspace = true
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 libdd-profiling = { path = ".", features = ["test-utils"] }
-proptest = "1"
-strum = { version = "0.26", features = ["derive"] }
+# rand is only used by tests/exporter_e2e.rs (rand::random), never by the
+# library itself, so it lives in dev-dependencies. `rand::random` needs the
+# thread RNG, i.e. both `std` and `std_rng` defaults.
+rand = { workspace = true, default-features = true }
+proptest = { workspace = true, default-features = true }
+strum = { workspace = true, features = ["derive"] }
 tempfile.workspace = true
 
 [build-dependencies]
