@@ -10,7 +10,6 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
@@ -39,6 +38,7 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
 use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle};
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_remote_config::fetch::ConfigInvariants;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
@@ -2064,7 +2064,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     let _ = transport.send_garbage();
 }
 
-/// Raw AppSec response returned by `ddog_sidecar_send_appsec_message`.
+/// Raw AppSec response returned by the AppSec message functions.
 ///
 /// When `ptr` is non-null, the response must be freed by calling
 /// `ddog_sidecar_appsec_response_drop`.
@@ -2092,7 +2092,37 @@ pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     client_id: u64,
     data: ffi::CharSlice,
 ) -> AppsecCResponse {
-    match blocking::send_appsec_message(transport, client_id, data.as_bytes()) {
+    appsec_c_response(blocking::send_appsec_message(
+        transport,
+        client_id,
+        data.as_bytes(),
+    ))
+}
+
+/// Sends an AppSec message once, without reconnecting the sidecar on failure.
+///
+/// The response is allocated by the sidecar and must be freed with
+/// `ddog_sidecar_appsec_response_drop` when the caller is done with it.
+///
+/// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
+#[cfg(unix)]
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn datadog_sidecar_send_appsec_message_without_reconnect(
+    transport: &mut Box<SidecarTransport>,
+    client_id: u64,
+    data: ffi::CharSlice,
+) -> AppsecCResponse {
+    appsec_c_response(blocking::send_appsec_message_without_reconnect(
+        transport,
+        client_id,
+        data.as_bytes(),
+    ))
+}
+
+#[cfg(unix)]
+fn appsec_c_response(response: std::io::Result<(Vec<u8>, bool)>) -> AppsecCResponse {
+    match response {
         Ok((bytes, disconnect)) => {
             let mut bytes = std::mem::ManuallyDrop::new(bytes);
             AppsecCResponse {
@@ -2111,13 +2141,13 @@ pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     }
 }
 
-/// Frees an `AppsecCResponse` that was returned by `ddog_sidecar_send_appsec_message`.
+/// Frees an `AppsecCResponse` returned by an AppSec message function.
 #[cfg(unix)]
 #[no_mangle]
 pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
     if !response.ptr.is_null() {
         // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in
-        // ddog_sidecar_send_appsec_message and use the sidecar's allocator.
+        // an AppSec message function and use the sidecar's allocator.
         unsafe {
             let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
         }

@@ -5,6 +5,8 @@
 
 use tracing::debug;
 
+use crate::span::span_pool::PooledChunks;
+
 use super::{v04::Span, SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
 
@@ -145,7 +147,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
+pub fn drop_chunks<T>(traces: &mut PooledChunks<T>) -> DroppedP0Stats
 where
     T: TraceData,
 {
@@ -188,11 +190,19 @@ where
             dropped_p0_traces += 1;
             return false;
         }
-        let sampled_spans = sampled_indexes
-            .iter()
-            .map(|i| std::mem::take(&mut chunk[*i]))
-            .collect();
-        *chunk = sampled_spans;
+
+        let mut sampled_indices = sampled_indexes.iter().copied().peekable();
+        let mut i: usize = 0;
+        chunk.retain_mut(|_span| {
+            let drop = if sampled_indices.peek().copied() == Some(i) {
+                sampled_indices.next();
+                true
+            } else {
+                false
+            };
+            i += 1;
+            drop
+        });
         true
     });
 
@@ -426,14 +436,16 @@ mod tests {
             (chunk_with_analyzed_span, 1),
         ];
 
-        for (chunk, expected_count) in chunks_and_expected_sampled_spans.into_iter() {
-            let mut traces = vec![chunk];
+        for (i, (chunk, expected_count)) in
+            chunks_and_expected_sampled_spans.into_iter().enumerate()
+        {
+            let mut traces = PooledChunks::unpooled(vec![chunk]);
             drop_chunks(&mut traces);
 
             if expected_count == 0 {
-                assert!(traces.is_empty());
+                assert!(traces.is_empty(), "failed at item {i}");
             } else {
-                assert_eq!(traces[0].len(), expected_count);
+                assert_eq!(traces[0].len(), expected_count, "failed at item {i}");
             }
         }
     }

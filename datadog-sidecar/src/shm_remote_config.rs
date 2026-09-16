@@ -6,12 +6,12 @@ use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_live_debugger::LiveDebuggingData;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{tag::Tag, MutexExt};
 use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use libdd_ipc::rate_limiter::ShmLimiter;
+use libdd_live_debugger::LiveDebuggingData;
 use libdd_remote_config::config::dynamic::{parse_json, Configs};
 use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
@@ -1048,7 +1048,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
-        use datadog_live_debugger::LiveDebuggingData;
+        use libdd_live_debugger::LiveDebuggingData;
 
         let server = RemoteConfigServer::spawn();
 

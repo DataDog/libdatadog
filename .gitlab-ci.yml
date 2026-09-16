@@ -6,7 +6,7 @@ variables:
     description: "downstream jobs are triggered on this branch"
 
   # To bump: docker buildx imagetools inspect registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
-  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:c23806c552973ba3177ec77377e0ed597cb70b05b116561e96ade5e47e0706e4
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:941d9b580302c07194e9bd2141d5f47c6cfb97d5a73c8ce9af2fce7a76034a0b
 
   # To bump: get commit sha from repo: https://gitlab.ddbuild.io/DataDog/benchmarking-platform branch: libdatadog/benchmarks
   BENCHMARKING_PLATFORM_SHA: "1d6ed8466bbe6e8fca75f899a7ec3bdc3003ce4e"

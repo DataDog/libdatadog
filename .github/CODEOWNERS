@@ -20,7 +20,7 @@ CLAUDE.md                            @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-engineering
 .gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
-bin_tests/                           @DataDog/libdatadog-profiling
+bin_tests/                           @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
 build-common/                        @DataDog/apm-common-components-core
 builder                              @DataDog/apm-common-components-core
 Cargo.*                              @DataDog/libdatadog
@@ -33,7 +33,7 @@ libdd-ffe                            @DataDog/feature-flagging-and-experimentati
 libdd-ffe-test-suite                 @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ffe-ffi                        @DataDog/feature-flagging-and-experimentation-sdk
 libdd-ipc*/                          @DataDog/libdatadog-php
-datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
+libdd-live-debugger*/                @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
 libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
@@ -46,8 +46,8 @@ libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
 libdd-common*/                       @DataDog/libdatadog
-libdd-crashtracker*/                 @DataDog/libdatadog-profiling
-libdd-data-pipeline*/                @DataDog/libdatadog-apm
+libdd-crashtracker*/                 @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers
+libdd-data-pipeline*/                @DataDog/apm-common-components-core
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog @DataDog/libdatadog-profiling
@@ -112,10 +112,10 @@ bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
 tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
-libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust
-libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust
-libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust
+libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
+libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
+libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
+libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
-

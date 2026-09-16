@@ -123,16 +123,20 @@ benchmarks:
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
     FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
 
-    # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix, not
-    # libddprof-build's: that pipeline builds --release and cargo bench uses [profile.bench], so
-    # the -C flags -- and therefore the cache keys -- never match.
-    SCCACHE_BUCKET: dd-ci-artefacts-build-stable
+    # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix,
+    # not libddprof-build's: that pipeline builds --release and cargo bench uses
+    # [profile.bench], so the -C flags -- and therefore the cache keys -- never
+    # match.
+    # Our CI role is granted only "libdatadog/*" in this bucket, so the key
+    # prefix must stay under it (cloud-inventory gitlab-repositories/libdatadog.json).
+    SCCACHE_BUCKET: dd-sccache-storage-us1-ddbuild-io
     SCCACHE_REGION: us-east-1
     SCCACHE_S3_KEY_PREFIX: libdatadog/benchmarks/sccache
     SCCACHE_ERROR_LOG: /tmp/sccache.log
-    # Required: candidate and baseline compile at different absolute paths below this one, and
+    # Required: candidate and baseline compile at different absolute paths, and
     # without a basedir sccache keys on the path, so they would share nothing.
-    SCCACHE_BASEDIRS: /platform/workspace
+    # Both leaf dirs, not the parent: sccache keys on the unmatched remainder.
+    SCCACHE_BASEDIRS: /platform/workspace/candidate:/platform/workspace/baseline
     # Incompatible with a shared compiler cache.
     CARGO_INCREMENTAL: "0"
 

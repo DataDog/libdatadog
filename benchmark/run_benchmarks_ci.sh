@@ -65,18 +65,34 @@ for crate in ${BENCH_PACKAGES}; do
   done
 done
 
-# Start the shared compiler cache if this image has one. Best-effort: nodes can still be serving
-# a pre-sccache image, and a cache problem must never fail a benchmark job.
+# Start the shared compiler cache. Still best-effort either way: a compiler
+# cache is an optimisation, and no cache problem may ever fail a benchmark job.
 start_compiler_cache() {
   if ! command -v sccache > /dev/null 2>&1; then
     message "sccache not present in this image; building without a compiler cache"
     return 1
   fi
-  if ! sccache --start-server > /dev/null 2>&1; then
-    message "sccache: server startup failed; building without a compiler cache (see ${SCCACHE_ERROR_LOG:-unset})"
+  local startup_output
+  if ! startup_output="$(sccache --start-server 2>&1)"; then
+    message "sccache: server startup failed; building without a compiler cache"
+    message "sccache: --start-server reported: ${startup_output:-<no output>}"
+    dump_compiler_cache_diagnostics
     return 1
   fi
   return 0
+}
+
+# $SCCACHE_ERROR_LOG is not in artifacts:paths; echo it into the job log.
+# AWS_* names only -- one of them is a secret.
+dump_compiler_cache_diagnostics() {
+  message "sccache: AWS_* variables present: $(env | sed -n 's/^\(AWS_[A-Z_]*\)=.*/\1/p' | sort | tr '\n' ' ')"
+  message "sccache: SCCACHE_* config: $(env | grep '^SCCACHE_' | sort | tr '\n' ' ')"
+  if [[ -s "${SCCACHE_ERROR_LOG:-/nonexistent}" ]]; then
+    message "sccache: last 50 lines of ${SCCACHE_ERROR_LOG}:"
+    tail -n 50 "${SCCACHE_ERROR_LOG}" >&2
+  else
+    message "sccache: ${SCCACHE_ERROR_LOG:-unset} is empty or absent (server may have died before logging)"
+  fi
 }
 
 if (( ${#package_args[@]} == 0 )); then
