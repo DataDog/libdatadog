@@ -3,9 +3,9 @@
 
 use crate::primary_sidecar_identifier;
 use http::uri::PathAndQuery;
-use libdd_common::Endpoint;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
+use libdd_types::Endpoint;
 use std::borrow::Cow;
 use std::ffi::CString;
 use std::mem::ManuallyDrop;

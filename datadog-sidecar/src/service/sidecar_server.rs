@@ -10,7 +10,7 @@ use crate::service::{
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
     SidecarInterface,
 };
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
 use libdd_telemetry::metrics::MetricContext;
@@ -21,6 +21,7 @@ use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use libdd_trace_utils::tracer_payload::TraceChunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
+use libdd_types::Endpoint;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Borrow;
 use std::borrow::Cow;

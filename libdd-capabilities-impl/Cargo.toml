@@ -21,6 +21,7 @@ bytes = { workspace = true, features = ["std"] }
 http = { workspace = true, features = ["std"] }
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.0" }
 libdd-common = { path = "../libdd-common", version = "5.2.0", default-features = false, features = ["http-client"] }
+libdd-types = { path = "../libdd-types", version = "5.2.0" }
 tokio = { workspace = true, features = ["fs", "time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

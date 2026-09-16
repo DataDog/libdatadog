@@ -14,7 +14,8 @@ use bytes::Bytes;
 use futures::future::{select, Either};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -71,7 +72,7 @@ impl std::error::Error for SendWithRetryError {}
 /// # Example
 ///
 /// ```rust, no_run
-/// # use libdd_common::Endpoint;
+/// # use libdd_types::Endpoint;
 /// # use libdd_capabilities::{HttpClientCapability, SleepCapability};
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {

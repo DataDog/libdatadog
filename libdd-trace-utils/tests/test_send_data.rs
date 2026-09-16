@@ -9,7 +9,7 @@ mod tracing_integration_tests {
     use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::http_common;
     use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;
     use libdd_trace_utils::span::vec_map::VecMap;
@@ -17,6 +17,7 @@ mod tracing_integration_tests {
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
     use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+    use libdd_types::Endpoint;
     use serde_json::json;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;

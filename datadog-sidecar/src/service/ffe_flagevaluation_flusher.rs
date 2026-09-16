@@ -11,12 +11,12 @@
 
 use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_ffe::telemetry::flagevaluation::{
     flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
     FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpSendConfig,
     FlagEvaluationEvpWriterStats,
 };
+use libdd_types::Endpoint;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex as AsyncMutex;

@@ -161,7 +161,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
 
 /// C-facing companion to [`libdd_telemetry::config::TelemetryEndpoint`]: the same
 /// shape, but with caller-owned [`ffi::CharSlice`] strings instead of `String`s,
-/// so `libdd_common::Endpoint` stays out of this crate's public API.
+/// so `libdd_types::Endpoint` stays out of this crate's public API.
 ///
 /// Empty `url`/`api_key`/`test_token` slices are treated as unset (leave the
 /// existing value unchanged); a `timeout_ms` of 0 keeps the existing/default

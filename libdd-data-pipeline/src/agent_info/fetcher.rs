@@ -11,8 +11,9 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::EndpointExt;
 use libdd_shared_runtime::Worker;
+use libdd_types::Endpoint;
 use sha2::{Digest, Sha256};
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -83,7 +84,7 @@ pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = libdd_types::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Fetch the info
 /// let agent_info = libdd_data_pipeline::agent_info::fetch_info::<NativeCapabilities>(&endpoint)
 ///     .await
@@ -164,7 +165,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
+/// let endpoint = libdd_types::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
 ///     NativeCapabilities,

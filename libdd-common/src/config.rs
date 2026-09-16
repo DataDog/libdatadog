@@ -6,7 +6,7 @@ pub mod parse_env {
     use http::Uri;
     use std::env;
 
-    use crate::parse_uri;
+    use libdd_types::parse_uri;
 
     pub fn duration(name: &str) -> Option<Duration> {
         Some(Duration::from_secs_f32(

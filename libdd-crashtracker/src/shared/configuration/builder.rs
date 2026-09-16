@@ -3,7 +3,7 @@
 use crate::{default_signals, shared::constants, signal_from_signum};
 use alloc::borrow::Cow;
 use core::time::Duration;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 
 use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
 
@@ -124,7 +124,7 @@ impl CrashtrackerConfigurationBuilder {
             .endpoint_url
             .map(|url| {
                 Ok::<Endpoint, anyhow::Error>(Endpoint {
-                    url: libdd_common::parse_uri(&url)?,
+                    url: libdd_types::parse_uri(&url)?,
                     api_key: self.endpoint_api_key.map(Cow::Owned),
                     timeout_ms: self
                         .endpoint_timeout_ms

@@ -37,9 +37,9 @@ fn main() {
 
 #[cfg(windows)]
 fn init_crashtracking(crash_path: &str, module_name: &str) -> bool {
-    use libdd_common::Endpoint;
     use libdd_common_ffi::CharSlice;
     use libdd_crashtracker_ffi::Metadata;
+    use libdd_types::Endpoint;
     use std::path::Path;
     use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, THREAD_ERROR_MODE};
 

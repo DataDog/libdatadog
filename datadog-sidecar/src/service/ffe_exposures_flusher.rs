@@ -13,9 +13,9 @@ use crate::service::FfeExposureBatch;
 #[cfg(test)]
 use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_ffe::telemetry::exposures::encode_exposure_batch;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
+use libdd_types::Endpoint;
 use tracing::debug;
 
 /// EVP proxy path for FFE exposure intake.

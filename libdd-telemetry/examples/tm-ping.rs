@@ -58,7 +58,7 @@ pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
         config
             .endpoint()
             .map(|e| e.timeout_ms)
-            .unwrap_or(libdd_common::Endpoint::DEFAULT_TIMEOUT),
+            .unwrap_or(libdd_types::Endpoint::DEFAULT_TIMEOUT),
     );
     let client = NativeCapabilities::new_client();
     let sleeper = <NativeCapabilities as SleepCapability>::new();

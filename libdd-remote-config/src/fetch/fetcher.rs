@@ -11,11 +11,12 @@ use hashbrown::HashMap;
 use http::uri::PathAndQuery;
 use http::StatusCode;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::{EndpointExt, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     ConfigStatus, TargetFileHash, TargetFileMeta,
 };
+use libdd_types::Endpoint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::HashSet;

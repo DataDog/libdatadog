@@ -11,7 +11,7 @@ macro_rules! assert_maybe_no_error {
     };
 }
 
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]

@@ -113,7 +113,7 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
 
 pub unsafe fn try_to_endpoint(
     endpoint: ProfilingEndpoint,
-) -> anyhow::Result<libdd_common::Endpoint> {
+) -> anyhow::Result<libdd_types::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {

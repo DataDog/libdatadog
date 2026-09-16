@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use libdd_common::config::parse_env;
+use libdd_types::{parse_uri, Endpoint};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 
@@ -537,7 +538,7 @@ mod tests {
             );
             assert_eq!(
                 Path::new(expected),
-                libdd_common::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
+                libdd_types::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
             );
         }
     }
@@ -545,14 +546,14 @@ mod tests {
     #[test]
     fn test_config_set_parsed_file_uri_does_not_reencode_path() {
         let mut cfg = Config::default();
-        let uri = libdd_common::parse_uri("file:///absolute/path").unwrap();
+        let uri = libdd_types::parse_uri("file:///absolute/path").unwrap();
 
         cfg.set_endpoint_uri(uri).unwrap();
 
         let endpoint = cfg.endpoint().unwrap();
         assert_eq!(
             Path::new("/absolute/path"),
-            libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap()
+            libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap()
         );
     }
 

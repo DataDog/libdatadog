@@ -11,7 +11,8 @@ use crate::service::evp_proxy;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 use tracing::{debug, warn};
 

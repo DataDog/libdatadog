@@ -958,7 +958,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            libdd_common::Endpoint::DEFAULT_TIMEOUT
+            libdd_types::Endpoint::DEFAULT_TIMEOUT
         };
         let timeout = time::Duration::from_millis(timeout_ms);
 

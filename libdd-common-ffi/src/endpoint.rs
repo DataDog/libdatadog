@@ -6,7 +6,7 @@ use crate::Error;
 use alloc::borrow::Cow;
 use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
-use libdd_common::{parse_uri, Endpoint};
+use libdd_types::{parse_uri, Endpoint};
 
 #[no_mangle]
 #[must_use]

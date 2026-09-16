@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt as _;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
@@ -26,6 +26,7 @@ use libdd_trace_utils::stats_payload_encoder::{
 };
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
+use libdd_types::Endpoint;
 use std::fmt::Debug;
 use tracing::error;
 
@@ -1099,7 +1100,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
@@ -1149,7 +1150,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
@@ -1200,7 +1201,7 @@ mod tests {
         let addr = socket.local_addr().unwrap().to_string();
 
         let dogstatsd_client =
-            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_types::Endpoint::from_slice(&addr))
                 .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
