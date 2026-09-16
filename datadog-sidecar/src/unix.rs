@@ -30,6 +30,14 @@ use std::ffi::CStr;
 #[no_mangle]
 #[allow(unused)]
 pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
+    // Unlike a Rust binary's `main`, this shared-library entrypoint does not go
+    // through `lang_start`, so explicitly restore Rust's usual SIGPIPE policy.
+    // The IPC server expects failed writes to return EPIPE rather than terminate
+    // the entire shared sidecar.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+    }
+
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
 
