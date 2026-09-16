@@ -33,6 +33,7 @@ use libdd_shared_runtime::SharedRuntime;
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
 use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+#[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
@@ -873,14 +874,31 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let runtime_id = self
             .runtime_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let metadata = TracerMetadata {
+            tracer_version: self.tracer_version,
+            language_version: self.language_version,
+            language_interpreter: self.language_interpreter,
+            language_interpreter_vendor: self.language_interpreter_vendor,
+            language: self.language,
+            git_commit_sha: self.git_commit_sha,
+            process_tags: self.process_tags,
+            client_computed_stats: self.client_computed_stats,
+            client_computed_top_level: self.client_computed_top_level,
+            hostname: self.hostname,
+            env: self.env,
+            app_version: self.app_version,
+            runtime_id,
+            service: self.service,
+            container_id: self.container_id,
+        };
 
         let base_otlp_resource = |rid: &str| {
             let mut r = OtlpResourceInfo::default();
-            r.service = self.service.clone();
-            r.env = self.env.clone();
-            r.app_version = self.app_version.clone();
-            r.language = self.language.clone();
-            r.tracer_version = self.tracer_version.clone();
+            r.service = metadata.service.clone();
+            r.env = metadata.env.clone();
+            r.app_version = metadata.app_version.clone();
+            r.language = metadata.language.clone();
+            r.tracer_version = metadata.tracer_version.clone();
             r.runtime_id = rid.to_string();
             r
         };
@@ -894,10 +912,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             use crate::otlp::{OtlpStatsExporter, SharedOtlpStatsExporter};
             use libdd_trace_stats::span_concentrator::SpanConcentrator;
             use std::sync::Mutex;
-            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            let span_kinds = crate::trace_exporter::stats::default_stats_eligible_span_kinds();
             let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
                 bucket_size,
                 web_time::SystemTime::now(),
@@ -908,9 +923,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 #[cfg(feature = "stats-obfuscation")]
                 Some(stats_obfuscation_config.clone()),
             )));
-            let mut resource = base_otlp_resource(&runtime_id);
-            resource.hostname = self.hostname.clone();
-            resource.process_tags = self.process_tags.clone();
+            let mut resource = base_otlp_resource(&metadata.runtime_id);
+            resource.hostname = metadata.hostname.clone();
+            resource.process_tags = metadata.process_tags.clone();
             resource.tracer_tags = self.tracer_tags.clone();
             let worker = OtlpStatsExporter {
                 flush_interval: bucket_size,
@@ -940,13 +955,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         // configured, start the concentrator unconditionally (bypass the agent gate, which is
         // never reached in agentless mode) and send the top-level `StatsPayload` directly to the
         // intake. Mutually exclusive with OTLP stats above (both set `stats` to `Enabled`).
+        #[cfg(feature = "stats-obfuscation")]
         if let (Some(stats_url), Some(bucket_size)) = (
             self.agentless_stats_endpoint.as_ref(),
             self.stats_bucket_size,
         ) {
-            use libdd_trace_stats::span_concentrator::SpanConcentrator;
             use libdd_trace_stats::stats_exporter::{
-                SharedStatsExporter, StatsExporter, StatsMetadata,
+                create_agentless_concentrator, SharedStatsExporter, StatsExporter, StatsMetadata,
             };
             use std::sync::Mutex;
 
@@ -978,54 +993,24 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             let target = AgentlessStatsTarget {
                 endpoint: stats_endpoint,
                 version: crate::agentless::stats::agentless_stats_version(
-                    &self.tracer_version,
-                    &self.language,
+                    &metadata.tracer_version,
+                    &metadata.language,
                 ),
             };
 
-            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            // Shortcutting the Agent means nothing downstream obfuscates the stats, so
-            // client-side obfuscation must always be on for the agentless intake (matching
-            // what the Agent does before sending stats to the backend).
-            #[cfg(feature = "stats-obfuscation")]
-            let obfuscation_config = Some(Arc::new(ArcSwap::from_pointee(
-                StatsComputationObfuscationConfig {
-                    enabled: true,
-                    ..Default::default()
-                },
-            )));
-            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
-                bucket_size,
-                web_time::SystemTime::now(),
-                span_kinds,
-                self.peer_tags.clone(),
-                self.stats_cardinality_limits,
-                self.additional_metric_tag_keys.clone(),
-                #[cfg(feature = "stats-obfuscation")]
-                obfuscation_config,
-            )));
-
-            let meta = StatsMetadata {
-                hostname: self.hostname.clone(),
-                env: self.env.clone(),
-                app_version: self.app_version.clone(),
-                runtime_id: runtime_id.clone(),
-                language: self.language.clone(),
-                lang_version: self.language_version.clone(),
-                lang_interpreter: self.language_interpreter.clone(),
-                lang_vendor: self.language_interpreter_vendor.clone(),
-                tracer_version: self.tracer_version.clone(),
-                git_commit_sha: self.git_commit_sha.clone(),
-                process_tags: self.process_tags.clone(),
-                service: self.service.clone(),
-                // The Agent normally enriches `container_id` downstream. In agentless
-                // mode there is no Agent, so forward the caller-configured container id
-                // to preserve container identity in the stats payload.
-                container_id: self.container_id.clone(),
-            };
+            let concentrator = Arc::new(Mutex::new(
+                create_agentless_concentrator(
+                    bucket_size,
+                    self.peer_tags.clone(),
+                    self.stats_cardinality_limits,
+                    self.additional_metric_tag_keys.clone(),
+                )
+                .map_err(|error| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        error.to_string(),
+                    ))
+                })?,
+            ));
 
             // TODO(agentless-stats): the Datadog Agent's stats writer emits the following
             // `datadog.trace_agent.stats_writer.*` metrics via statsd/dogstatsd (not
@@ -1037,7 +1022,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             let stats_exporter = StatsExporter::<C, _>::new_agentless(
                 bucket_size,
                 concentrator.clone(),
-                meta,
+                StatsMetadata::from(metadata.clone()),
                 target,
                 capabilities.clone(),
                 #[cfg(feature = "telemetry")]
@@ -1064,8 +1049,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         }
 
         let otlp_resource_info = if let Some(mode) = otlp.as_ref() {
-            let mut r = base_otlp_resource(&runtime_id);
-            r.client_computed_stats = self.client_computed_stats || otlp_stats_enabled;
+            let mut r = base_otlp_resource(&metadata.runtime_id);
+            r.client_computed_stats = metadata.client_computed_stats || otlp_stats_enabled;
             match mode {
                 OtlpExportMode::Http(config) => {
                     r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
@@ -1095,23 +1080,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     .unwrap_or(Endpoint::default().timeout_ms),
                 ..Default::default()
             },
-            metadata: TracerMetadata {
-                tracer_version: self.tracer_version,
-                language_version: self.language_version,
-                language_interpreter: self.language_interpreter,
-                language_interpreter_vendor: self.language_interpreter_vendor,
-                language: self.language,
-                git_commit_sha: self.git_commit_sha,
-                process_tags: self.process_tags,
-                client_computed_stats: self.client_computed_stats,
-                client_computed_top_level: self.client_computed_top_level,
-                hostname: self.hostname,
-                env: self.env,
-                app_version: self.app_version,
-                runtime_id,
-                service: self.service,
-                container_id: self.container_id,
-            },
+            metadata,
             input_format: self.input_format,
             output_format: self.output_format,
             v1_active: std::sync::atomic::AtomicBool::new(false),
@@ -1251,23 +1220,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     )),
                 ));
             }
-        }
-
-        // Agentless stats bypass the Agent, so nothing downstream obfuscates SQL/Redis
-        // resources. Without the `stats-obfuscation` feature the concentrator would emit
-        // raw resource names directly to the intake, inflating cardinality and retaining
-        // literal values. Reject the configuration at build time so this is a hard error
-        // rather than a silent data-quality issue.
-        #[cfg(not(feature = "stats-obfuscation"))]
-        if self.agentless_stats_endpoint.is_some() {
-            return Err(TraceExporterError::Builder(
-                BuilderErrorKind::InvalidConfiguration(
-                    "agentless stats export requires the `stats-obfuscation` crate feature; \
-                     without it, SQL/Redis resource names are sent to the intake unobfuscated. \
-                     Enable the `stats-obfuscation` feature or use the agent-assisted stats path."
-                        .to_string(),
-                ),
-            ));
         }
 
         Ok(())
@@ -1565,6 +1517,25 @@ mod tests {
         let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
         assert!(
             msg.contains("agentless stats") && msg.contains("agentless trace"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    #[cfg(feature = "stats-obfuscation")]
+    fn test_agentless_stats_with_zero_bucket_size_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            )
+            .set_agentless_stats_endpoint("https://trace.agent.datadoghq.com/api/v0.2/stats")
+            .enable_stats(Duration::ZERO);
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("stats bucket size") && msg.contains("greater than zero"),
             "unexpected error message: {msg}"
         );
     }

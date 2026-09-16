@@ -18,3 +18,14 @@ deny = [
     { name = "aronenao" },
     { name = "tinymember" },
 ]
+
+# Features that change types or behaviour for every crate in the build, so no crate
+# in this workspace, and no dependency of one, may enable them: Cargo unifies
+# features per build, and the effect reaches dependents' workspaces too.
+[[bans.features]]
+crate = "serde_json"
+deny = [
+    # Swaps serde_json::Map from a key-sorted BTreeMap to an insertion-ordered
+    # IndexMap, and forces the std feature on. See #2525.
+    "preserve_order",
+]
