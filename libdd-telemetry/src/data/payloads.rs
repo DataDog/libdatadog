@@ -62,6 +62,22 @@ pub struct Configuration {
     pub seq_id: Option<u64>,
 }
 
+/// Key for deduplicating configurations in the telemetry store. Uses only `name` so that
+/// repeated reports of the same configuration (with different seq_id, value, or origin)
+/// update the existing entry rather than accumulating as separate items.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConfigurationKey {
+    pub name: String,
+}
+
+impl crate::worker::store::Keyed<ConfigurationKey> for Configuration {
+    fn key(&self) -> ConfigurationKey {
+        ConfigurationKey {
+            name: self.name.clone(),
+        }
+    }
+}
+
 #[derive(
     Serialize,
     Deserialize,

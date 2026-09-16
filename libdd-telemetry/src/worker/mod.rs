@@ -132,7 +132,7 @@ pub struct LogIdentifier {
 struct TelemetryWorkerData {
     started: bool,
     dependencies: store::Store<data::Dependency, data::DependencyKey>,
-    configurations: store::Store<data::Configuration>,
+    configurations: store::Store<data::Configuration, data::ConfigurationKey>,
     integrations: store::Store<data::Integration>,
     endpoints: store::Store<data::Endpoint>,
     endpoints_is_first: bool,
@@ -1347,7 +1347,7 @@ pub struct TelemetryWorkerBuilder {
     pub runtime_id: Option<String>,
     pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
-    pub configurations: store::Store<data::Configuration>,
+    pub configurations: store::Store<data::Configuration, data::ConfigurationKey>,
     pub endpoints: store::Store<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,

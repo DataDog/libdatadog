@@ -384,4 +384,33 @@ mod tests {
         store.unflush_stored();
         assert_eq!(store.unflushed().collect::<Vec<_>>(), &[&2, &3, &4, &5, &6]);
     }
+
+    /// Regression test: Configuration must deduplicate by name only, not by seq_id.
+    /// Before the fix, each insert with a different seq_id was treated as a unique entry,
+    /// causing unbounded memory growth.
+    #[test]
+    fn test_configuration_deduplicates_by_name_not_seq_id() {
+        use crate::data::{Configuration, ConfigurationKey, ConfigurationOrigin};
+
+        let mut store: Store<Configuration, ConfigurationKey> = Store::new(100);
+
+        // Insert the same config name with different seq_ids (simulating repeated reporting)
+        for seq in 0..50 {
+            store.insert(Configuration {
+                name: "DD_TRACE_ENABLED".to_string(),
+                value: Some("true".to_string()),
+                origin: ConfigurationOrigin::EnvVar,
+                config_id: None,
+                seq_id: Some(seq),
+            });
+        }
+
+        // Should have exactly 1 item, not 50
+        assert_eq!(store.items.len(), 1, "config should deduplicate by name");
+
+        // The stored config should have the latest seq_id
+        let stored = store.unflushed().next().unwrap();
+        assert_eq!(stored.name, "DD_TRACE_ENABLED");
+        assert_eq!(stored.seq_id, Some(49));
+    }
 }
