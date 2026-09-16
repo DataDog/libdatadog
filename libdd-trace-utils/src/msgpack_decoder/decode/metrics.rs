@@ -10,8 +10,8 @@ use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 
 #[inline]
-pub fn read_metric_pair<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_metric_pair<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<(T::Text, f64), DecodeError> {
     let key = buf.read_string()?;
     let v = read_number(buf)?;
@@ -19,8 +19,8 @@ pub fn read_metric_pair<T: DeserializableTraceData>(
     Ok((key, v))
 }
 #[inline]
-pub fn read_metrics<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_metrics<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<VecMap<T::Text, f64>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(VecMap::new());
