@@ -23,9 +23,12 @@ use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
 };
-use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_stats::stats_exporter::{
+    FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
+};
 use libdd_trace_utils::trace_filter::TraceFilterer;
-use std::sync::{Arc, Mutex};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
@@ -75,6 +78,9 @@ pub(crate) enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         worker_handle: WorkerHandle,
+        /// Weak handle to trigger an immediate forced flush of the stats
+        /// exporter without holding a strong reference to the background worker.
+        flush_handle: Weak<dyn FlushableStatsExport>,
     },
 }
 
@@ -177,9 +183,10 @@ fn create_and_start_stats_worker<
         ctx.telemetry.clone(),
         ctx.dogstatsd.clone(),
     );
+    let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, ctx.restart_after_fork)
+        .spawn_worker(shared, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -188,6 +195,7 @@ fn create_and_start_stats_worker<
         .store(Arc::new(StatsComputationStatus::Enabled {
             stats_concentrator: stats_concentrator.clone(),
             worker_handle,
+            flush_handle: weak,
         }));
 
     Ok(())

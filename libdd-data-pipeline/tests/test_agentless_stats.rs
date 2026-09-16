@@ -674,3 +674,66 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
          aggregation key; got groups: {groups:#?}"
     );
 }
+
+/// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the
+/// agentless stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
+/// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_flush_client_side_stats_sends_agentless_stats() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    // One response for the explicit flush; an extra one in case the shutdown flush also fires.
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let mock_clone = mock.clone();
+    let flushed = task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_language("rust")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service("test-svc")
+            .set_hostname("test-host");
+
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("build failed");
+
+        exporter
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
+            .expect("send_trace_chunks failed");
+
+        // Force an immediate flush through the dyn handle, ahead of the periodic worker.
+        let flushed = exporter.flush_client_side_stats();
+        exporter.shutdown(None).expect("shutdown failed");
+        flushed
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    assert!(
+        flushed,
+        "flush_client_side_stats must report true when stats are enabled"
+    );
+
+    let reqs = mock.captured_requests();
+    let stats_req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("explicit flush should have produced a stats request");
+    // The body must be a valid agentless StatsPayload (msgpack), proving the flush handle
+    // drove the real export path rather than being a no-op.
+    let payload: pb::StatsPayload =
+        rmp_serde::from_slice(&stats_req.body).expect("stats body must be valid msgpack");
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
+}

@@ -891,7 +891,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         if let (Some(metrics_config), Some(bucket_size)) =
             (otlp_metrics_config.clone(), self.stats_bucket_size)
         {
-            use crate::otlp::OtlpStatsExporter;
+            use crate::otlp::{OtlpStatsExporter, SharedOtlpStatsExporter};
             use libdd_trace_stats::span_concentrator::SpanConcentrator;
             use std::sync::Mutex;
             let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
@@ -920,8 +920,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 test_token: self.test_session_token.clone(),
                 capabilities: capabilities.clone(),
             };
+            let (shared, flush_handle) = SharedOtlpStatsExporter::wrap(worker);
             let worker_handle = shared_runtime
-                .spawn_worker(worker, self.restart_after_fork)
+                .spawn_worker(shared, self.restart_after_fork)
                 .map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
@@ -930,6 +931,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
+                flush_handle,
             };
             otlp_stats_enabled = true;
         }
@@ -943,7 +945,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             self.stats_bucket_size,
         ) {
             use libdd_trace_stats::span_concentrator::SpanConcentrator;
-            use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+            use libdd_trace_stats::stats_exporter::{
+                SharedStatsExporter, StatsExporter, StatsMetadata,
+            };
             use std::sync::Mutex;
 
             // Agentless stats authenticate with the agentless API key (from
@@ -1044,8 +1048,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     None
                 },
             );
+            let (shared, flush_handle) = SharedStatsExporter::wrap(stats_exporter);
             let worker_handle = shared_runtime
-                .spawn_worker(stats_exporter, self.restart_after_fork)
+                .spawn_worker(shared, self.restart_after_fork)
                 .map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
@@ -1054,6 +1059,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
+                flush_handle,
             };
         }
 
