@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-types"
-version = "5.2.0"
+version = "0.1.0"
 description = "Common, dependency-light shared data types for Datadog libraries"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-types"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-types"

@@ -23,7 +23,7 @@ futures-util.workspace = true
 hex = { workspace = true, default-features = true }
 httparse = { workspace = true, features = ["std"], optional = true }
 http = { workspace = true, features = ["std"] }
-libdd-types = { version = "5.2.0", path = "../libdd-types" }
+libdd-types = { path = "../libdd-types" }
 mime = { workspace = true, optional = true }
 multer = { workspace = true, optional = true }
 bytes = { workspace = true, features = ["std"] }
