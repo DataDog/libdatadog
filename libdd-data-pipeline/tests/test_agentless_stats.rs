@@ -17,7 +17,10 @@ use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
+use libdd_trace_utils::span::{
+    span_pool::PooledChunks,
+    v04::{SpanBytes, VecMap},
+};
 use std::time::Duration;
 use tokio::task;
 
@@ -81,7 +84,7 @@ async fn run_agentless_with_stats(
 
         for chunks in chunks_per_call {
             exporter
-                .send_trace_chunks(chunks, None)
+                .send_trace_chunks(PooledChunks::unpooled(chunks), None)
                 .expect("send_trace_chunks failed");
         }
         exporter.shutdown(None).expect("shutdown failed");
@@ -160,7 +163,10 @@ async fn test_agentless_stats_sent_to_correct_endpoint() {
             .expect("TraceExporter::build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -233,7 +239,10 @@ async fn test_agentless_stats_payload_structure() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -581,7 +590,10 @@ async fn test_agentless_stats_preserves_container_id() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -639,7 +651,7 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![span]], None)
+            .send_trace_chunks(PooledChunks::unpooled(vec![vec![span]]), None)
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })

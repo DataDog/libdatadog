@@ -94,6 +94,8 @@ pub mod ffi {
         Custom3,
         Custom4,
         Custom5,
+        GcTime,
+        GcSamples,
     }
 
     struct Period {
@@ -408,6 +410,8 @@ impl TryFrom<ffi::SampleType> for api::SampleType {
             ffi::SampleType::Custom3 => api::SampleType::Custom3,
             ffi::SampleType::Custom4 => api::SampleType::Custom4,
             ffi::SampleType::Custom5 => api::SampleType::Custom5,
+            ffi::SampleType::GcTime => api::SampleType::GcTime,
+            ffi::SampleType::GcSamples => api::SampleType::GcSamples,
             _ => anyhow::bail!("invalid SampleType discriminant from C++"),
         })
     }

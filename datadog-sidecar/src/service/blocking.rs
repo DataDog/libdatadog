@@ -577,6 +577,24 @@ pub fn send_appsec_message(
     transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
 }
 
+/// Forwards an AppSec message without reconnecting the sidecar on failure.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message_without_reconnect(
+    transport: &mut SidecarTransport,
+    client_id: u64,
+    data: &[u8],
+) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    let mut sender = transport
+        .inner
+        .lock()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    sender
+        .send_appsec_message(&request)
+        .map_err(decode_error_to_io)
+}
+
 /// Flushes traces/stats and/or telemetry, as specified by options.
 pub fn flush(transport: &mut SidecarTransport, options: SidecarFlushOptions) -> io::Result<()> {
     transport.with_retry(|s| s.flush(options))

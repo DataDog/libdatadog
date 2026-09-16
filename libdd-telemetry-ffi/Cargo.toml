@@ -28,9 +28,9 @@ libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-types = { path = "../libdd-types" }
-function_name = "0.3"
+function_name.workspace = true
 libc.workspace = true
-paste = "1"
+paste.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

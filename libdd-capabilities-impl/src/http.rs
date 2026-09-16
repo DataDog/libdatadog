@@ -18,6 +18,7 @@ mod native {
     use libdd_common::http_common::{
         new_client_periodic, new_default_client, Body, GenericHttpClient,
     };
+    use libdd_common::MutexExt;
 
     use http_body_util::BodyExt;
 
@@ -91,6 +92,11 @@ mod native {
             std::fs::rename(&tmp, &dest)
                 .map_err(|e| HttpError::Other(anyhow::anyhow!("renaming to {dest:?}: {e}")))?;
         } else {
+            // Serialize writes to avoid large writes interleaving. This is a global lock,
+            // but totally acceptable for the debug-case of file://.
+            static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = WRITE_LOCK.lock_or_panic();
+
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
