@@ -350,18 +350,22 @@ pub fn obfuscate_url_string(
         };
     }
 
+    // Where the path begins, which is where the authority ends when there is one.
+    let authority_end = path_start(url, path_end);
+
     // Cat1 or non-ASCII in the path causes Cat2 encoding too, and it is also what stops Go emitting
     // the raw path and fragment verbatim; a fragment is disqualified by a control character or a
     // `#` as well, which the path cannot hold by the time it gets here.
     let needs_full_path = needs_escaping(&url[..path_end]);
-    let raw_path_is_valid = !needs_full_path;
+    // Go escapes the authority on its own, so only the path decides whether the raw path is what
+    // Go emits. Scanning the authority too would re-escape a bracketed path behind a non-ASCII
+    // host.
+    let raw_path_is_valid = !needs_escaping(&url[authority_end..path_end]);
     let frag_has_non_ascii = frag_pos.is_some_and(|i| !url[i + 1..].is_ascii());
     let raw_frag_is_valid = frag_pos.is_some_and(|i| {
         let fragment = &url[i + 1..];
         !needs_escaping(fragment) && !fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
     });
-    // Where the path begins, which is where the authority ends when there is one.
-    let authority_end = path_start(url, path_end);
 
     // Pre-encode chars that UriRef (strict RFC 3986) rejects.
     // We encode ALL non-ASCII chars (not just Cat1/Cat2) so that characters outside
@@ -556,6 +560,11 @@ mod tests {
     [brackets_with_userinfo_only_lose_the_credentials] [false] [false] ["http://user:pw@foo.com/a[b"] ["http://foo.com/a[b"];
     // An escaped bracket in the input stays escaped: only the escapes this module adds are undone.
     [escaped_bracket_in_path_is_left_alone] [true] [true] ["http://foo.com/a%5Bb/c"] ["http://foo.com/a%5Bb/c"];
+    // Go escapes a non-ASCII authority on its own, so the authority never decides whether the raw
+    // path is emitted.
+    [non_ascii_host_keeps_the_path_brackets] [true] [true] ["http://é.example/a[b]"] ["http://%C3%A9.example/a[b]"];
+    [non_ascii_host_keeps_the_path_cat2] [true] [true] ["http://é.example/a(b)"] ["http://%C3%A9.example/a(b)"];
+    [non_ascii_host_still_escapes_a_redacted_path] [false] [true] ["http://é.example/a[b]/c1"] ["http://%C3%A9.example/a%5Bb%5D/?"];
     // An IP-literal host needs its brackets to parse, including when the path forces escaping.
     [ip_literal_host_survives] [false] [true] ["http://[::1]:8080/x1"] ["http://[::1]:8080/?"];
     [ip_literal_host_survives_an_escaped_path] [true] [true] ["http://[::1]:8080/x y"] ["http://[::1]:8080/x%20y"];
