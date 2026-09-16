@@ -35,9 +35,12 @@ use web_time::SystemTime;
 
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
-/// The maximum obfuscation version this tracer supports.
+/// The obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+/// The obfuscation version this tracer supports, given that we follow the full obfuscation config
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const NEW_SUPPORTED_OBFUSCATION_VERSION: u32 = 2;
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
@@ -108,10 +111,14 @@ fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
 /// Return true if the agent's obfuscation version is supported by this tracer
 #[cfg(feature = "stats-obfuscation")]
 fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
-    agent_info
-        .info
-        .obfuscation_version
-        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
+    agent_info.info.obfuscation_version.is_some_and(|v| {
+        v >= 1
+            && [
+                SUPPORTED_OBFUSCATION_VERSION,
+                NEW_SUPPORTED_OBFUSCATION_VERSION,
+            ]
+            .contains(&v)
+    })
 }
 
 /// Get span kinds for stats computation with default fallback
