@@ -156,9 +156,7 @@ unsafe fn block_all_signals() -> Result<SignalMask, libc::c_int> {
     // Public sigprocmask/pthread_sigmask filters libc-internal signals such as
     // glibc's SIGCANCEL and SIGSETXID, so operate on the exact kernel mask.
     let mut all_signals = unsafe { std::mem::zeroed::<SignalMask>() };
-    for word in &mut all_signals.sig {
-        *word = !0;
-    }
+    all_signals.sig.fill(!0);
     let mut old_mask = unsafe { std::mem::zeroed::<SignalMask>() };
     let result = unsafe {
         libc::syscall(
