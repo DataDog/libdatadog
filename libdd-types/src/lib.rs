@@ -8,7 +8,10 @@
 
 extern crate alloc;
 
+pub mod endpoint;
 pub mod tag;
+
+pub use endpoint::{decode_uri_path_in_authority, parse_uri, Endpoint, HttpRequestBuilder};
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]

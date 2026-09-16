@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
+hex = "0.4"
 http = { workspace = true, features = ["std"] }
 serde = { workspace = true, default-features = true, features = ["derive"] }
 static_assertions = "1.1.0"
