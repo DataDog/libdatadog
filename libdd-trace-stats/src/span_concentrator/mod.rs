@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
+use libdd_trace_types::span::v1::SpanKind;
 
 use aggregation::StatsBucket;
 
@@ -22,6 +23,21 @@ use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 pub use stat_span::{ChunkSpanView, StatSpan};
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+
+const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [SpanKind; 4] = [
+    SpanKind::Client,
+    SpanKind::Server,
+    SpanKind::Producer,
+    SpanKind::Consumer,
+];
+
+/// Span kinds that are eligible for stats computation without Agent configuration.
+pub fn default_stats_eligible_span_kinds() -> Vec<String> {
+    DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+        .into_iter()
+        .map(|span_kind| span_kind.as_meta_str().to_owned())
+        .collect()
+}
 
 /// Deduplicate, sort alphabetically, and cap `keys` using [`ADDITIONAL_METRIC_TAGS_MAX_KEYS`].
 /// Excess keys are dropped and logged as a one time warning.

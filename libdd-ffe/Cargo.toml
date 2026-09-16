@@ -33,7 +33,6 @@ thiserror.workspace = true
 url = { workspace = true, features = ["std"] }
 lru = { workspace = true, default-features = true, optional = true }
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf", optional = true }
-# Hand-written generated-style code uses #[derive(::prost::Message)] and ::prost::alloc types.
 prost = { workspace = true, default-features = true, optional = true }
 pyo3 = { workspace = true, features = ["macros"], optional = true }
 
