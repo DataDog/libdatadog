@@ -27,8 +27,6 @@ serde_yaml.workspace = true
 prost = { workspace = true, features = ["std"] }
 anyhow.workspace = true
 rand = { workspace = true, default-features = true }
-# Direct dep unused in sources (only rmp-serde is used, which pulls rmp itself).
-rmp.workspace = true
 rmp-serde.workspace = true
 
 libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }

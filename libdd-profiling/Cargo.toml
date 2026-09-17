@@ -32,21 +32,16 @@ bitmaps = { workspace = true, default-features = true }
 # std is byteorder's only default feature; the workspace disables default
 # features, so enable std explicitly.
 byteorder = { workspace = true, features = ["std"] }
-bytes = { workspace = true, features = ["std"] }
 chrono = { workspace = true, features = ["std", "clock"] }
 crossbeam-channel = { workspace = true, default-features = true }
 crossbeam-utils = { workspace = true, default-features = true }
 cxx = { workspace = true, default-features = true, optional = true }
-futures.workspace = true
 hashbrown.workspace = true
 http = { workspace = true, features = ["std"] }
-http-body-util.workspace = true
-httparse = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
-mime.workspace = true
 parking_lot.workspace = true
 # Only the prost::Message trait is used here; the Message derives live in
 # libdd-profiling-protobuf (which enables prost/derive for its generated code).
