@@ -215,17 +215,15 @@ impl Profile {
         self.handle_result(Operation::SetCustomSampleType, result)
     }
 
-    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> bool {
-        let result = self
-            .inner
-            .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint));
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &[u8]) -> bool {
+        let endpoint = String::from_utf8_lossy(endpoint);
+        let result = self.inner.add_endpoint(local_root_span_id, endpoint);
         self.handle_result(Operation::AddEndpoint, result)
     }
 
-    pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> bool {
-        let result = self
-            .inner
-            .add_endpoint_count(std::borrow::Cow::Borrowed(endpoint), value);
+    pub fn add_endpoint_count(&mut self, endpoint: &[u8], value: i64) -> bool {
+        let endpoint = String::from_utf8_lossy(endpoint);
+        let result = self.inner.add_endpoint_count(endpoint, value);
         self.handle_result(Operation::AddEndpointCount, result)
     }
 

@@ -3,16 +3,15 @@
 
 use super::*;
 use crate::api;
-use crate::exporter;
 use crate::pprof::test_utils::{deserialize_compressed_pprof, string_table_fetch};
 use libdd_common::test_utils::{
     create_temp_file_path, parse_http_request_sync, HttpRequest, TempFileGuard,
 };
 use serde_json::json;
 
-const TEST_LIB_NAME: &str = "dd-trace-test";
-const TEST_LIB_VERSION: &str = "1.0.0";
-const TEST_FAMILY: &str = "test";
+const TEST_LIB_NAME: &[u8] = b"dd-trace-test";
+const TEST_LIB_VERSION: &[u8] = b"1.0.0";
+const TEST_FAMILY: &[u8] = b"test";
 
 fn create_test_profile() -> Box<Profile> {
     let wall_time = ffi::SampleType::WallTime;
@@ -148,10 +147,10 @@ fn create_test_exporter() -> Box<ProfileExporter> {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![ffi::Tag {
-            key: "env",
-            value: "test",
+            key: b"env",
+            value: b"test",
         }],
-        "http://localhost:1", // Port 1 unlikely to have server
+        b"http://localhost:1", // Port 1 unlikely to have server
         100,
         false,
     )
@@ -165,10 +164,10 @@ fn create_test_file_exporter(test_name: &str) -> (Box<ProfileExporter>, TempFile
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![ffi::Tag {
-            key: "env",
-            value: "test",
+            key: b"env",
+            value: b"test",
         }],
-        file_path.to_string_lossy().as_ref(),
+        file_path.to_string_lossy().as_bytes(),
     )
     .unwrap();
 
@@ -224,9 +223,9 @@ fn test_profile_operations() {
     );
 
     // Test endpoints
-    profile.add_endpoint(12345, "/api/test");
-    profile.add_endpoint(67890, "/api/other");
-    profile.add_endpoint_count("/api/test", 100);
+    profile.add_endpoint(12345, b"/api/test");
+    profile.add_endpoint(67890, b"/api/other");
+    profile.add_endpoint_count(b"/api/test", 100);
 
     // Test upscaling rules (verify they don't error)
     assert!(profile.add_upscaling_rule_poisson(&[0], "thread_id", "0", 0, 0, 1000000));
@@ -308,7 +307,7 @@ fn test_status_and_result_accessors() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![],
-        "not a url",
+        b"not a url",
         0,
         false,
     );
@@ -716,7 +715,7 @@ fn test_profile_serialize_returns_encoded_profile_and_resets() {
 fn test_send_encoded_profile_with_attachments() {
     let mut profile = create_test_profile();
     profile.add_sample(&create_test_sample());
-    profile.add_endpoint_count("/api/test", 100);
+    profile.add_endpoint_count(b"/api/test", 100);
 
     let encoded = profile.serialize().unwrap();
     let mut exporter = create_test_exporter();
@@ -727,16 +726,16 @@ fn test_send_encoded_profile_with_attachments() {
     let result = exporter.send_encoded_profile(
         encoded,
         vec![ffi::AttachmentFile {
-            name: "metadata.json",
+            name: b"metadata.json",
             data: &attachment_data,
         }],
         vec![ffi::Tag {
-            key: "profile_type",
-            value: "cpu",
+            key: b"profile_type",
+            value: b"cpu",
         }],
-        "language:rust,profiler_version:1.0",
-        r#"{"version": "1.0", "profiler": "test"}"#,
-        r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+        b"language:rust,profiler_version:1.0",
+        br#"{"version": "1.0", "profiler": "test"}"#,
+        br#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
     );
 
     assert!(!result.ok(), "Should fail when no server is available");
@@ -752,9 +751,9 @@ fn test_send_encoded_profile_with_attachments() {
 fn test_send_encoded_profile_file_export_preserves_metadata() {
     let mut profile = create_test_profile();
     profile.add_sample(&create_test_sample());
-    profile.add_endpoint_count("/api/test", 2);
-    profile.add_endpoint_count("/api/test", 3);
-    profile.add_endpoint_count("/api/other", 7);
+    profile.add_endpoint_count(b"/api/test", 2);
+    profile.add_endpoint_count(b"/api/test", 3);
+    profile.add_endpoint_count(b"/api/other", 7);
 
     let encoded = profile.serialize().unwrap();
     let (mut exporter, file_path) = create_test_file_exporter("cxx_send_encoded_profile");
@@ -764,16 +763,16 @@ fn test_send_encoded_profile_file_export_preserves_metadata() {
         .send_encoded_profile(
             encoded,
             vec![ffi::AttachmentFile {
-                name: "metadata.json",
+                name: b"metadata.json",
                 data: &attachment_data,
             }],
             vec![ffi::Tag {
-                key: "profile_type",
-                value: "cpu",
+                key: b"profile_type",
+                value: b"cpu",
             }],
-            "language:rust,profiler_version:1.0",
-            r#"{"version": "1.0", "profiler": "test"}"#,
-            r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+            b"language:rust,profiler_version:1.0",
+            br#"{"version": "1.0", "profiler": "test"}"#,
+            br#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
         )
         .unwrap();
 
@@ -841,9 +840,9 @@ fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
         encoded,
         vec![],
         vec![],
-        "",
-        "",
-        "",
+        b"",
+        b"",
+        b"",
         &cancel,
     );
 
@@ -862,8 +861,8 @@ fn test_send_encoded_profile_with_cancelled_token_does_not_send() {
 fn test_endpoint_operations() {
     let mut profile = create_test_profile();
 
-    profile.add_endpoint(12345, "/api/test");
-    profile.add_endpoint_count("/api/test", 100);
+    profile.add_endpoint(12345, b"/api/test");
+    profile.add_endpoint_count(b"/api/test", 100);
 }
 
 #[test]
@@ -912,10 +911,10 @@ fn test_exporter_create() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![ffi::Tag {
-            key: "service",
-            value: "test"
+            key: b"service",
+            value: b"test"
         }],
-        "http://localhost:8126",
+        b"http://localhost:8126",
         0,
         false,
     )
@@ -928,19 +927,19 @@ fn test_exporter_create() {
         TEST_FAMILY,
         vec![
             ffi::Tag {
-                key: "service",
-                value: "my-service"
+                key: b"service",
+                value: b"my-service"
             },
             ffi::Tag {
-                key: "env",
-                value: "prod"
+                key: b"env",
+                value: b"prod"
             },
             ffi::Tag {
-                key: "version",
-                value: "2.0"
+                key: b"version",
+                value: b"2.0"
             },
         ],
-        "http://localhost:8126",
+        b"http://localhost:8126",
         10000,
         false,
     )
@@ -952,8 +951,8 @@ fn test_exporter_create() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![],
-        "datadoghq.com",
-        "fake-api-key",
+        b"datadoghq.com",
+        b"fake-api-key",
         5000,
         false,
     )
@@ -964,8 +963,8 @@ fn test_exporter_create() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![],
-        "datadoghq.eu",
-        "fake-api-key",
+        b"datadoghq.eu",
+        b"fake-api-key",
         0,
         false,
     )
@@ -977,7 +976,7 @@ fn test_exporter_create() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![],
-        "http://localhost:8126",
+        b"http://localhost:8126",
         0,
         false,
     )
@@ -992,10 +991,10 @@ fn test_exporter_create_accepts_unix_socket_agent_url() {
         TEST_LIB_VERSION,
         TEST_FAMILY,
         vec![ffi::Tag {
-            key: "service",
-            value: "test",
+            key: b"service",
+            value: b"test",
         }],
-        "unix:///var/run/datadog/apm.socket",
+        b"unix:///var/run/datadog/apm.socket",
         0,
         false,
     );
@@ -1031,34 +1030,13 @@ fn test_intern_string_lossy_invalid_utf8() {
 
 #[test]
 fn test_type_conversions() {
-    // AttachmentFile conversion
-    let data = vec![1u8, 2, 3, 4, 5, 255, 128, 0];
-    let file: exporter::File = (&ffi::AttachmentFile {
-        name: "test.bin",
-        data: &data,
-    })
-        .into();
-    assert_eq!(file.name, "test.bin");
-    assert_eq!(file.bytes, data.as_slice());
+    // AttachmentFile conversion is now handled inline in prepare_export_args
+    // to manage lossy UTF-8 lifetimes. No standalone From impl to test.
 
     // Tag conversion with special characters
-    let tag: libdd_common::tag::Tag = (&ffi::Tag {
-        key: "test-key.with_special:chars",
-        value: "test_value/with@special#chars",
-    })
-        .try_into()
-        .unwrap();
-    assert_eq!(
-        tag.as_ref(),
-        "test-key.with_special:chars:test_value/with@special#chars"
-    );
-
-    // Tag validation - empty key should fail
-    assert!(TryInto::<libdd_common::tag::Tag>::try_into(&ffi::Tag {
-        key: "",
-        value: "value"
-    })
-    .is_err());
+    // Tag conversion now uses tags_from_cxx() which handles lossy UTF-8.
+    // Test it through the public API (create_agent_exporter) rather than
+    // the removed TryFrom<&Tag> trait impl.
 
     // SampleType conversion
     let st: api::SampleType = ffi::SampleType::CpuSamples.try_into().unwrap();

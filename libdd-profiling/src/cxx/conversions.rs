@@ -3,7 +3,6 @@
 
 use super::ffi;
 use crate::api;
-use crate::exporter;
 
 impl TryFrom<ffi::SampleType> for api::SampleType {
     type Error = anyhow::Error;
@@ -127,19 +126,6 @@ impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
     }
 }
 
-impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
-    fn from(file: &ffi::AttachmentFile<'a>) -> Self {
-        exporter::File {
-            name: file.name,
-            bytes: file.data,
-        }
-    }
-}
-
-impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_common::tag::Tag {
-    type Error = anyhow::Error;
-
-    fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
-        libdd_common::tag::Tag::new(tag.key, tag.value)
-    }
-}
+// AttachmentFile → exporter::File conversion is handled inline in
+// prepare_export_args (profile_exporter.rs) to keep lossy-converted
+// filenames alive for the borrow.

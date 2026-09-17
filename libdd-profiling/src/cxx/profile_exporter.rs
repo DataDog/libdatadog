@@ -10,15 +10,21 @@ use crate::internal;
 use libdd_common::{parse_uri, Endpoint};
 
 struct PreparedExportArgs<'a> {
-    files_to_compress: Vec<exporter::File<'a>>,
+    files: Vec<(String, &'a [u8])>,
     additional_tags: Vec<libdd_common::tag::Tag>,
-    process_tags: Option<&'a str>,
+    process_tags: Option<String>,
     internal_metadata: Option<serde_json::Value>,
     info: Option<serde_json::Value>,
 }
 
 fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_common::tag::Tag>> {
-    tags.iter().map(TryInto::try_into).collect()
+    tags.iter()
+        .map(|tag| {
+            let key = String::from_utf8_lossy(tag.key);
+            let value = String::from_utf8_lossy(tag.value);
+            libdd_common::tag::Tag::new(key.as_ref(), value.as_ref())
+        })
+        .collect()
 }
 
 fn optional_json(value: &str) -> anyhow::Result<Option<serde_json::Value>> {
@@ -52,16 +58,22 @@ fn apply_timeout_and_resolver(
 fn prepare_export_args<'a>(
     files_to_compress: Vec<ffi::AttachmentFile<'a>>,
     additional_tags: Vec<ffi::Tag>,
-    process_tags: &'a str,
-    internal_metadata: &str,
-    info: &str,
+    process_tags: &[u8],
+    internal_metadata: &[u8],
+    info: &[u8],
 ) -> anyhow::Result<PreparedExportArgs<'a>> {
+    let process_tags_str = String::from_utf8_lossy(process_tags);
+    let internal_metadata_str = String::from_utf8_lossy(internal_metadata);
+    let info_str = String::from_utf8_lossy(info);
     Ok(PreparedExportArgs {
-        files_to_compress: files_to_compress.iter().map(Into::into).collect(),
+        files: files_to_compress
+            .iter()
+            .map(|f| (String::from_utf8_lossy(f.name).into_owned(), f.data))
+            .collect(),
         additional_tags: tags_from_cxx(additional_tags)?,
-        process_tags: optional_str(process_tags),
-        internal_metadata: optional_json(internal_metadata)?,
-        info: optional_json(info)?,
+        process_tags: optional_str(&process_tags_str).map(|s| s.to_string()),
+        internal_metadata: optional_json(&internal_metadata_str)?,
+        info: optional_json(&info_str)?,
     })
 }
 
@@ -98,22 +110,26 @@ impl ProfileExporter {
     }
 
     pub fn create_agent_exporter(
-        profiling_library_name: &str,
-        profiling_library_version: &str,
-        family: &str,
+        profiling_library_name: &[u8],
+        profiling_library_version: &[u8],
+        family: &[u8],
         tags: Vec<ffi::Tag>,
-        agent_url: &str,
+        agent_url: &[u8],
         timeout_ms: u64,
         use_system_resolver: bool,
     ) -> Box<ProfileExporterResult> {
+        let name = String::from_utf8_lossy(profiling_library_name);
+        let version = String::from_utf8_lossy(profiling_library_version);
+        let fam = String::from_utf8_lossy(family);
         Self::from_endpoint(
             Operation::CreateAgentExporter,
-            profiling_library_name,
-            profiling_library_version,
-            family,
+            &name,
+            &version,
+            &fam,
             tags,
             (|| {
-                let endpoint = exporter::config::agent(parse_uri(agent_url)?)?;
+                let url = String::from_utf8_lossy(agent_url);
+                let endpoint = exporter::config::agent(parse_uri(&url)?)?;
                 Ok(apply_timeout_and_resolver(
                     endpoint,
                     timeout_ms,
@@ -125,41 +141,50 @@ impl ProfileExporter {
 
     #[allow(clippy::too_many_arguments)]
     pub fn create_agentless_exporter(
-        profiling_library_name: &str,
-        profiling_library_version: &str,
-        family: &str,
+        profiling_library_name: &[u8],
+        profiling_library_version: &[u8],
+        family: &[u8],
         tags: Vec<ffi::Tag>,
-        site: &str,
-        api_key: &str,
+        site: &[u8],
+        api_key: &[u8],
         timeout_ms: u64,
         use_system_resolver: bool,
     ) -> Box<ProfileExporterResult> {
+        let name = String::from_utf8_lossy(profiling_library_name);
+        let version = String::from_utf8_lossy(profiling_library_version);
+        let fam = String::from_utf8_lossy(family);
+        let site = String::from_utf8_lossy(site);
+        let api_key = String::from_utf8_lossy(api_key);
         Self::from_endpoint(
             Operation::CreateAgentlessExporter,
-            profiling_library_name,
-            profiling_library_version,
-            family,
+            &name,
+            &version,
+            &fam,
             tags,
-            exporter::config::agentless(site, api_key.to_string()).map(|endpoint| {
+            exporter::config::agentless(&*site, api_key.into_owned()).map(|endpoint| {
                 apply_timeout_and_resolver(endpoint, timeout_ms, use_system_resolver)
             }),
         )
     }
 
     pub fn create_file_exporter(
-        profiling_library_name: &str,
-        profiling_library_version: &str,
-        family: &str,
+        profiling_library_name: &[u8],
+        profiling_library_version: &[u8],
+        family: &[u8],
         tags: Vec<ffi::Tag>,
-        output_path: &str,
+        output_path: &[u8],
     ) -> Box<ProfileExporterResult> {
+        let name = String::from_utf8_lossy(profiling_library_name);
+        let version = String::from_utf8_lossy(profiling_library_version);
+        let fam = String::from_utf8_lossy(family);
+        let path = String::from_utf8_lossy(output_path);
         Self::from_endpoint(
             Operation::CreateFileExporter,
-            profiling_library_name,
-            profiling_library_version,
-            family,
+            &name,
+            &version,
+            &fam,
             tags,
-            exporter::config::file(output_path),
+            exporter::config::file(&*path),
         )
     }
 
@@ -170,9 +195,9 @@ impl ProfileExporter {
         encoded: Box<EncodedProfile>,
         files_to_compress: Vec<ffi::AttachmentFile>,
         additional_tags: Vec<ffi::Tag>,
-        process_tags: &str,
-        internal_metadata: &str,
-        info: &str,
+        process_tags: &[u8],
+        internal_metadata: &[u8],
+        info: &[u8],
     ) -> ffi::Status {
         ffi::Status::from_result(
             Operation::SendEncodedProfile,
@@ -195,9 +220,9 @@ impl ProfileExporter {
         encoded: Box<EncodedProfile>,
         files_to_compress: Vec<ffi::AttachmentFile>,
         additional_tags: Vec<ffi::Tag>,
-        process_tags: &str,
-        internal_metadata: &str,
-        info: &str,
+        process_tags: &[u8],
+        internal_metadata: &[u8],
+        info: &[u8],
         cancel: &CancellationToken,
     ) -> ffi::Status {
         ffi::Status::from_result(
@@ -220,9 +245,9 @@ impl ProfileExporter {
         encoded: Box<EncodedProfile>,
         files_to_compress: Vec<ffi::AttachmentFile>,
         additional_tags: Vec<ffi::Tag>,
-        process_tags: &str,
-        internal_metadata: &str,
-        info: &str,
+        process_tags: &[u8],
+        internal_metadata: &[u8],
+        info: &[u8],
         cancel: Option<&tokio_util::sync::CancellationToken>,
     ) -> anyhow::Result<()> {
         let args = prepare_export_args(
@@ -242,13 +267,21 @@ impl ProfileExporter {
         args: PreparedExportArgs<'_>,
         cancel: Option<&tokio_util::sync::CancellationToken>,
     ) -> anyhow::Result<()> {
+        let files: Vec<_> = args
+            .files
+            .iter()
+            .map(|(name, data)| exporter::File {
+                name: name.as_str(),
+                bytes: data,
+            })
+            .collect();
         let status = self.inner.send_blocking(
             encoded,
-            &args.files_to_compress,
+            &files,
             &args.additional_tags,
             args.internal_metadata,
             args.info,
-            args.process_tags,
+            args.process_tags.as_deref(),
             cancel,
         )?;
 

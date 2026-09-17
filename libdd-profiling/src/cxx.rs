@@ -242,12 +242,12 @@ pub mod ffi {
     }
 
     struct Tag<'a> {
-        key: &'a str,
-        value: &'a str,
+        key: &'a [u8],
+        value: &'a [u8],
     }
 
     struct AttachmentFile<'a> {
-        name: &'a str,
+        name: &'a [u8],
         data: &'a [u8],
     }
 
@@ -490,8 +490,8 @@ pub mod ffi {
             type_: &str,
             unit: &str,
         ) -> bool;
-        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> bool;
-        fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> bool;
+        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &[u8]) -> bool;
+        fn add_endpoint_count(self: &mut Profile, endpoint: &[u8], value: i64) -> bool;
 
         // Upscaling rule methods (one for each variant)
         fn add_upscaling_rule_poisson(
@@ -534,11 +534,11 @@ pub mod ffi {
         // Static factory methods for ProfileExporter
         #[Self = "ProfileExporter"]
         fn create_agent_exporter(
-            profiling_library_name: &str,
-            profiling_library_version: &str,
-            family: &str,
+            profiling_library_name: &[u8],
+            profiling_library_version: &[u8],
+            family: &[u8],
             tags: Vec<Tag>,
-            agent_url: &str,
+            agent_url: &[u8],
             timeout_ms: u64,
             use_system_resolver: bool,
         ) -> Box<ProfileExporterResult>;
@@ -546,23 +546,23 @@ pub mod ffi {
         #[Self = "ProfileExporter"]
         #[allow(clippy::too_many_arguments)]
         fn create_agentless_exporter(
-            profiling_library_name: &str,
-            profiling_library_version: &str,
-            family: &str,
+            profiling_library_name: &[u8],
+            profiling_library_version: &[u8],
+            family: &[u8],
             tags: Vec<Tag>,
-            site: &str,
-            api_key: &str,
+            site: &[u8],
+            api_key: &[u8],
             timeout_ms: u64,
             use_system_resolver: bool,
         ) -> Box<ProfileExporterResult>;
 
         #[Self = "ProfileExporter"]
         fn create_file_exporter(
-            profiling_library_name: &str,
-            profiling_library_version: &str,
-            family: &str,
+            profiling_library_name: &[u8],
+            profiling_library_version: &[u8],
+            family: &[u8],
             tags: Vec<Tag>,
-            output_path: &str,
+            output_path: &[u8],
         ) -> Box<ProfileExporterResult>;
 
         // ProfileExporter methods
@@ -580,9 +580,9 @@ pub mod ffi {
             encoded: Box<EncodedProfile>,
             files_to_compress: Vec<AttachmentFile>,
             additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
+            process_tags: &[u8],
+            internal_metadata: &[u8],
+            info: &[u8],
         ) -> Status;
 
         /// Sends a previously serialized profile to Datadog with cancellation
@@ -593,9 +593,9 @@ pub mod ffi {
             encoded: Box<EncodedProfile>,
             files_to_compress: Vec<AttachmentFile>,
             additional_tags: Vec<Tag>,
-            process_tags: &str,
-            internal_metadata: &str,
-            info: &str,
+            process_tags: &[u8],
+            internal_metadata: &[u8],
+            info: &[u8],
             cancel: &CancellationToken,
         ) -> Status;
 
