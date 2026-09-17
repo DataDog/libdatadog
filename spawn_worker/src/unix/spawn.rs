@@ -357,7 +357,7 @@ impl SpawnWorker {
         let dependency_fds = temp_memfds.into_iter();
         #[cfg(not(target_os = "linux"))]
         let dependency_fds = std::iter::empty();
-        let fd_plan = ChildFdPlan::new(
+        let mut fd_plan = ChildFdPlan::new(
             &self.stdin,
             &self.stdout,
             &self.stderr,
@@ -408,6 +408,7 @@ impl SpawnWorker {
                 PreparedSpawn::Exec(path)
             }
         };
+        fd_plan.reserve_directory_fd()?;
 
         let daemonize = self.daemonize;
 
@@ -438,10 +439,15 @@ impl SpawnWorker {
             RawFork::Child => {}
         }
 
-        // We're in the (first) child. We can't drop memory
+        // We're in the (first) child. We can't drop memory, and can't let
+        // OwnedFds call libc close(). Current code would generally not do that
+        // and instead calls _exit() directly before anything is dropped,
+        // but let's be defensive against future changes.
         let mut argv = ManuallyDrop::new(argv);
         let temp_files = ManuallyDrop::new(temp_files);
         let envp = ManuallyDrop::new(envp);
+        let fd_plan = ManuallyDrop::new(fd_plan);
+        let prepared_spawn = ManuallyDrop::new(prepared_spawn);
 
         if daemonize {
             // A detached worker must not inherit the embedding runtime's signal
@@ -549,13 +555,14 @@ impl ChildStdio {
 /// the optional passed descriptor to fd 3, and dependencies to the following
 /// fds. Sources that could be overwritten are protected before the fork; after
 /// the mappings are installed, the plan preserves a required exec fd and tries
-/// to close higher fds using Linux close_range or a precomputed scan bound.
+/// to close higher fds using Linux close_range or exact descriptor-directory
+/// enumeration.
 pub(crate) struct ChildFdPlan<'fd> {
     stdio: [ChildStdio; 3],
     mappings: Vec<FdMapping<'fd>>,
     source_fd_minimum: RawFd,
     first_to_close: u32,
-    fallback_last: u32,
+    directory_fd_reservation: Option<OwnedFd>,
 }
 
 struct FdMapping<'fd> {
@@ -612,7 +619,7 @@ impl<'fd> ChildFdPlan<'fd> {
             mappings: Vec::with_capacity(usize::from(has_passed_fd) + dependency_count),
             source_fd_minimum,
             first_to_close: u32::try_from(source_fd_minimum)?,
-            fallback_last: Self::fd_limit()?,
+            directory_fd_reservation: None,
         };
 
         if let Some(fd) = passed_fd {
@@ -639,6 +646,19 @@ impl<'fd> ChildFdPlan<'fd> {
         Self::duplicate_fd_at_least(fd, self.source_fd_minimum)
     }
 
+    /// Reserve a descriptor for child-side directory enumeration. Must be
+    /// called after preparing all other descriptors and before the fork.
+    pub(crate) fn reserve_directory_fd(&mut self) -> std::io::Result<()> {
+        let reservation = OwnedFd::from(File::open("/dev/null")?);
+        let reservation = if reservation.as_raw_fd() >= self.source_fd_minimum {
+            reservation
+        } else {
+            self.duplicate_source(reservation.as_raw_fd())?
+        };
+        self.directory_fd_reservation = Some(reservation);
+        Ok(())
+    }
+
     /// Apply the plan after the fork. Must be called only in the child.
     pub(crate) unsafe fn apply(&self, exec_fd: Option<RawFd>, temp_files: &[CString]) {
         for (child_stdio, destination) in self.stdio.iter().zip(0..=libc::STDERR_FILENO) {
@@ -659,19 +679,30 @@ impl<'fd> ChildFdPlan<'fd> {
             }
         }
 
-        if let Some(exec_fd) = exec_fd {
+        // Release the slot reserved in the parent immediately before opening
+        // the descriptor directory. The reservation is above every mapping
+        // destination, so none of the dup2 calls above can overwrite it.
+        if let Some(reservation) = &self.directory_fd_reservation {
+            unsafe {
+                Self::close_fd(reservation.as_raw_fd());
+            }
+        }
+
+        let closed_descriptors = if let Some(exec_fd) = exec_fd {
             let exec_fd = exec_fd as u32;
             unsafe {
-                Self::close_fd_range(
-                    self.first_to_close,
-                    exec_fd.saturating_sub(1),
-                    self.fallback_last,
-                );
-                Self::close_fd_range(exec_fd.saturating_add(1), u32::MAX, self.fallback_last);
+                Self::close_fd_range(self.first_to_close, exec_fd.saturating_sub(1))
+                    && Self::close_fd_range(exec_fd.saturating_add(1), u32::MAX)
             }
         } else {
+            unsafe { Self::close_fd_range(self.first_to_close, u32::MAX) }
+        };
+        if !closed_descriptors {
             unsafe {
-                Self::close_fd_range(self.first_to_close, u32::MAX, self.fallback_last);
+                child_fail(
+                    temp_files,
+                    b"spawn_worker: closing file descriptors failed\n",
+                );
             }
         }
     }
@@ -721,125 +752,185 @@ impl<'fd> ChildFdPlan<'fd> {
         Ok(unsafe { OwnedFd::from_raw_fd(duplicated) })
     }
 
-    fn fd_limit() -> std::io::Result<u32> {
-        let mut limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == -1 {
-            return Err(std::io::Error::last_os_error());
-        }
-
-        // TODO: A descriptor opened before the hard limit is lowered can remain
-        // above rlim_max and escape the fallback scan when close_range is unavailable.
-        let descriptor_count = if limit.rlim_max == libc::RLIM_INFINITY {
-            Self::system_fd_limit()?
-        } else {
-            limit.rlim_max
-        };
-        let highest_raw_fd = libc::c_int::MAX as libc::rlim_t;
-        Ok(descriptor_count.saturating_sub(1).min(highest_raw_fd) as u32)
-    }
-
     #[cfg(target_os = "linux")]
-    fn system_fd_limit() -> std::io::Result<libc::rlim_t> {
-        let nr_open = std::fs::read_to_string("/proc/sys/fs/nr_open")?;
-        nr_open
-            .trim()
-            .parse::<libc::rlim_t>()
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    unsafe fn close_fd_range(first: u32, last: u32) -> bool {
+        if first > last {
+            return true;
+        }
+        if unsafe { libc::syscall(libc::SYS_close_range, first, last, 0) } == 0 {
+            return true;
+        }
+        unsafe { Self::close_open_fds_from_proc(first, last) }
     }
 
     #[cfg(target_os = "macos")]
-    fn system_fd_limit() -> std::io::Result<libc::rlim_t> {
-        let mut maximum: libc::c_int = 0;
-        let mut size = std::mem::size_of_val(&maximum);
-        let result = unsafe {
-            libc::sysctlbyname(
-                c"kern.maxfilesperproc".as_ptr(),
-                (&mut maximum as *mut libc::c_int).cast::<libc::c_void>(),
-                &mut size,
-                std::ptr::null_mut(),
+    unsafe fn close_fd_range(first: u32, last: u32) -> bool {
+        if first > last {
+            return true;
+        }
+        unsafe { Self::close_open_fds_from_dev(first, last) }
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn close_open_fds_from_proc(first: u32, last: u32) -> bool {
+        unsafe { Self::enumerate_and_close_open_fds_from_proc(first, last) }.is_some()
+    }
+
+    #[cfg(target_os = "linux")]
+    unsafe fn enumerate_and_close_open_fds_from_proc(first: u32, last: u32) -> Option<usize> {
+        // linux_dirent64 has fixed-width fields through d_type, followed by the
+        // variable-length, NUL-terminated d_name at byte 19.
+        const DIRENT64_NAME_OFFSET: usize = 19;
+        const DIRENT64_RECLEN_OFFSET: usize = 16;
+        const BUFFER_SIZE: usize = 4096;
+
+        let directory_fd = unsafe {
+            libc::syscall(
+                libc::SYS_openat,
+                libc::AT_FDCWD,
+                c"/proc/self/fd".as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
                 0,
             )
         };
-        if result == -1 {
-            return Err(std::io::Error::last_os_error());
+        if directory_fd < 0 {
+            return None;
         }
-        libc::rlim_t::try_from(maximum)
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
-    }
+        let Ok(directory_fd) = RawFd::try_from(directory_fd) else {
+            return None;
+        };
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn system_fd_limit() -> std::io::Result<libc::rlim_t> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "cannot determine the system file descriptor limit",
-        ))
-    }
+        // Both glibc and musl allocate in opendir(), and their allocator locks
+        // are not repaired after _Fork or a raw fork. Use raw syscalls and fixed
+        // stack storage so the child cannot deadlock on inherited libc state.
+        // The child is single-threaded with signals blocked, so its descriptor
+        // table cannot change except through the syscalls in this function.
+        let mut buffer = [0_u8; BUFFER_SIZE];
+        let mut batch_count = 0;
+        let enumerated_all = 'read_entries: loop {
+            let bytes_read = unsafe {
+                libc::syscall(
+                    libc::SYS_getdents64,
+                    directory_fd,
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                )
+            };
+            if bytes_read == 0 {
+                break true;
+            }
+            let Ok(bytes_read) = usize::try_from(bytes_read) else {
+                break false;
+            };
+            if bytes_read > buffer.len() {
+                break false;
+            }
+            batch_count += 1;
 
-    // Use separate last and fallback_last because using last=u32::MAX is
-    // better than relying on RLIMIT_NOFILE, but using a very high number
-    // for close_open_fds would be prohibitively slow.
-    #[cfg(target_os = "linux")]
-    unsafe fn close_fd_range(first: u32, last: u32, fallback_last: u32) {
-        if first > last {
-            return;
-        }
-        if unsafe { libc::syscall(libc::SYS_close_range, first, last, 0) } == 0 {
-            return;
-        }
+            let mut offset = 0;
+            while offset < bytes_read {
+                let remaining = bytes_read - offset;
+                if remaining <= DIRENT64_NAME_OFFSET {
+                    break 'read_entries false;
+                }
+                let Some(&[reclen_low, reclen_high]) = buffer
+                    .get(offset + DIRENT64_RECLEN_OFFSET..offset + DIRENT64_RECLEN_OFFSET + 2)
+                else {
+                    break 'read_entries false;
+                };
+                let record_length = usize::from(u16::from_ne_bytes([reclen_low, reclen_high]));
+                if record_length <= DIRENT64_NAME_OFFSET || record_length > remaining {
+                    break 'read_entries false;
+                }
+                let name_offset = offset + DIRENT64_NAME_OFFSET;
+                let record_end = offset + record_length;
+                let Some(name) = buffer.get(name_offset..record_end) else {
+                    break 'read_entries false;
+                };
+
+                if let Some(fd) = Self::parse_fd_name(name) {
+                    let Ok(fd_number) = u32::try_from(fd) else {
+                        break 'read_entries false;
+                    };
+                    if fd != directory_fd && fd_number >= first && fd_number <= last {
+                        unsafe {
+                            Self::close_fd(fd);
+                        }
+                    }
+                }
+                offset = record_end;
+            }
+        };
+
         unsafe {
-            Self::close_open_fds(first, last.min(fallback_last));
+            Self::close_fd(directory_fd);
         }
+        enumerated_all.then_some(batch_count)
     }
 
-    #[cfg(not(target_os = "linux"))]
-    unsafe fn close_fd_range(first: u32, last: u32, fallback_last: u32) {
-        unsafe {
-            Self::close_open_fds(first, last.min(fallback_last));
+    #[cfg(target_os = "macos")]
+    unsafe fn close_open_fds_from_dev(first: u32, last: u32) -> bool {
+        // macOS 12+ implements vfork with fork-like address-space semantics and
+        // runs LibSystem's internal malloc and pthread repair hooks. Using these
+        // allocating, locking APIs deliberately relies on that stock LibSystem
+        // behavior; they are not generally async-signal-safe after a POSIX fork.
+        let directory = unsafe { libc::opendir(c"/dev/fd".as_ptr()) };
+        if directory.is_null() {
+            return false;
         }
-    }
-
-    unsafe fn close_open_fds(first: u32, last: u32) {
-        const POLL_BATCH_SIZE: usize = 256;
-
-        if first > last {
-            return;
+        let directory_fd = unsafe { libc::dirfd(directory) };
+        if directory_fd == -1 {
+            unsafe {
+                libc::closedir(directory);
+            }
+            return false;
         }
 
-        let mut poll_fds = [libc::pollfd {
-            fd: -1,
-            events: 0,
-            revents: 0,
-        }; POLL_BATCH_SIZE];
-        let mut next_fd = first;
-        loop {
-            let mut count = 0;
-            while count < POLL_BATCH_SIZE && next_fd <= last {
-                // SAFETY: count is checked against POLL_BATCH_SIZE above.
-                let poll_fd = unsafe { poll_fds.get_unchecked_mut(count) };
-                poll_fd.fd = next_fd as RawFd;
-                poll_fd.revents = 0;
-                count += 1;
-                next_fd += 1;
+        let enumerated_all = loop {
+            unsafe {
+                *libc::__error() = 0;
+            }
+            let entry = unsafe { libc::readdir(directory) };
+            if entry.is_null() {
+                break unsafe { *libc::__error() } == 0;
             }
 
-            let poll_result =
-                unsafe { Self::poll_open_fds(poll_fds.as_mut_ptr(), count as libc::nfds_t) };
-            for index in 0..count {
-                // SAFETY: index is bounded by count, which is at most POLL_BATCH_SIZE.
-                let poll_fd = unsafe { poll_fds.get_unchecked(index) };
-                if poll_result == -1 || poll_fd.revents & libc::POLLNVAL == 0 {
+            let name = unsafe { ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if let Some(fd) = Self::parse_fd_name(name) {
+                let Ok(fd_number) = u32::try_from(fd) else {
+                    break false;
+                };
+                if fd != directory_fd && fd_number >= first && fd_number <= last {
                     unsafe {
-                        Self::close_fd(poll_fd.fd);
+                        Self::close_fd(fd);
                     }
                 }
             }
+        };
 
-            if next_fd > last {
-                return;
+        let closed_directory = unsafe { libc::closedir(directory) } == 0;
+        enumerated_all && closed_directory
+    }
+
+    fn parse_fd_name(name: &[u8]) -> Option<RawFd> {
+        let mut value = 0_u32;
+        let mut has_digit = false;
+        for byte in name {
+            if *byte == 0 {
+                break;
             }
+            if !byte.is_ascii_digit() {
+                return None;
+            }
+            has_digit = true;
+            value = value
+                .checked_mul(10)?
+                .checked_add(u32::from(*byte - b'0'))?;
+        }
+        if has_digit {
+            RawFd::try_from(value).ok()
+        } else {
+            None
         }
     }
 
@@ -857,31 +948,6 @@ impl<'fd> ChildFdPlan<'fd> {
         unsafe {
             libc::close(fd);
         }
-    }
-
-    #[cfg(target_os = "linux")]
-    unsafe fn poll_open_fds(poll_fds: *mut libc::pollfd, count: libc::nfds_t) -> libc::c_int {
-        // libc poll is a cancellation point on musl. Use the raw ppoll syscall so
-        // a raw-fork child never enters libc's unrepaired cancellation machinery.
-        let timeout = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        unsafe {
-            libc::syscall(
-                libc::SYS_ppoll,
-                poll_fds,
-                count,
-                &timeout,
-                std::ptr::null::<libc::sigset_t>(),
-                std::mem::size_of::<u64>(),
-            ) as libc::c_int
-        }
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    unsafe fn poll_open_fds(poll_fds: *mut libc::pollfd, count: libc::nfds_t) -> libc::c_int {
-        unsafe { libc::poll(poll_fds, count, 0) }
     }
 }
 
@@ -1012,6 +1078,7 @@ impl PreparedSpawn {
                 }
             }
             child_fail(temp_files, b"spawn_worker: exec failed\n")
+            // in the successful path, it's the trampoline that unlinks the temp files
         }
     }
 
@@ -1221,6 +1288,155 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fd_names_are_parsed_without_allocating() {
+        assert_eq!(Some(0), ChildFdPlan::parse_fd_name(b"0\0"));
+        assert_eq!(Some(123), ChildFdPlan::parse_fd_name(b"123\0padding"));
+        assert_eq!(Some(123), ChildFdPlan::parse_fd_name(b"123"));
+        assert_eq!(None, ChildFdPlan::parse_fd_name(b".\0"));
+        assert_eq!(None, ChildFdPlan::parse_fd_name(b"12x\0"));
+        assert_eq!(None, ChildFdPlan::parse_fd_name(b"2147483648\0"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn descriptor_directory_walker_closes_only_descriptors_in_range() {
+        let file = File::open("/dev/null").unwrap();
+        let targets = (0..64)
+            .map(|_| ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 64).unwrap())
+            .collect::<Vec<_>>();
+        let first_target_fd = targets.iter().map(AsRawFd::as_raw_fd).min().unwrap();
+        let last_target_fd = targets.iter().map(AsRawFd::as_raw_fd).max().unwrap();
+        let preserved =
+            ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), last_target_fd + 1).unwrap();
+        let preserved_fd = preserved.as_raw_fd();
+        let first = u32::try_from(first_target_fd).unwrap();
+        let last = u32::try_from(last_target_fd).unwrap();
+
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                #[cfg(target_os = "linux")]
+                let enumerated = ChildFdPlan::close_open_fds_from_proc(first, last);
+                #[cfg(target_os = "macos")]
+                let enumerated = ChildFdPlan::close_open_fds_from_dev(first, last);
+                let targets_are_closed = targets
+                    .iter()
+                    .all(|target| libc::fcntl(target.as_raw_fd(), libc::F_GETFD) == -1);
+                let lower_fd_is_open = libc::fcntl(file.as_raw_fd(), libc::F_GETFD) != -1;
+                let higher_fd_is_open = libc::fcntl(preserved_fd, libc::F_GETFD) != -1;
+                libc::_exit(
+                    if enumerated && targets_are_closed && lower_fd_is_open && higher_fd_is_open {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            },
+            RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn descriptor_directory_walker_handles_its_own_fd_in_range() {
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                #[cfg(target_os = "linux")]
+                let enumerated = ChildFdPlan::close_open_fds_from_proc(0, u32::MAX);
+                #[cfg(target_os = "macos")]
+                let enumerated = ChildFdPlan::close_open_fds_from_dev(0, u32::MAX);
+                libc::_exit(if enumerated { 0 } else { 1 });
+            },
+            RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn proc_fd_walker_preserves_exec_fd_between_ranges() {
+        let file = File::open("/dev/null").unwrap();
+        let below = ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 64).unwrap();
+        let exec_fd =
+            ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), below.as_raw_fd() + 1).unwrap();
+        let above =
+            ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), exec_fd.as_raw_fd() + 1).unwrap();
+        let first = u32::try_from(below.as_raw_fd()).unwrap();
+        let exec_fd_number = u32::try_from(exec_fd.as_raw_fd()).unwrap();
+
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                let closed_below =
+                    ChildFdPlan::close_open_fds_from_proc(first, exec_fd_number.saturating_sub(1));
+                let closed_above = ChildFdPlan::close_open_fds_from_proc(
+                    exec_fd_number.saturating_add(1),
+                    u32::MAX,
+                );
+                let below_is_closed = libc::fcntl(below.as_raw_fd(), libc::F_GETFD) == -1;
+                let exec_fd_is_open = libc::fcntl(exec_fd.as_raw_fd(), libc::F_GETFD) != -1;
+                let above_is_closed = libc::fcntl(above.as_raw_fd(), libc::F_GETFD) == -1;
+                libc::_exit(
+                    if closed_below
+                        && closed_above
+                        && below_is_closed
+                        && exec_fd_is_open
+                        && above_is_closed
+                    {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            },
+            RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn proc_fd_walker_reads_multiple_getdents_batches() {
+        // Numeric procfs fd entries occupy at least 24 bytes each, so 192
+        // descriptors cannot fit in the walker's 4 KiB buffer.
+        let file = File::open("/dev/null").unwrap();
+        let targets = (0..192)
+            .map(|_| ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 64).unwrap())
+            .collect::<Vec<_>>();
+        let first = targets
+            .iter()
+            .map(AsRawFd::as_raw_fd)
+            .min()
+            .and_then(|fd| u32::try_from(fd).ok())
+            .unwrap();
+        let last = targets
+            .iter()
+            .map(AsRawFd::as_raw_fd)
+            .max()
+            .and_then(|fd| u32::try_from(fd).ok())
+            .unwrap();
+
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                let batch_count = ChildFdPlan::enumerate_and_close_open_fds_from_proc(first, last);
+                let targets_are_closed = targets
+                    .iter()
+                    .all(|target| libc::fcntl(target.as_raw_fd(), libc::F_GETFD) == -1);
+                libc::_exit(
+                    if batch_count.is_some_and(|count| count >= 2) && targets_are_closed {
+                        0
+                    } else {
+                        1
+                    },
+                );
+            },
+            RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn child_fd_plan_keeps_required_fds_and_closes_others() {
         let mut pipe_fds = [-1; 2];
@@ -1230,7 +1446,7 @@ mod tests {
         // SAFETY: pipe returned two descriptors owned by this test.
         let pipe_write = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
         let stdio = [Stdio::Inherit, Stdio::Inherit, Stdio::Inherit];
-        let fd_plan = ChildFdPlan::new(
+        let mut fd_plan = ChildFdPlan::new(
             &stdio[0],
             &stdio[1],
             &stdio[2],
@@ -1240,6 +1456,13 @@ mod tests {
         .unwrap();
         let unwanted_file = File::open("/dev/null").unwrap();
         let unwanted = fd_plan.duplicate_source(unwanted_file.as_raw_fd()).unwrap();
+        fd_plan.reserve_directory_fd().unwrap();
+        let reservation_fd = fd_plan
+            .directory_fd_reservation
+            .as_ref()
+            .unwrap()
+            .as_raw_fd();
+        assert!(reservation_fd >= fd_plan.source_fd_minimum);
         let temp_files = Vec::new();
 
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
@@ -1248,11 +1471,14 @@ mod tests {
                 let required_are_open =
                     libc::fcntl(3, libc::F_GETFD) != -1 && libc::fcntl(4, libc::F_GETFD) != -1;
                 let unwanted_is_closed = libc::fcntl(unwanted.as_raw_fd(), libc::F_GETFD) == -1;
-                libc::_exit(if required_are_open && unwanted_is_closed {
-                    0
-                } else {
-                    1
-                });
+                let reservation_is_closed = libc::fcntl(reservation_fd, libc::F_GETFD) == -1;
+                libc::_exit(
+                    if required_are_open && unwanted_is_closed && reservation_is_closed {
+                        0
+                    } else {
+                        1
+                    },
+                );
             },
             RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
             RawFork::Error(error) => panic!("fork failed with errno {error}"),
