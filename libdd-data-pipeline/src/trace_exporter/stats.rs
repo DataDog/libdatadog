@@ -19,6 +19,8 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
@@ -270,14 +272,23 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
-        let obfuscation_config = (|| agent_info.info.config.as_ref()?.obfuscation.as_ref())();
-        let mut sql_obfuscation_config = obfuscation_config
-            .and_then(|cfg| cfg.sql.as_ref())
-            .cloned()
-            .unwrap_or_default();
-        sql_obfuscation_config.obfuscation_mode = obfuscation_config
-            .map(|cfg| cfg.sql_obfuscation_mode)
-            .unwrap_or_default();
+        let obfuscation_config = agent_info
+            .info
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.obfuscation.as_ref());
+        let sql_obfuscation_config = match obfuscation_config {
+            Some(obfuscation_config) => match &obfuscation_config.sql {
+                Some(sql_config) => sql_config.clone(),
+                // Fallback for the previous /info config format
+                None => SqlConfig {
+                    obfuscation_mode: obfuscation_config.sql_obfuscation_mode.unwrap_or_default(),
+                    ..Default::default()
+                },
+            },
+            None => SqlConfig::default(),
+        };
+
         client_side_stats
             .obfuscation_config
             .store(Arc::new(StatsComputationObfuscationConfig {
