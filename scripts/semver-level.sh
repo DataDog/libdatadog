@@ -185,6 +185,17 @@ crate_target_kinds_at_rev() {
 #   <crate> dep      <name> <alias> <kind> <target> <req>  one per dependency a consumer resolves
 #   <crate> feature  <name> default|optional               one per declared feature
 #
+# `default` on a feature row means `default` REACHES the feature, not that it lists it:
+# the closure over the feature graph, which is what a consumer writing
+# `default-features = true` actually gets. Keyed on direct membership instead, moving
+# `default = ["foo"]` to `default = ["bundle"]` with `bundle = ["foo"]` changes nothing
+# a consumer can observe yet reads as `foo` losing its default, i.e. a major; and the
+# inverse, emptying a `bundle` that `default` still lists, is a real break that reads as
+# no change at all. cargo-semver-checks resolves the closure — its
+# `feature_not_enabled_by_default` passes the first and fails the second, verified
+# against 0.47/0.48 — so keying on direct membership would also put this pass at odds
+# with the lint backing it up.
+#
 # The crate leads every row so that rows from different members stay apart; the passes
 # below, which ask for one crate, cut it back off.
 #
@@ -215,6 +226,26 @@ manifest_facts_at_rev() {
         return 1
     fi
     jq -r --arg crate "$crate" '
+        # The local features one entry of a feature list enables. `dep:x` activates an
+        # optional dependency and deliberately creates no implicit feature; `x?/f`
+        # enables `f` of `x` only where `x` is already on, so neither reaches a local
+        # feature. Plain `x/f` does also enable the implicit feature `x`, but only when
+        # `x` is an optional dependency — which is exactly when `x` is a key of the
+        # feature map, a non-optional dependency having none.
+        def local_edges($f):
+            [ .[]
+              | if startswith("dep:") then empty
+                elif contains("/") then (split("/")[0] | if endswith("?") then empty else . end)
+                else . end ]
+            | map(. as $k | select($f | has($k)))
+            | unique;
+        # Every feature `default` reaches, directly or through another feature. One
+        # round per declared feature reaches the fixed point: a round that changes
+        # anything adds at least one of the finitely many features.
+        def default_closure($f):
+            reduce range(0; ($f | length) + 1) as $_
+                (($f["default"] // []) | local_edges($f);
+                 (. + ([ .[] | ($f[.] // [])[] ] | local_edges($f))) | unique);
         .packages[]
         | select($crate == "" or .name == $crate)
         | . as $p
@@ -223,7 +254,7 @@ manifest_facts_at_rev() {
               | select((.kind // "normal") != "dev")
               | [$p.name, "dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req] ),
             ( ($p.features // {}) as $f
-              | ($f.default // []) as $d
+              | default_closure($f) as $d
               | ($f | keys[]) as $n
               | select($n != "default")
               | [$p.name, "feature", $n, (if ($d | index($n)) then "default" else "optional" end)] )
@@ -718,8 +749,10 @@ compute_semver_results() {
     # merely warn) and this block is skipped once a pass said major; it earns its keep
     # on a crate with no library target, where (1) is skipped entirely.
     #
-    # Not scored: a change to what a feature *enables* — the two *_enables_feature
-    # lints' job, and judging it needs the feature graph rather than a name set.
+    # Not scored for its own sake: a change to what a feature *enables* — the two
+    # *_enables_feature lints' job. It reaches this pass only where it moves the set of
+    # features `default` reaches, which the rows resolve (see manifest_facts_at_rev);
+    # emptying a `bundle` that `default` lists undefaults everything below it.
     # ----------------------------------------------------------------
     if $manifest_compared; then
         local base_features now_features
