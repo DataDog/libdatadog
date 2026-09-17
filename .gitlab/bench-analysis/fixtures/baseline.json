@@ -1,0 +1,141 @@
+{
+  "schema_version": "v1",
+  "benchmarks": [
+    {
+      "parameters": {
+        "name": "normalize",
+        "variant": "service",
+        "scenario": "normalize-service-libdatadog",
+        "baseline_or_candidate": "baseline",
+        "git_branch": "main",
+        "git_commit_sha": "aaaaaaaabbbbbbbbccccccccdddddddd00000001",
+        "git_commit_date": "1718000000",
+        "ci_job_date": "1718001000",
+        "ci_job_id": "100000001",
+        "ci_pipeline_id": "200000001"
+      },
+      "runs": {
+        "#1": {
+          "execution_time": {
+            "uom": "ns",
+            "values": [499500.0, 499600.0, 499700.0, 499800.0, 499900.0, 500000.0, 500100.0, 500200.0, 500300.0, 500400.0, 500500.0, 500600.0]
+          },
+          "instructions": {
+            "uom": "instructions",
+            "values": [1198800.0, 1199040.0, 1199280.0, 1199520.0, 1199760.0, 1200000.0, 1200240.0, 1200480.0, 1200720.0, 1200960.0, 1201200.0, 1201440.0]
+          },
+          "cpu_user_time": {
+            "uom": "ns",
+            "values": [494505.0, 494604.0, 494703.0, 494802.0, 494901.0, 495000.0, 495099.0, 495198.0, 495297.0, 495396.0, 495495.0, 495594.0]
+          },
+          "max_rss_usage": {
+            "uom": "bytes",
+            "values": [2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0]
+          }
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "normalize",
+        "variant": "name",
+        "scenario": "normalize-name-libdatadog",
+        "baseline_or_candidate": "baseline",
+        "git_branch": "main",
+        "git_commit_sha": "aaaaaaaabbbbbbbbccccccccdddddddd00000001",
+        "git_commit_date": "1718000000",
+        "ci_job_date": "1718001000",
+        "ci_job_id": "100000001",
+        "ci_pipeline_id": "200000001"
+      },
+      "runs": {
+        "#1": {
+          "execution_time": {
+            "uom": "ns",
+            "values": [399500.0, 399600.0, 399700.0, 399800.0, 399900.0, 400000.0, 400100.0, 400200.0, 400300.0, 400400.0, 400500.0, 400600.0]
+          },
+          "instructions": {
+            "uom": "instructions",
+            "values": [958800.0, 959040.0, 959280.0, 959520.0, 959760.0, 960000.0, 960240.0, 960480.0, 960720.0, 960960.0, 961200.0, 961440.0]
+          },
+          "cpu_user_time": {
+            "uom": "ns",
+            "values": [395505.0, 395604.0, 395703.0, 395802.0, 395901.0, 396000.0, 396099.0, 396198.0, 396297.0, 396396.0, 396495.0, 396594.0]
+          },
+          "max_rss_usage": {
+            "uom": "bytes",
+            "values": [2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0]
+          }
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "concentrator",
+        "variant": "add_spans",
+        "scenario": "concentrator-libdatadog",
+        "baseline_or_candidate": "baseline",
+        "git_branch": "main",
+        "git_commit_sha": "aaaaaaaabbbbbbbbccccccccdddddddd00000001",
+        "git_commit_date": "1718000000",
+        "ci_job_date": "1718001000",
+        "ci_job_id": "100000001",
+        "ci_pipeline_id": "200000001"
+      },
+      "runs": {
+        "#1": {
+          "execution_time": {
+            "uom": "ns",
+            "values": [4997500.0, 4998000.0, 4998500.0, 4999000.0, 4999500.0, 5000000.0, 5000500.0, 5001000.0, 5001500.0, 5002000.0, 5002500.0, 5003000.0]
+          },
+          "instructions": {
+            "uom": "instructions",
+            "values": [11994000.0, 11995200.0, 11996400.0, 11997600.0, 11998800.0, 12000000.0, 12001200.0, 12002400.0, 12003600.0, 12004800.0, 12006000.0, 12007200.0]
+          },
+          "cpu_user_time": {
+            "uom": "ns",
+            "values": [4947525.0, 4948020.0, 4948515.0, 4949010.0, 4949505.0, 4950000.0, 4950495.0, 4950990.0, 4951485.0, 4951980.0, 4952475.0, 4952970.0]
+          },
+          "max_rss_usage": {
+            "uom": "bytes",
+            "values": [2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0]
+          }
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "obfuscation",
+        "variant": "sql",
+        "scenario": "obfuscation-sql-libdatadog",
+        "baseline_or_candidate": "baseline",
+        "git_branch": "main",
+        "git_commit_sha": "aaaaaaaabbbbbbbbccccccccdddddddd00000001",
+        "git_commit_date": "1718000000",
+        "ci_job_date": "1718001000",
+        "ci_job_id": "100000001",
+        "ci_pipeline_id": "200000001"
+      },
+      "runs": {
+        "#1": {
+          "execution_time": {
+            "uom": "ns",
+            "values": [99500.0, 99600.0, 99700.0, 99800.0, 99900.0, 100000.0, 100100.0, 100200.0, 100300.0, 100400.0, 100500.0, 100600.0]
+          },
+          "instructions": {
+            "uom": "instructions",
+            "values": [238800.0, 239040.0, 239280.0, 239520.0, 239760.0, 240000.0, 240240.0, 240480.0, 240720.0, 240960.0, 241200.0, 241440.0]
+          },
+          "cpu_user_time": {
+            "uom": "ns",
+            "values": [98505.0, 98604.0, 98703.0, 98802.0, 98901.0, 99000.0, 99099.0, 99198.0, 99297.0, 99396.0, 99495.0, 99594.0]
+          },
+          "max_rss_usage": {
+            "uom": "bytes",
+            "values": [2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0, 2097152.0]
+          }
+        }
+      }
+    }
+  ]
+}
