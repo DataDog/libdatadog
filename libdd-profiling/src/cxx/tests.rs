@@ -108,9 +108,9 @@ fn create_test_dictionary_sample_parts(
         vec![1000000],
         vec![ffi::DictionaryLabel {
             key: label_key,
-            str: "",
+            str_bytes: b"",
             num: 101,
-            num_unit: "",
+            num_unit: b"",
         }],
     )
 }
@@ -1000,6 +1000,33 @@ fn test_exporter_create_accepts_unix_socket_agent_url() {
         false,
     );
     assert!(result.ok(), "{}", result.message());
+}
+
+#[test]
+fn test_intern_string_lossy_valid_utf8() {
+    let dictionary = create_test_dictionary();
+    let mut id = ffi::DictionaryStringId::default();
+    assert!(dictionary.intern_string_lossy(b"hello", &mut id));
+    assert!(!id.is_null());
+
+    // Same bytes interned via intern_string should produce the same id
+    let mut id2 = ffi::DictionaryStringId::default();
+    assert!(dictionary.intern_string("hello", &mut id2));
+    assert_eq!(id.handle, id2.handle);
+}
+
+#[test]
+fn test_intern_string_lossy_invalid_utf8() {
+    let dictionary = create_test_dictionary();
+    let mut id = ffi::DictionaryStringId::default();
+    // 0xFF is not valid UTF-8 — should be replaced with U+FFFD
+    assert!(dictionary.intern_string_lossy(b"\xFF", &mut id));
+    assert!(!id.is_null());
+
+    // Interning the same invalid bytes again should return the same id
+    let mut id2 = ffi::DictionaryStringId::default();
+    assert!(dictionary.intern_string_lossy(b"\xFF", &mut id2));
+    assert_eq!(id.handle, id2.handle);
 }
 
 #[test]

@@ -7,7 +7,9 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace datadog::profiling::views {
@@ -64,3 +66,19 @@ DictionarySample dictionary_sample(
 }
 
 }  // namespace datadog::profiling::views
+
+namespace datadog::profiling::strings {
+
+// Convert a std::string_view to rust::Str. Throws std::invalid_argument if
+// the input is not valid UTF-8.
+inline rust::Str str(std::string_view value) {
+    return rust::Str(value.data(), value.size());
+}
+
+// Convert a std::string_view to a byte slice for CXX bridge functions
+// that accept &[u8]. No UTF-8 validation.
+inline rust::Slice<const uint8_t> bytes(std::string_view value) noexcept {
+    return {reinterpret_cast<const uint8_t*>(value.data()), value.size()};
+}
+
+}  // namespace datadog::profiling::strings

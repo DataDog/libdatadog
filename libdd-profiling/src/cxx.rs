@@ -222,9 +222,11 @@ pub mod ffi {
     /// add_dictionary_sample call.
     struct DictionaryLabel<'a> {
         key: DictionaryStringId,
-        str: &'a str,
+        /// Arbitrary bytes; the Rust side applies lossy UTF-8 conversion.
+        /// This accepts user-supplied data that may not be valid UTF-8.
+        str_bytes: &'a [u8],
         num: i64,
-        num_unit: &'a str,
+        num_unit: &'a [u8],
     }
 
     /// Dictionary-backed sample.
@@ -390,6 +392,15 @@ pub mod ffi {
         fn intern_string(
             self: &ProfileDictionary,
             value: &str,
+            out: &mut DictionaryStringId,
+        ) -> bool;
+
+        /// Like intern_string, but accepts arbitrary bytes and replaces
+        /// invalid UTF-8 with U+FFFD. Use for user-supplied data (frame
+        /// names, filenames, bytes inputs) that may not be valid UTF-8.
+        fn intern_string_lossy(
+            self: &ProfileDictionary,
+            value: &[u8],
             out: &mut DictionaryStringId,
         ) -> bool;
 

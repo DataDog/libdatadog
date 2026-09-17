@@ -83,6 +83,17 @@ impl ProfileDictionary {
         )
     }
 
+    pub fn intern_string_lossy(&self, value: &[u8], out: &mut ffi::DictionaryStringId) -> bool {
+        // Returns Cow::Borrowed (zero-copy) when valid UTF-8, Cow::Owned (one
+        // allocation with U+FFFD replacements) only when invalid.
+        let s = String::from_utf8_lossy(value);
+        self.write_output(
+            Operation::InternDictionaryString,
+            out,
+            self.inner.try_insert_str2(&s).map(Into::into),
+        )
+    }
+
     /// # Safety
     /// All non-null ids in function must have been produced by this dictionary.
     pub unsafe fn intern_function(
