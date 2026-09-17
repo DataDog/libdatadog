@@ -69,7 +69,7 @@ mod native {
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
-        let path = libdd_common::decode_uri_path_in_authority(uri)
+        let path = libdd_types::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
 
         let is_dir = path.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR) || path.is_dir();

@@ -3,8 +3,8 @@
 
 use crate::health_metrics::{HealthMetric, SendResult};
 use either::Either;
-use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDAction, DogStatsDClient};
+use libdd_types::tag::Tag;
 use tracing::debug;
 
 /// Handles emission of health metrics to DogStatsD
@@ -82,7 +82,7 @@ impl<'a> MetricsEmitter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_common::tag;
+    use libdd_types::tag;
 
     #[test]
     fn test_metrics_emitter_new() {

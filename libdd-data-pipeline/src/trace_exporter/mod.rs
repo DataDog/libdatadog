@@ -47,8 +47,6 @@ use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::tag::Tag;
-use libdd_common::Endpoint;
 use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
@@ -62,6 +60,8 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+use libdd_types::tag::Tag;
+use libdd_types::Endpoint;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
 use std::io;

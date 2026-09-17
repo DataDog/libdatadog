@@ -10,12 +10,12 @@ use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
     data::{self, Application, LogLevel},
     worker::http_client::request_builder,
 };
+use libdd_types::Endpoint;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -203,7 +203,7 @@ impl TelemetryCrashUploader {
             if endpoint.url.scheme_str() == Some("file") {
                 // Write telemetry alongside the crash file. Rebuild from the
                 // decoded path so the file path is re-encoded exactly once.
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_types::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
                 let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),
@@ -364,7 +364,7 @@ impl TelemetryCrashUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .header(
                 libdd_telemetry::worker::http_client::header::API_VERSION,
@@ -476,8 +476,8 @@ mod tests {
         crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata},
         ErrorKind,
     };
-    use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
+    use libdd_types::Endpoint;
     use std::{collections::HashSet, fs};
     use uuid::Uuid;
 

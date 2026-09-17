@@ -33,8 +33,8 @@ impl std::str::FromStr for OtlpProtocol {
 impl OtlpProtocol {
     pub(crate) fn content_type(&self) -> Option<http::HeaderValue> {
         match self {
-            OtlpProtocol::HttpJson => Some(libdd_common::header::APPLICATION_JSON),
-            OtlpProtocol::HttpProtobuf => Some(libdd_common::header::APPLICATION_PROTOBUF),
+            OtlpProtocol::HttpJson => Some(libdd_types::header::APPLICATION_JSON),
+            OtlpProtocol::HttpProtobuf => Some(libdd_types::header::APPLICATION_PROTOBUF),
             OtlpProtocol::Grpc => None,
         }
     }
@@ -110,11 +110,11 @@ mod tests {
     fn protocol_content_types() {
         assert_eq!(
             OtlpProtocol::HttpJson.content_type(),
-            Some(libdd_common::header::APPLICATION_JSON)
+            Some(libdd_types::header::APPLICATION_JSON)
         );
         assert_eq!(
             OtlpProtocol::HttpProtobuf.content_type(),
-            Some(libdd_common::header::APPLICATION_PROTOBUF)
+            Some(libdd_types::header::APPLICATION_PROTOBUF)
         );
         assert_eq!(OtlpProtocol::Grpc.content_type(), None);
     }

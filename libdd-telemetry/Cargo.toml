@@ -34,6 +34,7 @@ uuid = { workspace = true, features = ["v4", "std"] }
 # Only HashTable (ungated) and DefaultHashBuilder (default-hasher) are used.
 hashbrown = { workspace = true, default-features = true }
 bytes = { workspace = true, features = ["std"] }
+libdd-types = { path = "../libdd-types" }
 libdd-capabilities = { version = "3.0.1", path = "../libdd-capabilities" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime", default-features = false }

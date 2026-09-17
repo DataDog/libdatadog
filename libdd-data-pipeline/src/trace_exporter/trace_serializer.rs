@@ -9,15 +9,15 @@ use crate::trace_exporter::agent_response::{
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
-use libdd_common::header::{
-    APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
-};
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use libdd_trace_utils::tracer_payload::{self};
+use libdd_types::header::{
+    APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
+};
 
 /// Minimal capacity of fresh buffers allocated to encode traces, in bytes.
 const MIN_BUFFER_CAPACITY: usize = 1024;
@@ -148,10 +148,10 @@ mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
     use http::header::CONTENT_TYPE;
-    use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
+    use libdd_types::header::APPLICATION_MSGPACK_STR;
 
     fn create_test_span() -> SpanBytes {
         SpanBytes {

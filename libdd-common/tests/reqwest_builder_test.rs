@@ -6,7 +6,8 @@ mod tests {
     use libdd_common::test_utils::{
         count_active_threads, create_temp_file_path, parse_http_request,
     };
-    use libdd_common::Endpoint;
+    use libdd_common::EndpointExt;
+    use libdd_types::Endpoint;
 
     /// With rustls-no-provider, reqwest does not auto-install a crypto provider.
     /// Tests that build a reqwest client must ensure one is installed first.

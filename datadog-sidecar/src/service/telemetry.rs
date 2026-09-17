@@ -24,8 +24,8 @@ use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
 use std::sync::LazyLock;

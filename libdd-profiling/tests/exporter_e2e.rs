@@ -208,18 +208,18 @@ enum RequestSource {
 
 /// Export a comprehensive profile with all features and capture the HTTP request
 async fn export_full_profile(
-    endpoint: libdd_common::Endpoint,
+    endpoint: libdd_types::Endpoint,
     source: RequestSource,
 ) -> anyhow::Result<ReceivedRequest> {
     // Build tags
     let tags = vec![
-        libdd_common::tag::Tag::new("service", "test-service")?,
-        libdd_common::tag::Tag::new("env", "test")?,
+        libdd_types::tag::Tag::new("service", "test-service")?,
+        libdd_types::tag::Tag::new("env", "test")?,
     ];
 
     let additional_tags = vec![
-        libdd_common::tag::Tag::new("runtime", "rust")?,
-        libdd_common::tag::Tag::new("version", "1.0")?,
+        libdd_types::tag::Tag::new("runtime", "rust")?,
+        libdd_types::tag::Tag::new("version", "1.0")?,
     ];
 
     // Build additional files
@@ -436,7 +436,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
     // Configure agentless endpoint based on transport
     let endpoint = if let Some(port) = server.port {
         let endpoint_url = format!("http://127.0.0.1:{}/api/v2/profile", port).parse()?;
-        let mut endpoint = libdd_common::Endpoint::from_url(endpoint_url);
+        let mut endpoint = libdd_types::Endpoint::from_url(endpoint_url);
         endpoint.api_key = Some("test-api-key-12345".into());
         endpoint
     } else {
@@ -448,7 +448,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
-            let mut endpoint = libdd_common::Endpoint::from_url(url);
+            let mut endpoint = libdd_types::Endpoint::from_url(url);
             endpoint.api_key = Some("test-api-key-12345".into());
             endpoint
         }
@@ -461,7 +461,7 @@ async fn test_agentless_with_transport(transport: Transport) -> anyhow::Result<(
             let mut parts = endpoint_url.into_parts();
             parts.path_and_query = Some("/api/v2/profile".parse()?);
             let url = http::Uri::from_parts(parts)?;
-            let mut endpoint = libdd_common::Endpoint::from_url(url);
+            let mut endpoint = libdd_types::Endpoint::from_url(url);
             endpoint.api_key = Some("test-api-key-12345".into());
             endpoint
         }

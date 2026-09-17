@@ -212,11 +212,11 @@ impl DatadogAgentContainerBuilder {
 /// ```no_run
 /// use libdd_capabilities::HttpClientCapability;
 /// use libdd_capabilities_impl::NativeCapabilities;
-/// use libdd_common::Endpoint;
 /// use libdd_trace_utils::send_data::SendData;
 /// use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
 /// use libdd_trace_utils::tracer_payload::TracerPayloadCollection;
+/// use libdd_types::Endpoint;
 ///
 /// use tokio;
 ///
@@ -293,7 +293,7 @@ impl DatadogTestAgent {
     }
 
     pub async fn get_base_uri(&self) -> http::Uri {
-        libdd_common::parse_uri(&if let Some(path) = &self.socket_path {
+        libdd_types::parse_uri(&if let Some(path) = &self.socket_path {
             format!("unix://{path}")
         } else {
             self.container.trace_agent_uri().unwrap()

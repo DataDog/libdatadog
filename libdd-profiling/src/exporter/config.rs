@@ -3,7 +3,7 @@
 
 #[cfg(unix)]
 use libdd_common::connector::uds;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 
 #[cfg(windows)]
 use libdd_common::connector::named_pipe;

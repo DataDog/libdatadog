@@ -5,7 +5,8 @@ use super::{encode_flag_evaluation_payloads, FfeFlagEvaluationBatch};
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::EndpointExt;
+use libdd_types::Endpoint;
 use std::time::Duration;
 
 /// EVP proxy path for FFE flag evaluation intake.

@@ -44,6 +44,7 @@ http-body-util.workspace = true
 httparse = { workspace = true, features = ["std"] }
 indexmap = { workspace = true, default-features = true }
 libdd-alloc = { version = "1.0.0", path = "../libdd-alloc" }
+libdd-types = { path = "../libdd-types" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["reqwest", "test-utils"] }
 libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-protobuf", features = ["prost_impls"] }
 mime.workspace = true

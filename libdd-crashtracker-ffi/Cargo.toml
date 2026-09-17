@@ -41,6 +41,7 @@ anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-types = { path = "../libdd-types" }
 symbolic-demangle = { workspace = true, features = ["rust", "cpp", "msvc"], optional = true }
 symbolic-common = { workspace = true, optional = true }
 function_name.workspace = true

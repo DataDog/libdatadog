@@ -16,7 +16,6 @@ use super::TracerMetadata;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
@@ -27,6 +26,7 @@ use libdd_trace_stats::span_concentrator::{
 };
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use libdd_trace_utils::trace_filter::TraceFilterer;
+use libdd_types::Endpoint;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error};

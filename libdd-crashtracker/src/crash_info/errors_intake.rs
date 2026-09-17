@@ -14,7 +14,9 @@ use super::{
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use libdd_common::config::parse_env;
+use libdd_common::EndpointExt;
+use libdd_types::{parse_uri, Endpoint};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -540,7 +542,7 @@ impl ErrorsIntakeUploader {
 
         // Handle file endpoint
         if endpoint.url.scheme_str() == Some("file") {
-            let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+            let path = libdd_types::decode_uri_path_in_authority(&endpoint.url)
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
@@ -578,7 +580,7 @@ impl ErrorsIntakeUploader {
             .method(http::Method::POST)
             .header(
                 http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
+                libdd_types::header::APPLICATION_JSON,
             )
             .body(serde_json::to_string(payload)?.into())?;
 
@@ -933,7 +935,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
         // The original socket path is preserved in authority for unix:// URLs (URL encoded)
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"
@@ -959,7 +961,7 @@ mod tests {
 
         assert_eq!(endpoint.url.scheme_str(), Some("windows"));
         // For windows: scheme, the pipe name is URL-encoded in the authority
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "my_custom_pipe");
 
         // Should use agent proxy path
@@ -980,7 +982,7 @@ mod tests {
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(decoded_path.to_string_lossy(), "/tmp/custom.socket");
 
         // Should use agent proxy path
@@ -1090,7 +1092,7 @@ mod tests {
 
         // Should use UDS socket, not host/port
         assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
+        let decoded_path = libdd_types::decode_uri_path_in_authority(&endpoint.url).unwrap();
         assert_eq!(
             decoded_path.to_string_lossy(),
             "/var/run/datadog/apm.socket"

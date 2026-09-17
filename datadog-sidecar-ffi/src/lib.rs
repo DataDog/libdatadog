@@ -30,8 +30,6 @@ use datadog_sidecar::service::{
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
 use libc::c_char;
-use libdd_common::tag::Tag;
-use libdd_common::Endpoint;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
@@ -50,6 +48,8 @@ use libdd_telemetry::{
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
+use libdd_types::tag::Tag;
+use libdd_types::Endpoint;
 use std::ffi::{c_void, CStr, CString};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -1035,7 +1035,7 @@ fn ddog_sidecar_enqueue_telemetry_point_impl(
 
     fn get_tags(tags_slice: CharSlice) -> Result<Vec<Tag>, String> {
         let tags = char_slice_to_string(tags_slice)?;
-        let (tags, error) = libdd_common::tag::parse_tags(tags.as_str());
+        let (tags, error) = libdd_types::tag::parse_tags(tags.as_str());
         if let Some(error) = error {
             return Err(error.to_string());
         }

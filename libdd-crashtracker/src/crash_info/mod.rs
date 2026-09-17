@@ -25,7 +25,7 @@ pub use builder::*;
 pub use error_data::*;
 pub use errors_intake::*;
 pub use experimental::*;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 pub use metadata::Metadata;
 pub use os_info::*;
 pub use proc_info::*;
@@ -140,7 +140,7 @@ impl CrashInfo {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
-                let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
+                let path = libdd_types::decode_uri_path_in_authority(&endpoint.url)
                     .context("crash output file path was not correctly formatted")?;
                 self.to_file(&path)?;
             }

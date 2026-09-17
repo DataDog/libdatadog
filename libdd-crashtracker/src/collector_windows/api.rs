@@ -12,7 +12,7 @@ use core::ffi::c_void;
 use core::mem::{size_of, MaybeUninit};
 use core::ptr::{addr_of, read_unaligned};
 use core::{fmt, slice, str};
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;

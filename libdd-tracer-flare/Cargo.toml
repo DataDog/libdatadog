@@ -11,6 +11,7 @@ homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 
 [dependencies]
+libdd-types = { path = "../libdd-types" }
 anyhow = { workspace = true, default-features = true }
 libdd-remote-config = { version = "5.0.0", path = "../libdd-remote-config", default-features = false }
 libdd-common = { version = "6.0.0", path = "../libdd-common" }

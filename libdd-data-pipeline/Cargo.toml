@@ -31,6 +31,7 @@ tokio = { workspace = true, features = [
     "time",
 ] }
 uuid = { workspace = true, features = ["v4", "std"] }
+libdd-types = { path = "../libdd-types" }
 tokio-util.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-data-pipeline-core = { path = "../libdd-data-pipeline-core", version = "1.0.0" }

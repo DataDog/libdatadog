@@ -5,7 +5,6 @@
 #![allow(clippy::box_vec)]
 
 use function_name::named;
-use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{
     wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
@@ -13,6 +12,7 @@ use libdd_common_ffi::{
 use libdd_profiling::exporter;
 use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
 use libdd_profiling::internal::EncodedProfile;
+use libdd_types::tag::Tag;
 use std::borrow::Cow;
 use std::str::FromStr;
 
@@ -113,7 +113,7 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
 
 pub unsafe fn try_to_endpoint(
     endpoint: ProfilingEndpoint,
-) -> anyhow::Result<libdd_common::Endpoint> {
+) -> anyhow::Result<libdd_types::Endpoint> {
     // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
     // a failed result is likely to be an error.
     match endpoint {
@@ -546,8 +546,8 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_common::tag;
     use libdd_common_ffi::Slice;
+    use libdd_types::tag;
 
     fn profiling_library_name() -> CharSlice<'static> {
         CharSlice::from("dd-trace-foo")

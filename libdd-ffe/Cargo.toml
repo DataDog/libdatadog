@@ -18,6 +18,7 @@ faststr = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json = { workspace = true, features = ["std", "raw_value"] }
 chrono = { workspace = true, features = ["now", "serde"] }
+libdd-types = { path = "../libdd-types" }
 derive_more = { workspace = true, features = ["from", "into"] }
 log = { workspace = true, features = ["kv", "kv_serde"] }
 md5.workspace = true

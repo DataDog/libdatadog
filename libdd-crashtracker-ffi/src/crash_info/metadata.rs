@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::tag::Tag;
 use libdd_common_ffi::{slice::AsBytes, CharSlice};
+use libdd_types::tag::Tag;
 
 #[repr(C)]
 pub struct Metadata<'a> {

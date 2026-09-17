@@ -5,10 +5,10 @@ use crate::enter_listener_loop;
 use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
-use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
 use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use libdd_types::Endpoint;
 use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;

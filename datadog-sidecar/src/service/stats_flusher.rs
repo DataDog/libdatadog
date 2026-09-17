@@ -15,11 +15,12 @@ use base64::Engine;
 use futures::{future::join_all, TryFutureExt};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{Endpoint, MutexExt};
+use libdd_common::MutexExt;
 use libdd_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
 use libdd_telemetry::config::Config;
+use libdd_types::Endpoint;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;

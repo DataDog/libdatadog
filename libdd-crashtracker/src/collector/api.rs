@@ -122,7 +122,7 @@ mod single_threaded_tests {
     };
     use chrono::Utc;
     use core::time::Duration;
-    use libdd_common::tag;
+    use libdd_types::tag;
 
     const PATH_TO_RECEIVER: &str = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver";
     // We can't run this in the main test runner because it (deliberately) crashes,

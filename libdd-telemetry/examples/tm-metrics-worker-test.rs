@@ -3,8 +3,8 @@
 
 use std::{error::Error, time::Duration, time::Instant};
 
-use libdd_common::tag;
 use libdd_telemetry::{data, worker};
+use libdd_types::tag;
 
 macro_rules! timeit {
     ($op_name:literal, $op:block) => {{

@@ -20,6 +20,7 @@ arc-swap = { workspace = true, optional = true }
 arrayref.workspace = true
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
+libdd-types = { path = "../libdd-types" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 

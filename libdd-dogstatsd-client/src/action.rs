@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::tag::Tag;
+use libdd_types::tag::Tag;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 

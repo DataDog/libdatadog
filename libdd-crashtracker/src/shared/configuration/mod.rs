@@ -4,7 +4,7 @@
 mod builder;
 pub use builder::CrashtrackerConfigurationBuilder;
 use core::time::Duration;
-use libdd_common::Endpoint;
+use libdd_types::Endpoint;
 use serde::{Deserialize, Serialize};
 
 /// Stacktrace collection occurs in the context of a crashing process.

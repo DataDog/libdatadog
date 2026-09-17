@@ -49,6 +49,7 @@ libdd-libunwind-sys.workspace = true
 [dependencies]
 anyhow.workspace = true
 chrono = { workspace = true, features = ["std", "clock", "serde"] }
+libdd-types = { path = "../libdd-types" }
 cxx = { workspace = true, default-features = true, optional = true }
 errno = { workspace = true, default-features = true }
 libdd-capabilities = { version = "3.0.1", path = "../libdd-capabilities" }
