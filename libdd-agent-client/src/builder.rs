@@ -313,7 +313,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn build_succeeds_with_required_fields() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let result = AgentClientBuilder::new()
             .http("localhost", 8126)
             .language_metadata(LanguageMetadata::new(

@@ -5,14 +5,9 @@ use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest};
 use std::time::Duration;
 
-fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_request_times_out() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server
@@ -36,7 +31,6 @@ async fn test_request_times_out() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_per_request_timeout_overrides_client() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server
@@ -63,7 +57,6 @@ async fn test_per_request_timeout_overrides_client() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_connection_refused() {
-    ensure_crypto_provider();
     // Use port 1 which is very unlikely to have a listener.
     let client = HttpClient::new("http://127.0.0.1:1".to_owned(), Duration::from_secs(1)).unwrap();
 

@@ -4,12 +4,7 @@
 use httpmock::MockServer;
 use libdd_agent_client::{AgentClient, LanguageMetadata};
 
-pub fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 pub fn client_for(server: &MockServer) -> AgentClient {
-    ensure_crypto_provider();
     AgentClient::builder()
         .http("localhost", server.port())
         .language_metadata(LanguageMetadata::new(

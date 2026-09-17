@@ -281,12 +281,7 @@ mod tests {
     use super::*;
     use crate::{AgentClient, LanguageMetadata};
 
-    fn ensure_crypto_provider() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    }
-
     fn test_client(port: u16) -> AgentClient {
-        ensure_crypto_provider();
         AgentClient::builder()
             .http("localhost", port)
             .language_metadata(LanguageMetadata::new(
@@ -320,7 +315,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn extra_headers_propagated() {
-        ensure_crypto_provider();
         let client = AgentClient::builder()
             .http("localhost", 80)
             .language_metadata(LanguageMetadata::new(

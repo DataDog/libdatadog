@@ -47,7 +47,6 @@ async fn test_token_injected_when_set() {
         then.status(200).body(r#"{}"#);
     });
 
-    common::ensure_crypto_provider();
     let client = AgentClient::builder()
         .http("localhost", server.port())
         .language_metadata(LanguageMetadata::new(

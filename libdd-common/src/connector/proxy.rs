@@ -30,9 +30,21 @@ pub(super) struct HttpProxyConnector {
 }
 
 impl HttpProxyConnector {
-    pub(super) fn new(direct: Connector) -> Self {
+    /// Fails when the process-wide crypto provider cannot satisfy this build, the
+    /// same condition [`Connector::try_cached`] reports. A missing trust store only
+    /// leaves the proxy without a TLS config, which the CONNECT path handles.
+    pub(super) fn try_new(direct: Connector) -> anyhow::Result<Self> {
         #[cfg(feature = "tls-core")]
-        let tls_config = https::build_tls_config().ok();
+        let tls_config = match https::build_tls_config() {
+            Ok(config) => Some(config),
+            // Only the caller can fix this; tunnelling over a provider this build
+            // rejects would defeat the point of asking for it.
+            Err(err @ https::TlsConfigError::CryptoProvider(_)) => {
+                return Err(anyhow::anyhow!(err))
+            }
+            #[cfg(not(feature = "use_webpki_roots"))]
+            Err(https::TlsConfigError::TrustRoots(_)) => None,
+        };
         #[cfg(feature = "tls-core")]
         let proxy_dialer = tls_config.clone().map(|tls_config| {
             hyper_rustls::HttpsConnectorBuilder::new()
@@ -41,14 +53,14 @@ impl HttpProxyConnector {
                 .enable_http1()
                 .build()
         });
-        Self {
+        Ok(Self {
             matcher: &PROXY_MATCHER,
             #[cfg(feature = "tls-core")]
             tls_config,
             #[cfg(feature = "tls-core")]
             proxy_dialer,
             direct,
-        }
+        })
     }
 
     pub(super) fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), ConnStreamError>> {

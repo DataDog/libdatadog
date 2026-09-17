@@ -193,10 +193,6 @@ impl HttpClientBuilder {
 mod tests {
     use super::*;
 
-    fn ensure_crypto_provider() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    }
-
     #[test]
     fn config_getters() {
         let config =
@@ -233,7 +229,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_success() {
-        ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost:8126".to_owned())
             .timeout(Duration::from_secs(3))
@@ -244,7 +239,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_treat_http_errors_defaults_true() {
-        ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))
@@ -256,7 +250,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_treat_http_errors_set_false() {
-        ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))
@@ -269,7 +262,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_allow_connection_pooling_defaults_true() {
-        ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))
@@ -281,7 +273,6 @@ mod tests {
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_allow_connection_pooling_set_false() {
-        ensure_crypto_provider();
         let client = HttpClientBuilder::new()
             .base_url("http://localhost".to_owned())
             .timeout(Duration::from_secs(1))

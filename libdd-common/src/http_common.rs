@@ -140,7 +140,7 @@ mod native {
             .pool_timer(TokioTimer::new())
             .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
             .pool_max_idle_per_host(POOL_MAX_IDLE)
-            .build(Connector::default())
+            .build(Connector::cached_or_http_only())
     }
 
     /// Create a new default configuration hyper client.
@@ -149,7 +149,7 @@ mod native {
     pub fn new_default_client() -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
             .pool_max_idle_per_host(POOL_MAX_IDLE)
-            .build(Connector::default())
+            .build(Connector::cached_or_http_only())
     }
 
     pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {

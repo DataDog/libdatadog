@@ -14,9 +14,11 @@ bench = false
 
 [features]
 default = ["https", "reqwest-backend"]
-# Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. Ring provider is
-# installed explicitly by libdd-common's connector init.
-https = ["dep:reqwest", "reqwest?/rustls-no-provider", "libdd-common?/https"]
+# Use rustls-no-provider to avoid reqwest forcing aws-lc-rs. reqwest then relies on
+# the process-wide provider, which `crypto::ensure_crypto_provider` installs (ring).
+# `libdd-common` is only in the graph under `hyper-backend`, so it cannot be relied
+# on for this: its connector installs a provider for the hyper path alone.
+https = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/ring", "libdd-common?/https"]
 reqwest-backend = ["dep:reqwest", "reqwest?/hickory-dns", "reqwest?/multipart"]
 hyper-backend = [
     "dep:libdd-common",
@@ -27,7 +29,11 @@ hyper-backend = [
 ]
 # Honor HTTPS_PROXY/NO_PROXY environment variables in the hyper backend.
 hyper-proxy = ["hyper-backend", "libdd-common?/hyper-proxy"]
-fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws-lc-rs", "libdd-common?/fips"]
+# `rustls?/fips` (not `rustls?/aws-lc-rs`) is what builds aws-lc-rs in FIPS mode: it
+# pulls aws-lc-fips-sys, whereas plain `aws-lc-rs` pulls non-FIPS aws-lc-sys. The
+# `libdd-common?/fips` below only applies under `hyper-backend`, where libdd-common is
+# in the graph at all, so it cannot be what puts this build in FIPS mode.
+fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/fips", "libdd-common?/fips"]
 
 [dependencies]
 bytes = { workspace = true, features = ["std"] }
@@ -44,6 +50,8 @@ http-body-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 httpmock.workspace = true
-rustls = { workspace = true, features = ["ring"] }
+# No provider features here on purpose: tests must not add a crypto provider that
+# the crate itself does not link. Used to assert which provider ends up installed.
+rustls.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "io-util", "net"] }
 tempfile.workspace = true

@@ -2736,7 +2736,6 @@ dependencies = [
  "httpmock",
  "libdd-common",
  "libdd-http-client",
- "rustls",
  "serde",
  "serde_json",
  "serial_test",

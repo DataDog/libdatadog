@@ -21,6 +21,10 @@ impl super::Backend for ReqwestBackend {
         client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
+        // reqwest is built with `rustls-no-provider` and panics while building the
+        // client if no process-wide provider is installed.
+        crate::crypto::ensure_crypto_provider()?;
+
         let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
 
         match transport {

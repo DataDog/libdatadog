@@ -5,14 +5,9 @@ use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpClientError, HttpMethod, HttpRequest};
 use std::time::Duration;
 
-fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_post_round_trip() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -39,7 +34,6 @@ async fn test_post_round_trip() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_get_round_trip() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -65,7 +59,6 @@ async fn test_get_round_trip() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_response_headers_returned() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -96,7 +89,6 @@ async fn test_response_headers_returned() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_4xx_returns_request_failed() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server
@@ -123,7 +115,6 @@ async fn test_4xx_returns_request_failed() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_4xx_returns_ok_when_errors_disabled() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server
@@ -150,7 +141,6 @@ async fn test_4xx_returns_ok_when_errors_disabled() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_5xx_returns_request_failed() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     server

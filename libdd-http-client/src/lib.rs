@@ -51,6 +51,10 @@ pub mod config;
 
 pub(crate) mod backend;
 mod client;
+// Only the reqwest backend selects a provider itself; the hyper backend gets one
+// from `libdd_common`'s connector.
+#[cfg(feature = "reqwest-backend")]
+pub(crate) mod crypto;
 mod error;
 mod request;
 mod response;

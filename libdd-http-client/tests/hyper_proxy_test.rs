@@ -15,10 +15,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 /// A minimal HTTP CONNECT proxy stand-in: accepts one connection, verifies
 /// it received a CONNECT request, replies with a successful tunnel
 /// establishment, then closes. This is enough to prove the client routed
@@ -66,8 +62,6 @@ async fn spawn_fake_connect_proxy() -> (std::net::SocketAddr, Arc<AtomicBool>) {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_https_request_is_routed_through_https_proxy() {
-    ensure_crypto_provider();
-
     let (proxy_addr, proxy_hit) = spawn_fake_connect_proxy().await;
     // SAFETY: no other threads in this test process mutate the environment
     // concurrently.

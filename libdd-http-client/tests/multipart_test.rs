@@ -5,14 +5,9 @@ use httpmock::prelude::*;
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest, MultipartPart};
 use std::time::Duration;
 
-fn ensure_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multipart_upload() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server
@@ -44,7 +39,6 @@ async fn test_multipart_upload() {
 #[cfg_attr(miri, ignore)]
 #[tokio::test]
 async fn test_multipart_sets_content_type() {
-    ensure_crypto_provider();
     let server = MockServer::start_async().await;
 
     let mock = server

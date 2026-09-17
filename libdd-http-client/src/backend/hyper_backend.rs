@@ -154,8 +154,14 @@ impl super::Backend for HyperBackend {
             builder.pool_max_idle_per_host(0);
         }
 
+        // Reports a crypto-provider misconfiguration — in a FIPS build, a non-FIPS
+        // provider that was installed first — rather than handing back a client
+        // that would refuse every https:// request.
+        let connector = Connector::try_cached()
+            .map_err(|err| HttpClientError::InvalidConfig(err.to_string()))?;
+
         Ok(Self {
-            client: builder.build(Connector::default()),
+            client: builder.build(connector),
             transport,
         })
     }
