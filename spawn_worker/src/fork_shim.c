@@ -14,21 +14,6 @@
 
 #if !defined(__APPLE__)
 extern pid_t _Fork(void) __attribute__((weak));
-#else
-#include <stdbool.h>
-#include <stdint.h>
-
-typedef struct {
-  uint32_t platform;
-  uint32_t version;
-} ddog_dyld_build_version;
-
-extern bool _availability_version_check(
-    uint32_t count, ddog_dyld_build_version versions[])
-    __attribute__((weak_import));
-
-static bool ddog_spawn_worker_has_fork_like_vfork(void);
-
 // On supported Darwin versions (macOS 12+), vfork() is fork() with a private
 // "LibSystem handlers only" flag. This skips API pthread_atfork handlers while
 // retaining LibSystem's pthread, malloc, libc, dyld, dispatch, and XPC repair
@@ -52,16 +37,10 @@ pid_t ddog_spawn_worker_fork(int *error) {
 #elif defined(__APPLE__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    if (ddog_spawn_worker_has_fork_like_vfork()) {
-      result = vfork();
-    } else {
-      errno = ENOTSUP;
-      result = -1;
-    }
+    result = vfork();
 #pragma clang diagnostic pop
 #else
-    errno = ENOSYS;
-    result = -1;
+#error "Unsupported platform"
 #endif
   }
 
@@ -73,18 +52,3 @@ pid_t ddog_spawn_worker_fork(int *error) {
   *error = result == -1 ? errno : 0;
   return result;
 }
-
-#if defined(__APPLE__)
-static bool ddog_spawn_worker_has_fork_like_vfork(void) {
-  if (_availability_version_check == NULL) {
-    return false;
-  }
-
-  // Match compiler-rt's __isPlatformVersionAtLeast encoding.
-  const uint32_t platform_macos = 1;
-  ddog_dyld_build_version versions[] = {
-      {platform_macos, 12U << 16},
-  };
-  return _availability_version_check(1, versions);
-}
-#endif

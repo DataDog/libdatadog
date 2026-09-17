@@ -15,14 +15,18 @@ fn main() {
             .warnings(true)
             .warnings_into_errors(true)
             .emit_rerun_if_env_changed(true);
-        if target_os == "macos" && std::env::var_os("MACOSX_DEPLOYMENT_TARGET").is_none() {
-            let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-            let minimum_version = if target_arch == "aarch64" {
-                "11.0"
-            } else {
-                "10.12"
-            };
-            builder.flag(format!("-mmacosx-version-min={minimum_version}"));
+        if target_os == "macos" {
+            const MINIMUM_VERSION: &str = "12.0";
+            println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+            match std::env::var("MACOSX_DEPLOYMENT_TARGET") {
+                Ok(version) => validate_macos_deployment_target(&version),
+                Err(std::env::VarError::NotPresent) => {
+                    builder.flag(format!("-mmacosx-version-min={MINIMUM_VERSION}"));
+                }
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    panic!("MACOSX_DEPLOYMENT_TARGET must be valid UTF-8");
+                }
+            }
         }
         builder.compile("ddog_spawn_worker_fork");
     }
@@ -90,5 +94,27 @@ fn main() {
         builder
             .try_compile_shared_lib("crashtracking_trampoline.bin")
             .unwrap();
+    }
+}
+
+fn validate_macos_deployment_target(version: &str) {
+    let mut components = version.split('.');
+    let major = components
+        .next()
+        .and_then(|value| value.parse::<u32>().ok());
+    let minor = components
+        .next()
+        .map(|value| value.parse::<u32>().ok())
+        .unwrap_or(Some(0));
+    let remaining_components_are_valid = components.all(|value| value.parse::<u32>().is_ok());
+
+    let version_tuple = match (major, minor, remaining_components_are_valid) {
+        (Some(major), Some(minor), true) => (major, minor),
+        _ => panic!(
+            "invalid MACOSX_DEPLOYMENT_TARGET {version:?}; expected a dotted numeric version"
+        ),
+    };
+    if version_tuple < (12, 0) {
+        panic!("spawn_worker requires MACOSX_DEPLOYMENT_TARGET >= 12.0, got {version}");
     }
 }
