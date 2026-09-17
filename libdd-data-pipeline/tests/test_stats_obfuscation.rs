@@ -12,7 +12,7 @@ use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 use serde_json::json;
 
-// Each preserved token exercises a non-mode option from the agent's nested SQL config.
+// Each preserved token exercises a non-default option from the agent's nested SQL config.
 const SQL_RESOURCE: &str = "SELECT * FROM users WHERE email = 'alice@example.com' AND active = TRUE AND deleted_at IS NULL;";
 
 fn sql_trace_payload() -> Vec<u8> {
@@ -49,12 +49,14 @@ async fn wait_for_agent_info() {
     }
 }
 
-#[cfg_attr(miri, ignore)]
-#[tokio::test]
-async fn client_side_stats_follows_agent_sql_config_snapshot_test() {
-    // Keep both modes identical: TRUE, NULL, and the trailing semicolon can only survive if the
-    // nested keep_* options are followed, rather than only the legacy sql_obfuscation_mode.
-    const EXTRA_INFO: &str = r#"{
+mod tracing_integration_tests {
+    use super::*;
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn client_side_stats_follows_agent_sql_config_snapshot_test() {
+        // Keep both modes identical: TRUE, NULL, and the trailing semicolon can only survive if the
+        // nested keep_* options are followed, rather than only the legacy sql_obfuscation_mode.
+        const EXTRA_INFO: &str = r#"{
         "obfuscation_version": 2,
         "config": {
             "obfuscation": {
@@ -68,47 +70,48 @@ async fn client_side_stats_follows_agent_sql_config_snapshot_test() {
             }
         }
     }"#;
-    const SNAPSHOT_DIRECTORY: &str = "libdd-data-pipeline/tests/snapshots/";
-    const SNAPSHOT_NAME: &str = "client_side_stats_follows_agent_sql_config_snapshot_test";
+        const SNAPSHOT_DIRECTORY: &str = "libdd-data-pipeline/tests/snapshots/";
+        const SNAPSHOT_NAME: &str = "client_side_stats_follows_agent_sql_config_snapshot_test";
 
-    let test_agent = DatadogTestAgent::new(
-        Some(SNAPSHOT_DIRECTORY),
-        None,
-        &[("DD_AGENT_EXTRA_INFO", EXTRA_INFO)],
-    )
-    .await;
-    let url = test_agent.get_base_uri().await;
-    test_agent.start_session(SNAPSHOT_NAME, None).await;
+        let test_agent = DatadogTestAgent::new(
+            Some(SNAPSHOT_DIRECTORY),
+            None,
+            &[("DD_AGENT_EXTRA_INFO", EXTRA_INFO)],
+        )
+        .await;
+        let url = test_agent.get_base_uri().await;
+        test_agent.start_session(SNAPSHOT_NAME, None).await;
 
-    let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-    builder
-        .set_url(url.to_string().as_ref())
-        .set_env("staging")
-        .set_service("test-service")
-        .set_language("rust")
-        .set_language_version("1.0")
-        .set_language_interpreter("rustc")
-        .set_tracer_version("1.0")
-        .set_test_session_token(SNAPSHOT_NAME)
-        .set_input_format(TraceExporterInputFormat::V04)
-        .set_output_format(TraceExporterOutputFormat::V04)
-        .enable_stats(Duration::from_secs(10))
-        .enable_client_side_stats_obfuscation();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(url.to_string().as_ref())
+            .set_env("staging")
+            .set_service("test-service")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_tracer_version("1.0")
+            .set_test_session_token(SNAPSHOT_NAME)
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10))
+            .enable_client_side_stats_obfuscation();
 
-    let exporter = builder
-        .build_async::<NativeCapabilities>()
-        .await
-        .expect("trace exporter must build");
+        let exporter = builder
+            .build_async::<NativeCapabilities>()
+            .await
+            .expect("trace exporter must build");
 
-    wait_for_agent_info().await;
-    exporter
-        .send_async(&sql_trace_payload())
-        .await
-        .expect("trace must be sent");
-    tokio::task::spawn_blocking(move || exporter.shutdown(None))
-        .await
-        .expect("trace exporter shutdown task must complete")
-        .expect("trace exporter must flush stats and shut down");
+        wait_for_agent_info().await;
+        exporter
+            .send_async(&sql_trace_payload())
+            .await
+            .expect("trace must be sent");
+        tokio::task::spawn_blocking(move || exporter.shutdown(None))
+            .await
+            .expect("trace exporter shutdown task must complete")
+            .expect("trace exporter must flush stats and shut down");
 
-    test_agent.assert_snapshot(SNAPSHOT_NAME).await;
+        test_agent.assert_snapshot(SNAPSHOT_NAME).await;
+    }
 }
