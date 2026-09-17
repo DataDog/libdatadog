@@ -46,6 +46,11 @@ while [[ $# -gt 0 ]]; do
             echo "crates a bump is owed to and why. A widened, lowered or unparseable"
             echo "requirement, a dependency added or removed, and a feature change are all"
             echo "absent: they are not raised floors and do not earn a minor on their own."
+            echo ""
+            echo "Both list modes take BASE_REF named as a ref to mean \"since this branch"
+            echo "forked\", and compare from the merge base. A full commit SHA is taken to mean"
+            echo "that commit exactly, which differs only when it is not an ancestor of"
+            echo "CURRENT_REF -- a release tag off a squash-merged branch, say."
             exit 0
             ;;
         -*)
@@ -931,19 +936,34 @@ compute_semver_results() {
 # The list modes stop here: they report on the workspace rather than checking one crate,
 # so none of the per-crate machinery below runs.
 if [[ -n "$LIST_MODE" ]]; then
+    # A baseline named as a ref is compared from where the branch left it, the way a
+    # changed-file search uses `git diff base...HEAD`: a fact that moved on the baseline
+    # *since* then is not this branch's doing, and reporting it would put another
+    # branch's change on this branch's report.
+    #
+    # A baseline given as a full commit SHA is compared from as given, the caller having
+    # resolved it already. The two agree wherever that commit is an ancestor of
+    # CURRENT_REF, since it is then its own merge base; they part where it is not, and
+    # there only the caller knows which it meant. A release tag that a squash merge left
+    # off HEAD's history is exactly that case: its merge base predates the release, so
+    # floors measured from there include ones the released version already states.
+    BASE_GIVEN_AS_COMMIT=false
+    if [[ "$BASE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+        BASE_GIVEN_AS_COMMIT=true
+    fi
     if ! BASE_REF=$(resolve_baseline "$BASE_REF"); then
         exit 1
     fi
-    # Compared from where the branch left the baseline, the way a changed-file search
-    # uses `git diff base...HEAD`: a fact that moved on the baseline *since* then is not
-    # this branch's doing, and reporting it would put another branch's change on this
-    # branch's report. A clone too shallow to hold a merge base falls back to the
-    # baseline tip, erring towards reporting too much. A caller passing the start of a
-    # range it already resolved gets that commit back unchanged, being its own merge base.
-    FORK_POINT=$(git merge-base "$BASE_REF" "$CURRENT_REF" 2>/dev/null)
-    if [[ -z "$FORK_POINT" ]]; then
-        echo "Warning: no merge base for $BASE_REF and $CURRENT_REF; comparing against the baseline tip" >&2
+    if $BASE_GIVEN_AS_COMMIT; then
         FORK_POINT="$BASE_REF"
+    else
+        # A clone too shallow to hold a merge base falls back to the baseline tip,
+        # erring towards reporting too much.
+        FORK_POINT=$(git merge-base "$BASE_REF" "$CURRENT_REF" 2>/dev/null)
+        if [[ -z "$FORK_POINT" ]]; then
+            echo "Warning: no merge base for $BASE_REF and $CURRENT_REF; comparing against the baseline tip" >&2
+            FORK_POINT="$BASE_REF"
+        fi
     fi
     case "$LIST_MODE" in
         affected)

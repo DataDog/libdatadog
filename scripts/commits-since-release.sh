@@ -7,8 +7,8 @@
 # Takes JSON from publication-order.sh and finds commits since the last release tag for each crate
 #
 # A crate's commits are the ones touching a file of its own. Alongside them, `raised_floors`
-# reports the dependency requirement floors that rose over the same range -- including a
-# raise to a `[workspace.dependencies]` entry the crate inherits, which is in the root
+# reports the dependency requirement floors that rose since the tagged release -- including
+# a raise to a `[workspace.dependencies]` entry the crate inherits, which is in the root
 # manifest and so in no commit of the crate's own. A raised floor is not a release on its
 # own, but it is what semver-level.sh scores a minor, so it is the one thing a crate with
 # no commits still has to be able to report.
@@ -56,7 +56,7 @@ ${arg#--exclude=}"
             echo "Takes JSON from publication-order.sh and finds commits since the last release tag for each crate."
             echo ""
             echo "A crate's commits are those touching a file of its own. \"raised_floors\" reports,"
-            echo "separately, the dependency requirement floors that rose over the same range,"
+            echo "separately, the dependency requirement floors that rose since the tagged release,"
             echo "an inherited [workspace.dependencies] entry included. Reading those needs"
             echo "semver-level.sh alongside this script."
             echo ""
@@ -87,8 +87,11 @@ ${arg#--exclude=}"
             echo '    "range":"<start-sha>..<head-sha>","commits":[...],"raised_floors":[...]}]'
             echo ""
             echo '  "raised_floors" holds {"dependency","kind","previous_req","current_req"} for'
-            echo '  each requirement whose lowest admitted version rose across "range", read as'
-            echo '  one comparison of its ends: a raise reverted before the release nets out to'
+            echo '  each requirement whose lowest admitted version rose between the tagged'
+            echo '  release and HEAD. Measured from the tagged commit, not from "range" start,'
+            echo '  which steps back to a merge base when the tag is not an ancestor of HEAD;'
+            echo '  the released version states the tagged requirements. Read as one comparison'
+            echo '  of those two ends: a raise reverted before HEAD nets out to'
             echo '  nothing. A widened, lowered or unparseable requirement, a dependency added or'
             echo '  removed and a feature change are not raised floors and are absent. Empty for'
             echo '  a crate with no previous release tag.'
@@ -366,10 +369,25 @@ while read -r crate; do
             # commits has to be able to say a floor rose, or the proposal reads as "nothing
             # happened" where semver-level.sh scores a minor.
             #
-            # Read from RANGE_START so the two answers agree on where the last release was,
-            # and as one comparison of its two ends: a raise reverted before the release
-            # nets out to nothing here exactly as it will for the crate's next release.
-            if ! RAISES=$(raised_floors_since "$RANGE_START"); then
+            # Read from TAG_COMMIT, the published tree itself, rather than from
+            # RANGE_START. The two are the same commit while the tag is an ancestor of
+            # HEAD; when it is not, RANGE_START steps back to the merge base, or to the
+            # oldest commit's parent, both of which predate the release. What the
+            # released version states as its requirements is what the tagged manifest
+            # says, and release-version-bumps.sh scores the level against
+            # `refs/tags/$TAG` for that same reason. Measured from earlier, a floor the
+            # published version already carries reads as a new raise -- for this repo's
+            # own release flow, that is every crate whose sibling was version-bumped on a
+            # squash-merged release branch, since the bump raises the requirement on that
+            # sibling and the tag then sits off HEAD's history. RANGE_START stays the
+            # commit range's start, where stepping back is the right answer: those
+            # commits genuinely are not in HEAD's history.
+            #
+            # One comparison of the two ends, not a walk between them: a raise reverted
+            # before HEAD nets out to nothing here exactly as it will for the crate's
+            # next release. TAG_COMMIT is non-empty wherever RANGE_START is -- every path
+            # that sets RANGE_START derives it from the dereferenced tag.
+            if ! RAISES=$(raised_floors_since "$TAG_COMMIT"); then
                 exit 1
             fi
             RAISED_FLOORS_JSON=$(awk -F'\t' -v crate="$NAME" \
