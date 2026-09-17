@@ -1260,6 +1260,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn child_fd_plan_reuses_safe_sources_without_losing_ownership() {
         let file = File::open("/dev/null").unwrap();
         let passed = ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 4).unwrap();
