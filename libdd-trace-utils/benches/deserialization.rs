@@ -4,7 +4,7 @@
 use std::alloc::System;
 
 use criterion::{black_box, criterion_group, Criterion};
-use libdd_common::bench_utils::{memory_allocated_measurement, AllocatedBytesMeasurement};
+use libdd_common::bench_utils::{memory_allocated_criterion, AllocatedBytesMeasurement};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 use serde_json::{json, Value};
@@ -147,8 +147,9 @@ criterion_group!(
     deserialize_msgpack_to_internal,
     deserialize_msgpack_to_slice
 );
-criterion_group!(
-    name = deserialize_alloc_benches;
-    config = memory_allocated_measurement(&super::GLOBAL);
-    targets = deserialize_msgpack_to_internal_allocs, deserialize_msgpack_to_slice_allocs
-);
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+pub fn deserialize_alloc_benches() {
+    let mut criterion = memory_allocated_criterion(&super::GLOBAL);
+    deserialize_msgpack_to_internal_allocs(&mut criterion);
+    deserialize_msgpack_to_slice_allocs(&mut criterion);
+}

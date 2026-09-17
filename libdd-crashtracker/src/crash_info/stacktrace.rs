@@ -473,6 +473,58 @@ mod tests {
     }
 }
 
+// These test the `comments` fallback with garbage input against the live process,
+// so unlike `unix_test` they need no generated `.so` fixtures or extra feature flags.
+#[cfg(all(unix, test))]
+mod unix_comment_tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_normalize_ips_with_garbage_ip_adds_comment() {
+        let mut symbolizer = Symbolizer::new();
+        let normalizer = Normalizer::new();
+        let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
+
+        let good_frame = StackFrame::new();
+
+        let mut garbage_frame = StackFrame::new();
+        garbage_frame.ip = Some("not-a-valid-hex-address".to_string());
+
+        let mut st = StackTrace::from_frames(vec![good_frame, garbage_frame], false);
+
+        let result = st.normalize_ips(
+            &normalizer,
+            Pid::from(std::process::id()),
+            &mut elf_resolvers,
+        );
+
+        assert!(result.is_err());
+        assert!(st.frames[0].comments.is_empty());
+        assert_eq!(st.frames[1].comments.len(), 1);
+        assert!(st.frames[1].comments[0].starts_with("normalize_ip failed with"));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_resolve_names_unresolvable_address_adds_comment() {
+        let mut frame = StackFrame::new();
+        frame.ip = Some(format!("{:#x}", u64::MAX));
+
+        let mut process = blazesym::symbolize::source::Process::new(std::process::id().into());
+        process.map_files = false;
+        let src = Source::Process(process);
+        let symbolizer = Symbolizer::new();
+
+        let mut st = StackTrace::from_frames(vec![frame], false);
+        let result = st.resolve_names(&src, &symbolizer);
+
+        assert!(result.is_err());
+        assert_eq!(st.frames[0].comments.len(), 1);
+        assert!(st.frames[0].comments[0].starts_with("resolve_names failed with"));
+    }
+}
+
 // Tests are disabled on macos because we cannot generate the libs
 #[cfg(all(unix, not(target_os = "macos"), feature = "generate-unit-test-files"))]
 #[cfg(test)]

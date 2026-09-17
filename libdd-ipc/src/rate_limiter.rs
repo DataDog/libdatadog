@@ -114,13 +114,15 @@ impl<Inner> ShmLimiterMemory<Inner> {
             memory: self.clone(),
         };
         let limiter = reference.limiter();
-        limiter.rc.store(1, Ordering::Relaxed);
-        // SAFETY: we initialize the struct here
+        // Initialize the limiter before publishing it through the reference count. Otherwise a
+        // reader can acquire the entry while its zero-filled granularity is still being reset.
+        // SAFETY: this entry is not visible while its reference count is zero.
         unsafe {
             (*(limiter as *const _ as *mut ShmLimiterData<Inner>))
                 .limiter
                 .reset(seconds)
         };
+        limiter.rc.store(1, Ordering::Release);
         reference
     }
 
@@ -153,14 +155,14 @@ impl<Inner> ShmLimiterMemory<Inner> {
             memory: self.clone(),
         };
         let limiter = reference.limiter();
-        let mut rc = limiter.rc.load(Ordering::Relaxed);
+        let mut rc = limiter.rc.load(Ordering::Acquire);
         loop {
             if rc == 0 {
                 return None;
             }
             match limiter
                 .rc
-                .compare_exchange(rc, rc + 1, Ordering::Release, Ordering::Relaxed)
+                .compare_exchange(rc, rc + 1, Ordering::AcqRel, Ordering::Acquire)
             {
                 Ok(_) => return Some(reference),
                 Err(found) => rc = found,
