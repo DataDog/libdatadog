@@ -97,7 +97,7 @@ pub struct ObfuscationConfig {
     pub elasticsearch: libdd_trace_obfuscation::json::JsonObfuscator,
     pub opensearch: libdd_trace_obfuscation::json::JsonObfuscator,
     pub mongodb: libdd_trace_obfuscation::json::JsonObfuscator,
-    pub tag_replace_rules: Vec<ReplaceRule>,
+    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl AgentInfo {
@@ -121,7 +121,7 @@ impl From<ObfuscationConfig> for libdd_trace_obfuscation::obfuscation_config::Ob
             },
         };
         Self {
-            tag_replace_rules: value.tag_replace_rules,
+            tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
             http: value.http,
             memcached: value.memcached,
             redis: value.redis,
