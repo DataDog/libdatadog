@@ -11,30 +11,29 @@ fn test_spawning_trampoline_worker() {
     let stdout = tempfile::NamedTempFile::new().unwrap().into_temp_path();
     let stderr = tempfile::NamedTempFile::new().unwrap().into_temp_path();
 
-    let status = SpawnWorker::new()
-        .target(Target::ManualTrampoline(
-            String::from("__dummy_mirror_test"),
-            String::from("symbol_name"),
-        ))
-        .stdin(Stdio::Null)
-        .stdout(
-            &OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&stdout)
-                .unwrap(),
-        )
-        .stderr(
-            &OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&stderr)
-                .unwrap(),
-        )
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+    let status = SpawnWorker::new(Target::ManualTrampoline(
+        String::from("__dummy_mirror_test"),
+        String::from("symbol_name"),
+    ))
+    .stdin(Stdio::Null)
+    .stdout(
+        &OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&stdout)
+            .unwrap(),
+    )
+    .stderr(
+        &OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&stderr)
+            .unwrap(),
+    )
+    .spawn()
+    .unwrap()
+    .wait()
+    .unwrap();
 
     //wait for process exit
     let output = fs::read_to_string(stdout.as_os_str()).unwrap();

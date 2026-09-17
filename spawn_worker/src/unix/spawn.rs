@@ -4,11 +4,12 @@
 #![cfg(unix)]
 
 use std::fs::File;
+use std::os::fd::IntoRawFd;
 use std::{
     env,
     ffi::{self, CString, OsString},
     fs::Permissions,
-    io::{Seek, Write},
+    io::{Read, Seek, Write},
     mem::ManuallyDrop,
     os::unix::prelude::{
         AsFd, AsRawFd, BorrowedFd, FromRawFd, OsStrExt, OsStringExt, PermissionsExt, RawFd,
@@ -66,7 +67,6 @@ impl Target {
                 .get_fs_path()
                 .ok_or_else(|| std::io::Error::other("can't find the entrypoint's target path")),
             Target::ManualTrampoline(p, _) => Ok(std::path::PathBuf::from(p)),
-            Target::Noop => return Ok(default_method),
         }?;
         let target_filename = target_path
             .file_name()
@@ -109,13 +109,16 @@ pub struct SpawnWorker {
 }
 
 impl SpawnWorker {
-    pub fn from_env<E: IntoIterator<Item = (ffi::OsString, ffi::OsString)>>(env: E) -> Self {
+    pub fn from_env<T: Into<Target>, E: IntoIterator<Item = (ffi::OsString, ffi::OsString)>>(
+        target: T,
+        env: E,
+    ) -> Self {
         Self {
             stdin: Stdio::Inherit,
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             daemonize: false,
-            target: Target::Noop,
+            target: target.into(),
             spawn_method: None,
             fd_to_pass: None,
             env: env.into_iter().collect(),
@@ -129,13 +132,8 @@ impl SpawnWorker {
     /// access to environment (required to be read to be passed to subprocess) is unsafe
     ///
     /// ensure no other threads read the environment at the same time as this method is called
-    pub unsafe fn new() -> Self {
-        Self::from_env(env::vars_os())
-    }
-
-    pub fn target<T: Into<Target>>(&mut self, target: T) -> &mut Self {
-        self.target = target.into();
-        self
+    pub unsafe fn new<T: Into<Target>>(target: T) -> Self {
+        Self::from_env(target, env::vars_os())
     }
 
     pub fn shared_lib_dependencies(&mut self, deps: Vec<LibDependency>) -> &mut Self {
@@ -197,18 +195,15 @@ impl SpawnWorker {
         self
     }
 
+    /// Wait for the first child to exit successfully, reporting setup and exec
+    /// failures from either child when daemonizing.
     pub fn wait_spawn(&mut self) -> anyhow::Result<()> {
-        let Child { pid } = self.spawn()?;
-        Self::wait_pid(pid)
+        self.spawn()?.wait_success()
     }
 
+    /// Spawn a worker and return after the first fork without waiting for child setup or exec.
+    /// Call `Child::wait()` to report child setup/exec failures and reap the first child.
     pub fn spawn(&mut self) -> anyhow::Result<Child> {
-        let pid = self.do_spawn()?;
-
-        Ok(Child { pid })
-    }
-
-    fn do_spawn(&self) -> anyhow::Result<Option<libc::pid_t>> {
         // Resolve the spawn method, target, and initial argument vector.
         #[allow(unused_mut)]
         let mut spawn_method = match &self.spawn_method {
@@ -243,7 +238,6 @@ impl SpawnWorker {
                 CString::new(path.as_str())?,
                 CString::new(symbol_name.as_str())?,
             ),
-            Target::Noop => return Ok(None),
         };
 
         if !use_direct {
@@ -357,7 +351,7 @@ impl SpawnWorker {
         let dependency_fds = temp_memfds.into_iter();
         #[cfg(not(target_os = "linux"))]
         let dependency_fds = std::iter::empty();
-        let mut fd_plan = ChildFdPlan::new(
+        let (fd_plan, status_read) = ChildFdPlan::new(
             &self.stdin,
             &self.stdout,
             &self.stderr,
@@ -408,6 +402,19 @@ impl SpawnWorker {
                 PreparedSpawn::Exec(path)
             }
         };
+
+        self.spawn_prepared(fd_plan, status_read, prepared_spawn, argv, envp, temp_files)
+    }
+
+    fn spawn_prepared(
+        &self,
+        mut fd_plan: ChildFdPlan<'_>,
+        status_read: File,
+        prepared_spawn: PreparedSpawn,
+        argv: ExecVec,
+        envp: ExecVec,
+        mut temp_files: TempFiles,
+    ) -> anyhow::Result<Child> {
         fd_plan.reserve_directory_fd()?;
 
         let daemonize = self.daemonize;
@@ -430,7 +437,10 @@ impl SpawnWorker {
             RawFork::Parent(child_pid) => {
                 temp_files.disarm();
                 // temp_files is dropped here without unlinking its paths.
-                return Ok(Some(child_pid));
+                return Ok(Child {
+                    pid: child_pid,
+                    status_read,
+                });
             }
             RawFork::Error(error) => {
                 // temp_files is dropped here and unlinks its paths.
@@ -449,14 +459,19 @@ impl SpawnWorker {
         let fd_plan = ManuallyDrop::new(fd_plan);
         let prepared_spawn = ManuallyDrop::new(prepared_spawn);
 
+        unsafe {
+            ChildFdPlan::close_fd(status_read.into_raw_fd());
+        }
+
         if daemonize {
             // A detached worker must not inherit the embedding runtime's signal
             // policy. Unlike execve, this also resets dispositions set to SIG_IGN.
             if unsafe { reset_signal_dispositions() }.is_err() {
                 unsafe {
                     child_fail(
+                        fd_plan.status_write.as_fd(),
                         temp_files.as_slice(),
-                        b"spawn_worker: resetting signal dispositions failed\n",
+                        ChildError::ResetSignalDispositions,
                     );
                 }
             }
@@ -464,7 +479,11 @@ impl SpawnWorker {
             // controlling terminal before the final fork.
             if unsafe { libc::setsid() } == -1 {
                 unsafe {
-                    child_fail(temp_files.as_slice(), b"spawn_worker: setsid failed\n");
+                    child_fail(
+                        fd_plan.status_write.as_fd(),
+                        temp_files.as_slice(),
+                        ChildError::SetSid,
+                    );
                 }
             }
         }
@@ -482,7 +501,11 @@ impl SpawnWorker {
             // since we clear it afterwards
             match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
                 RawFork::Error(_) => unsafe {
-                    child_fail(temp_files.as_slice(), b"spawn_worker: daemon fork failed\n");
+                    child_fail(
+                        fd_plan.status_write.as_fd(),
+                        temp_files.as_slice(),
+                        ChildError::DaemonFork,
+                    );
                 },
                 RawFork::Parent(_) => unsafe {
                     // The grandchild owns the prepared artifacts. Exit without
@@ -497,41 +520,77 @@ impl SpawnWorker {
             if unsafe { clear_signal_mask() }.is_err() {
                 unsafe {
                     child_fail(
+                        fd_plan.status_write.as_fd(),
                         temp_files.as_slice(),
-                        b"spawn_worker: clearing signal mask failed\n",
+                        ChildError::ClearSignalMask,
                     );
                 }
             }
         }
 
         // Replace the child with the prepared executable.
-        prepared_spawn.exec(&mut argv, &envp, temp_files.as_slice());
-    }
-
-    fn wait_pid(pid: Option<libc::pid_t>) -> anyhow::Result<()> {
-        let pid = match pid {
-            Some(pid) => Pid::from_raw(pid),
-            None => return Ok(()),
-        };
-
-        nix::sys::wait::waitpid(Some(pid), None)?;
-        Ok(())
+        prepared_spawn.exec(
+            &mut argv,
+            &envp,
+            fd_plan.status_write.as_fd(),
+            temp_files.as_slice(),
+        );
     }
 }
 
 pub struct Child {
-    pub pid: Option<libc::pid_t>,
+    pub pid: libc::pid_t,
+    status_read: File,
 }
 
 impl Child {
+    /// Wait for setup/exec error reporting to finish and reap the first child.
+    ///
+    /// # Returns
+    ///
+    /// If no setup/exec error is reported and `waitpid` succeeds, returns `Ok(status)`:
+    ///
+    /// - Without daemonization, `status` is the worker's wait status.
+    /// - With daemonization, `status` is the intermediate child's wait status, normally
+    ///   `WaitStatus::Exited(pid, 0)`. This waits for the status pipe to close, normally when the
+    ///   detached worker execs, but does not wait for that worker to exit or return its eventual
+    ///   exit status.
+    ///
+    /// A nonzero exit code or signal termination of the first child is returned
+    /// as `Ok(WaitStatus::Exited(..))` or `Ok(WaitStatus::Signaled(..))` unless a
+    /// setup/exec error was also reported. [`SpawnWorker::wait_spawn`] additionally
+    /// treats these unsuccessful wait statuses as errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if either child reports a failure to configure signals,
+    /// create a session, duplicate or close descriptors, perform the daemonizing
+    /// fork, or exec. Also returns an error if reading the status pipe fails,
+    /// the pipe contains an unknown error code, or `waitpid` fails (for example,
+    /// because the first child has already been reaped).
+    ///
+    /// Reaping is attempted even when the status pipe reports an error. An error
+    /// reported or encountered on the pipe takes precedence over a `waitpid` error.
     pub fn wait(self) -> anyhow::Result<WaitStatus> {
-        // Command::spawn(&mut self);
-        let pid = match self.pid {
-            Some(pid) => Pid::from_raw(pid),
-            None => return Ok(WaitStatus::Exited(Pid::from_raw(0), 0)),
-        };
+        let child_status = read_child_status(self.status_read);
+        let pid = Pid::from_raw(self.pid);
 
-        Ok(nix::sys::wait::waitpid(Some(pid), None)?)
+        // Always reap the first child, including when the status read failed.
+        let wait_status = loop {
+            match nix::sys::wait::waitpid(Some(pid), None) {
+                Err(nix::errno::Errno::EINTR) => continue,
+                result => break result,
+            }
+        };
+        child_status?;
+        Ok(wait_status?)
+    }
+
+    fn wait_success(self) -> anyhow::Result<()> {
+        match self.wait()? {
+            WaitStatus::Exited(_, 0) => Ok(()),
+            status => anyhow::bail!("spawn_worker: child failed: {status:?}"),
+        }
     }
 }
 
@@ -554,14 +613,15 @@ impl ChildStdio {
 /// Descriptor setup to apply in the child: map standard streams to fds 0-2,
 /// the optional passed descriptor to fd 3, and dependencies to the following
 /// fds. Sources that could be overwritten are protected before the fork; after
-/// the mappings are installed, the plan preserves a required exec fd and tries
-/// to close higher fds using Linux close_range or exact descriptor-directory
-/// enumeration.
+/// the mappings are installed, the plan preserves the status pipe and a required
+/// exec fd and tries to close higher fds using Linux close_range or exact
+/// descriptor-directory enumeration.
 pub(crate) struct ChildFdPlan<'fd> {
     stdio: [ChildStdio; 3],
     mappings: Vec<FdMapping<'fd>>,
     source_fd_minimum: RawFd,
     first_to_close: u32,
+    status_write: OwnedFd,
     directory_fd_reservation: Option<OwnedFd>,
 }
 
@@ -584,14 +644,15 @@ impl AsRawFd for MaybeOwnedFd<'_> {
 }
 
 impl<'fd> ChildFdPlan<'fd> {
-    /// Build the complete descriptor plan. Must be called before the fork.
+    /// Build the complete descriptor plan and return its status reader.
+    /// The plan owns the writer. Must be called before the fork.
     pub(crate) fn new<I>(
         stdin: &Stdio,
         stdout: &Stdio,
         stderr: &Stdio,
         passed_fd: Option<BorrowedFd<'fd>>,
         dependency_fds: I,
-    ) -> anyhow::Result<Self>
+    ) -> anyhow::Result<(Self, File)>
     where
         I: ExactSizeIterator<Item = OwnedFd>,
     {
@@ -609,6 +670,7 @@ impl<'fd> ChildFdPlan<'fd> {
         let source_fd_minimum = last_destination
             .checked_add(1)
             .ok_or_else(|| std::io::Error::other("too many child file descriptors"))?;
+        let (status_read, status_write) = Self::child_status_pipe(source_fd_minimum)?;
 
         let mut plan = Self {
             stdio: [
@@ -619,6 +681,7 @@ impl<'fd> ChildFdPlan<'fd> {
             mappings: Vec::with_capacity(usize::from(has_passed_fd) + dependency_count),
             source_fd_minimum,
             first_to_close: u32::try_from(source_fd_minimum)?,
+            status_write,
             directory_fd_reservation: None,
         };
 
@@ -629,7 +692,7 @@ impl<'fd> ChildFdPlan<'fd> {
             plan.add_owned_mapping(fd, dependency_destination + RawFd::try_from(index)?)?;
         }
 
-        Ok(plan)
+        Ok((plan, status_read))
     }
 
     /// Determine the dependency layout while preparing arguments before the fork.
@@ -646,8 +709,33 @@ impl<'fd> ChildFdPlan<'fd> {
         Self::duplicate_fd_at_least(fd, self.source_fd_minimum)
     }
 
+    /// Create the status channel before forking. The writer is at least
+    /// first_to_close, above all remapping destinations. Both ends are CLOEXEC.
+    fn child_status_pipe(source_fd_minimum: RawFd) -> std::io::Result<(File, OwnedFd)> {
+        #[cfg(target_os = "linux")]
+        let (read, write) = nix::unistd::pipe2(nix::fcntl::OFlag::O_CLOEXEC)?;
+        #[cfg(target_os = "macos")]
+        let (read, write) = {
+            let (read, write) = nix::unistd::pipe()?;
+            for fd in [&read, &write] {
+                nix::fcntl::fcntl(
+                    fd.as_raw_fd(),
+                    nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC),
+                )?;
+            }
+            (read, write)
+        };
+        let writer = nix::fcntl::fcntl(
+            write.as_raw_fd(),
+            nix::fcntl::FcntlArg::F_DUPFD_CLOEXEC(source_fd_minimum),
+        )?;
+        // SAFETY: F_DUPFD_CLOEXEC returned a new descriptor owned by this function.
+        Ok((File::from(read), unsafe { OwnedFd::from_raw_fd(writer) }))
+    }
+
     /// Reserve a descriptor for child-side directory enumeration. Must be
     /// called after preparing all other descriptors and before the fork.
+    /// The reservation is placed above all remapping destinations
     pub(crate) fn reserve_directory_fd(&mut self) -> std::io::Result<()> {
         let reservation = OwnedFd::from(File::open("/dev/null")?);
         let reservation = if reservation.as_raw_fd() >= self.source_fd_minimum {
@@ -660,12 +748,15 @@ impl<'fd> ChildFdPlan<'fd> {
     }
 
     /// Apply the plan after the fork. Must be called only in the child.
+    /// Both preserved descriptors must be above all remapping destinations;
+    /// their relative order does not matter.
     pub(crate) unsafe fn apply(&self, exec_fd: Option<RawFd>, temp_files: &[CString]) {
+        let status_fd = self.status_write.as_fd();
         for (child_stdio, destination) in self.stdio.iter().zip(0..=libc::STDERR_FILENO) {
             if let Some(source) = child_stdio.as_fd() {
                 if unsafe { libc::dup2(source, destination) } == -1 {
                     unsafe {
-                        child_fail(temp_files, b"spawn_worker: dup2 failed\n");
+                        child_fail(status_fd, temp_files, ChildError::DupFd);
                     }
                 }
             }
@@ -674,7 +765,7 @@ impl<'fd> ChildFdPlan<'fd> {
         for mapping in &self.mappings {
             if unsafe { libc::dup2(mapping.source.as_raw_fd(), mapping.destination) } == -1 {
                 unsafe {
-                    child_fail(temp_files, b"spawn_worker: dup2 failed\n");
+                    child_fail(status_fd, temp_files, ChildError::DupFd);
                 }
             }
         }
@@ -688,21 +779,32 @@ impl<'fd> ChildFdPlan<'fd> {
             }
         }
 
-        let closed_descriptors = if let Some(exec_fd) = exec_fd {
-            let exec_fd = exec_fd as u32;
-            unsafe {
-                Self::close_fd_range(self.first_to_close, exec_fd.saturating_sub(1))
-                    && Self::close_fd_range(exec_fd.saturating_add(1), u32::MAX)
+        // Close everything above first_to_close... except for exec_fd and status_fd
+        // Both descriptors were allocated above all remapping destinations in
+        // the parent. Valid descriptors are nonnegative, so these casts are safe.
+        let status_fd_number = status_fd.as_raw_fd() as u32;
+        let closed_descriptors = match exec_fd {
+            None => unsafe {
+                Self::close_fd_range(self.first_to_close, status_fd_number.saturating_sub(1))
+                    && Self::close_fd_range(status_fd_number.saturating_add(1), u32::MAX)
+            },
+            Some(exec_fd) => {
+                let exec_fd_number = exec_fd as u32;
+                let lower_fd = status_fd_number.min(exec_fd_number);
+                let higher_fd = status_fd_number.max(exec_fd_number);
+                unsafe {
+                    Self::close_fd_range(self.first_to_close, lower_fd.saturating_sub(1))
+                        && Self::close_fd_range(
+                            lower_fd.saturating_add(1),
+                            higher_fd.saturating_sub(1),
+                        )
+                        && Self::close_fd_range(higher_fd.saturating_add(1), u32::MAX)
+                }
             }
-        } else {
-            unsafe { Self::close_fd_range(self.first_to_close, u32::MAX) }
         };
         if !closed_descriptors {
             unsafe {
-                child_fail(
-                    temp_files,
-                    b"spawn_worker: closing file descriptors failed\n",
-                );
+                child_fail(status_fd, temp_files, ChildError::CloseFds);
             }
         }
     }
@@ -1033,7 +1135,13 @@ enum PreparedSpawn {
 }
 
 impl PreparedSpawn {
-    fn exec(&self, argv: &mut ExecVec, envp: &ExecVec, temp_files: &[CString]) -> ! {
+    fn exec(
+        &self,
+        argv: &mut ExecVec,
+        envp: &ExecVec,
+        status_fd: BorrowedFd<'_>,
+        temp_files: &[CString],
+    ) -> ! {
         unsafe {
             match self {
                 #[cfg(target_os = "linux")]
@@ -1077,7 +1185,7 @@ impl PreparedSpawn {
                     libc::execve(path.as_ptr(), argv.as_ptr(), envp.as_ptr());
                 }
             }
-            child_fail(temp_files, b"spawn_worker: exec failed\n")
+            child_fail(status_fd, temp_files, ChildError::Exec)
             // in the successful path, it's the trampoline that unlinks the temp files
         }
     }
@@ -1091,13 +1199,90 @@ impl PreparedSpawn {
     }
 }
 
-unsafe fn child_fail(temp_files: &[CString], message: &'static [u8]) -> ! {
+fn read_child_status(mut read: File) -> anyhow::Result<()> {
+    let mut code = [0];
+    // A single byte cannot be partially read; read_exact retries EINTR.
+    match read.read_exact(&mut code) {
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(()) => match ChildError::from_code(code[0]) {
+            Some(error) => Err(error.into()),
+            None => anyhow::bail!("spawn_worker: invalid child status {}", code[0]),
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ChildError {
+    ResetSignalDispositions = 1,
+    SetSid,
+    DupFd,
+    CloseFds,
+    DaemonFork,
+    ClearSignalMask,
+    Exec,
+}
+
+impl ChildError {
+    fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::ResetSignalDispositions),
+            2 => Some(Self::SetSid),
+            3 => Some(Self::DupFd),
+            4 => Some(Self::CloseFds),
+            5 => Some(Self::DaemonFork),
+            6 => Some(Self::ClearSignalMask),
+            7 => Some(Self::Exec),
+            _ => None,
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::ResetSignalDispositions => "spawn_worker: resetting signal dispositions failed\n",
+            Self::SetSid => "spawn_worker: setsid failed\n",
+            Self::DupFd => "spawn_worker: dup2 failed\n",
+            Self::CloseFds => "spawn_worker: closing file descriptors failed\n",
+            Self::DaemonFork => "spawn_worker: daemon fork failed\n",
+            Self::ClearSignalMask => "spawn_worker: clearing signal mask failed\n",
+            Self::Exec => "spawn_worker: exec failed\n",
+        }
+    }
+}
+
+impl std::fmt::Display for ChildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message().trim_end())
+    }
+}
+
+impl std::error::Error for ChildError {}
+
+unsafe fn child_fail(status_fd: BorrowedFd<'_>, temp_files: &[CString], error: ChildError) -> ! {
+    // Clean up first: dropping Child without waiting closes the reader, so
+    // reporting the error may terminate this child with SIGPIPE.
     for temp_file in temp_files {
         unsafe {
             // unlink() is async-signal-safe
             libc::unlink(temp_file.as_ptr());
         }
     }
+    // The repr(u8) discriminant fits in one byte. Report before stderr writes,
+    // which may fail or block. No allocation or formatting here.
+    let code = [error as u8];
+    #[cfg(target_os = "linux")]
+    linux::write_all(status_fd.as_raw_fd(), &code);
+    #[cfg(target_os = "macos")]
+    loop {
+        let result =
+            unsafe { libc::write(status_fd.as_raw_fd(), code.as_ptr().cast(), code.len()) };
+        if result != -1 || unsafe { *libc::__error() } != libc::EINTR {
+            break;
+        }
+    }
+
+    let message = error.message().as_bytes();
     unsafe {
         #[cfg(target_os = "linux")]
         linux::write_all(libc::STDERR_FILENO, message);
@@ -1288,6 +1473,268 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_success_reports_child_failure() {
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe { libc::_exit(1) },
+            RawFork::Parent(pid) => {
+                let child = Child {
+                    pid,
+                    status_read: File::open("/dev/null").unwrap(),
+                };
+                assert!(child.wait_success().is_err());
+            }
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_spawn_reports_daemon_exec_failure() {
+        // Exceed ARG_MAX on macOS and Linux without changing the parent's environment.
+        let error = SpawnWorker::from_env(
+            test_target(),
+            [(
+                OsString::from("TOO_LARGE"),
+                "x".repeat(3 * 1024 * 1024).into(),
+            )],
+        )
+        .spawn_method(SpawnMethod::Exec)
+        .daemonize(true)
+        .stderr(Stdio::Null)
+        .wait_spawn();
+        assert_eq!(Some(&ChildError::Exec), error.unwrap_err().downcast_ref());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_reports_first_child_setup_failure_and_reaps_child() {
+        for daemonize in [false, true] {
+            let mut worker = SpawnWorker::from_env(test_target(), []);
+            worker.daemonize(daemonize).stderr(Stdio::Null);
+            let (mut fd_plan, status_read) = ChildFdPlan::new(
+                &worker.stdin,
+                &worker.stdout,
+                &worker.stderr,
+                None,
+                std::iter::empty(),
+            )
+            .unwrap();
+            // Force a dup2 failure after the first fork, before daemonization's
+            // second fork, without invalidating any parent-owned descriptor.
+            fd_plan.stdio[0] = ChildStdio::Ref(-1);
+            let mut temp_files = TempFiles::new();
+            let path = temp_files.persist(b"cleanup after setup failure").unwrap();
+            let child = worker
+                .spawn_prepared(
+                    fd_plan,
+                    status_read,
+                    PreparedSpawn::Exec(c"/bin/true".into()),
+                    ExecVec::empty(),
+                    ExecVec::empty(),
+                    temp_files,
+                )
+                .unwrap();
+            let pid = child.pid;
+            let error = child.wait().unwrap_err();
+            assert_eq!(Some(&ChildError::DupFd), error.downcast_ref());
+            assert_child_reaped(pid);
+            assert!(!std::path::Path::new(ffi::OsStr::from_bytes(path.as_bytes())).exists());
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_reports_exec_failure_and_reaps_child_with_and_without_daemonization() {
+        for daemonize in [false, true] {
+            let mut worker = SpawnWorker::from_env(test_target(), []);
+            worker.daemonize(daemonize).stderr(Stdio::Null);
+            let (fd_plan, status_read) = ChildFdPlan::new(
+                &worker.stdin,
+                &worker.stdout,
+                &worker.stderr,
+                None,
+                std::iter::empty(),
+            )
+            .unwrap();
+            let child = worker
+                .spawn_prepared(
+                    fd_plan,
+                    status_read,
+                    PreparedSpawn::Exec(c"/spawn_worker/path/that/does/not/exist".into()),
+                    ExecVec::empty(),
+                    ExecVec::empty(),
+                    TempFiles::new(),
+                )
+                .unwrap();
+            let pid = child.pid;
+            let error = child.wait().unwrap_err();
+            assert_eq!(Some(&ChildError::Exec), error.downcast_ref());
+            assert_child_reaped(pid);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn spawn_returns_without_waiting_for_worker_exit() {
+        for daemonize in [false, true] {
+            let (gate_read, gate_write) = nix::unistd::pipe().unwrap();
+            let (output_read, output_write) = nix::unistd::pipe().unwrap();
+            let mut worker = SpawnWorker::from_env(test_target(), []);
+            worker
+                .daemonize(daemonize)
+                .pass_fd(gate_read)
+                .stdout(Stdio::Fd(output_write));
+            let (fd_plan, status_read) = ChildFdPlan::new(
+                &worker.stdin,
+                &worker.stdout,
+                &worker.stderr,
+                worker.fd_to_pass.as_ref().map(AsFd::as_fd),
+                std::iter::empty(),
+            )
+            .unwrap();
+            let mut argv = ExecVec::empty();
+            for arg in [c"sh", c"-c", c"read value <&3; printf started"] {
+                argv.push(arg.into());
+            }
+            let child = worker
+                .spawn_prepared(
+                    fd_plan,
+                    status_read,
+                    PreparedSpawn::Exec(c"/bin/sh".into()),
+                    argv,
+                    ExecVec::empty(),
+                    TempFiles::new(),
+                )
+                .unwrap();
+            // The worker cannot exit until this write.
+            File::from(gate_write).write_all(b"continue\n").unwrap();
+            child.wait_success().unwrap();
+            drop(worker);
+            let mut output = String::new();
+            File::from(output_read).read_to_string(&mut output).unwrap();
+            assert_eq!("started", output);
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn spawn_returns_before_status_pipe_eof() {
+        for daemonize in [false, true] {
+            let (fd_plan, status_read) = empty_fd_plan();
+            // Keep the pipe open regardless of how quickly the child execs or
+            // exits. Spawn must return while this additional writer is held.
+            let writer = fd_plan.status_write.try_clone().unwrap();
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            let spawning = std::thread::spawn(move || {
+                let mut worker = SpawnWorker::from_env(test_target(), []);
+                worker.daemonize(daemonize);
+                let mut argv = ExecVec::empty();
+                for arg in [c"sh", c"-c", c"exit 0"] {
+                    argv.push(arg.into());
+                }
+                let result = worker.spawn_prepared(
+                    fd_plan,
+                    status_read,
+                    PreparedSpawn::Exec(c"/bin/sh".into()),
+                    argv,
+                    ExecVec::empty(),
+                    TempFiles::new(),
+                );
+                assert!(sender.send(result).is_ok());
+            });
+            let result = receiver.recv_timeout(std::time::Duration::from_secs(5));
+            // Release the writer even on timeout so a blocking regression can
+            // finish, be reaped, and fail the test without leaving a thread.
+            drop(writer);
+            spawning.join().unwrap();
+            match result {
+                Ok(child) => child.unwrap().wait_success().unwrap(),
+                Err(error) => {
+                    receiver.recv().unwrap().unwrap().wait_success().unwrap();
+                    panic!("spawn waited for status-pipe EOF: {error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_reaps_child_when_status_read_fails() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let status_read = File::options().write(true).open(file.path()).unwrap();
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe { libc::_exit(0) },
+            RawFork::Parent(pid) => {
+                let error = Child { pid, status_read }.wait().unwrap_err();
+                assert_eq!(
+                    Some(libc::EBADF),
+                    error
+                        .downcast_ref::<std::io::Error>()
+                        .unwrap()
+                        .raw_os_error(),
+                );
+                assert_child_reaped(pid);
+            }
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn child_failure_cleans_up_after_status_reader_is_dropped() {
+        let (fd_plan, status_read) = empty_fd_plan();
+        drop(status_read);
+        let mut temp_files = TempFiles::new();
+        let path = temp_files
+            .persist(b"cleanup without a status reader")
+            .unwrap();
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                if reset_signal_dispositions().is_err() || clear_signal_mask().is_err() {
+                    libc::_exit(2);
+                }
+                child_fail(
+                    fd_plan.status_write.as_fd(),
+                    temp_files.as_slice(),
+                    ChildError::Exec,
+                );
+            },
+            RawFork::Parent(pid) => {
+                Child {
+                    pid,
+                    status_read: File::open("/dev/null").unwrap(),
+                }
+                .wait()
+                .unwrap();
+                assert!(!std::path::Path::new(ffi::OsStr::from_bytes(path.as_bytes())).exists());
+            }
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn wait_success_reports_signal_death() {
+        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
+            RawFork::Child => unsafe {
+                libc::kill(libc::getpid(), libc::SIGKILL);
+                libc::_exit(1);
+            },
+            RawFork::Parent(pid) => {
+                let error = Child {
+                    pid,
+                    status_read: File::open("/dev/null").unwrap(),
+                }
+                .wait_success()
+                .unwrap_err();
+                assert!(error.to_string().contains("SIGKILL"));
+            }
+            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        }
+    }
+
+    #[test]
     fn fd_names_are_parsed_without_allocating() {
         assert_eq!(Some(0), ChildFdPlan::parse_fd_name(b"0\0"));
         assert_eq!(Some(123), ChildFdPlan::parse_fd_name(b"123\0padding"));
@@ -1439,49 +1886,97 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn child_fd_plan_keeps_required_fds_and_closes_others() {
-        let mut pipe_fds = [-1; 2];
-        assert_eq!(0, unsafe { libc::pipe(pipe_fds.as_mut_ptr()) });
-        // SAFETY: pipe returned two descriptors owned by this test.
-        let pipe_read = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
-        // SAFETY: pipe returned two descriptors owned by this test.
-        let pipe_write = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
-        let stdio = [Stdio::Inherit, Stdio::Inherit, Stdio::Inherit];
-        let mut fd_plan = ChildFdPlan::new(
-            &stdio[0],
-            &stdio[1],
-            &stdio[2],
-            Some(pipe_write.as_fd()),
-            std::iter::once(pipe_read),
-        )
-        .unwrap();
-        let unwanted_file = File::open("/dev/null").unwrap();
-        let unwanted = fd_plan.duplicate_source(unwanted_file.as_raw_fd()).unwrap();
-        fd_plan.reserve_directory_fd().unwrap();
-        let reservation_fd = fd_plan
-            .directory_fd_reservation
-            .as_ref()
-            .unwrap()
-            .as_raw_fd();
-        assert!(reservation_fd >= fd_plan.source_fd_minimum);
-        let temp_files = Vec::new();
+        enum ExecFdPosition {
+            Absent,
+            BeforeStatus,
+            AfterStatus,
+        }
 
-        match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
-            RawFork::Child => unsafe {
-                fd_plan.apply(None, &temp_files);
-                let required_are_open =
-                    libc::fcntl(3, libc::F_GETFD) != -1 && libc::fcntl(4, libc::F_GETFD) != -1;
-                let unwanted_is_closed = libc::fcntl(unwanted.as_raw_fd(), libc::F_GETFD) == -1;
-                let reservation_is_closed = libc::fcntl(reservation_fd, libc::F_GETFD) == -1;
-                libc::_exit(
-                    if required_are_open && unwanted_is_closed && reservation_is_closed {
-                        0
-                    } else {
-                        1
-                    },
-                );
-            },
-            RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
-            RawFork::Error(error) => panic!("fork failed with errno {error}"),
+        for exec_position in [
+            ExecFdPosition::Absent,
+            ExecFdPosition::BeforeStatus,
+            ExecFdPosition::AfterStatus,
+        ] {
+            let (pipe_read, pipe_write) = nix::unistd::pipe().unwrap();
+            let stdio = [Stdio::Inherit, Stdio::Inherit, Stdio::Inherit];
+            let (mut fd_plan, _status_read) = ChildFdPlan::new(
+                &stdio[0],
+                &stdio[1],
+                &stdio[2],
+                Some(pipe_write.as_fd()),
+                std::iter::once(pipe_read),
+            )
+            .unwrap();
+            // Put unwanted descriptors below, between, and above the two
+            // candidates so every close range is exercised in either ordering.
+            let file = File::open("/dev/null").unwrap();
+            let below = fd_plan.duplicate_source(file.as_raw_fd()).unwrap();
+            assert!(
+                u32::try_from(fd_plan.status_write.as_raw_fd()).unwrap() >= fd_plan.first_to_close
+            );
+            let writer_above = |fd: RawFd| {
+                let writer = nix::fcntl::fcntl(
+                    fd_plan.status_write.as_raw_fd(),
+                    nix::fcntl::FcntlArg::F_DUPFD_CLOEXEC(fd + 1),
+                )
+                .unwrap();
+                // SAFETY: F_DUPFD_CLOEXEC returned a new descriptor owned by this test.
+                unsafe { OwnedFd::from_raw_fd(writer) }
+            };
+            let lower_write = writer_above(below.as_raw_fd());
+            let between =
+                ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), lower_write.as_raw_fd() + 1)
+                    .unwrap();
+            let higher_write = writer_above(between.as_raw_fd());
+            let above =
+                ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), higher_write.as_raw_fd() + 1)
+                    .unwrap();
+            let (exec_file, status_write, unused_writer) = match exec_position {
+                ExecFdPosition::Absent => (None, lower_write, Some(higher_write)),
+                ExecFdPosition::BeforeStatus => (Some(lower_write), higher_write, None),
+                ExecFdPosition::AfterStatus => (Some(higher_write), lower_write, None),
+            };
+            fd_plan.status_write = status_write;
+            let exec_fd = exec_file.as_ref().map(AsRawFd::as_raw_fd);
+            fd_plan.reserve_directory_fd().unwrap();
+            let reservation_fd = fd_plan
+                .directory_fd_reservation
+                .as_ref()
+                .unwrap()
+                .as_raw_fd();
+            assert!(reservation_fd >= fd_plan.source_fd_minimum);
+            let temp_files = Vec::new();
+
+            match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
+                RawFork::Child => unsafe {
+                    fd_plan.apply(exec_fd, &temp_files);
+                    let required_are_open = libc::fcntl(3, libc::F_GETFD) != -1
+                        && libc::fcntl(4, libc::F_GETFD) != -1
+                        && exec_fd.is_none_or(|fd| libc::fcntl(fd, libc::F_GETFD) != -1)
+                        && libc::fcntl(fd_plan.status_write.as_raw_fd(), libc::F_GETFD)
+                            == libc::FD_CLOEXEC;
+                    let unwanted_are_closed = [
+                        below.as_raw_fd(),
+                        between.as_raw_fd(),
+                        above.as_raw_fd(),
+                        reservation_fd,
+                    ]
+                    .iter()
+                    .all(|fd| libc::fcntl(*fd, libc::F_GETFD) == -1);
+                    let unused_candidate_is_closed = unused_writer
+                        .as_ref()
+                        .is_none_or(|fd| libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) == -1);
+                    libc::_exit(
+                        if required_are_open && unwanted_are_closed && unused_candidate_is_closed {
+                            0
+                        } else {
+                            1
+                        },
+                    );
+                },
+                RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
+                RawFork::Error(error) => panic!("fork failed with errno {error}"),
+            }
         }
     }
 
@@ -1502,7 +1997,7 @@ mod tests {
         }
         let stdio = [Stdio::Inherit, Stdio::Inherit, Stdio::Inherit];
 
-        let fd_plan = ChildFdPlan::new(
+        let (fd_plan, _status_read) = ChildFdPlan::new(
             &stdio[0],
             &stdio[1],
             &stdio[2],
@@ -1562,11 +2057,12 @@ mod tests {
         argv.push(CString::new("symbol_name").unwrap());
         let envp = ExecVec::empty();
         let temp_files = Vec::new();
+        let (fd_plan, _status_read) = empty_fd_plan();
 
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
             RawFork::Child => unsafe {
                 libc::syscall(libc::SYS_umask, 0o777);
-                prepared_spawn.exec(&mut argv, &envp, &temp_files)
+                prepared_spawn.exec(&mut argv, &envp, fd_plan.status_write.as_fd(), &temp_files)
             },
             RawFork::Parent(pid) => {
                 crate::assert_child_exit!(pid, 0);
@@ -1598,9 +2094,12 @@ mod tests {
         argv.push(CString::new("symbol_name").unwrap());
         let envp = ExecVec::empty();
         let temp_files = Vec::new();
+        let (fd_plan, _status_read) = empty_fd_plan();
 
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
-            RawFork::Child => prepared_spawn.exec(&mut argv, &envp, &temp_files),
+            RawFork::Child => {
+                prepared_spawn.exec(&mut argv, &envp, fd_plan.status_write.as_fd(), &temp_files)
+            }
             RawFork::Parent(pid) => {
                 crate::assert_child_exit!(pid, 0);
                 assert_eq!(
@@ -1633,9 +2132,12 @@ mod tests {
         argv.push(CString::new("").unwrap());
         let envp = ExecVec::empty();
         let temp_files = Vec::new();
+        let (fd_plan, _status_read) = empty_fd_plan();
 
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
-            RawFork::Child => prepared_spawn.exec(&mut argv, &envp, &temp_files),
+            RawFork::Child => {
+                prepared_spawn.exec(&mut argv, &envp, fd_plan.status_write.as_fd(), &temp_files)
+            }
             RawFork::Parent(pid) => {
                 crate::assert_child_exit!(pid, 1);
                 assert_eq!(ORIGINAL, std::fs::read(existing.path()).unwrap());
@@ -1658,11 +2160,12 @@ mod tests {
         let prepared_spawn =
             PreparedSpawn::Exec(CString::new("/spawn_worker/path/that/does/not/exist").unwrap());
         let temp_files = Vec::new();
+        let (fd_plan, _status_read) = empty_fd_plan();
 
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::No) } {
             RawFork::Child => {
                 let _drop_notifier = DropNotifier(pipe_write.as_raw_fd());
-                prepared_spawn.exec(&mut argv, &envp, &temp_files);
+                prepared_spawn.exec(&mut argv, &envp, fd_plan.status_write.as_fd(), &temp_files);
             }
             RawFork::Parent(pid) => {
                 drop(pipe_write);
@@ -1678,5 +2181,30 @@ mod tests {
             }
             RawFork::Error(error) => panic!("fork failed with errno {error}"),
         }
+    }
+
+    fn test_target() -> Target {
+        Target::ManualTrampoline("__dummy_mirror_test".into(), "symbol_name".into())
+    }
+
+    fn empty_fd_plan() -> (ChildFdPlan<'static>, File) {
+        ChildFdPlan::new(
+            &Stdio::Inherit,
+            &Stdio::Inherit,
+            &Stdio::Inherit,
+            None,
+            std::iter::empty(),
+        )
+        .unwrap()
+    }
+
+    fn assert_child_reaped(pid: libc::pid_t) {
+        assert_eq!(
+            Err(nix::errno::Errno::ECHILD),
+            nix::sys::wait::waitpid(
+                Some(Pid::from_raw(pid)),
+                Some(nix::sys::wait::WaitPidFlag::WNOHANG),
+            ),
+        );
     }
 }

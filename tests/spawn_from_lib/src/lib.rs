@@ -24,9 +24,7 @@ pub extern "C" fn exported_entrypoint(_trampoline_data: &TrampolineData) {
 
 pub fn build() -> SpawnWorker {
     #[allow(unused_unsafe)]
-    let mut worker = unsafe { SpawnWorker::new() };
-
-    worker.target(entrypoint!(exported_entrypoint));
-
-    worker
+    unsafe {
+        SpawnWorker::new(entrypoint!(exported_entrypoint))
+    }
 }
