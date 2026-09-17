@@ -27,8 +27,8 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0  # Full history
-      - name: Install Rust
-        run: rustup set profile minimal && rustup install stable
+      # Rust is auto-installed from rust-toolchain.toml on first cargo invocation
+      # inside the composite action; no explicit setup needed here.
       - name: Run annotation reporter
         uses: ./.github/actions/clippy-annotation-reporter
         with:

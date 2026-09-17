@@ -12,10 +12,10 @@ license.workspace = true
 bench = false
 
 [dependencies]
-tracing = { version = "0.1", default-features = false, features = ["std"] }
-tracing-subscriber = { version = "0.3.22", default-features = false, features = ["json", "env-filter"] }
-tracing-appender = "0.2.3"
-chrono = { version = "0.4.38", default-features = false, features = ["clock", "std"] }
+tracing = { workspace = true, features = ["std"] }
+tracing-subscriber = { workspace = true, features = ["json"] }
+tracing-appender.workspace = true
+chrono = { workspace = true, features = ["clock", "std"] }
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile.workspace = true

@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 #[derive(Debug)]
 pub struct Scheduler<T: Clone + Eq> {
@@ -22,14 +23,6 @@ impl<T: Clone + Eq> Scheduler<T> {
     pub fn next_deadline(&self) -> Option<(Instant, &T)> {
         let (i, key) = self.deadlines.first()?;
         Some((*i, key))
-    }
-
-    pub fn schedule_events(&mut self, events: &mut impl Iterator<Item = T>) -> Result<(), T> {
-        let now = self.now.now();
-        for ev in events {
-            self.schedule_event_with_from(ev, now)?;
-        }
-        Ok(())
     }
 
     fn schedule_event_with_from(&mut self, event: T, from: Instant) -> Result<(), T> {
@@ -108,9 +101,9 @@ mod tests {
             (Duration::from_millis(40), 2),
         ]);
         scheduler.now = Now::Mock(start);
-        scheduler
-            .schedule_events(&mut [0, 1, 2].into_iter())
-            .unwrap();
+        scheduler.schedule_event(0).unwrap();
+        scheduler.schedule_event(1).unwrap();
+        scheduler.schedule_event(2).unwrap();
 
         scheduler.now = Now::Mock(start + Duration::from_millis(9));
         expect_scheduled(

@@ -1,0 +1,26 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! Types specific to [`crate::AgentClient::send_telemetry`].
+
+/// A single telemetry event to send via [`crate::AgentClient::send_telemetry`].
+///
+/// The three per-request headers `DD-Telemetry-Request-Type`, `DD-Telemetry-API-Version`, and
+/// `DD-Telemetry-Debug-Enabled` are derived automatically from the struct by the client.
+///
+/// The client always routes to the agent telemetry proxy endpoint
+/// (`telemetry/proxy/api/v2/apmtelemetry`).
+#[derive(Debug, Clone)]
+pub struct TelemetryRequest {
+    /// Value for the `DD-Telemetry-Request-Type` header, e.g. `"app-started"`.
+    pub request_type: String,
+    /// Value for the `DD-Telemetry-API-Version` header, e.g. `"v2"`.
+    pub api_version: String,
+    /// Value for the `DD-Telemetry-Debug-Enabled` header.
+    pub debug: bool,
+    /// Pre-serialized JSON payload body.
+    ///
+    /// The caller is responsible for serializing the event body to JSON before constructing this
+    /// struct. The client sends these bytes as `Content-Type: application/json`.
+    pub body: bytes::Bytes,
+}

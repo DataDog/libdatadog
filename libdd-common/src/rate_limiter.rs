@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 pub trait Limiter {
     /// Takes the limit per interval.
@@ -158,7 +158,7 @@ impl Limiter for LocalLimiter {
 #[cfg(test)]
 mod tests {
     use crate::rate_limiter::{now, Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
-    use std::sync::atomic::Ordering;
+    use core::sync::atomic::Ordering;
 
     fn set_mock_time(nanos: u64) {
         MOCK_NOW.store(nanos, Ordering::Relaxed);

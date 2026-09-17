@@ -9,14 +9,19 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
-    TraceExporterOutputFormat,
+    TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
+    TraceExporterInputFormat, TraceExporterOutputFormat,
 };
+use libdd_data_pipeline::OtlpProtocol;
 
-type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+// FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
+// don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
+// directly.
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 
@@ -48,6 +53,13 @@ pub struct TelemetryClientConfig<'a> {
     /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
     /// Defaults to false.
     pub debug_enabled: bool,
+
+    /// HTTP header `dd-session-id` (empty = omitted).
+    pub session_id: CharSlice<'a>,
+    /// HTTP header `dd-root-session-id` (empty = omitted).
+    pub root_session_id: CharSlice<'a>,
+    /// HTTP header `dd-parent-session-id` (empty = omitted).
+    pub parent_session_id: CharSlice<'a>,
 }
 
 /// The TraceExporterConfig object will hold the configuration properties for the TraceExporter.
@@ -69,12 +81,28 @@ pub struct TraceExporterConfig {
     compute_stats: bool,
     client_computed_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
+    telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
+    otlp_protocol: Option<OtlpProtocol>,
+    otlp_instrumentation_scope_name: Option<String>,
+    otlp_instrumentation_scope_version: Option<String>,
+    output_to_log: bool,
+    log_max_line_size: Option<usize>,
+    stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    /// Full URL to POST traces to for agentless export (e.g.
+    /// `https://public-trace-http-intake.logs.datadoghq.com/v1/input`).
+    agentless_endpoint: Option<String>,
+    /// Datadog API key sent in the `dd-api-key` header for agentless export.
+    agentless_api_key: Option<String>,
+    /// Agentless request timeout in milliseconds. `None` uses the builder default (15s).
+    agentless_timeout_ms: Option<u64>,
+    /// Span obfuscation config for the agentless export path
+    obfuscation_config: Option<libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig>,
 }
 
 #[no_mangle]
@@ -308,8 +336,23 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
                     },
                     debug_enabled: telemetry_cfg.debug_enabled,
                 };
-                debug!(telemetry_cfg = ?cfg, "Configuring telemetry");
+                let sessions = TelemetryInstrumentationSessions {
+                    session_id: match sanitize_string(telemetry_cfg.session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
+                    root_session_id: match sanitize_string(telemetry_cfg.root_session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
+                    parent_session_id: match sanitize_string(telemetry_cfg.parent_session_id) {
+                        Ok(s) => Some(s),
+                        Err(e) => return Some(e),
+                    },
+                };
+                debug!(telemetry_cfg = ?cfg, telemetry_sessions = ?sessions, "Configuring telemetry");
                 config.telemetry_cfg = Some(cfg);
+                config.telemetry_instrumentation_sessions = sessions;
             }
             None
         } else {
@@ -433,7 +476,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: Option<NonNull<SharedRuntime>>,
+    handle: Option<NonNull<ForkSafeRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         match (config, handle) {
@@ -451,11 +494,12 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     )
 }
 
-/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+/// Enables OTLP trace export and sets the endpoint URL.
 ///
-/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
-/// agent. The host language is responsible for resolving the endpoint from its configuration
-/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+/// When set, traces are sent to this URL using the protocol selected by
+/// `ddog_trace_exporter_config_set_otlp_protocol` instead of the Datadog agent. The host language
+/// is responsible for resolving the endpoint from its configuration (e.g.
+/// `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     config: Option<&mut TraceExporterConfig>,
@@ -475,12 +519,245 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
+/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default),
+/// `http/protobuf`, or `grpc`; unknown values are rejected. The host language resolves the value
+/// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+/// The `grpc` protocol currently supports plaintext `http://` endpoints only.
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this protocol selection is ignored.
+///
+/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
+/// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
+    config: Option<&mut TraceExporterConfig>,
+    protocol: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let value = match sanitize_string(protocol) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            match value.parse::<OtlpProtocol>() {
+                Ok(p) => {
+                    handle.otlp_protocol = Some(p);
+                    None
+                }
+                Err(_) => gen_error!(ErrorCode::InvalidArgument),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets OTLP trace instrumentation scope metadata.
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this scope metadata is ignored.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+    config: Option<&mut TraceExporterConfig>,
+    name: CharSlice,
+    version: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let name = match sanitize_string(name) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            let version = match sanitize_string(version) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            handle.otlp_instrumentation_scope_name = Some(name);
+            handle.otlp_instrumentation_scope_version = Some(version);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the cardinality limit for client-side stats computation.
+///
+/// When the number of distinct stats groups exceeds `limit`, additional groups are
+/// aggregated into a sentinel key instead of being tracked individually.
+/// This bounds memory usage when the trace population has very high cardinality.
+///
+/// Has no effect unless stats computation is enabled via
+/// `ddog_trace_exporter_config_set_compute_stats`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
+    config: Option<&mut TraceExporterConfig>,
+    limits: CardinalityLimitConfig,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.stats_cardinality_limits = Some(limits);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Returns a `CardinalityLimitConfig` with default values
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit(
+) -> CardinalityLimitConfig {
+    CardinalityLimitConfig::default()
+}
+
+/// Enables agentless APM trace export and sets the intake URL and API key.
+///
+/// When set, APM trace spans are sent directly to the Datadog HTTP intake in JSON format
+/// (`POST /v1/input`) instead of through the Datadog Agent. Agentless trace export is mutually
+/// exclusive with both an agent URL ([`ddog_trace_exporter_config_set_url`]) and an OTLP endpoint
+/// ([`ddog_trace_exporter_config_set_otlp_endpoint`]); combining either with this setter causes
+/// [`ddog_trace_exporter_new`] to return an error.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+    api_key: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let endpoint = match sanitize_string(url) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            let api_key = match sanitize_string(api_key) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            handle.agentless_endpoint = Some(endpoint);
+            handle.agentless_api_key = Some(api_key);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the request timeout (in milliseconds) used by the agentless intake transport.
+///
+/// Defaults to 15 seconds when unset. Calling this without also setting an agentless endpoint
+/// causes [`ddog_trace_exporter_new`] to return an error.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_agentless_timeout(
+    config: Option<&mut TraceExporterConfig>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.agentless_timeout_ms = Some(timeout_ms);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the span obfuscation configuration from a JSON string.
+///
+/// `json` is deserialized into `ObfuscationConfig` (the same struct the Datadog Agent uses),
+/// which controls obfuscation of HTTP URLs, SQL resources, Redis/Valkey commands, memcached
+/// commands, credit-card numbers, elasticsearch/opensearch/mongodb bodies, and tag-replace
+/// rules. Obfuscation is applied to every span on the agentless export path (see
+/// [`ddog_trace_exporter_config_set_agentless_endpoint`]); it has no effect on the agent path.
+///
+/// Returns an error if `json` is not valid UTF-8 or fails to deserialize. Example:
+/// ```c
+/// ddog_trace_exporter_config_set_obfuscation_config(
+///   cfg, DDOG_CHARSLICE_C(
+///     "{\"http\":{\"remove_query_string\":true},"
+///     "\"credit_cards\":{\"enabled\":true}}"));
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
+    config: Option<&mut TraceExporterConfig>,
+    json: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let json = match json.try_to_utf8() {
+                Ok(s) => s,
+                Err(_) => {
+                    return Some(Box::new(ExporterError::new(
+                        ErrorCode::InvalidInput,
+                        &ErrorCode::InvalidInput.to_string(),
+                    )))
+                }
+            };
+            match serde_json::from_str::<
+                libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig,
+            >(json)
+            {
+                Ok(cfg) => {
+                    handle.obfuscation_config = Some(cfg);
+                    None
+                }
+                Err(e) => Some(Box::new(ExporterError::new(
+                    ErrorCode::InvalidInput,
+                    &format!("invalid obfuscation config JSON: {e}"),
+                ))),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
+/// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
+/// environments (e.g. AWS Lambda) when no agent is reachable.
+///
+/// `max_line_size` overrides the per-line byte cap; pass `0` to use the default (256 KiB, the AWS
+/// CloudWatch Logs limit). When enabled, agent-specific behavior (agent-info polling, client-side
+/// stats, V1 negotiation) is bypassed.
+///
+/// In this mode each span's `meta` is serialized to process stdout (and thus captured by CloudWatch
+/// Logs in Lambda); `meta_struct` is excluded because it holds raw msgpack the log intake cannot
+/// interpret.
+///
+/// Writes are synchronous/blocking on stdout, so this mode targets single-threaded / current-thread
+/// serverless runtimes (e.g. AWS Lambda) where a blocking write won't stall a shared async reactor.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
+    config: Option<&mut TraceExporterConfig>,
+    max_line_size: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.output_to_log = true;
+            handle.log_max_line_size = (max_line_size != 0).then_some(max_line_size);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
-/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
-/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
-/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
-/// OTLP when OTLP is enabled.
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces using
+/// the configured `http/json`, `http/protobuf`, or `grpc` protocol instead of the Datadog agent.
+/// The same payload (e.g. MessagePack) is passed to
+/// `ddog_trace_exporter_send`; the library decodes and converts it to OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -493,10 +770,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
-            // let config = &*ptr;
             let mut builder = TraceExporter::builder();
+            // Only forward the agent URL when one was explicitly provided. Calling
+            // `set_url("")` would mark the agent URL as configured and conflict with
+            // agentless trace export, which rejects any caller-supplied agent URL at build
+            // time. Leaving `url` unset lets the builder fall back to its default agent URL
+            // when no transport override is configured.
+            if let Some(url) = config.url.as_ref() {
+                builder.set_url(url);
+            }
             builder
-                .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
@@ -515,6 +798,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
 
+            if let Some(limit) = config.stats_cardinality_limits {
+                builder.set_stats_cardinality_limit(limit);
+            }
+
             if config.compute_stats {
                 builder.enable_stats(Duration::from_secs(10));
             } else if config.client_computed_stats {
@@ -524,6 +811,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             if let Some(cfg) = &config.telemetry_cfg {
                 builder.enable_telemetry(cfg.clone());
             }
+            builder.set_telemetry_instrumentation_sessions(
+                config.telemetry_instrumentation_sessions.clone(),
+            );
 
             if let Some(token) = &config.test_session_token {
                 builder.set_test_session_token(token);
@@ -539,6 +829,37 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
+                if let Some(protocol) = config.otlp_protocol {
+                    builder.set_otlp_protocol(protocol);
+                }
+                builder.set_otlp_instrumentation_scope(
+                    config
+                        .otlp_instrumentation_scope_name
+                        .as_deref()
+                        .unwrap_or(""),
+                    config
+                        .otlp_instrumentation_scope_version
+                        .as_deref()
+                        .unwrap_or(""),
+                );
+            }
+
+            if config.output_to_log {
+                builder.set_output_to_log(config.log_max_line_size);
+            }
+
+            // Agentless export path (enables span obfuscation). Mutually exclusive with an
+            // agent URL and an OTLP endpoint; the builder validates this and returns an
+            // error we map to ExporterError below.
+            if let Some(ref url) = config.agentless_endpoint {
+                let api_key = config.agentless_api_key.as_deref().unwrap_or("");
+                builder.set_agentless_endpoint(url, api_key);
+                if let Some(timeout_ms) = config.agentless_timeout_ms {
+                    builder.set_agentless_timeout(Duration::from_millis(timeout_ms));
+                }
+            }
+            if let Some(ref cfg) = config.obfuscation_config {
+                builder.set_span_obfuscation_config(cfg.clone());
             }
 
             match builder.build() {
@@ -636,8 +957,37 @@ mod tests {
             assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
+            assert!(!cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+            assert_eq!(cfg.stats_cardinality_limits, None);
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
 
             ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn config_output_to_log_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_output_to_log(None, 0);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // 0 is a sentinel for "use the default cap" -> None.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 0);
+            assert_eq!(error, None);
+            let cfg = config.unwrap();
+            assert!(cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+
+            // Non-zero cap is stored as-is.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 4096);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().log_max_line_size, Some(4096));
         }
     }
 
@@ -871,6 +1221,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("id"),
                     debug_enabled: false,
+                    session_id: CharSlice::empty(),
+                    root_session_id: CharSlice::empty(),
+                    parent_session_id: CharSlice::empty(),
                 }),
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
@@ -888,6 +1241,9 @@ mod tests {
                     interval: 1000,
                     runtime_id: CharSlice::from("foo"),
                     debug_enabled: true,
+                    session_id: CharSlice::empty(),
+                    root_session_id: CharSlice::empty(),
+                    parent_session_id: CharSlice::empty(),
                 }),
             );
             assert!(error.is_none());
@@ -903,6 +1259,40 @@ mod tests {
                 "foo"
             );
             assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
+            assert_eq!(
+                cfg.telemetry_instrumentation_sessions.session_id.as_deref(),
+                Some("")
+            );
+            assert_eq!(
+                cfg.telemetry_instrumentation_sessions
+                    .root_session_id
+                    .as_deref(),
+                Some("")
+            );
+            assert_eq!(
+                cfg.telemetry_instrumentation_sessions
+                    .parent_session_id
+                    .as_deref(),
+                Some("")
+            );
+
+            let mut cfg = TraceExporterConfig::default();
+            let error = ddog_trace_exporter_config_enable_telemetry(
+                Some(&mut cfg),
+                Some(&TelemetryClientConfig {
+                    interval: 500,
+                    runtime_id: CharSlice::from("rid"),
+                    debug_enabled: false,
+                    session_id: CharSlice::from("sess-z"),
+                    root_session_id: CharSlice::from("root-z"),
+                    parent_session_id: CharSlice::from("par-z"),
+                }),
+            );
+            assert!(error.is_none());
+            let s = &cfg.telemetry_instrumentation_sessions;
+            assert_eq!(s.session_id.as_deref(), Some("sess-z"));
+            assert_eq!(s.root_session_id.as_deref(), Some("root-z"));
+            assert_eq!(s.parent_session_id.as_deref(), Some("par-z"));
         }
     }
 
@@ -946,35 +1336,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn exporter_constructor_error_test() {
-        unsafe {
-            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
-
-            let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
-                Some(cfg.as_mut()),
-                CharSlice::from("service"),
-            );
-            assert_eq!(error, None);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-
-            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
-
-            let error = ret.as_ref().unwrap();
-            assert_eq!(error.code, ErrorCode::InvalidUrl);
-
-            ddog_trace_exporter_error_free(ret);
-
-            ddog_trace_exporter_config_free(cfg);
-        }
-    }
-
     #[test]
     fn exporter_send_test_arguments_test() {
         unsafe {
@@ -1002,6 +1363,61 @@ mod tests {
             );
 
             assert_eq!(error.unwrap().code, ErrorCode::InvalidInput);
+        }
+    }
+
+    #[test]
+    fn config_agentless_endpoint_both_valid_test() {
+        unsafe {
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                CharSlice::from("https://trace.agentless.example.com"),
+                CharSlice::from("a1b2c3d4e5f6"),
+            );
+            assert_eq!(error, None);
+            let cfg = config.unwrap();
+            assert_eq!(
+                cfg.agentless_endpoint.as_deref(),
+                Some("https://trace.agentless.example.com")
+            );
+            assert_eq!(cfg.agentless_api_key.as_deref(), Some("a1b2c3d4e5f6"));
+        }
+    }
+
+    #[test]
+    fn config_agentless_endpoint_valid_url_invalid_api_key_unchanged_test() {
+        unsafe {
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                CharSlice::from("https://trace.agentless.example.com"),
+                CharSlice::from_bytes(&invalid),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            let cfg = config.as_ref().unwrap();
+            assert!(cfg.agentless_endpoint.is_none());
+            assert!(cfg.agentless_api_key.is_none());
+        }
+    }
+
+    #[test]
+    fn config_agentless_endpoint_invalid_url_valid_api_key_unchanged_test() {
+        unsafe {
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+                CharSlice::from("a1b2c3d4e5f6"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            let cfg = config.as_ref().unwrap();
+            assert!(cfg.agentless_endpoint.is_none());
+            assert!(cfg.agentless_api_key.is_none());
         }
     }
 
@@ -1217,6 +1633,140 @@ mod tests {
         }
     }
 
+    #[test]
+    fn config_otlp_protocol_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error =
+                ddog_trace_exporter_config_set_otlp_protocol(None, CharSlice::from("http/json"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // "http/json" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/json"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpJson)
+            );
+
+            // "http/protobuf" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/protobuf"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpProtobuf)
+            );
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("grpc"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::Grpc)
+            );
+
+            // Garbage value → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("nonsense"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Non-UTF-8 input → InvalidInput
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn config_otlp_instrumentation_scope_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                None,
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error, None);
+            let cfg = config.as_ref().unwrap();
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_name.as_deref(),
+                Some("dd-trace-js")
+            );
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_version.as_deref(),
+                Some("7.0.0-pre")
+            );
+
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            let cfg = config.as_ref().unwrap();
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
+        }
+    }
+
+    #[test]
+    fn set_otlp_protocol_stores_parsed_enum() {
+        use libdd_data_pipeline::OtlpProtocol;
+        let mut cfg = TraceExporterConfig::default();
+        let err = unsafe {
+            ddog_trace_exporter_config_set_otlp_protocol(
+                Some(&mut cfg),
+                CharSlice::from("http/protobuf"),
+            )
+        };
+        assert!(err.is_none());
+        assert_eq!(cfg.otlp_protocol, Some(OtlpProtocol::HttpProtobuf));
+    }
+
+    #[test]
+    fn set_otlp_protocol_rejects_unknown() {
+        let mut cfg = TraceExporterConfig::default();
+        for bad in ["nonsense", "grcp"] {
+            let err = unsafe {
+                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
+            };
+            assert!(err.is_some(), "expected error for {bad}");
+            assert_eq!(cfg.otlp_protocol, None, "{bad} must not be stored");
+        }
+    }
+
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     #[test]
     fn catch_panic_test() {
@@ -1224,6 +1774,41 @@ mod tests {
 
         assert!(ret.is_some());
         assert_eq!(ret.unwrap().code, ErrorCode::Panic);
+    }
+
+    #[test]
+    fn config_stats_cardinality_limit_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(
+                None,
+                CardinalityLimitConfig {
+                    whole_key_limit: 100,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Valid config → value stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(
+                config.as_mut(),
+                CardinalityLimitConfig {
+                    whole_key_limit: 500,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config
+                    .unwrap()
+                    .stats_cardinality_limits
+                    .unwrap()
+                    .whole_key_limit,
+                500
+            );
+        }
     }
 
     #[test]
@@ -1242,6 +1827,125 @@ mod tests {
 
             let cfg = config.unwrap();
             assert!(cfg.health_metrics_enabled);
+        }
+    }
+
+    #[test]
+    fn config_agentless_endpoint_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                None,
+                CharSlice::from("https://example.com"),
+                CharSlice::from("api-key"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Valid URL + API key -> stored on the handle.
+            let mut config = Some(TraceExporterConfig::default());
+            assert!(config.as_ref().unwrap().agentless_endpoint.is_none());
+            assert!(config.as_ref().unwrap().agentless_api_key.is_none());
+
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                CharSlice::from("https://example.com/v1/input"),
+                CharSlice::from("secret-key"),
+            );
+            assert_eq!(error, None);
+
+            let cfg = config.unwrap();
+            assert_eq!(
+                cfg.agentless_endpoint.as_ref().unwrap(),
+                "https://example.com/v1/input"
+            );
+            assert_eq!(cfg.agentless_api_key.as_ref().unwrap(), "secret-key");
+
+            // Invalid UTF-8 in URL -> InvalidInput error.
+            let mut config = Some(TraceExporterConfig::default());
+            let bad_url = CharSlice::from_bytes(&[0xFF, 0xFE, 0xFD]);
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                bad_url,
+                CharSlice::from("key"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            assert!(config.unwrap().agentless_endpoint.is_none());
+
+            // Invalid UTF-8 in API key -> InvalidInput error.
+            let mut config = Some(TraceExporterConfig::default());
+            let bad_key = CharSlice::from_bytes(&[0xFF, 0xFE, 0xFD]);
+            let error = ddog_trace_exporter_config_set_agentless_endpoint(
+                config.as_mut(),
+                CharSlice::from("https://example.com"),
+                bad_key,
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            assert!(config.unwrap().agentless_api_key.is_none());
+        }
+    }
+
+    #[test]
+    fn config_agentless_timeout_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_agentless_timeout(None, 5000);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Default config has no timeout set.
+            let mut config = Some(TraceExporterConfig::default());
+            assert!(config.as_ref().unwrap().agentless_timeout_ms.is_none());
+
+            // Setting a timeout stores it.
+            let error = ddog_trace_exporter_config_set_agentless_timeout(config.as_mut(), 30_000);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().agentless_timeout_ms, Some(30_000));
+        }
+    }
+
+    #[test]
+    fn config_obfuscation_config_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error =
+                ddog_trace_exporter_config_set_obfuscation_config(None, CharSlice::from("{}"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Valid JSON -> stored on the handle.
+            let mut config = Some(TraceExporterConfig::default());
+            assert!(config.as_ref().unwrap().obfuscation_config.is_none());
+
+            let valid_json =
+                r#"{"http":{"remove_query_string":true},"credit_cards":{"enabled":true}}"#;
+            let error = ddog_trace_exporter_config_set_obfuscation_config(
+                config.as_mut(),
+                CharSlice::from(valid_json),
+            );
+            assert_eq!(error, None);
+            assert!(config.unwrap().obfuscation_config.is_some());
+
+            // Invalid JSON -> InvalidInput error, nothing stored.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_obfuscation_config(
+                config.as_mut(),
+                CharSlice::from("{not valid json}"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            assert!(config.unwrap().obfuscation_config.is_none());
+
+            // Invalid UTF-8 -> InvalidInput error, nothing stored.
+            let mut config = Some(TraceExporterConfig::default());
+            let bad_json = CharSlice::from_bytes(&[0xFF, 0xFE, 0xFD]);
+            let error =
+                ddog_trace_exporter_config_set_obfuscation_config(config.as_mut(), bad_json);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            assert!(config.unwrap().obfuscation_config.is_none());
         }
     }
 }

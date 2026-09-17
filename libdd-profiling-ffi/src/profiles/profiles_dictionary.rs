@@ -242,15 +242,35 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
     let Some(dict) = dict else {
         return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
     };
-    let string_ref = StringRef::from(string_id);
     // SAFETY: It's not actually safe--as indicated in the docs
     // for this function, the caller needs to be sure the string
     // set in the dictionary outlives the slice.
     result.write(unsafe {
         std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(CharSlice::from(
-            dict.strings().get(string_ref),
+            dict.get_str(string_id),
         ))
     });
+    ProfileStatus::OK
+}
+
+/// Tries to get the function value associated with the function id.
+///
+/// # Safety
+///
+///  1. The `function_id` should belong to this dictionary.
+///  2. The dictionary must be live for the duration of the call.
+///  3. The result pointer must be valid for [`core::ptr::write`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_func(
+    result: *mut Function2,
+    dict: Option<&ProfilesDictionary>,
+    function_id: FunctionId2,
+) -> ProfileStatus {
+    ensure_non_null_out_parameter!(result);
+    let Some(dict) = dict else {
+        return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
+    };
+    unsafe { result.write(dict.get_func(function_id)) };
     ProfileStatus::OK
 }
 

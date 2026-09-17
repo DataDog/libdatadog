@@ -2,6 +2,190 @@
 
 
 
+## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v11.0.0..libdd-trace-utils-v12.0.0) - 2026-09-08
+
+### Added
+
+- Emit native trace export telemetry ([#2338](https://github.com/datadog/libdatadog/issues/2338)) - ([1887a57](https://github.com/datadog/libdatadog/commit/1887a57ca4564b1aacc9270622a896f14c3250de))
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add runtime-independent agentless sending ([#2389](https://github.com/datadog/libdatadog/issues/2389)) - ([4cfd390](https://github.com/datadog/libdatadog/commit/4cfd390c26275689456a8bd7db26d37601d232d7))
+- Add v1-native JSON log encoder brick ([#2371](https://github.com/datadog/libdatadog/issues/2371)) - ([789b10f](https://github.com/datadog/libdatadog/commit/789b10f6c94d92437e473151eb690df97a02d82e))
+- Add v1-native agentless JSON encoder brick ([#2370](https://github.com/datadog/libdatadog/issues/2370)) - ([b15bd22](https://github.com/datadog/libdatadog/commit/b15bd22b7499aaffdf65a51863900384cf8917c4))
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Align zstd behavior across targets ([#2400](https://github.com/datadog/libdatadog/issues/2400)) - ([a25619e](https://github.com/datadog/libdatadog/commit/a25619e4a6c6ad6f458faca3f29e5548a70bce41))
+- Read OTel HTTP names for the status and method dimensions ([#2323](https://github.com/datadog/libdatadog/issues/2323)) - ([c172290](https://github.com/datadog/libdatadog/commit/c1722904796778e193703397dcd516c2bbf6f577))
+- Use vec map dedup when serializing ([#2422](https://github.com/datadog/libdatadog/issues/2422)) - ([7327f30](https://github.com/datadog/libdatadog/commit/7327f3049c281090f7cce7830b9430206fba11cf))
+
+
+
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.1.0..libdd-trace-utils-v11.0.0) - 2026-08-25
+
+### Added
+
+- Use zrip for wasm targets ([#2386](https://github.com/datadog/libdatadog/issues/2386)) - ([9d6b2ff](https://github.com/datadog/libdatadog/commit/9d6b2ffb3d86bb052a822a5e9a9bcfeb62514983))
+
+### Fixed
+
+- Fix forward compatibility for string streaming ([#2295](https://github.com/datadog/libdatadog/issues/2295)) - ([24022a9](https://github.com/datadog/libdatadog/commit/24022a96fb4410d7931bf4fc50b848f7c5e3024e))
+
+
+
+## [10.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v10.0.0..libdd-trace-utils-v10.1.0) - 2026-08-17
+
+### Added
+
+- Adds new attributes to OTLP trace metrics export ([#2316](https://github.com/datadog/libdatadog/issues/2316)) - ([0b8ca65](https://github.com/datadog/libdatadog/commit/0b8ca652d3dde2db589324ec71d8f100a8285887))
+- Add v1 isolated bricks for trace exporter ([#2280](https://github.com/datadog/libdatadog/issues/2280)) - ([7ba36d7](https://github.com/datadog/libdatadog/commit/7ba36d7a2ea868e2c0a6a9e68c9583acc2bbda74))
+
+
+
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v9.0.0..libdd-trace-utils-v10.0.0) - 2026-08-07
+
+### Added
+
+- Add compression option for agentless export ([#2205](https://github.com/datadog/libdatadog/issues/2205)) - ([fd59f6d](https://github.com/datadog/libdatadog/commit/fd59f6da4cb6b40e2040b3d15d5fb354b29367ba))
+- Add instrumentation scope metadata ([#2235](https://github.com/datadog/libdatadog/issues/2235)) - ([a7ec21d](https://github.com/datadog/libdatadog/commit/a7ec21d8e135fed13515dd612a31df5808144691))
+- Implement additional metric tags in libdd-trace-stats ([#2170](https://github.com/datadog/libdatadog/issues/2170)) - ([63ecad5](https://github.com/datadog/libdatadog/commit/63ecad56152f675fb74761d60adf5a861dafb1e1))
+- Add v1 decoder ([#2174](https://github.com/datadog/libdatadog/issues/2174)) - ([d7980db](https://github.com/datadog/libdatadog/commit/d7980db6be51fe821f4547512bc51d67654b99a9))
+- Add encoder v1 to v04 + refactor ([#2145](https://github.com/datadog/libdatadog/issues/2145)) - ([407f8f2](https://github.com/datadog/libdatadog/commit/407f8f238621508bfd5a10ac846ec36c9c2045e2))
+
+### Changed
+
+- Update nightly ([#2281](https://github.com/datadog/libdatadog/issues/2281)) - ([ddef629](https://github.com/datadog/libdatadog/commit/ddef629242c5288137987a1babfee0c588fe2533))
+- Make conversion from RemoteConfigProduct back and forth generally available ([#2325](https://github.com/datadog/libdatadog/issues/2325)) - ([ea75b04](https://github.com/datadog/libdatadog/commit/ea75b04c3547037937730a14cf8a72a5ebf702d7))
+- Split generic TracerHeaderTags ([#2279](https://github.com/datadog/libdatadog/issues/2279)) - ([79eff2f](https://github.com/datadog/libdatadog/commit/79eff2fa1f9866441309ca28a648529206e60f97))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Apply SpanLink flags masking when v0.5 json encoding ([#2314](https://github.com/datadog/libdatadog/issues/2314)) - ([01f18d5](https://github.com/datadog/libdatadog/commit/01f18d500303c774b45543026e6d651c97d6bb33))
+- Expose HttpClientCapability in remote config ([#2252](https://github.com/datadog/libdatadog/issues/2252)) - ([43156bb](https://github.com/datadog/libdatadog/commit/43156bbe53c026fdeeaeb3777cb9d4054507a250))
+- Serialize v0.5 span links and events into meta ([#980](https://github.com/datadog/libdatadog/issues/980)) - ([ade7821](https://github.com/datadog/libdatadog/commit/ade7821b1633dea675a1c92c58b176e3de081a35))
+
+
+
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v8.0.0..libdd-trace-utils-v9.0.0) - 2026-07-07
+
+### Added
+
+- Add agentless export ([#2081](https://github.com/datadog/libdatadog/issues/2081)) - ([48b8243](https://github.com/datadog/libdatadog/commit/48b8243418426ed881173fa184a619962d7aa69f))
+- Add stdout log trace exporter ([#2074](https://github.com/datadog/libdatadog/issues/2074)) - ([c2751ef](https://github.com/datadog/libdatadog/commit/c2751eff7036159127ec52c69130eebf7d9a5a97))
+- OTLP HTTP/protobuf trace export ([#2115](https://github.com/datadog/libdatadog/issues/2115)) - ([4e8e6cc](https://github.com/datadog/libdatadog/commit/4e8e6cc8c0fe083089cc8e57f0fd26667f29941c))
+- Export client-computed span stats as OTLP trace metrics ([#2067](https://github.com/datadog/libdatadog/issues/2067)) - ([cc2d696](https://github.com/datadog/libdatadog/commit/cc2d6963073a6f5f37c31c4429b805760e836906))
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+- Change buffer foundation ([#2046](https://github.com/datadog/libdatadog/issues/2046)) - ([693406c](https://github.com/datadog/libdatadog/commit/693406cc108379b3923751f9c3c0267a24f00845))
+- Export OTLP spans with attribute-level OTel compatibility ([#2091](https://github.com/datadog/libdatadog/issues/2091)) - ([c690b5e](https://github.com/datadog/libdatadog/commit/c690b5e43ccdf5ff84566db4447d416ac8c48ea8))
+- Add v1 span and its encoder ([#2039](https://github.com/datadog/libdatadog/issues/2039)) - ([c7fbf3a](https://github.com/datadog/libdatadog/commit/c7fbf3aa843d3256d353e7aeec13dfb0a8c1f120))
+- Change buffer implementation ([#2055](https://github.com/datadog/libdatadog/issues/2055)) - ([a21b946](https://github.com/datadog/libdatadog/commit/a21b946af7163968906f2730e93e6f56b9051257))
+
+### Changed
+
+- Replace slot index with span_id, fix segment isolation ([#2105](https://github.com/datadog/libdatadog/issues/2105)) - ([5bbf425](https://github.com/datadog/libdatadog/commit/5bbf425da51d69adf655ab5042a68bcedac8d047))
+- Skip slow miri tests ([#2188](https://github.com/datadog/libdatadog/issues/2188)) - ([4b66bd6](https://github.com/datadog/libdatadog/commit/4b66bd62c4d39184c68a58d576d7955f1fb51aaa))
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Submit p0 telemetry in stats ([#2130](https://github.com/datadog/libdatadog/issues/2130)) - ([54bd386](https://github.com/datadog/libdatadog/commit/54bd38625350d27000653278cb2dd835005157da))
+- Add V05 msgpack decode microbenchmark ([#2127](https://github.com/datadog/libdatadog/issues/2127)) - ([ade9d96](https://github.com/datadog/libdatadog/commit/ade9d96eb908b1bcfa224263efb695964130101c))
+- Add VecMap microbenchmarks ([#2126](https://github.com/datadog/libdatadog/issues/2126)) - ([cd90e50](https://github.com/datadog/libdatadog/commit/cd90e50a5b067cf77a3e06641d838bc4c6b62aba))
+- Update protobufs to be in sync with datadog-agent ([#2180](https://github.com/datadog/libdatadog/issues/2180)) - ([b02d454](https://github.com/datadog/libdatadog/commit/b02d454576034ea56becbd61411ff2f831a89562))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Mark decoded span maps as deduped ([#2110](https://github.com/datadog/libdatadog/issues/2110)) - ([8907887](https://github.com/datadog/libdatadog/commit/8907887c56605bee49b2ee06040bda1aea99ec47))
+
+
+
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v7.0.0..libdd-trace-utils-v8.0.0) - 2026-06-08
+
+### Changed
+
+- Avoid Clone bound from dedup ([#2069](https://github.com/datadog/libdatadog/issues/2069)) - ([93e9723](https://github.com/datadog/libdatadog/commit/93e97238020b5cf1165b2583ec555d58307af3c1))
+
+
+
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.1..libdd-trace-utils-v7.0.0) - 2026-06-05
+
+### Added
+
+- Add dedup convenience to VecMap ([#2049](https://github.com/datadog/libdatadog/issues/2049)) - ([331b904](https://github.com/datadog/libdatadog/commit/331b90444aff0db70d37bc2d507056f19881633b))
+
+### Changed
+
+- Revert add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+- Match the Go trace agent when parsing `datadog-client-computed-*` bool headers ([#2071](https://github.com/datadog/libdatadog/issues/2071)) - ([48da0d8](https://github.com/datadog/libdatadog/commit/48da0d82cb32b43d4cdece35b794c9bcbc275a03))
+
+
+
+## [6.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.0..libdd-trace-utils-v6.0.1) - 2026-06-01
+
+### Fixed
+
+- Propagate _dd.p.tid from chunk root to all spans ([#2014](https://github.com/datadog/libdatadog/issues/2014)) - ([42d9ab0](https://github.com/datadog/libdatadog/commit/42d9ab0438338516d2e8ef962de4f8ed158c519d))
+
+
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v6.0.0) - 2026-05-29
+
+### Added
+
+- Introduce VecMap datastructure ([#2022](https://github.com/datadog/libdatadog/issues/2022)) - ([f7d471d](https://github.com/datadog/libdatadog/commit/f7d471dc51bb3f2131e9577adc9ea0e06ee417c7))
+- Update test agent version ([#2038](https://github.com/datadog/libdatadog/issues/2038)) - ([670a5ad](https://github.com/datadog/libdatadog/commit/670a5ad9fe540d7f4f3eee0b1f5192f532bbc06d))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v4.0.0..libdd-trace-utils-v5.0.0) - 2026-05-22
+
+### Added
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) - ([ecdca7d](https://github.com/datadog/libdatadog/commit/ecdca7d4ef4e7f11c0194ed2f4e25173973404e7))
+- Add encoder from v04 to v1 ([#1896](https://github.com/datadog/libdatadog/issues/1896)) - ([e2fb886](https://github.com/datadog/libdatadog/commit/e2fb8860d002d1b56d0dc8b0b185fca7954371df))
+
+
+
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.1..libdd-trace-utils-v4.0.0) - 2026-05-18
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Check for empty value in header datadog-client-computed-stats ([#1900](https://github.com/datadog/libdatadog/issues/1900)) - ([27aa92c](https://github.com/datadog/libdatadog/commit/27aa92cfeeca073d8730a8b4974bd3fdef7ddf3a))
+- Add support for OTLP trace export ([#1641](https://github.com/datadog/libdatadog/issues/1641)) - ([ee83a45](https://github.com/datadog/libdatadog/commit/ee83a4522289af457263f83a2877916ad297b44c))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Map DD span resource to OTLP resource.name attribute ([#1811](https://github.com/datadog/libdatadog/issues/1811)) - ([9b42048](https://github.com/datadog/libdatadog/commit/9b420483c2e9745be692d7ca4de7ba769f94a5e7))
+- Search all spans to populate tracer payload fields ([#1954](https://github.com/datadog/libdatadog/issues/1954)) - ([0a3304c](https://github.com/datadog/libdatadog/commit/0a3304c6aaf84738786b670d706a01edc22dab81))
+
+### Changed
+
+- Add allocation size tracking allocator ([#1905](https://github.com/datadog/libdatadog/issues/1905)) - ([d29b8d2](https://github.com/datadog/libdatadog/commit/d29b8d22f33ee0bd2ca9baf40f1afee801550c73))
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+- Compilation of libdd-data-pipeline to wasm32 ([#1830](https://github.com/datadog/libdatadog/issues/1830)) - ([32f9679](https://github.com/datadog/libdatadog/commit/32f96790350141f82ad78a4b53babe5b757ea345))
+
+### Fixed
+
+- Gate libdd-common TLS features in obfuscation and capabilities-impl ([#1872](https://github.com/datadog/libdatadog/issues/1872)) - ([986aab5](https://github.com/datadog/libdatadog/commit/986aab55cb7941d8453dffb59d35a70599d08665))
+- Update cloud environment detection logic for Serverless [SVLS-8799] ([#1857](https://github.com/datadog/libdatadog/issues/1857)) - ([d60d0a4](https://github.com/datadog/libdatadog/commit/d60d0a4bc7df3841d91929f9b852c5d9ccecd637))
+- Defer trampoline self-deletion to avoid Valgrind false positive ([#1844](https://github.com/datadog/libdatadog/issues/1844)) - ([fc86998](https://github.com/datadog/libdatadog/commit/fc869988ed4f3dc04a081c08d1fda352d4ee2650))
+
+
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.0..libdd-trace-utils-v3.0.1) - 2026-03-25
 
 ### Changed

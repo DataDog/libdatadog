@@ -4,19 +4,22 @@
 // Datadog, Inc.
 
 use std::{
-    borrow::Cow,
     sync::atomic::{AtomicU64, Ordering},
     time::SystemTime,
 };
 
-use http::{header::CONTENT_TYPE, Uri};
-use libdd_common::Endpoint;
+use bytes::Bytes;
+use http::header::CONTENT_TYPE;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_telemetry::{
     build_host,
     config::Config,
     data::{self, metrics::Distribution, Application, Telemetry},
     worker::http_client::request_builder,
 };
+use std::time::Duration;
+use tokio::select;
 
 fn seq_id() -> u64 {
     static SEQ_ID: AtomicU64 = AtomicU64::new(1);
@@ -41,13 +44,26 @@ fn build_request<'a>(
 }
 
 pub async fn push_telemetry(config: &Config, telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
-    let client = libdd_telemetry::worker::http_client::from_config(config);
+    let timeout = Duration::from_millis(
+        config
+            .endpoint()
+            .map(|e| e.timeout_ms)
+            .unwrap_or(libdd_common::Endpoint::DEFAULT_TIMEOUT),
+    );
+    let client = NativeCapabilities::new_client();
+    let sleeper = <NativeCapabilities as SleepCapability>::new();
     let req = request_builder(config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, libdd_common::header::APPLICATION_JSON)
-        .body(serde_json::to_string(telemetry)?.into())?;
+        .body(Bytes::from(serde_json::to_vec(telemetry)?))?;
 
-    let resp = client.request(req).await?;
+    let resp = select! {
+        biased;
+        result = client.request(req) => result?,
+        _ = sleeper.sleep(timeout) => {
+            return Err(anyhow::anyhow!("Telemetry request timed out"));
+        }
+    };
 
     if !resp.status().is_success() {
         Err(anyhow::Error::msg(format!(
@@ -111,10 +127,11 @@ async fn async_main() {
     let mut config = Config::from_env();
     config.direct_submission_enabled = true;
     config.debug_enabled = true;
+    let api_key = std::env::var("DD_API_KEY").unwrap();
     config
-        .set_endpoint(Endpoint {
-            url: Uri::from_static("https://instrumentation-telemetry-intake.datad0g.com"),
-            api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("https://instrumentation-telemetry-intake.datad0g.com".to_owned()),
+            api_key: Some(api_key),
             ..Default::default()
         })
         .unwrap();

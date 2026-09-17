@@ -154,6 +154,14 @@ void evaluate_and_print_flag(
     bool do_log = ddog_ffe_assignment_get_do_log(assignment);
     printf("  Do Log: %s\n", do_log ? "true" : "false");
 
+    // Get and print serial_id
+    struct ddog_Option_I32 serial_id = ddog_ffe_assignment_get_serial_id(assignment);
+    if (serial_id.tag == DDOG_OPTION_I32_SOME_I32) {
+        printf("  Serial ID: %d\n", serial_id.some);
+    } else {
+        printf("  Serial ID: (none)\n");
+    }
+
     // Get and print flag metadata
     struct ddog_ffe_ArrayMap_BorrowedStr metadata = ddog_ffe_assignnment_get_flag_metadata(assignment);
     if (metadata.count > 0) {
@@ -181,8 +189,8 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         config_path = argv[1];
     } else {
-        // Default to the test data file
-        config_path = "./datadog-ffe/tests/data/flags-v1.json";
+        // Default to the canonical FFE test data file
+        config_path = "./libdd-ffe-test-suite/ffe-system-test-data/ufc-config.json";
     }
 
     printf("Step 1: Loading configuration from file...\n");
@@ -215,11 +223,14 @@ int main(int argc, char* argv[]) {
     ddog_ffe_Handle_Configuration config = config_result.ok;
     printf("  Configuration loaded successfully\n");
 
+    bool observe_full_evaluation_data = ddog_ffe_configuration_get_observe_full_evaluation_data(config);
+    printf("  observeFullEvaluationData: %s\n", observe_full_evaluation_data ? "true" : "false");
+
     // Step 2: Create evaluation context with targeting key and attributes
     printf("\nStep 2: Creating evaluation context...\n");
 
     // Define some attributes for the evaluation context
-    // These attributes match targeting rules in the flags-v1.json test data
+    // These attributes match targeting rules in the canonical UFC test data
     struct ddog_ffe_AttributePair attributes[] = {
         {
             .name = "country",

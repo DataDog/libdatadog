@@ -63,6 +63,8 @@ pub struct Host {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel_release: Option<String>,

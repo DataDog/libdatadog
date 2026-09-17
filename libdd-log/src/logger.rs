@@ -4,10 +4,10 @@
 use crate::writers::{FileWriter, StdWriter};
 use std::sync::{LazyLock, Mutex};
 use tracing::subscriber::DefaultGuard;
-use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::reload::Handle;
-use tracing_subscriber::{fmt, reload, EnvFilter, Layer, Registry};
+use tracing_subscriber::{fmt, reload, Layer, Registry};
 
 pub type Error = String;
 
@@ -73,11 +73,11 @@ struct Logger {
     /// complexity warning.
     #[allow(clippy::type_complexity)]
     layer_handle: Handle<
-        Vec<Box<dyn Layer<Layered<reload::Layer<EnvFilter, Registry>, Registry>> + Send + Sync>>,
-        Layered<reload::Layer<EnvFilter, Registry>, Registry>,
+        Vec<Box<dyn Layer<Layered<reload::Layer<Targets, Registry>, Registry>> + Send + Sync>>,
+        Layered<reload::Layer<Targets, Registry>, Registry>,
     >,
     /// Handle for modifying the log filter at runtime.
-    filter_handle: Handle<EnvFilter, Registry>,
+    filter_handle: Handle<Targets, Registry>,
     /// Guard is for local subscriber which is not used in the global logger.
     #[allow(dead_code)]
     _guard: Option<DefaultGuard>,
@@ -180,8 +180,10 @@ impl Logger {
     /// Set the log level for the logger.
     fn set_log_level(&self, log_level: LogEventLevel) -> Result<(), Error> {
         let level_filter = LevelFilter::from(log_level);
-        let new_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(level_filter.to_string().to_lowercase()));
+        let new_filter = std::env::var("RUST_LOG")
+            .ok()
+            .and_then(|s| s.parse::<Targets>().ok())
+            .unwrap_or_else(|| Targets::new().with_default(level_filter));
 
         self.filter_handle
             .modify(|filter| {
@@ -194,9 +196,11 @@ impl Logger {
 }
 
 /// Create environment filter with default to INFO level.
-fn env_filter() -> EnvFilter {
-    EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(LevelFilter::INFO.to_string().to_lowercase()))
+fn env_filter() -> Targets {
+    std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.parse::<Targets>().ok())
+        .unwrap_or_else(|| Targets::new().with_default(LevelFilter::INFO))
 }
 
 /// Create standard output layer.
@@ -204,7 +208,7 @@ fn env_filter() -> EnvFilter {
 fn std_layer(
     config: &StdConfig,
 ) -> Result<
-    Box<dyn Layer<Layered<reload::Layer<EnvFilter, Registry>, Registry>> + Send + Sync + 'static>,
+    Box<dyn Layer<Layered<reload::Layer<Targets, Registry>, Registry>> + Send + Sync + 'static>,
     Error,
 > {
     let writer = StdWriter::new(config.target);
@@ -224,7 +228,7 @@ fn std_layer(
 fn file_layer(
     config: &FileConfig,
 ) -> Result<
-    Box<dyn Layer<Layered<reload::Layer<EnvFilter, Registry>, Registry>> + Send + Sync + 'static>,
+    Box<dyn Layer<Layered<reload::Layer<Targets, Registry>, Registry>> + Send + Sync + 'static>,
     Error,
 > {
     let writer = FileWriter::new(config)

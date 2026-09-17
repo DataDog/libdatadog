@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ptr::null_mut;
+use core::ptr::null_mut;
 
 use anyhow::Context;
 
@@ -48,7 +48,7 @@ impl<T> ToInner<T> for Handle<T> {
     unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
         // Leaving a null will help with double-free issues that can arise in C.
         // Of course, it's best to never get there in the first place!
-        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
+        let raw = core::mem::replace(&mut self.inner, core::ptr::null_mut());
         anyhow::ensure!(
             !raw.is_null(),
             "inner pointer was null, indicates use after free"

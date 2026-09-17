@@ -4,14 +4,17 @@
 pub mod send_data_result;
 
 use crate::msgpack_encoder;
-use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult};
+use crate::send_with_retry::compression::{add_headers, compress};
+use crate::send_with_retry::{
+    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryResult,
+};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::{
     header::{
         APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
@@ -22,10 +25,6 @@ use libdd_common::{
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
-#[cfg(feature = "compression")]
-use std::io::Write;
-#[cfg(feature = "compression")]
-use zstd::stream::write::Encoder;
 
 #[derive(Debug)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -59,10 +58,10 @@ use zstd::stream::write::Encoder;
 ///
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
-///     // Send the data (caller picks the HTTP client implementation)
-///     use libdd_capabilities::HttpClientTrait;
-///     let client = libdd_capabilities_impl::NativeCapabilities::new_client();
-///     let result = send_data.send(&client).await;
+///     // Send the data (caller picks the capabilities implementation)
+///     use libdd_capabilities::HttpClientCapability;
+///     let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
+///     let result = send_data.send(&capabilities).await;
 /// }
 /// ```
 pub struct SendData {
@@ -71,15 +70,7 @@ pub struct SendData {
     target: Endpoint,
     headers: HeaderMap,
     retry_strategy: RetryStrategy,
-    #[cfg(feature = "compression")]
-    compression: Compression,
-}
-
-#[cfg(feature = "compression")]
-#[derive(Debug, Clone)]
-pub enum Compression {
-    Zstd(i32),
-    None,
+    compression: CompressionStrategy,
 }
 
 pub struct SendDataBuilder {
@@ -88,8 +79,7 @@ pub struct SendDataBuilder {
     target: Endpoint,
     headers: HeaderMap,
     retry_strategy: RetryStrategy,
-    #[cfg(feature = "compression")]
-    compression: Compression,
+    compression: CompressionStrategy,
 }
 
 impl SendDataBuilder {
@@ -107,13 +97,11 @@ impl SendDataBuilder {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
-            #[cfg(feature = "compression")]
-            compression: Compression::None,
+            compression: CompressionStrategy::None,
         }
     }
 
-    #[cfg(feature = "compression")]
-    pub fn with_compression(mut self, compression: Compression) -> SendDataBuilder {
+    pub fn with_compression(mut self, compression: CompressionStrategy) -> SendDataBuilder {
         self.compression = compression;
         self
     }
@@ -135,7 +123,6 @@ impl SendDataBuilder {
             target: self.target,
             headers: self.headers,
             retry_strategy: self.retry_strategy,
-            #[cfg(feature = "compression")]
             compression: self.compression,
         }
     }
@@ -169,8 +156,7 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
-            #[cfg(feature = "compression")]
-            compression: Compression::None,
+            compression: CompressionStrategy::None,
         }
     }
 
@@ -224,39 +210,48 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<H: HttpClientTrait>(&self, client: &H) -> SendDataResult {
-        self.send_internal(client, None).await
+    pub async fn send<C: HttpClientCapability + SleepCapability>(
+        &self,
+        capabilities: &C,
+    ) -> SendDataResult {
+        self.send_internal(capabilities, None).await
     }
 
-    async fn send_internal<H: HttpClientTrait>(
+    async fn send_internal<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf(client, endpoint).await
+            self.send_with_protobuf(capabilities, endpoint).await
         } else {
-            self.send_with_msgpack(client, endpoint).await
+            self.send_with_msgpack(capabilities, endpoint).await
         }
     }
 
-    async fn send_payload<H: HttpClientTrait>(
+    async fn send_payload<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         chunks: u64,
         payload: Vec<u8>,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         endpoint: Option<&Endpoint>,
+        compression_strategy: CompressionStrategy,
     ) -> (SendWithRetryResult, u64, u64) {
+        // Compress here (rather than inside `send_with_retry`) so that the reported
+        // `bytes_sent` metric reflects the number of bytes actually put on the wire.
+        let (payload, compression_strategy) = compress(payload, compression_strategy);
+        add_headers(&mut headers, compression_strategy);
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
             send_with_retry(
-                client,
+                capabilities,
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
                 &self.retry_strategy,
+                CompressionStrategy::None,
             )
             .await,
             payload_len,
@@ -268,34 +263,9 @@ impl SendData {
         self.target.api_key.is_some()
     }
 
-    #[cfg(feature = "compression")]
-    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HeaderMap) -> Vec<u8> {
-        match self.compression {
-            Compression::Zstd(level) => {
-                let result = (|| -> std::io::Result<Vec<u8>> {
-                    let mut encoder = Encoder::new(Vec::new(), level)?;
-                    encoder.write_all(&payload)?;
-                    encoder.finish()
-                })();
-
-                match result {
-                    Ok(compressed_payload) => {
-                        headers.insert(
-                            http::header::CONTENT_ENCODING,
-                            HeaderValue::from_static("zstd"),
-                        );
-                        compressed_payload
-                    }
-                    Err(_) => payload,
-                }
-            }
-            _ => payload,
-        }
-    }
-
-    async fn send_with_protobuf<H: HttpClientTrait>(
+    async fn send_with_protobuf<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -314,22 +284,16 @@ impl SendData {
                 };
                 let mut request_headers = self.headers.clone();
 
-                #[cfg(feature = "compression")]
-                let final_payload =
-                    self.compress_payload(serialized_trace_payload, &mut request_headers);
-
-                #[cfg(not(feature = "compression"))]
-                let final_payload = serialized_trace_payload;
-
                 request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
 
                 let (response, bytes_sent, chunks) = self
                     .send_payload(
-                        client,
+                        capabilities,
                         chunks,
-                        final_payload,
+                        serialized_trace_payload,
                         request_headers,
                         endpoint.as_ref(),
+                        self.compression,
                     )
                     .await;
 
@@ -341,9 +305,9 @@ impl SendData {
         }
     }
 
-    async fn send_with_msgpack<H: HttpClientTrait>(
+    async fn send_with_msgpack<C: HttpClientCapability + SleepCapability>(
         &self,
-        client: &H,
+        capabilities: &C,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -365,11 +329,12 @@ impl SendData {
                     };
 
                     futures.push(self.send_payload(
-                        client,
+                        capabilities,
                         chunks,
                         payload,
                         headers,
                         endpoint.as_ref(),
+                        CompressionStrategy::None,
                     ));
                 }
             }
@@ -381,14 +346,15 @@ impl SendData {
                 headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
-                let payload = msgpack_encoder::v04::to_vec(payload);
+                let payload = msgpack_encoder::v04::to_vec_from_v04(payload);
 
                 futures.push(self.send_payload(
-                    client,
+                    capabilities,
                     chunks,
                     payload,
                     headers,
                     endpoint.as_ref(),
+                    CompressionStrategy::None,
                 ));
             }
             TracerPayloadCollection::V05(payload) => {
@@ -405,11 +371,31 @@ impl SendData {
                 };
 
                 futures.push(self.send_payload(
-                    client,
+                    capabilities,
                     chunks,
                     payload,
                     headers,
                     endpoint.as_ref(),
+                    CompressionStrategy::None,
+                ));
+            }
+            TracerPayloadCollection::V1(payload) => {
+                #[allow(clippy::unwrap_used)]
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let mut headers = self.headers.clone();
+                headers.reserve(2);
+                headers.insert(DATADOG_TRACE_COUNT, chunks.into());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
+
+                let payload = msgpack_encoder::v1::to_vec_from_v1(payload);
+
+                futures.push(self.send_payload(
+                    capabilities,
+                    chunks,
+                    payload,
+                    headers,
+                    endpoint.as_ref(),
+                    CompressionStrategy::None,
                 ));
             }
         }
@@ -456,11 +442,11 @@ mod tests {
     use super::*;
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
-    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
-    use crate::tracer_header_tags::TracerHeaderTags;
+    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, TracerPayloadTags};
+    use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
@@ -475,18 +461,20 @@ mod tests {
         lang_vendor: "vendor",
         tracer_version: "1.0",
         container_id: "id",
-        client_computed_top_level: false,
-        client_computed_stats: false,
-        dropped_p0_traces: 0,
-        dropped_p0_spans: 0,
+        generic: TracerGenericTags {
+            client_computed_top_level: false,
+            client_computed_stats: false,
+            dropped_p0_traces: 0,
+            dropped_p0_spans: 0,
+        },
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
-        let root_tags = RootSpanTags {
-            env: "TEST",
-            app_version: "1.0",
-            hostname: "test_bench",
-            runtime_id: "id",
+        let tracer_payload_tags = TracerPayloadTags {
+            env: "TEST".to_string(),
+            app_version: "1.0".to_string(),
+            hostname: "test_bench".to_string(),
+            runtime_id: "id".to_string(),
         };
 
         let chunk = construct_trace_chunk(vec![Span {
@@ -507,7 +495,7 @@ mod tests {
             span_events: vec![],
         }]);
 
-        construct_tracer_payload(vec![chunk], header_tags, root_tags)
+        construct_tracer_payload(vec![chunk], header_tags, tracer_payload_tags)
     }
 
     fn compute_payload_len(collection: &TracerPayloadCollection) -> usize {
@@ -531,9 +519,12 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                msgpack_encoder::v04::to_len(payloads) as usize
+                msgpack_encoder::v04::to_encoded_byte_len_from_v04(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
+            TracerPayloadCollection::V1(payload) => {
+                msgpack_encoder::v1::to_encoded_byte_len_from_v1(payload) as usize
+            }
         }
     }
 
@@ -873,7 +864,7 @@ mod tests {
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(5).await;
+        mock.assert_calls_async(6).await;
 
         assert!(res.last_result.is_ok());
         assert_eq!(
@@ -883,7 +874,7 @@ mod tests {
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(*res.responses_count_per_code.get(&500).unwrap(), 1_u64);
@@ -923,7 +914,7 @@ mod tests {
             }
         }
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.errors_status_code, 0);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
@@ -954,33 +945,39 @@ mod tests {
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
-                then.status(200).body("").delay(Duration::from_millis(500));
+                then.status(200)
+                    .body("")
+                    .delay(Duration::from_millis(1_000));
             })
             .await;
 
         let header_tags = HEADER_TAGS;
 
         let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
-        let data = SendData::new(
+        let mut data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 200,
+                timeout_ms: 500,
                 ..Endpoint::default()
             },
         );
 
+        // Setting constant time in order to reduce wall time in CI tests in case there is too much
+        // contention.
+        data.set_retry_strategy(RetryStrategy::new(5, 100, RetryBackoffType::Constant, None));
+
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(5).await;
+        mock.assert_calls_async(6).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
@@ -996,33 +993,39 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/");
-                then.status(200).body("").delay(Duration::from_millis(500));
+                then.status(200)
+                    .body("")
+                    .delay(Duration::from_millis(1_000));
             })
             .await;
 
         let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
-        let data = SendData::new(
+        let mut data = SendData::new(
             100,
             TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 200,
+                timeout_ms: 500,
                 ..Endpoint::default()
             },
         );
 
+        // Setting constant time in order to reduce wall time in CI tests in case there is too much
+        // contention.
+        data.set_retry_strategy(RetryStrategy::new(5, 100, RetryBackoffType::Constant, None));
+
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(10).await;
+        mock.assert_calls_async(12).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);

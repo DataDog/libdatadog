@@ -6,6 +6,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
 mod error;
 
 pub mod array_queue;

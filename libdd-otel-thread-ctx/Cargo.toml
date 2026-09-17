@@ -3,18 +3,38 @@
 
 [package]
 name = "libdd-otel-thread-ctx"
-version = "1.0.0"
+version = "1.1.0"
 description = "OTel thread-level context publisher for Datadog profiling (OTEP #4947)"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
 
 [lib]
 crate-type = ["lib"]
 bench = false
 
-[build-dependencies]
-cc = "1.1.31"
+[dependencies]
+anyhow = { workspace = true, optional = true }
+elf = { workspace = true, features = ["std"], optional = true }
+object = { workspace = true, features = ["archive", "read_core"], optional = true }
+
+[features]
+sanity-check = ["dep:elf", "dep:anyhow"]
+# Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
+# integration tests.
+test-utils = ["dep:elf", "dep:object"]
+# Gate for the gen_tls_shim_bytes binary. Do not build it by default; it's very
+# rarely needed (and maybe won't ever be): only if the corresponding test is
+# failing one day, and we need to update the TLSDESC inline assembly to match
+# what newer versions of clang generate.
+gen-tls-shim-bytes = ["test-utils"]
+
+# Dev tool to regenerate the TLSDESC golden bytes for tests.
+[[bin]]
+name = "gen_tls_shim_bytes"
+required-features = ["gen-tls-shim-bytes"]
+
+[dev-dependencies]
+libdd-otel-thread-ctx = { path = ".", features = ["test-utils"] }

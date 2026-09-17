@@ -44,6 +44,15 @@ pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'
 /// cbindgen:field-names=[code]
 pub struct HttpStatus(u16);
 
+fn try_clone_optional_tags(tags: Option<&libdd_common_ffi::Vec<Tag>>) -> anyhow::Result<Vec<Tag>> {
+    let mut cloned = Vec::new();
+    if let Some(tags) = tags {
+        cloned.try_reserve_exact(tags.len())?;
+        cloned.extend(tags.iter().cloned());
+    }
+    Ok(cloned)
+}
+
 /// Creates an endpoint that uses the agent.
 /// # Arguments
 /// * `base_url` - Contains a URL with scheme, host, and port e.g. "https://agent:8126/".
@@ -162,9 +171,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
         let library_version = profiling_library_version.try_to_utf8()?;
         let family = family.try_to_utf8()?;
         let converted_endpoint = unsafe { try_to_endpoint(endpoint)? };
-        let tags = tags
-            .map(|tags| tags.iter().cloned().collect())
-            .unwrap_or_default();
+        let tags = try_clone_optional_tags(tags)?;
         anyhow::Ok(
             ProfileExporter::new(
                 library_name,
@@ -189,16 +196,18 @@ pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<Profi
     drop(exporter.take())
 }
 
-unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> {
-    slice
-        .into_slice()
-        .iter()
-        .map(|file| {
-            let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
-            let bytes = file.file.as_slice();
-            exporter::File { name, bytes }
-        })
-        .collect()
+unsafe fn try_into_vec_files<'a>(
+    slice: Slice<'a, File>,
+) -> anyhow::Result<Vec<exporter::File<'a>>> {
+    let files = slice.try_as_slice()?;
+    let mut converted = Vec::new();
+    converted.try_reserve_exact(files.len())?;
+    for file in files {
+        let name = file.name.try_to_utf8().unwrap_or("{invalid utf-8}");
+        let bytes = file.file.try_as_slice()?;
+        converted.push(exporter::File { name, bytes });
+    }
+    Ok(converted)
 }
 
 unsafe fn parse_json(
@@ -222,7 +231,37 @@ unsafe fn parse_json(
     }
 }
 
+/// Initializes the tokio runtime for the exporter.
+///
+/// This function creates the tokio runtime used by `ddog_prof_Exporter_send_blocking`.
+/// It can be called ahead of time to ensure the runtime is ready before sending.
+///
+/// # Thread Affinity
+///
+/// **Important**: The runtime has thread affinity. This function should be called from
+/// the same thread that will later call `ddog_prof_Exporter_send_blocking`.
+///
+/// # Arguments
+/// * `exporter` - Borrows the exporter.
+///
+/// # Safety
+/// The `exporter` must point to a valid ProfileExporter that has not been dropped.
+#[no_mangle]
+#[must_use]
+#[named]
+pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
+    mut exporter: *mut Handle<ProfileExporter>,
+) -> VoidResult {
+    wrap_with_void_ffi_result!({
+        let exporter = exporter.to_inner_mut()?;
+        exporter.init_runtime()?
+    })
+}
+
 /// Builds a request and sends it, returning the HttpStatus.
+///
+/// Note: If the runtime has not been initialized via `ddog_prof_Exporter_init_runtime`,
+/// it will be lazily initialized on first call.
 ///
 /// # Arguments
 /// * `exporter` - Borrows the exporter.
@@ -252,10 +291,8 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-        let tags: Vec<Tag> = optional_additional_tags
-            .map(|tags| tags.iter().cloned().collect())
-            .unwrap_or_default();
+        let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
+        let tags = try_clone_optional_tags(optional_additional_tags)?;
         let process_tags_str = optional_process_tags
             .map(|cs| cs.try_to_utf8())
             .transpose()?;
@@ -406,10 +443,8 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
     wrap_with_void_ffi_result!({
         let manager = manager.to_inner_mut()?;
         let profile = *profile.take()?;
-        let files_to_compress_and_export = into_vec_files(files_to_compress_and_export);
-        let tags: Vec<Tag> = optional_additional_tags
-            .map(|tags| tags.iter().cloned().collect())
-            .unwrap_or_default();
+        let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
+        let tags = try_clone_optional_tags(optional_additional_tags)?;
         let process_tags_str = optional_process_tags
             .map(|cs| cs.try_to_utf8())
             .transpose()?;

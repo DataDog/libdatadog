@@ -1,8 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use regex::Regex;
+use libdd_trace_utils::span::{v04, SpanText, TraceData};
 use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
 
 #[derive(Deserialize)]
@@ -27,7 +28,7 @@ pub struct ReplaceRule {
     pub name: String,
 
     // re holds the regex pattern for matching.
-    pub re: regex::Regex,
+    pub re: Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
     pub repl: String,
@@ -40,8 +41,8 @@ impl<'de> Deserialize<'de> for ReplaceRule {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let raw = RawReplaceRule::deserialize(deserializer)?;
         let re = Regex::new(&raw.pattern).map_err(serde::de::Error::custom)?;
-        let no_expansion = regex::Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
-        Ok(ReplaceRule {
+        let no_expansion = Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
+        Ok(Self {
             name: raw.name,
             re,
             repl: raw.repl,
@@ -72,11 +73,11 @@ impl ReplaceRule {
             self.no_expansion,
             tag_value,
             scratch_space,
-        )
+        );
     }
 }
 
-/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of
+/// `replace_trace_tags` replaces the tag values of all spans within a trace with a given set of
 /// rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     let mut scratch_space = String::new();
@@ -85,14 +86,56 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     }
 }
 
-/// replace_span_tags replaces the tag values of a span with a given set of rules.
+/// Replaces the tag values of a [`v04::Span`] using the given rules.
+///
+/// Fields are the immutable [`SpanText`] type, so matches are written back through
+/// [`SpanText::from_owned`]. [`replace_all_opt`] returns `None` on no match, so untouched fields
+/// don't allocate.
+pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
+    fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
+        if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
+        {
+            *field = S::from_owned(new);
+        }
+    }
+
+    for rule in rules {
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, tag_value) in &mut span.meta {
+                    apply_rule(rule, tag_value);
+                }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                apply_rule(rule, &mut span.resource);
+            }
+            "resource.name" => {
+                apply_rule(rule, &mut span.resource);
+            }
+            _ => {
+                if let Some(tag_value) = span.meta.get_mut(rule.name.as_str()) {
+                    apply_rule(rule, tag_value);
+                }
+            }
+        }
+    }
+}
+
+/// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for (_, tag_value) in span.meta.iter_mut() {
+                for tag_value in span.meta.values_mut() {
                     rule.apply(tag_value, scratch_space);
                 }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                rule.apply(&mut span.resource, scratch_space);
             }
             "resource.name" => {
                 rule.apply(&mut span.resource, scratch_space);
@@ -106,9 +149,13 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
     }
 }
 
-/// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
+/// `parse_rules_from_string` takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
-/// * returns a vec of ReplaceRules
+/// * returns a vec of `ReplaceRules`
+///
+/// # Errors
+///
+/// Returns an error when the input is not valid JSON or a rule pattern is not a valid regex.
 pub fn parse_rules_from_string(
     // rules: &'a [[&'a str; 3]],
     rules: &str,
@@ -122,10 +169,10 @@ pub fn parse_rules_from_string(
         let compiled_regex = match Regex::new(&raw_rule.pattern) {
             Ok(res) => res,
             Err(err) => {
-                anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
+                anyhow::bail!("Obfuscator Error: Error while parsing rule: {err}")
             }
         };
-        let no_expansion = regex::Replacer::no_expansion(&mut &raw_rule.repl).is_some();
+        let no_expansion = Replacer::no_expansion(&mut &raw_rule.repl).is_some();
         vec.push(ReplaceRule {
             name: raw_rule.name,
             re: compiled_regex,
@@ -139,8 +186,8 @@ pub fn parse_rules_from_string(
 /// Mutate the haystack by changing all occurences of the regex by the `replace` parameter
 /// using the scratch space provided
 ///
-/// Taken from regex::replacen to use a reusable scratch space instead of allocating a new String
-/// https://docs.rs/regex/1.10.2/src/regex/regex/string.rs.html#890-944
+/// Taken from `regex::replacen` to use a reusable scratch space instead of allocating a new String
+/// <https://docs.rs/regex/1.10.2/src/regex/regex/string.rs.html#890-944>
 fn replace_all(
     re: &Regex,
     mut replace: &str,
@@ -183,18 +230,57 @@ fn replace_all(
             #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
-            regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
+            Replacer::replace_append(&mut replace, &cap, scratch_space);
             last_match = m.end();
         }
         scratch_space.push_str(&haystack[last_match..]);
     }
-    std::mem::swap(scratch_space, haystack);
-    scratch_space.truncate(0);
+    core::mem::swap(scratch_space, haystack);
+    scratch_space.clear();
+}
+
+/// Variant of [`replace_all`] for callers holding an immutable `&str` (e.g. [`SpanText`]-backed
+/// spans). Returns `None` when the regex doesn't match `haystack`.
+fn replace_all_opt(
+    re: &Regex,
+    mut replace: &str,
+    no_expansion: bool,
+    haystack: &str,
+) -> Option<String> {
+    if no_expansion {
+        let mut it = re.find_iter(haystack).peekable();
+        it.peek()?;
+        let mut out = String::with_capacity(haystack.len());
+        let mut last_match = 0;
+        for m in it {
+            out.push_str(&haystack[last_match..m.start()]);
+            out.push_str(replace);
+            last_match = m.end();
+        }
+        out.push_str(&haystack[last_match..]);
+        Some(out)
+    } else {
+        let mut it = re.captures_iter(haystack).peekable();
+        it.peek()?;
+        let mut out = String::with_capacity(haystack.len());
+        let mut last_match = 0;
+        for cap in it {
+            // unwrap on 0 is OK because captures only reports matches
+            #[allow(clippy::unwrap_used)]
+            let m = cap.get(0).unwrap();
+            out.push_str(&haystack[last_match..m.start()]);
+            Replacer::replace_append(&mut replace, &cap, &mut out);
+            last_match = m.end();
+        }
+        out.push_str(&haystack[last_match..]);
+        Some(out)
+    }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use super::Regex;
     use crate::replacer;
     use duplicate::duplicate_item;
     use libdd_trace_protobuf::pb;
@@ -232,52 +318,43 @@ mod tests {
     }
 
     #[duplicate_item(
-        [
-        test_name   [test_replace_tags]
-        rules       [r#"[
+    test_name rules input expected;
+    [test_replace_tags] [r#"[
                         {"name": "http.url", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("http.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
-        [
-        test_name   [test_replace_tags_with_exceptions]
-        rules       [r#"[
+    [test_replace_tags_with_exceptions] [r#"[
                         {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "*", "pattern": "this", "repl": "that"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
                         {"name": "resource.name", "pattern": "prod", "repl": "stage"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("resource.name", "this is prod"),
                             ("http.url", "some/[REDACTED]/token/abcdef/abc"),
                             ("other.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
-                            ("resource.name", "this is stage"),
+                            ("resource.name", "that is stage"),
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("other.url", "some/guid/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
     )]
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -291,15 +368,12 @@ mod tests {
         replacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
 
         for (key, val) in expected {
-            match key {
-                "resource.name" => {
-                    assert_eq!(val, trace[0].resource);
-                    assert_eq!(val, trace[1].resource);
-                }
-                _ => {
-                    assert_eq!(val, trace[0].meta.get(key).unwrap());
-                    assert_eq!(val, trace[1].meta.get(key).unwrap());
-                }
+            if key == "resource.name" {
+                assert_eq!(val, trace[0].resource);
+                assert_eq!(val, trace[1].resource);
+            } else {
+                assert_eq!(val, trace[0].meta.get(key).unwrap());
+                assert_eq!(val, trace[1].meta.get(key).unwrap());
             }
         }
     }
@@ -315,13 +389,13 @@ mod tests {
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
@@ -333,13 +407,13 @@ mod tests {
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(broken/)([^/]*)").unwrap(),
+            re: Regex::new("(broken/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };

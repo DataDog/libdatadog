@@ -18,10 +18,10 @@ pub(crate) struct ReqwestBackend {
 impl super::Backend for ReqwestBackend {
     // Creates a `reqwest::Client` with connection pooling enabled.
     fn new(
-        timeout: std::time::Duration,
+        client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let mut builder = reqwest::Client::builder().timeout(timeout);
+        let mut builder = reqwest::Client::builder().timeout(client_config.timeout());
 
         match transport {
             TransportConfig::Tcp => {}
@@ -33,6 +33,10 @@ impl super::Backend for ReqwestBackend {
             TransportConfig::WindowsNamedPipe(pipe) => {
                 builder = builder.windows_named_pipe(pipe);
             }
+        }
+
+        if !client_config.allow_connection_pooling() {
+            builder = builder.pool_max_idle_per_host(0);
         }
 
         let client = builder

@@ -3,12 +3,11 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::{adjust_extern_symbols, file_replace, project_root, wait_for_success};
+use crate::utils::{adjust_extern_symbols, project_root, wait_for_success};
 use anyhow::Result;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
-use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -59,6 +58,10 @@ impl Profiling {
         headers.push("ddsketch.h");
         #[cfg(feature = "ffe")]
         headers.push("ffe.h");
+        #[cfg(feature = "shared-runtime")]
+        headers.push("shared-runtime.h");
+        #[cfg(feature = "otel-thread-ctx")]
+        headers.push("otel-thread-ctx.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();
@@ -118,65 +121,34 @@ impl Profiling {
     }
 
     fn add_pkg_config(&self) -> Result<()> {
-        let files: [&str; 3] = [
-            "datadog_profiling.pc",
-            "datadog_profiling_with_rpath.pc",
-            "datadog_profiling-static.pc",
-        ];
-
-        //Create directory
-        let pc_dir = Path::new(self.target_pkconfig.as_ref());
-        fs::create_dir_all(pc_dir).expect("Failed to create pkgconfig directory");
-
-        // Create files
-        for file in files.iter() {
-            let file_in = file.to_string() + ".in";
-
-            let mut pc_origin: PathBuf = project_root();
-            pc_origin.push(CRATE_FOLDER);
-            pc_origin.push(file_in);
-
-            let pc_target: PathBuf = [pc_dir.as_os_str(), OsStr::new(file)].iter().collect();
-
-            file_replace(
-                pc_origin.to_str().unwrap(),
-                pc_target.to_str().unwrap(),
-                "@Datadog_VERSION@",
-                &self.version,
-            )?;
-
-            if *file == files[2] {
-                file_replace(
-                    pc_origin.to_str().unwrap(),
-                    pc_target.to_str().unwrap(),
-                    "@Datadog_LIBRARIES@",
-                    arch::NATIVE_LIBS,
-                )?;
-            }
-        }
-        Ok(())
+        arch::add_pkg_config(
+            CRATE_FOLDER,
+            self.target_pkconfig.as_ref(),
+            self.version.as_ref(),
+        )
     }
 }
 
 impl Module for Profiling {
     fn build(&self) -> Result<()> {
-        let features = self.features.to_string() + "," + "cbindgen";
-        #[cfg(feature = "crashtracker")]
-        let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
-
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![
             "rustc",
             "-p",
             CRATE_FOLDER,
+            "--no-default-features",
             "--features",
-            &features,
+            &self.features,
             "--target",
             &self.arch,
         ];
 
-        if self.profile.as_ref() == "release" {
-            cargo_args.push("--release");
+        match self.profile.as_ref() {
+            "debug" | "dev" => {}
+            profile => {
+                cargo_args.push("--profile");
+                cargo_args.push(profile);
+            }
         }
 
         // Parse profiling-ffi manifest in order to get the crate-type array.

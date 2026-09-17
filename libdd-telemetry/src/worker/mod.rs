@@ -2,20 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod http_client;
+pub mod metric_ring;
 mod scheduler;
 pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
+    data::{
+        self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, ProductState,
+        Telemetry,
+    },
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 
+use crate::worker::metric_ring::MetricRing;
+
 use async_trait::async_trait;
-use libdd_common::{http_common, tag::Tag};
+use bytes::Bytes;
+use libdd_capabilities::{HttpClientCapability, HttpError, MaybeSend, SleepCapability};
+use libdd_common::tag::Tag;
 use libdd_shared_runtime::Worker;
 
 use std::iter::Sum;
+use std::marker::PhantomData;
 use std::ops::Add;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -23,24 +32,26 @@ use std::{
     ops::ControlFlow,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Condvar, Mutex,
+        Arc,
     },
-    time,
 };
 use std::{collections::HashSet, fmt::Debug, time::Duration};
+// `web_time` re-exports `std::time::Instant`/`SystemTime` on native and
+// provides Performance.now()/Date.now()-backed shims on wasm32. We use
+// `time::Instant` and `time::SystemTime` through this module-local alias so
+// the wasm runtime doesn't hit `time not implemented on this platform`.
+use web_time as time;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Condvar, Mutex};
 
 use crate::metrics::MetricBucketStats;
-use futures::{
-    channel::oneshot,
-    future::{self},
-};
+use futures::channel::oneshot;
 use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    runtime::{self, Handle},
-    sync::mpsc,
-    task::JoinHandle,
-};
+use tokio::sync::mpsc;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::{runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
@@ -48,8 +59,7 @@ const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
 
 fn time_now() -> f64 {
-    #[allow(clippy::unwrap_used)]
-    std::time::SystemTime::UNIX_EPOCH
+    time::SystemTime::UNIX_EPOCH
         .elapsed()
         .unwrap_or_default()
         .as_secs_f64()
@@ -78,7 +88,7 @@ macro_rules! telemetry_worker_log {
                 $($arg)*
             );
             if $worker.config.telemetry_debug_logging_enabled {
-                println!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
+                eprintln!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
             }
         }
     };
@@ -90,6 +100,7 @@ pub enum TelemetryActions {
     AddConfig(data::Configuration),
     AddDependency(Dependency),
     AddIntegration(Integration),
+    AddProductChange((String, ProductState)),
     AddLog((LogIdentifier, Log)),
     AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
@@ -120,31 +131,44 @@ pub struct LogIdentifier {
 #[derive(Debug)]
 struct TelemetryWorkerData {
     started: bool,
-    dependencies: store::Store<Dependency>,
+    dependencies: store::Store<data::Dependency, data::DependencyKey>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
-    endpoints: HashSet<data::Endpoint>,
+    endpoints: store::Store<data::Endpoint>,
+    endpoints_is_first: bool,
+    products: std::collections::HashMap<String, ProductState>,
+    products_pending: HashSet<String>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
     host: Host,
     app: Application,
+    install_signature: Option<data::InstallSignature>,
 }
 
-pub struct TelemetryWorker {
+/// `C` is the capability bundle. Leaf crates pin it to a concrete type
+/// (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     flavor: TelemetryWorkerFlavor,
     config: Config,
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
     runtime_id: String,
-    client: Box<dyn http_client::HttpClient + Sync + Send>,
+    capabilities: C,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
     next_action: Option<TelemetryActions>,
+    stopped: bool,
+    /// Shared with the handle: producers publish metric points here instead of the mailbox, and
+    /// this worker batch-drains them into `data.metric_buckets` (see `metric_ring`).
+    metric_ring: Arc<MetricRing>,
 }
-impl Debug for TelemetryWorker {
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
+    for TelemetryWorker<C>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TelemetryWorker")
             .field("flavor", &self.flavor)
@@ -160,12 +184,25 @@ impl Debug for TelemetryWorker {
     }
 }
 
-#[async_trait]
-impl Worker for TelemetryWorker {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Worker
+    for TelemetryWorker<C>
+{
     async fn trigger(&mut self) {
         if self.next_action.is_some() {
             // An action is already available and hasn't been executed
             return;
+        }
+        if self.stopped {
+            // Channel is closed and Stop has already been dispatched. Park forever to avoid
+            // a hot loop re-emitting Lifecycle::Stop on every iteration; the runtime will
+            // tear the worker down via the handle.
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                "Telemetry worker mailbox closed; parking until shutdown"
+            );
+            std::future::pending::<()>().await;
         }
         // Wait for the next action and store it
         let action = self.recv_next_action().await;
@@ -208,13 +245,31 @@ impl Worker for TelemetryWorker {
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
         self.data.metric_buckets = MetricBuckets::default();
+        // Discard points published to the ring buffer before the fork (single-threaded here).
+        self.metric_ring.drain(|_, _, _| {});
         self.data.dependencies.clear();
         self.data.integrations.clear();
         self.data.configurations.clear();
         self.data.endpoints.clear();
+        self.data.endpoints_is_first = true;
+        self.data.products.clear();
+        self.data.products_pending.clear();
     }
 
     async fn shutdown(&mut self) {
+        // Drain queued actions before Stop so the final flush includes anything
+        // enqueued between the last runloop tick and shutdown.
+        for _ in 0..self.mailbox.len() {
+            if let Ok(action) = self.mailbox.try_recv() {
+                let _ = match self.flavor {
+                    TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                    TelemetryWorkerFlavor::MetricsLogs => {
+                        self.dispatch_metrics_logs_action(action).await
+                    }
+                };
+            }
+        }
+
         let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
         let _action_result = match self.flavor {
             TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
@@ -279,36 +334,70 @@ mod serialize {
     }
 }
 
-impl TelemetryWorker {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryWorker<C> {
     fn log_err(&self, err: &anyhow::Error) {
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
 
+    /// Drain all metric points published to the ring buffer into the aggregation buckets.
+    fn drain_metric_ring(&mut self) {
+        // Clone the Arc so the drain closure can mutably borrow `data.metric_buckets` without also
+        // borrowing `self.metric_ring`.
+        let ring = self.metric_ring.clone();
+        let buckets = &mut self.data.metric_buckets;
+        ring.drain(|value, key, extra_tags| buckets.add_point(key, value, extra_tags));
+    }
+
+    /// Drain any ring-buffered points, then roll the aggregation buckets into series/distributions.
+    fn flush_metric_aggregates(&mut self) {
+        self.drain_metric_ring();
+        self.data.metric_buckets.flush_aggregates();
+    }
+
     async fn recv_next_action(&mut self) -> TelemetryActions {
-        let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
-            // If deadline passed, directly return associated action
-            if deadline
-                .checked_duration_since(time::Instant::now())
-                .is_none()
-            {
-                return TelemetryActions::Lifecycle(*deadline_action);
+        loop {
+            // Fold any points published to the ring buffer into the aggregates before we wait.
+            self.drain_metric_ring();
+
+            let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+                let deadline_action = *deadline_action;
+                // If deadline passed, service any already-queued mailbox action first, then
+                // return the associated action.
+                // This avoids pathological cases with a very short heartbeat, which would hang a
+                // synchronous flush()/stop() (whose FlushData/CollectStats never get processed).
+                let Some(remaining) = deadline.checked_duration_since(time::Instant::now()) else {
+                    if let Ok(mailbox_action) = self.mailbox.try_recv() {
+                        return mailbox_action;
+                    }
+                    return TelemetryActions::Lifecycle(deadline_action);
+                };
+
+                let sleeper = <C as SleepCapability>::new();
+                let ring = self.metric_ring.clone();
+                tokio::select! {
+                    biased;
+                    mailbox_action = self.mailbox.recv() => mailbox_action,
+                    _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
+                    // The ring buffer has points to drain: loop back to fold them in.
+                    _ = ring.notified() => continue,
+                }
+            } else {
+                let ring = self.metric_ring.clone();
+                tokio::select! {
+                    biased;
+                    mailbox_action = self.mailbox.recv() => mailbox_action,
+                    _ = ring.notified() => continue,
+                }
             };
 
-            // Otherwise run it in a timeout against the mailbox
-            match tokio::time::timeout_at(deadline.into(), self.mailbox.recv()).await {
-                Ok(mailbox_action) => mailbox_action,
-                Err(_) => Some(TelemetryActions::Lifecycle(*deadline_action)),
-            }
-        } else {
-            self.mailbox.recv().await
-        };
-
-        // if no action is received, then it means the channel is stopped
-        action.unwrap_or_else(|| {
-            // the worker handle no longer lives - we must remove restartable here to avoid leaks
-            self.config.restartable = false;
-            TelemetryActions::Lifecycle(LifecycleAction::Stop)
-        })
+            // if no action is received, then it means the channel is stopped
+            return action.unwrap_or_else(|| {
+                // the worker handle no longer lives - remove restartable here to avoid leaks
+                self.config.restartable = false;
+                self.stopped = true;
+                TelemetryActions::Lifecycle(LifecycleAction::Stop)
+            });
+        }
     }
 
     async fn dispatch_metrics_logs_action(&mut self, action: TelemetryActions) -> ControlFlow<()> {
@@ -340,7 +429,7 @@ impl TelemetryWorker {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -369,21 +458,28 @@ impl TelemetryWorker {
             AddConfig(_)
             | AddDependency(_)
             | AddIntegration(_)
+            | AddProductChange(_)
             | AddEndpoint(_)
             | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
-                let observability_events = self.build_observability_batch();
-                if let Err(e) = self
-                    .send_payload(&data::Payload::MessageBatch(observability_events))
-                    .await
-                {
-                    self.log_err(&e);
+                let batch = self.build_observability_batch();
+                if !batch.is_empty() {
+                    let payload = data::Payload::MessageBatch(batch);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => {
+                            if self.config.restartable {
+                                self.payload_sent_success(&payload)
+                            }
+                        }
+                        Err(e) => self.log_err(&e),
+                    }
                 }
+
                 self.data.started = false;
                 if !self.config.restartable {
                     self.deadlines.clear_pending();
@@ -405,10 +501,12 @@ impl TelemetryWorker {
         match action {
             Lifecycle(Start) => {
                 if !self.data.started {
-                    let app_started = data::Payload::AppStarted(self.build_app_started());
-                    match self.send_payload(&app_started).await {
-                        Ok(()) => self.payload_sent_success(&app_started),
-                        Err(err) => self.log_err(&err),
+                    if self.config.emit_app_lifecycle {
+                        let app_started = data::Payload::AppStarted(self.build_app_started());
+                        match self.send_payload(&app_started).await {
+                            Ok(()) => self.payload_sent_success(&app_started),
+                            Err(err) => self.log_err(&err),
+                        }
                     }
 
                     #[allow(clippy::unwrap_used)]
@@ -421,11 +519,20 @@ impl TelemetryWorker {
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
                         .unwrap();
+
+                    #[allow(clippy::unwrap_used)]
+                    self.deadlines
+                        .schedule_event(LifecycleAction::ExtendedHeartbeat)
+                        .unwrap();
                     self.data.started = true;
                 }
             }
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
+            AddProductChange((name, state)) => {
+                self.data.products.insert(name.clone(), state);
+                self.data.products_pending.insert(name);
+            }
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddEndpoint(endpoint) => {
                 self.data.endpoints.insert(endpoint);
@@ -440,7 +547,7 @@ impl TelemetryWorker {
                 self.data.metric_buckets.add_point(key, point, extra_tags)
             }
             Lifecycle(FlushMetricAggr) => {
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
@@ -479,60 +586,67 @@ impl TelemetryWorker {
                 }
             }
             Lifecycle(ExtendedHeartbeat) => {
+                // Flush the data before submitting a heartbeat to ensure completeness.
+                let delta = self.build_app_events_batch();
+                if !delta.is_empty() {
+                    let payload = data::Payload::MessageBatch(delta);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => self.payload_sent_success(&payload),
+                        Err(err) => self.log_err(&err),
+                    }
+                }
+
                 self.data.dependencies.unflush_stored();
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
 
-                let app_started = data::Payload::AppStarted(self.build_app_started());
-                match self.send_payload(&app_started).await {
-                    Ok(()) => self.payload_sent_success(&app_started),
+                let extended_hb =
+                    data::Payload::AppExtendedHeartbeat(self.build_extended_heartbeat());
+                match self.send_payload(&extended_hb).await {
+                    Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
+
+                if !self.data.products.is_empty() {
+                    let products = self
+                        .data
+                        .products
+                        .iter()
+                        .map(|(name, state)| (name.clone(), state.clone()))
+                        .collect();
+                    let product_change =
+                        data::Payload::AppProductChange(data::AppProductChange { products });
+                    match self.send_payload(&product_change).await {
+                        Ok(()) => self.payload_sent_success(&product_change),
+                        Err(err) => self.log_err(&err),
+                    }
+                }
+                // Only re-schedule self. Resetting `FlushData` here would replace its
+                // existing deadline with `now + heartbeat_interval`, starving FlushData
+                // when `extended_heartbeat_interval < heartbeat_interval` because each
+                // ExtendedHeartbeat firing pushes FlushData out before it can fire.
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
-                    .schedule_events(
-                        &mut [
-                            LifecycleAction::FlushData,
-                            LifecycleAction::ExtendedHeartbeat,
-                        ]
-                        .into_iter(),
-                    )
+                    .schedule_event(LifecycleAction::ExtendedHeartbeat)
                     .unwrap();
             }
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
                 }
-                self.data.metric_buckets.flush_aggregates();
+                self.flush_metric_aggregates();
 
                 let mut app_events = self.build_app_events_batch();
-                app_events.push(data::Payload::AppClosing(()));
-
-                let observability_events = self.build_observability_batch();
-
-                let mut payloads = vec![data::Payload::MessageBatch(app_events)];
-                if !observability_events.is_empty() {
-                    payloads.push(data::Payload::MessageBatch(observability_events));
+                app_events.extend(self.build_observability_batch());
+                if self.config.emit_app_lifecycle {
+                    app_events.push(data::Payload::AppClosing(()));
                 }
 
-                let self_arc = Arc::new(tokio::sync::RwLock::new(&mut *self));
-                let futures = payloads.into_iter().map(|payload| {
-                    let self_arc = self_arc.clone();
-                    async move {
-                        // This is different from the non-functional:
-                        // match self_arc.read().await.send_payload(&payload).await { ... }
-                        // presumably because the temp read guard would live till end of match
-                        let res = {
-                            let self_rguard = self_arc.read().await;
-                            self_rguard.send_payload(&payload).await
-                        };
-                        match res {
-                            Ok(()) => self_arc.write().await.payload_sent_success(&payload),
-                            Err(err) => self_arc.read().await.log_err(&err),
-                        }
-                    }
-                });
-                future::join_all(futures).await;
+                let payload = data::Payload::MessageBatch(app_events);
+                match self.send_payload(&payload).await {
+                    Ok(()) => self.payload_sent_success(&payload),
+                    Err(err) => self.log_err(&err),
+                }
 
                 self.data.started = false;
                 if !self.config.restartable {
@@ -567,6 +681,22 @@ impl TelemetryWorker {
                 },
             ))
         }
+        if !self.data.products_pending.is_empty() {
+            let products = self
+                .data
+                .products_pending
+                .iter()
+                .filter_map(|name| {
+                    self.data
+                        .products
+                        .get(name)
+                        .map(|state| (name.clone(), state.clone()))
+                })
+                .collect();
+            payloads.push(data::Payload::AppProductChange(data::AppProductChange {
+                products,
+            }))
+        }
         if self.data.configurations.flush_not_empty() {
             payloads.push(data::Payload::AppClientConfigurationChange(
                 data::AppClientConfigurationChange {
@@ -574,13 +704,16 @@ impl TelemetryWorker {
                 },
             ))
         }
-        if !self.data.endpoints.is_empty() {
+        if self.data.endpoints.flush_not_empty() {
             payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
-                is_first: true,
+                is_first: self.data.endpoints_is_first,
+                // Only the first `endpoints_message_limit` of the queue: the rest is left
+                // unflushed and picked up by the next payload.
                 endpoints: self
                     .data
                     .endpoints
-                    .iter()
+                    .unflushed()
+                    .take(self.config.endpoints_message_limit as usize)
                     .map(|e| e.to_json_value().unwrap_or_default())
                     .filter(|e| e.is_object())
                     .collect(),
@@ -662,8 +795,26 @@ impl TelemetryWorker {
     }
 
     fn build_app_started(&mut self) -> data::AppStarted {
+        // This needs to be distinct from heartbeat:
+        // the backend fully rejects AppStarted payloads with contained integrations or dependencies
         data::AppStarted {
             configuration: self.data.configurations.unflushed().cloned().collect(),
+            dependencies: Vec::new(),
+            integrations: Vec::new(),
+            install_signature: self.data.install_signature.clone(),
+            products: self.data.products.clone(),
+            error: None,
+        }
+    }
+
+    fn build_extended_heartbeat(&mut self) -> data::AppStarted {
+        data::AppStarted {
+            configuration: self.data.configurations.unflushed().cloned().collect(),
+            dependencies: self.data.dependencies.unflushed().cloned().collect(),
+            integrations: self.data.integrations.unflushed().cloned().collect(),
+            install_signature: self.data.install_signature.clone(),
+            products: self.data.products.clone(),
+            error: None,
         }
     }
 
@@ -671,6 +822,9 @@ impl TelemetryWorker {
         self.data
             .configurations
             .removed_flushed(p.configuration.len());
+        self.data.dependencies.removed_flushed(p.dependencies.len());
+        self.data.integrations.removed_flushed(p.integrations.len());
+        self.data.products_pending.clear();
     }
 
     fn payload_sent_success(&mut self, payload: &data::Payload) {
@@ -684,11 +838,21 @@ impl TelemetryWorker {
             AppIntegrationsChange(p) => {
                 self.data.integrations.removed_flushed(p.integrations.len())
             }
+            AppProductChange(p) => {
+                for name in p.products.keys() {
+                    self.data.products_pending.remove(name);
+                }
+            }
             AppClientConfigurationChange(p) => self
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
-            AppEndpoints(_) => self.data.endpoints.clear(),
+            AppEndpoints(p) => {
+                // Drops exactly the endpoints this payload carried, so anything the message limit
+                // held back is still queued for the next one.
+                self.data.endpoints.removed_flushed(p.endpoints.len());
+                self.data.endpoints_is_first = false;
+            }
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
@@ -740,7 +904,7 @@ impl TelemetryWorker {
         Ok(())
     }
 
-    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http_common::HttpRequest> {
+    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http::Request<Bytes>> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -770,27 +934,33 @@ impl TelemetryWorker {
             )
             .header(
                 http_client::header::LIBRARY_LANGUAGE,
-                // Note: passing by ref here just causes the clone to happen underneath
                 tel.application.language_name.clone(),
             )
             .header(
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             );
+        let req = http_client::add_instrumentation_session_headers(
+            req,
+            self.config.session_id.as_deref(),
+            self.config.parent_session_id.as_deref(),
+            self.config.root_session_id.as_deref(),
+        );
 
-        let body = http_common::Body::from(serialize::serialize(&tel)?);
+        let body = Bytes::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
     async fn send_request(
         &self,
-        req: http_common::HttpRequest,
-    ) -> Result<http_common::HttpResponse, http_common::Error> {
+        req: http::Request<Bytes>,
+    ) -> Result<http::Response<Bytes>, HttpError> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
             libdd_common::Endpoint::DEFAULT_TIMEOUT
         };
+        let timeout = time::Duration::from_millis(timeout_ms);
 
         debug!(
             worker.runtime_id = %self.runtime_id,
@@ -798,32 +968,24 @@ impl TelemetryWorker {
             "Sending HTTP request"
         );
 
+        let sleeper = <C as SleepCapability>::new();
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request cancelled")))
+                Err(HttpError::Other(anyhow::anyhow!("Request cancelled")))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
+            _ = sleeper.sleep(timeout) => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request timed out")))
+                Err(HttpError::Other(anyhow::anyhow!("Request timed out")))
             },
-            r = self.client.request(req) => {
-                match r {
-                    Ok(resp) => {
-                        Ok(resp)
-                    }
-                    Err(e) => {
-                        Err(e)
-                    },
-                }
-            }
+            r = self.capabilities.request(req) => r,
         }
     }
 
@@ -895,12 +1057,14 @@ impl TelemetryWorker {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct InnerTelemetryShutdown {
     is_shutdown: Mutex<bool>,
     condvar: Condvar,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl InnerTelemetryShutdown {
     fn wait_for_shutdown(&self) {
         drop(
@@ -920,26 +1084,73 @@ impl InnerTelemetryShutdown {
     }
 }
 
-#[derive(Clone, Debug)]
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///
 /// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
 ///
 /// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush asynchronously
-/// then `TelemetryWorkerHandle::wait_for_shutdown`
-pub struct TelemetryWorkerHandle {
+/// then `TelemetryWorkerHandle::wait_for_shutdown` (native only — wasm callers rely on the
+/// SharedRuntime worker JoinHandle instead).
+pub struct TelemetryWorkerHandle<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+> {
     sender: mpsc::Sender<TelemetryActions>,
+    #[cfg(not(target_arch = "wasm32"))]
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    // Used to spawn cancellation tasks. Should be None when running as a SharedRuntime worker,
-    // since the runtime is not guaranteed to exist for the lifetime of the worker.
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<runtime::Handle>,
-
     contexts: MetricContexts,
+    /// Shared with the worker: `add_point` publishes here (see `metric_ring`).
+    metric_ring: Arc<MetricRing>,
+    _phantom: PhantomData<fn() -> C>,
 }
 
-impl TelemetryWorkerHandle {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clone
+    for TelemetryWorkerHandle<C>
+{
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            shutdown: self.shutdown.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime: self.runtime.clone(),
+            contexts: self.contexts.clone(),
+            metric_ring: self.metric_ring.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
+    for TelemetryWorkerHandle<C>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetryWorkerHandle")
+            .field("sender", &self.sender)
+            .field("cancellation_token", &self.cancellation_token)
+            .finish()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn schedule_deferred_cancel<F>(runtime: Option<&runtime::Handle>, future: F)
+where
+    F: core::future::Future<Output = ()> + Send + 'static,
+{
+    let Some(rt) = runtime else {
+        tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
+        return;
+    };
+    rt.spawn(future);
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
+    TelemetryWorkerHandle<C>
+{
     pub fn register_metric_context(
         &self,
         name: String,
@@ -991,30 +1202,57 @@ impl TelemetryWorkerHandle {
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
     }
 
-    fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
-        let Some(runtime) = &self.runtime else {
-            tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
-            return;
-        };
+    /// Schedule a deferred `CancellationToken::cancel()` to fire after `deadline`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
         let token = self.cancellation_token.clone();
-        let f = async move {
-            tokio::time::sleep_until(deadline.into()).await;
-            token.cancel()
+        let remaining = deadline.saturating_duration_since(time::Instant::now());
+        let sleeper = <C as SleepCapability>::new();
+        let future = async move {
+            sleeper.sleep(remaining).await;
+            token.cancel();
         };
-        runtime.spawn(f);
+        schedule_deferred_cancel(self.runtime.as_ref(), future);
     }
 
+    /// Sync wrapper: schedule a cancellation deadline and block the current
+    /// thread until shutdown finishes.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
         self.cancel_requests_with_deadline(deadline);
         self.wait_for_shutdown()
     }
 
-    pub fn add_dependency(&self, name: String, version: Option<String>) -> anyhow::Result<()> {
+    pub fn add_dependency(
+        &self,
+        name: String,
+        version: Option<String>,
+        metadata: Option<Vec<data::DependencyMetadata>>,
+    ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddDependency(Dependency {
                 name,
                 version,
+                hash: None,
+                metadata,
             }))?;
+        Ok(())
+    }
+
+    pub fn add_product_change(
+        &self,
+        product: String,
+        enabled: bool,
+        version: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.sender.try_send(TelemetryActions::AddProductChange((
+            product,
+            ProductState {
+                enabled,
+                version,
+                error: None,
+            },
+        )))?;
         Ok(())
     }
 
@@ -1025,6 +1263,7 @@ impl TelemetryWorkerHandle {
         version: Option<String>,
         compatible: Option<bool>,
         auto_enabled: Option<bool>,
+        error: Option<String>,
     ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddIntegration(Integration {
@@ -1033,6 +1272,7 @@ impl TelemetryWorkerHandle {
                 compatible,
                 enabled,
                 auto_enabled,
+                error,
             }))?;
         Ok(())
     }
@@ -1069,11 +1309,13 @@ impl TelemetryWorkerHandle {
         context: &ContextKey,
         extra_tags: Vec<Tag>,
     ) -> anyhow::Result<()> {
-        self.sender
-            .try_send(TelemetryActions::AddPoint((value, *context, extra_tags)))?;
+        // Points are the highest-frequency action; publish to the lock-free ring buffer rather
+        // than boxing a message + waking the receiver per point. The worker batch-drains it.
+        self.metric_ring.push(value, *context, extra_tags);
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown(&self) {
         self.shutdown.wait_for_shutdown();
     }
@@ -1103,14 +1345,15 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
-    pub dependencies: store::Store<data::Dependency>,
+    pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
-    pub endpoints: HashSet<data::Endpoint>,
+    pub endpoints: store::Store<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
     pub flavor: TelemetryWorkerFlavor,
+    pub install_signature: Option<data::InstallSignature>,
 }
 
 impl TelemetryWorkerBuilder {
@@ -1157,39 +1400,37 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
-            endpoints: HashSet::new(),
+            endpoints: store::Store::new(10000),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
             flavor: TelemetryWorkerFlavor::default(),
+            install_signature: None,
         }
     }
 
     /// Build the corresponding worker and its handle.
-    ///
-    /// The optional runtime handle is stored in the worker handle and should be the one used to run
-    /// the worker task cancellation deadlines. Pass `None` when the worker will be run via a
-    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
-    pub fn build_worker(
+    pub fn build_worker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
-        tokio_runtime: Option<Handle>,
-    ) -> (TelemetryWorkerHandle, TelemetryWorker) {
+        #[cfg(not(target_arch = "wasm32"))] tokio_runtime: Option<runtime::Handle>,
+    ) -> (TelemetryWorkerHandle<C>, TelemetryWorker<C>) {
         let (tx, mailbox) = mpsc::channel(5000);
+        #[cfg(not(target_arch = "wasm32"))]
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
             condvar: Condvar::new(),
         });
         let contexts = MetricContexts::default();
+        let metric_ring = Arc::new(MetricRing::new());
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
-        let client = http_client::from_config(&config);
+        let capabilities = C::new_without_connection_pooling();
 
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
-        #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
             flavor: self.flavor,
             data: TelemetryWorkerData {
@@ -1198,11 +1439,15 @@ impl TelemetryWorkerBuilder {
                 integrations: self.integrations,
                 configurations: self.configurations,
                 endpoints: self.endpoints,
+                endpoints_is_first: true,
+                products: std::collections::HashMap::new(),
+                products_pending: HashSet::new(),
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
                 host: self.host,
                 app: self.application,
+                install_signature: self.install_signature,
             },
             config,
             mailbox,
@@ -1210,7 +1455,7 @@ impl TelemetryWorkerBuilder {
             runtime_id: self
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            client,
+            capabilities,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
                 (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
@@ -1222,39 +1467,49 @@ impl TelemetryWorkerBuilder {
             ]),
             cancellation_token: token.clone(),
             next_action: None,
+            stopped: false,
+            metric_ring: metric_ring.clone(),
         };
 
         (
             TelemetryWorkerHandle {
                 sender: tx,
+                #[cfg(not(target_arch = "wasm32"))]
                 shutdown,
                 cancellation_token: token,
+                #[cfg(not(target_arch = "wasm32"))]
                 runtime: tokio_runtime,
-
                 contexts,
+                metric_ring,
+                _phantom: PhantomData,
             },
             worker,
         )
     }
 
-    /// Spawns a telemetry worker task in the current tokio runtime
-    /// The worker will capture a reference to the runtime and use it to run its tasks
-    pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
+    /// Spawns a telemetry worker task in the current tokio runtime.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> (TelemetryWorkerHandle<C>, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, worker) = self.build_worker(Some(tokio_runtime.clone()));
+        let (worker_handle, worker) = self.build_worker::<C>(Some(tokio_runtime.clone()));
 
         let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
 
         (worker_handle, join_handle)
     }
 
-    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
-    pub fn run(self) -> anyhow::Result<TelemetryWorkerHandle> {
+    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn run<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> anyhow::Result<TelemetryWorkerHandle<C>> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, worker) = self.build_worker(Some(runtime.handle().clone()));
+        let (handle, worker) = self.build_worker::<C>(Some(runtime.handle().clone()));
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
             runtime.block_on(worker.run_loop());
@@ -1268,7 +1523,17 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::TelemetryWorkerHandle;
+    use crate::config::TelemetryEndpoint;
+    use crate::data::Payload;
+    use crate::worker::http_client::header::{
+        DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
+    };
+    use crate::worker::{
+        LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
+        TelemetryWorkerFlavor, TelemetryWorkerHandle,
+    };
+    use libdd_capabilities_impl::NativeCapabilities;
+    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
@@ -1276,9 +1541,392 @@ mod tests {
     #[test]
     fn test_handle_sync_send() {
         #[allow(clippy::redundant_closure)]
-        let _ = |h: TelemetryWorkerHandle| is_send(h);
+        let _ = |h: TelemetryWorkerHandle<NativeCapabilities>| is_send(h);
         #[allow(clippy::redundant_closure)]
-        let _ = |h: TelemetryWorkerHandle| is_sync(h);
+        let _ = |h: TelemetryWorkerHandle<NativeCapabilities>| is_sync(h);
+    }
+
+    fn test_worker(
+        session_id: Option<String>,
+        root_session_id: Option<String>,
+        parent_session_id: Option<String>,
+    ) -> TelemetryWorker<NativeCapabilities> {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.config.session_id = session_id;
+        b.config.parent_session_id = parent_session_id;
+        b.config.root_session_id = root_session_id;
+        let rt = Runtime::new().unwrap();
+        b.build_worker::<NativeCapabilities>(Some(rt.handle().clone()))
+            .1
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_http_includes_dd_session_id() {
+        let req = test_worker(Some("sess".into()), None, None)
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("sess-id".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("root".into()),
+            Some("sess-id".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_http_omits_session_family_without_valid_session_id() {
+        let assert_no_session_headers = |req: &http::Request<bytes::Bytes>| {
+            assert!(req.headers().get(DD_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+        };
+
+        let req = test_worker(None, Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+
+        let req = test_worker(
+            Some(String::new()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_no_session_headers(&req);
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
+        let req = test_worker(
+            Some("sess".into()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    fn build_test_worker_with_flavor(
+        flavor: TelemetryWorkerFlavor,
+    ) -> TelemetryWorker<NativeCapabilities> {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.flavor = flavor;
+        b.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
+            .1
+    }
+
+    /// `endpoints_message_limit` caps one payload, it does not discard the rest: the overflow has
+    /// to come back in later payloads, and only the very first of them may set `is_first` (the
+    /// backend replaces its endpoint set on a first payload and merges on the others).
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    async fn endpoints_message_limit_chunks_payloads_and_flags_only_the_first() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+        worker.config.endpoints_message_limit = 2;
+
+        for i in 0..5 {
+            worker.data.endpoints.insert(crate::data::Endpoint {
+                operation_name: "http.request".to_string(),
+                resource_name: format!("GET /r{i}"),
+                ..Default::default()
+            });
+        }
+
+        let mut chunks = Vec::new();
+        // Each round: build the payload the flush would send, then account for a successful send.
+        while worker.data.endpoints.flush_not_empty() {
+            let payloads = worker.build_app_events_batch();
+            let endpoints = payloads
+                .iter()
+                .find_map(|p| match p {
+                    crate::data::Payload::AppEndpoints(e) => Some(e),
+                    _ => None,
+                })
+                .expect("an app-endpoints payload while endpoints are queued");
+            chunks.push((endpoints.is_first, endpoints.endpoints.len()));
+            let sent = crate::data::Payload::AppEndpoints(crate::data::AppEndpoints {
+                is_first: endpoints.is_first,
+                endpoints: endpoints.endpoints.clone(),
+            });
+            worker.payload_sent_success(&sent);
+        }
+
+        assert_eq!(
+            chunks,
+            vec![(true, 2), (false, 2), (false, 1)],
+            "5 endpoints at a limit of 2 should be 2+2+1 with is_first only on the first payload"
+        );
+    }
+
+    /// Every event with a delay must be scheduled on Start; otherwise it sits in
+    /// `delays` forever and its handler never fires. Walking `delays` (rather than
+    /// enumerating variants) guards against future periodic actions regressing.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
+    async fn full_flavor_start_schedules_every_periodic_action() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let delays: Vec<LifecycleAction> =
+            worker.deadlines.delays.iter().map(|(_, k)| *k).collect();
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(!delays.is_empty(), "scheduler should have periodic actions");
+        for ev in &delays {
+            assert!(
+                scheduled.contains(ev),
+                "{ev:?} has a delay but was not scheduled on Start; scheduled={scheduled:?}",
+            );
+        }
+    }
+
+    /// `MetricsLogs` flavor intentionally excludes lifecycle events. Negative guard
+    /// so any future change emitting them from this flavor has to update the test.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
+
+        let _ = worker
+            .dispatch_metrics_logs_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(scheduled.contains(&LifecycleAction::FlushMetricAggr));
+        assert!(scheduled.contains(&LifecycleAction::FlushData));
+        assert!(
+            !scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
+            "MetricsLogs should not schedule ExtendedHeartbeat; scheduled={scheduled:?}",
+        );
+    }
+
+    /// Regression: when `extended_heartbeat_interval < heartbeat_interval`, the
+    /// ExtendedHeartbeat handler must not reset FlushData's deadline. If it did, each
+    /// firing would push FlushData to `now + heartbeat_interval` and the next
+    /// (sooner) ExtendedHeartbeat would push it again — starving FlushData forever.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
+    async fn extended_heartbeat_does_not_reset_flush_data() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let flush_data_before = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData scheduled on Start");
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(
+                LifecycleAction::ExtendedHeartbeat,
+            ))
+            .await;
+
+        let flush_data_after = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData should still be scheduled after ExtendedHeartbeat fires");
+
+        assert_eq!(
+            flush_data_before, flush_data_after,
+            "ExtendedHeartbeat must not reset FlushData's deadline",
+        );
+    }
+
+    /// On api v2 the intake rejects an entire `app-started` payload whose `dependencies` or
+    /// `integrations` is non-empty ("v2 no longer accepts this field in app-started"), while
+    /// `app-extended-heartbeat` is validated with the v1 rules and is expected to carry both.
+    /// Both events are built from the same `data::AppStarted` shape, so it is easy to regress one
+    /// into the other.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn app_started_omits_dependencies_and_integrations() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddDependency(crate::data::Dependency {
+                name: "monolog/monolog".into(),
+                version: Some("3.5.0".into()),
+                ..Default::default()
+            }))
+            .await;
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddIntegration(crate::data::Integration {
+                name: "curl".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .await;
+
+        let app_started = worker.build_app_started();
+        assert!(
+            app_started.dependencies.is_empty(),
+            "app-started must not carry dependencies; the intake rejects the whole payload",
+        );
+        assert!(
+            app_started.integrations.is_empty(),
+            "app-started must not carry integrations; the intake rejects the whole payload",
+        );
+
+        // The data is not lost: it stays unflushed and goes out as its own events.
+        let batch = worker.build_app_events_batch();
+        assert!(
+            batch.iter().any(|p| matches!(
+                p,
+                crate::data::Payload::AppDependenciesLoaded(d) if !d.dependencies.is_empty()
+            )),
+            "dependencies registered before Start must still be reported via \
+             app-dependencies-loaded, got {batch:?}",
+        );
+        assert!(
+            batch.iter().any(|p| matches!(
+                p,
+                crate::data::Payload::AppIntegrationsChange(i) if !i.integrations.is_empty()
+            )),
+            "integrations registered before Start must still be reported via \
+             app-integrations-change, got {batch:?}",
+        );
+    }
+
+    /// The counterpart to the above: the extended heartbeat re-states the full accumulated
+    /// application state, dependencies and integrations included.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn extended_heartbeat_carries_dependencies_and_integrations() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddDependency(crate::data::Dependency {
+                name: "monolog/monolog".into(),
+                version: Some("3.5.0".into()),
+                ..Default::default()
+            }))
+            .await;
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddIntegration(crate::data::Integration {
+                name: "curl".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .await;
+
+        let hb = worker.build_extended_heartbeat();
+        assert_eq!(1, hb.dependencies.len(), "{hb:?}");
+        assert_eq!(1, hb.integrations.len(), "{hb:?}");
     }
 
     mod reset {
@@ -1287,9 +1935,13 @@ mod tests {
             metrics::{MetricNamespace, MetricType},
             Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
         };
+        use libdd_capabilities_impl::NativeCapabilities;
         use libdd_shared_runtime::Worker;
 
-        fn build_test_worker() -> (TelemetryWorkerHandle, TelemetryWorker) {
+        fn build_test_worker() -> (
+            TelemetryWorkerHandle<NativeCapabilities>,
+            TelemetryWorker<NativeCapabilities>,
+        ) {
             let builder = TelemetryWorkerBuilder::new(
                 "hostname".to_string(),
                 "test-service".to_string(),
@@ -1298,7 +1950,7 @@ mod tests {
                 "1.0.0".to_string(),
             );
             // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
-            builder.build_worker(Some(tokio::runtime::Handle::current()))
+            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
         }
 
         fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {
@@ -1317,6 +1969,7 @@ mod tests {
         }
 
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_clears_buffered_data() {
             let (handle, mut worker) = build_test_worker();
@@ -1324,7 +1977,7 @@ mod tests {
             // Populate every data field that reset() should clear.
             worker.data.dependencies.insert(Dependency {
                 name: "dep".to_string(),
-                version: None,
+                ..Default::default()
             });
             worker.data.integrations.insert(Integration {
                 name: "integration".to_string(),
@@ -1332,10 +1985,11 @@ mod tests {
                 enabled: true,
                 compatible: None,
                 auto_enabled: None,
+                ..Default::default()
             });
             worker.data.configurations.insert(Configuration {
                 name: "cfg".to_string(),
-                value: "true".to_string(),
+                value: Some("true".to_string()),
                 origin: ConfigurationOrigin::Code,
                 config_id: None,
                 seq_id: None,
@@ -1394,14 +2048,20 @@ mod tests {
                 stats.metric_buckets.series, 0,
                 "metric series should be cleared"
             );
-            assert!(
-                worker.data.endpoints.is_empty(),
+            assert_eq!(
+                worker.data.endpoints.len_stored(),
+                0,
                 "endpoints should be cleared"
+            );
+            assert!(
+                worker.data.endpoints_is_first,
+                "the child's first app-endpoints payload is a first one again"
             );
             assert!(worker.next_action.is_none(), "next_action should be None");
         }
 
         /// After reset(), actions queued in the mailbox before the fork are discarded.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_drains_mailbox() {
             let (handle, mut worker) = build_test_worker();
@@ -1410,7 +2070,7 @@ mod tests {
             handle
                 .try_send_msg(TelemetryActions::AddDependency(Dependency {
                     name: "dep".to_string(),
-                    version: None,
+                    ..Default::default()
                 }))
                 .unwrap();
             let (id, log) = make_log(1, "pre-fork log");
@@ -1443,6 +2103,7 @@ mod tests {
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_worker_accepts_new_data_after_reset() {
             let (handle, mut worker) = build_test_worker();
@@ -1470,6 +2131,7 @@ mod tests {
         }
 
         /// After reset(), lifecycle state needed to keep periodic flushing alive is preserved.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_preserves_started_and_deadlines() {
             let (_handle, mut worker) = build_test_worker();
@@ -1506,5 +2168,156 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_channel_close_flushes_and_parks_via_shared_runtime() {
+        use httpmock::prelude::*;
+        use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+        use std::time::Duration;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path(TELEMETRY_PATH);
+            then.status(202).body("");
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.runtime_id = Some("rid".into());
+
+        let shared_runtime = ForkSafeRuntime::new().expect("ForkSafeRuntime::new");
+        let runtime_handle = shared_runtime
+            .block_on(async { tokio::runtime::Handle::current() })
+            .expect("runtime handle");
+        let (telemetry_handle, worker) =
+            builder.build_worker::<NativeCapabilities>(Some(runtime_handle));
+
+        let _worker_handle = shared_runtime
+            .spawn_worker(worker, false)
+            .expect("spawn_worker");
+
+        // Drive the worker into the started state so Stop has work to flush.
+        telemetry_handle.send_start().expect("send_start");
+
+        // Wait for the AppStarted batch so we know the worker reached started == true
+        // before we close the channel.
+        for _ in 0..50 {
+            if mock.calls() >= 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() >= 1,
+            "worker should POST at least once after Start"
+        );
+
+        // Close the mailbox by dropping the handle.
+        let hits_before_close = mock.calls();
+        drop(telemetry_handle);
+
+        // The worker must dispatch Lifecycle::Stop, which flushes a final batch, then park.
+        for _ in 0..50 {
+            if mock.calls() > hits_before_close {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() > hits_before_close,
+            "worker should flush a final batch after the channel is closed"
+        );
+
+        // Once parked, the worker must stop POSTing. Sample for a while and require the
+        // hit count to stabilise (proves no Stop-emit loop).
+        let stable_hits = mock.calls();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            mock.calls(),
+            stable_hits,
+            "worker must stop POSTing after parking; observed {} extra hits",
+            mock.calls().saturating_sub(stable_hits),
+        );
+    }
+
+    /// An action enqueued into the mailbox but not yet processed by the runloop
+    /// must still be reflected in the final Stop flush. Drives `shutdown()`
+    /// directly (no `run_loop`) so the assertion is deterministic.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn shutdown_drains_pending_actions_before_stop() {
+        use crate::data::metrics::{MetricNamespace, MetricType};
+        use httpmock::prelude::*;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+        const METRIC_NAME: &str = "regression.drain_before_stop";
+
+        let server = MockServer::start();
+        let metric_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(TELEMETRY_PATH)
+                .body_includes(format!(r#""metric":"{METRIC_NAME}""#));
+            then.status(202).body("");
+        });
+        // Absorb the AppStarted / AppClosing payloads that don't carry the metric.
+        let _lifecycle = server.mock(|when, then| {
+            when.method(POST).path(TELEMETRY_PATH);
+            then.status(202).body("");
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.runtime_id = Some("rid".into());
+        let (handle, mut worker) =
+            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
+
+        let context = handle.register_metric_context(
+            METRIC_NAME.into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        // Get the worker into `started == true` so Stop performs the flush.
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        handle
+            .add_point(1.0, &context, Vec::new())
+            .expect("add_point");
+
+        <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
+
+        metric_mock.assert_calls(1);
     }
 }

@@ -1,8 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::convert::Infallible;
 use core::fmt;
-use std::convert::Infallible;
+use core::time::Duration;
 
 use thiserror::Error;
 
@@ -26,8 +27,8 @@ pub struct ClientError {
     kind: ErrorKind,
 }
 
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.source.fmt(f)
     }
 }
@@ -46,7 +47,7 @@ pub enum Error {
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::Client(e) => write!(f, "client error: {e}"),
             Error::Infallible(e) => match *e {},
@@ -67,19 +68,20 @@ impl From<http::Error> for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 // --- Native-only code (hyper, Body, client builders, etc.) ---
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use std::error::Error as _;
-    use std::task::Poll;
+    use core::error::Error as _;
+    use core::task::Poll;
 
     use crate::connector::Connector;
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
+    use hyper_util::rt::TokioTimer;
     use pin_project::pin_project;
 
     impl From<hyper::Error> for ClientError {
@@ -115,15 +117,29 @@ mod native {
 
     pub type ResponseFuture = hyper_util::client::legacy::ResponseFuture;
 
+    /// Idle timeout for connections kept alive by a client configured for periodic use (see
+    /// [`new_client_periodic`]).
+    ///
+    /// Kept much smaller than typical keep-alive timeouts on the receiving end (e.g. the Datadog
+    /// agent), so that an idle pooled connection is dropped by our side before the receiver closes
+    /// it.
+    pub(crate) const PERIODIC_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Max number of idle connections in a client's connection pool. This is a safety resource
+    /// bound that we don't really expect to hit in practice.
+    pub(crate) const POOL_MAX_IDLE: usize = 20;
+
     /// Create a new default configuration hyper client for fixed interval sending.
     ///
-    /// This client does not keep connections because otherwise we would get a pipe closed
-    /// every second connection because of low keep alive in the agent.
+    /// This client pools connections with a small timeout (smaller than any potential keep-alive on
+    /// the receiver side), because otherwise we would get a pipe closed every second connection
+    /// because of the keep alive in the agent or the backend.
     ///
-    /// This is on general not a problem if we use the client once every tens of seconds.
+    /// This is in general not a problem if we use the client once every tens of seconds.
     pub fn new_client_periodic() -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-            .pool_max_idle_per_host(0)
+            .pool_timer(TokioTimer::new())
+            .pool_idle_timeout(PERIODIC_POOL_IDLE_TIMEOUT)
+            .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
 
@@ -132,6 +148,7 @@ mod native {
     /// It will keep connections open for a longer time and reuse them.
     pub fn new_default_client() -> GenericHttpClient<Connector> {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
+            .pool_max_idle_per_host(POOL_MAX_IDLE)
             .build(Connector::default())
     }
 
@@ -205,7 +222,7 @@ mod native {
         }
 
         pub fn boxed<
-            E: std::error::Error + Sync + Send + 'static,
+            E: core::error::Error + Sync + Send + 'static,
             T: hyper::body::Body<Data = hyper::body::Bytes, Error = E> + Sync + Send + 'static,
         >(
             body: T,
@@ -253,9 +270,9 @@ mod native {
         type Error = Error;
 
         fn poll_frame(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self: core::pin::Pin<&mut Self>,
+            cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
             match self.project() {
                 BodyProj::Single(pin) => pin.poll_frame(cx).map_err(Error::Infallible),
                 BodyProj::Empty(pin) => pin.poll_frame(cx).map_err(Error::Infallible),
@@ -299,56 +316,6 @@ mod native {
 
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-    }
-
-    // --- DefaultHttpClient: portable HttpClientTrait backed by hyper ---
-
-    use libdd_capabilities::http::{HttpClientTrait, HttpError};
-    use libdd_capabilities::maybe_send::MaybeSend;
-
-    #[derive(Clone)]
-    pub struct DefaultHttpClient {
-        client: GenericHttpClient<Connector>,
-    }
-
-    impl std::fmt::Debug for DefaultHttpClient {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("DefaultHttpClient").finish()
-        }
-    }
-
-    impl HttpClientTrait for DefaultHttpClient {
-        fn new_client() -> Self {
-            Self {
-                client: new_default_client(),
-            }
-        }
-
-        #[allow(clippy::manual_async_fn)]
-        fn request(
-            &self,
-            req: http::Request<bytes::Bytes>,
-        ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
-        {
-            let client = self.client.clone();
-            async move {
-                let hyper_req = req.map(Body::from_bytes);
-
-                let response = client
-                    .request(hyper_req)
-                    .await
-                    .map_err(|e| HttpError::Network(e.into()))?;
-
-                let (parts, body) = response.into_parts();
-                let collected = body
-                    .collect()
-                    .await
-                    .map_err(|e| HttpError::ResponseBody(e.into()))?
-                    .to_bytes();
-
-                Ok(http::Response::from_parts(parts, collected))
-            }
-        }
     }
 }
 

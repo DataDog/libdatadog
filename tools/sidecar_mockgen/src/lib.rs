@@ -1,7 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use object::{File, Object, ObjectSymbol, Symbol, SymbolFlags, SymbolKind};
+use object::macho::MachHeader64;
+use object::read::elf::{ElfFile64, FileHeader};
+use object::read::macho::{LoadCommandVariant, MachHeader};
+use object::{
+    BinaryFormat, Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol,
+    SymbolFlags, SymbolKind,
+};
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
@@ -20,6 +26,17 @@ fn check_and_parse<'a>(
     match File::parse(bin_data.as_slice()) {
         Err(e) => Err(format!("Could not parse {}: {}", path.to_string_lossy(), e)),
         Ok(parsed) => Ok(parsed),
+    }
+}
+
+fn sym_is_definition(sym: &Symbol) -> bool {
+    if sym.is_definition() {
+        return true;
+    }
+    match sym.flags() {
+        // 10 == STT_GNU_IFUNC for ELF files
+        SymbolFlags::Elf { st_info, .. } => st_info & 0xf == 10,
+        _ => false,
     }
 }
 
@@ -42,25 +59,15 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         }
     }
 
-    fn sym_is_definition(sym: &Symbol) -> bool {
-        if sym.is_definition() {
-            return true;
-        }
-        match sym.flags() {
-            // 10 == STT_GNU_IFUNC for ELF files
-            SymbolFlags::Elf { st_info, .. } => st_info & 0xf == 10,
-            _ => false,
-        }
-    }
+    // Mach-O symbol names carry a leading '_' that ELF/COFF names don't.
+    let is_macho = so_file.format() == BinaryFormat::MachO;
 
     let mut generated = String::new();
     for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
         if sym_is_definition(&sym) {
             if let Ok(name) = sym.name() {
                 if missing_symbols.remove(name) {
-                    // strip leading underscore
-                    #[cfg(target_os = "macos")]
-                    let name = &name[1..];
+                    let name = if is_macho { &name[1..] } else { name };
                     _ = match sym.kind() {
                         SymbolKind::Text => {
                             if !sym.is_weak() {
@@ -73,23 +80,19 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
                         SymbolKind::Data | SymbolKind::Unknown => {
                             if sym.size() > 0 {
                                 writeln!(generated, "char {}[{}];", name, sym.size())
+                            } else if is_macho {
+                                writeln!(generated, "char {name}[1];")
                             } else {
-                                #[cfg(not(target_os = "macos"))]
-                                let ret = Ok(());
-                                #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "char {name}[1];");
-                                ret
+                                Ok(())
                             }
                         }
                         SymbolKind::Tls => {
                             if sym.size() > 0 {
                                 writeln!(generated, "__thread char {}[{}];", name, sym.size())
+                            } else if is_macho {
+                                writeln!(generated, "__thread char {name}[1];")
                             } else {
-                                #[cfg(not(target_os = "macos"))]
-                                let ret = Ok(());
-                                #[cfg(target_os = "macos")]
-                                let ret = writeln!(generated, "__thread char {name}[1];");
-                                ret
+                                Ok(())
                             }
                         }
                         _ => Ok(()),
@@ -99,4 +102,233 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
         }
     }
     Ok(generated)
+}
+
+/// Weaken symbols present in a binary in relocatable objects (`.o`) in place.
+pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String> {
+    let data = fs::read(target).map_err(|e| format!("read {}: {e}", target.display()))?;
+
+    let undefined_candidates: HashSet<String> = File::parse(data.as_slice())
+        .map_err(|e| format!("parse {}: {e}", target.display()))?
+        .symbols()
+        .filter(
+            |s| s.is_undefined(), /* somehow symbols can be misreported as weak?! */
+        )
+        .filter_map(|s| s.name().ok().map(|n| n.to_string()))
+        .collect();
+
+    // Filter symbols from binary.
+    let symbols = {
+        let bin_data = fs::read(binary).map_err(|e| format!("read {}: {e}", binary.display()))?;
+        let so_file = File::parse(bin_data.as_slice())
+            .map_err(|e| format!("parse {}: {e}", binary.display()))?;
+        let mut result = HashSet::new();
+        // Dispatch on the binary's actual format, not the host's `target_os`: `binary` may be
+        // for a different target than the one this tool was built for (cross-compilation).
+        let is_macho = so_file.format() == BinaryFormat::MachO;
+        // `dynamic_symbols()` is exported symbols only on macos.
+        let candidate_syms: Vec<_> = if is_macho {
+            so_file
+                .symbols()
+                .filter(|s| s.scope() == object::SymbolScope::Dynamic)
+                .collect()
+        } else {
+            so_file.dynamic_symbols().collect()
+        };
+        for sym in candidate_syms {
+            if sym_is_definition(&sym) {
+                if let Ok(name) = sym.name() {
+                    if undefined_candidates.contains(name) {
+                        let name = if is_macho {
+                            name.strip_prefix('_').unwrap_or(name)
+                        } else {
+                            name
+                        };
+                        result.insert(name.to_string());
+                    }
+                }
+            }
+        }
+        result
+    };
+
+    weaken_symtab(target, &symbols)
+}
+
+/// Weaken select symbols in the `.symtab` of an ELF relocatable object (`.o`).
+///
+/// - ELF64: flips `st_bind` from `STB_GLOBAL(1)` → `STB_WEAK(2)` in `.symtab`
+/// - Mach-O64: sets `N_WEAK_REF(0x0040)` in `n_desc` in `LC_SYMTAB`
+fn weaken_symtab(obj_path: &Path, symbols: &HashSet<String>) -> Result<(), String> {
+    let mut data = fs::read(obj_path).map_err(|e| format!("read {}: {e}", obj_path.display()))?;
+
+    let file_kind = FileKind::parse(data.as_slice())
+        .map_err(|e| format!("parse {}: {e}", obj_path.display()))?;
+    let modified = match file_kind {
+        FileKind::Elf64 => weaken_elf(&mut data, symbols, obj_path)?,
+        FileKind::MachO64 => weaken_macho(&mut data, symbols, obj_path)?,
+        _ => false,
+    };
+
+    if modified {
+        fs::write(obj_path, &data).map_err(|e| format!("write {}: {e}", obj_path.display()))?;
+    }
+    Ok(())
+}
+
+fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Result<bool, String> {
+    let (symtab_patches, lto_patches): (Vec<usize>, Vec<usize>) = {
+        let elf = ElfFile64::<Endianness>::parse(&*data)
+            .map_err(|e| format!("parse {}: {e}", obj_path.display()))?;
+
+        let symtab = match elf.section_by_name(".symtab") {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+        let (symtab_off, _) = symtab
+            .file_range()
+            .ok_or_else(|| format!("{}: .symtab has no file range", obj_path.display()))?;
+
+        // A slim LTO object (`-flto` without `-ffat-lto-objects`) has no real object code at all:
+        // We don't have anything we can do here. Just fail.
+        if elf
+            .symbols()
+            .any(|sym| sym.name().is_ok_and(|n| n == "__gnu_lto_slim"))
+        {
+            return Err(format!(
+                "{}: compiled as a slim LTO object (missing -ffat-lto-objects); \
+                 weaken-dynsym cannot patch symbol bindings inside GCC's LTO-only bytecode. \
+                 Recompile with -ffat-lto-objects (or without -flto).",
+                obj_path.display()
+            ));
+        }
+
+        let symtab_patches: Vec<usize> = elf
+            .symbols()
+            .filter(|sym| {
+                sym.is_undefined()
+                    && !sym.is_weak()
+                    && sym.name().is_ok_and(|n| symbols.contains(n))
+            })
+            .map(|sym| (symtab_off + sym.index().0 as u64 * 24 + 4) as usize) // sizeof(Elf64_Sym)=24; st_info at +4
+            .collect();
+
+        if symtab_patches.is_empty() {
+            return Ok(false);
+        }
+
+        // `-ffat-lto-objects` embeds a second, independent copy of every symbol's binding in
+        // `.gnu.lto_*` sections. The linker then recompiles from that IR instead of object data
+        // directly. Stripping the LTO sections to force the linker to use the object sections.
+        let header = elf.elf_header();
+        let endian = elf.endian();
+        let sh_off = header.e_shoff(endian) as usize;
+        let sh_entsize = header.e_shentsize(endian) as usize;
+        let lto_patches: Vec<usize> = elf
+            .sections()
+            .filter(|s| {
+                s.name()
+                    .is_ok_and(|n| n.starts_with(".gnu.lto_") || n.starts_with(".gnu.debuglto_"))
+            })
+            .map(|s| sh_off + s.index().0 * sh_entsize)
+            .collect();
+
+        (symtab_patches, lto_patches)
+    };
+
+    for pos in symtab_patches {
+        let old = data[pos];
+        data[pos] = (2u8 << 4) | (old & 0xf); // STB_WEAK = 2
+    }
+    for base in lto_patches {
+        // sh_name: blank to the empty string always present at offset 0 of a valid ELF string table
+        data[base..base + 4].fill(0);
+    }
+    Ok(true)
+}
+
+fn weaken_macho(
+    data: &mut [u8],
+    symbols: &HashSet<String>,
+    obj_path: &Path,
+) -> Result<bool, String> {
+    let patches: Vec<(usize, [u8; 2])> = {
+        let file =
+            File::parse(&*data).map_err(|e| format!("parse macho {}: {e}", obj_path.display()))?;
+
+        // Mach-O symbol names have a leading '_' stripped when `symbols` was built.
+        let indices: Vec<usize> = file
+            .symbols()
+            .filter(|sym| {
+                sym.is_undefined()
+                    && sym
+                        .name()
+                        .is_ok_and(|n| symbols.contains(n.strip_prefix('_').unwrap_or(n)))
+            })
+            .map(|sym| sym.index().0)
+            .collect();
+
+        if indices.is_empty() {
+            return Ok(false);
+        }
+
+        let (symoff, is_be) = macho_find_symoff(data, obj_path)?;
+
+        indices
+            .into_iter()
+            .filter_map(|idx| {
+                let abs = symoff + idx * 16 + 6; // nlist_64: 16 bytes/entry, n_desc at offset 6
+                if abs + 2 > data.len() {
+                    return None;
+                }
+                let old = if is_be {
+                    u16::from_be_bytes(data[abs..abs + 2].try_into().ok()?)
+                } else {
+                    u16::from_le_bytes(data[abs..abs + 2].try_into().ok()?)
+                };
+                let new_val = old | 0x0040; // N_WEAK_REF
+                Some((
+                    abs,
+                    if is_be {
+                        new_val.to_be_bytes()
+                    } else {
+                        new_val.to_le_bytes()
+                    },
+                ))
+            })
+            .collect()
+    };
+
+    if patches.is_empty() {
+        return Ok(false);
+    }
+    for (off, bytes) in patches {
+        data[off..off + 2].copy_from_slice(&bytes);
+    }
+    Ok(true)
+}
+
+/// Walk `LC_SYMTAB` load commands to find the symbol table file offset.
+/// Returns `(symoff, is_big_endian)`.
+fn macho_find_symoff(data: &[u8], obj_path: &Path) -> Result<(usize, bool), String> {
+    let header = MachHeader64::<Endianness>::parse(data, 0)
+        .map_err(|e| format!("parse mach header {}: {e}", obj_path.display()))?;
+    let endian = header
+        .endian()
+        .map_err(|e| format!("mach endian {}: {e}", obj_path.display()))?;
+    let mut cmds = header
+        .load_commands(endian, data, 0)
+        .map_err(|e| format!("load commands {}: {e}", obj_path.display()))?;
+    loop {
+        match cmds.next() {
+            Ok(Some(cmd)) => {
+                if let Ok(LoadCommandVariant::Symtab(sc)) = cmd.variant() {
+                    return Ok((sc.symoff.get(endian) as usize, endian.is_big_endian()));
+                }
+            }
+            Ok(None) => break,
+            Err(e) => return Err(format!("{}: load cmd: {e}", obj_path.display())),
+        }
+    }
+    Err(format!("{}: no LC_SYMTAB found", obj_path.display()))
 }

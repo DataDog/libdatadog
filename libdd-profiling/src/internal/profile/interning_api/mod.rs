@@ -55,11 +55,12 @@ impl Profile {
         &mut self,
         labels: &[GenerationalId<LabelId>],
     ) -> anyhow::Result<GenerationalId<LabelSetId>> {
-        let labels = labels
-            .iter()
-            .map(|l| l.get(self.generation))
-            .collect::<anyhow::Result<Box<_>>>()?;
-        let labels = LabelSet::new(labels);
+        let mut vec = Vec::new();
+        vec.try_reserve_exact(labels.len())?;
+        for l in labels.iter() {
+            vec.push(l.get(self.generation)?);
+        }
+        let labels = LabelSet::new(vec.into_boxed_slice());
         let id = self.label_sets.dedup(labels);
         Ok(GenerationalId::new(id, self.generation))
     }
@@ -145,10 +146,14 @@ impl Profile {
         &mut self,
         locations: &[GenerationalId<LocationId>],
     ) -> anyhow::Result<GenerationalId<StackTraceId>> {
-        let locations = locations
-            .iter()
-            .map(|l| l.get(self.generation))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+        let locations = {
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(locations.len())?;
+            for l in locations.iter() {
+                vec.push(l.get(self.generation)?);
+            }
+            vec
+        };
         let stacktrace = StackTrace { locations };
         let id = self.stack_traces.dedup(stacktrace);
         Ok(GenerationalId::new(id, self.generation))
@@ -229,6 +234,6 @@ impl Profile {
 
     pub fn samples_are_drained(&mut self) -> anyhow::Result<bool> {
         let current = self.active_samples.load(SeqCst);
-        Ok(current % Self::FLAG == 0)
+        Ok(current.is_multiple_of(Self::FLAG))
     }
 }

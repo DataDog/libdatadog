@@ -6,26 +6,35 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
+use alloc::borrow::Cow;
 use anyhow::Context;
-use http::uri;
+use core::{ops::Deref, str::FromStr};
+use http::uri::{self, PathAndQuery, Uri};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Mutex, MutexGuard};
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod azure_app_services;
-pub mod capabilities;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
 #[cfg(feature = "reqwest")]
+#[cfg(feature = "http-client")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod machine_id;
+pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
+#[cfg(feature = "http-client")]
 pub mod http_common;
 pub mod multipart;
 #[cfg(not(target_arch = "wasm32"))]
@@ -88,6 +97,85 @@ impl<T> MutexExt<T> for Mutex<T> {
     }
 }
 
+/// Extension trait for `RwLock` to provide methods that acquire read/write locks, panicking if
+/// the lock is poisoned.
+///
+/// Mirrors [`MutexExt`] for `RwLock` so callers avoid `#[allow(clippy::unwrap_used)]` at each
+/// lock site.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::RwLockExt;
+/// use std::sync::{Arc, RwLock};
+///
+/// let data = Arc::new(RwLock::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.write_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.read_or_panic(), 6);
+/// ```
+pub trait RwLockExt<T> {
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.read().unwrap()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.write().unwrap()
+    }
+}
+
+/// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
+///
+/// The signature constrains callers at compile time: the method is only available when the
+/// error type is [`core::convert::Infallible`]. No panics — the compiler proves the `Err`
+/// arm unreachable from the type.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::ResultInfallibleExt;
+/// use std::convert::Infallible;
+///
+/// let result: Result<i32, Infallible> = Ok(42);
+/// assert_eq!(result.unwrap_infallible(), 42);
+/// ```
+pub trait ResultInfallibleExt<T>: sealed::Sealed {
+    fn unwrap_infallible(self) -> T;
+}
+
+impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
+    #[inline(always)]
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<T> Sealed for Result<T, core::convert::Infallible> {}
+}
+
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use http::{header::HeaderName, HeaderValue};
@@ -113,19 +201,17 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use http_common::DefaultHttpClient;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub type HttpResponse = http_common::HttpResponse;
 pub type HttpRequestBuilder = http::request::Builder;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "http-client"))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {
@@ -134,7 +220,7 @@ impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'st
 // Used by tag! macro
 pub use const_format;
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
     pub url: http::Uri,
@@ -146,6 +232,18 @@ pub struct Endpoint {
     /// in-process resolver is used.
     #[serde(default)]
     pub use_system_resolver: bool,
+}
+
+impl core::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("url", &self.url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .field("timeout_ms", &self.timeout_ms)
+            .field("test_token", &self.test_token)
+            .field("use_system_resolver", &self.use_system_resolver)
+            .finish()
+    }
 }
 
 impl Default for Endpoint {
@@ -202,6 +300,20 @@ where
     builder.build().map_err(Error::custom)
 }
 
+/// Converts a human-facing URL string into the internal [`http::Uri`]
+/// representation.
+///
+/// NOTE: the name is misleading. For `http`/`https` this is an ordinary parse,
+/// but for the `file`/`unix`/`windows` schemes it *encodes* the path into the
+/// URI authority (see `encode_uri_path_in_authority`), so it is a
+/// URL-string-to-`Uri` *constructor*, not a pure parser.
+///
+/// WARNING: this is NOT idempotent for those three schemes. The `Uri` it
+/// returns stringifies back to the encoded form (`file://<hex>/`), and feeding
+/// that string in again re-encodes it, double-encoding the path. Only ever call
+/// this on an original URL string — never on the `.to_string()` of a `Uri` that
+/// already came out of here.
+///
 /// TODO: we should properly handle malformed urls
 /// * For windows and unix schemes:
 ///     * For compatibility reasons with existing implementation this parser stores the encoded path
@@ -229,7 +341,7 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http
     let path = hex::encode(path);
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
-    parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+    parts.path_and_query = Some(uri::PathAndQuery::from_static("/"));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -252,6 +364,24 @@ pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> 
 impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
+
+    pub fn agentless(site: &str, api_key: String) -> anyhow::Result<Self> {
+        Ok(Self {
+            url: Uri::builder()
+                .scheme("https")
+                .authority(
+                    uri::Authority::try_from(site)
+                        .with_context(|| format!("dd_site is an invalid url: {site}"))?,
+                )
+                .path_and_query(PathAndQuery::from_static(""))
+                .build()
+                .with_context(|| format!("rc url is invalid for site: {site}"))?,
+            api_key: Some(api_key.into()),
+            timeout_ms: Self::DEFAULT_TIMEOUT,
+            test_token: None,
+            use_system_resolver: true,
+        })
+    }
 
     /// Returns an iterator of optional endpoint-specific headers (api-key, test-token)
     /// as (header_name, header_value) string tuples for any that are available.
@@ -381,7 +511,7 @@ impl Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .timeout(core::time::Duration::from_millis(self.timeout_ms))
             .hickory_dns(!self.use_system_resolver)
             .no_proxy();
 
@@ -432,5 +562,24 @@ impl Endpoint {
         };
 
         Ok((builder, request_url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_uri;
+
+    /// A scheme prefix with an empty path produces an empty (and therefore
+    /// dropped) authority. parsing must reject these as malformed rather
+    /// than accept them.
+    #[test]
+    fn empty_authority_uris_are_rejected() {
+        for input in ["unix://", "windows:", "file://"] {
+            let result = parse_uri(input);
+            assert!(
+                result.is_err(),
+                "expected {input:?} to be rejected, got {result:?}"
+            );
+        }
     }
 }

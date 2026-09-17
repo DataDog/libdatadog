@@ -86,6 +86,8 @@ int main(int argc, char **argv) {
   // Get the default signals and explicitly use them.
   struct ddog_crasht_Slice_CInt signals = ddog_crasht_default_signals();
   ddog_crasht_Config config = {
+      .collect_all_threads = true,
+      .max_threads = 0, // 0 uses the default (libdd_crashtracker::default_max_threads())
       .create_alt_stack = false,
       .endpoint = {.url = slice(report_path)},
       .resolve_frames = DDOG_CRASHT_STACKTRACE_COLLECTION_ENABLED_WITH_INPROCESS_SYMBOLS,

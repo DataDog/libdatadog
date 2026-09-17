@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
-use libdd_shared_runtime::{SharedRuntime, SharedRuntimeError};
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, SharedRuntimeError};
 use std::ffi::{c_char, CString};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-/// Error codes for SharedRuntime FFI operations.
+/// Error codes for ForkSafeRuntime FFI operations.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SharedRuntimeErrorCode {
@@ -28,7 +28,7 @@ pub enum SharedRuntimeErrorCode {
     Panic,
 }
 
-/// Error returned by SharedRuntime FFI functions.
+/// Error returned by ForkSafeRuntime FFI functions.
 #[repr(C)]
 pub struct SharedRuntimeFFIError {
     pub code: SharedRuntimeErrorCode,
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
     catch_panic!(drop(error), ())
 }
 
-/// Create a new `SharedRuntime`.
+/// Create a new `ForkSafeRuntime`.
 ///
 /// On success writes a raw handle into `*out_handle` and returns `None`.
 /// On failure leaves `*out_handle` unchanged and returns an error.
@@ -95,10 +95,10 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 /// [`ddog_shared_runtime_free`] (or another consumer that takes ownership).
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_new(
-    out_handle: NonNull<*const SharedRuntime>,
+    out_handle: NonNull<*const ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
-        match SharedRuntime::new() {
+        match ForkSafeRuntime::new() {
             Ok(runtime) => {
                 out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
                 None
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_new(
 /// The underlying runtime may not be dropped if other components are still using it.
 /// Use [`ddog_shared_runtime_shutdown`] to cleanly stop workers.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) {
+pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const ForkSafeRuntime) {
     catch_panic!(
         {
             if !handle.is_null() {
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const SharedRuntime) 
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
-    handle: Option<&SharedRuntime>,
+    handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
@@ -163,7 +163,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
-    handle: Option<&SharedRuntime>,
+    handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
-    handle: Option<&SharedRuntime>,
+    handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
         {
@@ -217,7 +217,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
     )
 }
 
-/// Shut down the `SharedRuntime`, stopping all workers.
+/// Shut down the `ForkSafeRuntime`, stopping all workers.
 ///
 /// `timeout_ms` is the maximum time to wait for workers to stop, in
 /// milliseconds.  Pass `0` for no timeout.
@@ -227,7 +227,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
-    handle: Option<&SharedRuntime>,
+    handle: Option<&ForkSafeRuntime>,
     timeout_ms: u64,
 ) -> Option<Box<SharedRuntimeFFIError>> {
     catch_panic!(
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_new_and_free() {
         unsafe {
-            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            let mut handle: MaybeUninit<*const ForkSafeRuntime> = MaybeUninit::uninit();
             let err = ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             assert!(err.is_none());
             ddog_shared_runtime_free(handle.assume_init());
@@ -288,19 +288,19 @@ mod tests {
     #[test]
     fn test_fork_lifecycle() {
         unsafe {
-            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            let mut handle: MaybeUninit<*const ForkSafeRuntime> = MaybeUninit::uninit();
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
             let err = ddog_shared_runtime_before_fork(std::mem::transmute::<
-                *const SharedRuntime,
-                Option<&SharedRuntime>,
+                *const ForkSafeRuntime,
+                Option<&ForkSafeRuntime>,
             >(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
             let err = ddog_shared_runtime_after_fork_parent(std::mem::transmute::<
-                *const SharedRuntime,
-                Option<&SharedRuntime>,
+                *const ForkSafeRuntime,
+                Option<&ForkSafeRuntime>,
             >(handle));
             assert!(err.is_none(), "{:?}", err.map(|e| e.code));
 
@@ -311,12 +311,12 @@ mod tests {
     #[test]
     fn test_shutdown() {
         unsafe {
-            let mut handle: MaybeUninit<*const SharedRuntime> = MaybeUninit::uninit();
+            let mut handle: MaybeUninit<*const ForkSafeRuntime> = MaybeUninit::uninit();
             ddog_shared_runtime_new(NonNull::new_unchecked(handle.as_mut_ptr()));
             let handle = handle.assume_init();
 
             let err = ddog_shared_runtime_shutdown(
-                std::mem::transmute::<*const SharedRuntime, Option<&SharedRuntime>>(handle),
+                std::mem::transmute::<*const ForkSafeRuntime, Option<&ForkSafeRuntime>>(handle),
                 0,
             );
             assert!(err.is_none());

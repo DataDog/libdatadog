@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::{AsBytes, SliceConversionError};
+use core::fmt::{Debug, Display, Formatter};
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 use core::slice;
 use serde::ser::Error;
 use serde::Serializer;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 use std::os::raw::c_char;
-use std::ptr::NonNull;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -34,7 +34,7 @@ impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
 }
 
 impl<T: Debug> Debug for MutSlice<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         self.as_slice().fmt(f)
     }
 }
@@ -93,7 +93,13 @@ impl<'a, T: 'a> MutSlice<'a, T> {
         if let Some(ptr) = self.ptr {
             // Crashing immediately is likely better than ignoring these.
             assert!(ptr.is_aligned());
-            assert!(self.len <= isize::MAX as usize);
+            // Total byte size, not element count, must fit in isize::MAX
+            // (from_raw_parts_mut).
+            let too_large = self
+                .len
+                .checked_mul(core::mem::size_of::<T>())
+                .is_none_or(|bytes| bytes > isize::MAX as usize);
+            assert!(!too_large);
             unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), self.len) }
         } else {
             // Crashing immediately is likely better than ignoring this.
@@ -117,11 +123,18 @@ impl<'a, T: 'a> MutSlice<'a, T> {
     ///    instead.
     ///  - Returns [`SliceConversionError::MisalignedPointer`] if the pointer is non-null and is not
     ///    aligned correctly for the type.
-    ///  - Returns [`SliceConversionError::LargeLength`] if the length of the slice exceeds
-    ///    [`isize::MAX`].
+    ///  - Returns [`SliceConversionError::LargeLength`] if the total size in bytes (`self.len *
+    ///    size_of::<T>()`) exceeds [`isize::MAX`].
     pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
         if let Some(ptr) = self.ptr {
-            if self.len > isize::MAX as usize {
+            // `from_raw_parts` bounds the total size in *bytes*, not the element
+            // count: for a wide `T` a count within `isize::MAX` can still
+            // overflow. `checked_mul` also covers the overflow and ZST cases.
+            let too_large = self
+                .len
+                .checked_mul(core::mem::size_of::<T>())
+                .is_none_or(|bytes| bytes > isize::MAX as usize);
+            if too_large {
                 Err(SliceConversionError::LargeLength)
             } else if !ptr.is_aligned() {
                 Err(SliceConversionError::MisalignedPointer)
@@ -175,8 +188,8 @@ impl<'a, T> Display for MutSlice<'a, T>
 where
     MutSlice<'a, T>: AsBytes<'a>,
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.try_to_utf8().map_err(|_| std::fmt::Error)?)
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.try_to_utf8().map_err(|_| core::fmt::Error)?)
     }
 }
 
@@ -202,7 +215,7 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ptr;
+    use core::ptr;
 
     #[derive(Debug, Eq, PartialEq)]
     struct Foo(i64);
@@ -263,6 +276,19 @@ mod tests {
         _ = dangerous.as_mut_slice();
     }
 
+    #[should_panic]
+    #[test]
+    fn test_long_byte_size_panic() {
+        // Element count within isize::MAX, byte size beyond it.
+        let len = isize::MAX as usize / core::mem::size_of::<u64>() + 1;
+        let mut dangerous: MutSlice<u64> = MutSlice {
+            ptr: Some(ptr::NonNull::dangling()),
+            len,
+            _marker: PhantomData,
+        };
+        _ = dangerous.as_mut_slice();
+    }
+
     #[test]
     fn test_try_as_slice_success() {
         let mut data = vec![1u8, 2, 3, 4, 5];
@@ -308,6 +334,24 @@ mod tests {
         };
 
         let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_byte_size() {
+        // `len` is within `isize::MAX` as an element count, but the byte size
+        // (`len * size_of::<u64>()`) exceeds it.
+        let len = isize::MAX as usize / core::mem::size_of::<u64>() + 1;
+        let large_bytes: MutSlice<u64> = MutSlice {
+            ptr: Some(ptr::NonNull::dangling()),
+            len,
+            _marker: PhantomData,
+        };
+
+        let result = large_bytes.try_as_slice();
         assert!(matches!(
             result.unwrap_err(),
             SliceConversionError::LargeLength

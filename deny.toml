@@ -1,5 +1,31 @@
 [advisories]
 unmaintained = "workspace"
+ignore = [
+  { id = "RUSTSEC-2026-0009", reason = "the fixed version requires rust >=1.88.0. TODO: remove this after bumping MSRV"}
+]
 
 [bans]
 multiple-versions = "warn"
+
+deny = [
+    { name = "arrayref", version = "=0.3.10" },
+    { name = "append-only-vec", version = "=0.1.9" },
+    { name = "internment", version = "=0.8.7" },
+    { name = "proc-macro1" },
+    { name = "proc-macro-en" },
+    { name = "aovine" },
+    { name = "arone" },
+    { name = "aronenao" },
+    { name = "tinymember" },
+]
+
+# Features that change types or behaviour for every crate in the build, so no crate
+# in this workspace, and no dependency of one, may enable them: Cargo unifies
+# features per build, and the effect reaches dependents' workspaces too.
+[[bans.features]]
+crate = "serde_json"
+deny = [
+    # Swaps serde_json::Map from a key-sorted BTreeMap to an insertion-ordered
+    # IndexMap, and forces the std feature on. See #2525.
+    "preserve_order",
+]

@@ -1,0 +1,662 @@
+// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use heck::{ToPascalCase, ToSnakeCase};
+use proc_macro::TokenStream;
+use proc_macro2::Span;
+use quote::{format_ident, quote, ToTokens};
+use syn::{FnArg, Ident, ItemTrait, ReturnType, TraitItem, Type};
+
+fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(t) if t.elems.is_empty())
+}
+
+fn has_attr(attrs: &[syn::Attribute], name: &str) -> bool {
+    attrs
+        .iter()
+        .any(|a| a.meta.path().to_token_stream().to_string() == name)
+}
+
+// Each parameter stores its pass-through attributes, name, server type, and optional explicit
+// client type. The attributes include #[cfg(...)], allowing conditional compilation.
+struct ParamInfo {
+    attrs: Vec<syn::Attribute>,
+    name: Ident,
+    server_ty: Box<Type>, // also client type if client_ty is None
+    client_ty: Option<Box<Type>>,
+}
+
+struct MethodInfo {
+    name: Ident,
+    variant: Ident,
+    is_blocking: bool,
+    return_type: Option<Box<Type>>,
+    params: Vec<ParamInfo>,
+    handle_param_indices: Vec<usize>,
+}
+
+fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
+    let mut methods = Vec::new();
+
+    for trait_item in &item.items {
+        let TraitItem::Fn(func) = trait_item else {
+            continue;
+        };
+
+        let name = func.sig.ident.clone();
+        let variant = Ident::new(&name.to_string().to_pascal_case(), Span::mixed_site());
+        let is_blocking = has_attr(&func.attrs, "blocking");
+
+        let return_type = match &func.sig.output {
+            ReturnType::Default => None,
+            ReturnType::Type(_, ty) => {
+                if is_unit_type(ty) {
+                    None
+                } else {
+                    Some(ty.clone())
+                }
+            }
+        };
+
+        let mut params: Vec<ParamInfo> = Vec::new();
+        let mut handle_param_indices: Vec<usize> = Vec::new();
+
+        for arg in &func.sig.inputs {
+            let FnArg::Typed(pat_ty) = arg else {
+                continue;
+            };
+            let syn::Pat::Ident(ident_pat) = &*pat_ty.pat else {
+                continue;
+            };
+            if has_attr(&pat_ty.attrs, "SerializedHandle") {
+                handle_param_indices.push(params.len());
+            }
+            let client_ty = pat_ty
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("ClientType"))
+                .map(|attr| {
+                    Box::new(
+                        attr.parse_args::<Type>()
+                            .expect("ClientType must contain a Rust type"),
+                    )
+                });
+            assert!(
+                client_ty.is_none() || !has_attr(&pat_ty.attrs, "SerializedHandle"),
+                "ClientType is not supported on SerializedHandle parameters"
+            );
+            // Keep all attrs except those interpreted by this macro (e.g. #[cfg(...)]).
+            let pass_through_attrs: Vec<syn::Attribute> = pat_ty
+                .attrs
+                .iter()
+                .filter(|attr| {
+                    !attr.path().is_ident("SerializedHandle") && !attr.path().is_ident("ClientType")
+                })
+                .cloned()
+                .collect();
+            params.push(ParamInfo {
+                attrs: pass_through_attrs,
+                name: ident_pat.ident.clone(),
+                server_ty: pat_ty.ty.clone(),
+                client_ty,
+            });
+        }
+
+        methods.push(MethodInfo {
+            name,
+            variant,
+            is_blocking,
+            return_type,
+            params,
+            handle_param_indices,
+        });
+    }
+
+    methods
+}
+
+// whether any method has a parameter with #[ClientType(...)], which indicates
+// we need a separate message type for the client and the server.
+fn has_client_request(methods: &[MethodInfo]) -> bool {
+    methods
+        .iter()
+        .flat_map(|method| &method.params)
+        .any(|param| param.client_ty.is_some())
+}
+
+fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let variants: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let variant = &m.variant;
+            let fields: Vec<_> = m
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo {
+                        attrs,
+                        name,
+                        server_ty,
+                        ..
+                    } = param;
+                    quote! { #(#attrs)* #name: #server_ty }
+                })
+                .collect();
+            quote! { #variant { #(#fields),* } }
+        })
+        .collect();
+
+    quote! {
+        #[derive(::serde::Serialize, ::serde::Deserialize, Debug)]
+        pub enum #enum_name {
+            #(#variants),*
+        }
+    }
+}
+
+fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let variants: Vec<_> = methods
+        .iter()
+        .map(|method| {
+            let variant = &method.variant;
+            let fields: Vec<_> = method
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo {
+                        attrs,
+                        name,
+                        server_ty,
+                        client_ty,
+                    } = param;
+                    let ty = client_ty.as_ref().unwrap_or(server_ty);
+                    quote! { #(#attrs)* #name: #ty }
+                })
+                .collect();
+            quote! { #variant { #(#fields),* } }
+        })
+        .collect();
+
+    quote! {
+        #[derive(::serde::Serialize, Debug)]
+        pub enum #enum_name<'request> {
+            #(#variants),*
+        }
+    }
+}
+
+fn gen_transfer_handles(
+    enum_name: &Ident,
+    methods: &[MethodInfo],
+    client_request: bool,
+) -> proc_macro2::TokenStream {
+    let impl_generics = client_request.then(|| quote! { <'request> });
+    let request_lifetime = client_request.then(|| quote! { <'request> });
+    let copy_arms: Vec<_> = methods
+        .iter()
+        .filter(|m| !m.handle_param_indices.is_empty())
+        .map(|m| {
+            let variant = &m.variant;
+            let handle_names: Vec<_> = m
+                .handle_param_indices
+                .iter()
+                .map(|&i| &m.params[i].name)
+                .collect();
+            // One copy_handle call per #[SerializedHandle] param.
+            // Uses .into() to convert from the param type to PlatformHandle<OwnedFileHandle>.
+            let stmts: Vec<_> = handle_names
+                .iter()
+                .map(|hn| quote! { __transport.copy_handle(#hn.clone().into())?; })
+                .collect();
+            quote! {
+                #enum_name::#variant { #(#handle_names,)* .. } => {
+                    #(#stmts)*
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    let recv_arms: Vec<_> = methods
+        .iter()
+        .filter(|m| !m.handle_param_indices.is_empty())
+        .map(|m| {
+            let variant = &m.variant;
+            let handle_names: Vec<_> = m
+                .handle_param_indices
+                .iter()
+                .map(|&i| &m.params[i].name)
+                .collect();
+            let stmts: Vec<_> = handle_names
+                .iter()
+                .map(|hn| quote! { #hn.receive_handles(__transport)?; })
+                .collect();
+            quote! {
+                #enum_name::#variant { #(#handle_names,)* .. } => {
+                    #(#stmts)*
+                    Ok(())
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        impl #impl_generics libdd_ipc::handles::TransferHandles
+            for #enum_name #request_lifetime
+        {
+            fn copy_handles<Transport: libdd_ipc::handles::HandlesTransport>(
+                &self,
+                __transport: Transport,
+            ) -> ::std::result::Result<(), Transport::Error> {
+                match self {
+                    #(#copy_arms,)*
+                    _ => Ok(()),
+                }
+            }
+
+            fn receive_handles<Transport: libdd_ipc::handles::HandlesTransport>(
+                &mut self,
+                __transport: Transport,
+            ) -> ::std::result::Result<(), Transport::Error> {
+                match self {
+                    #(#recv_arms,)*
+                    _ => Ok(()),
+                }
+            }
+        }
+    }
+}
+
+fn gen_handler_trait(
+    trait_name: &Ident,
+    vis: &syn::Visibility,
+    methods: &[MethodInfo],
+) -> proc_macro2::TokenStream {
+    let handler_methods: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let name = &m.name;
+            let params: Vec<_> = m
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo {
+                        attrs,
+                        name,
+                        server_ty,
+                        ..
+                    } = param;
+                    quote! { #(#attrs)* #name: #server_ty }
+                })
+                .collect();
+            let ret = match &m.return_type {
+                None => quote! { () },
+                Some(ty) => quote! { #ty },
+            };
+            quote! {
+                fn #name(
+                    &self,
+                    #(#params),*
+                ) -> impl ::std::future::Future<Output = #ret> + Send + '_;
+            }
+        })
+        .collect();
+
+    quote! {
+        #vis trait #trait_name: Send + Sync + 'static {
+            /// Returns the counter incremented on each received IPC message.
+            /// The serve loop uses this to track received payloads.
+            fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
+
+            /// Storage for the connection to read from.
+            fn connection(&self) -> &libdd_ipc::ipc_server::OwnedServerConn;
+
+            #(#handler_methods)*
+        }
+    }
+}
+
+fn gen_serve_fn(
+    trait_name: &Ident,
+    enum_name: &Ident,
+    methods: &[MethodInfo],
+) -> proc_macro2::TokenStream {
+    let snake = trait_name.to_string().to_snake_case();
+    let serve_fn = format_ident!("serve_{}_connection", snake);
+
+    let match_arms: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let variant = &m.variant;
+            let name = &m.name;
+            // field_names: includes leading #[cfg(...)] attrs for conditional params.
+            let field_names: Vec<_> = m
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo { attrs, name, .. } = param;
+                    quote! { #(#attrs)* #name }
+                })
+                .collect();
+
+            let force_flush = if m.is_blocking {
+                quote! { true }
+            } else {
+                quote! { false }
+            };
+
+            let response_code = if m.return_type.is_some() {
+                // Flush any buffered acks before sending the typed response, so the client's
+                // send_count/ack_count loop processes them before reading the real reply.
+                quote! {
+                    #[cfg(target_os = "linux")]
+                    if __pending_acks > 0 {
+                        libdd_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
+                        __pending_acks = 0;
+                    }
+                    let result = handler.#name(#(#field_names),*).await;
+                    let __resp_data = libdd_ipc::codec::encode(&result);
+                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
+                }
+            } else {
+                // On Linux, buffer up to 20 acks and flush in a single
+                // sendmmsg(2) syscall; on other platforms send each ack immediately.
+                quote! {
+                    handler.#name(#(#field_names),*).await;
+                    #[cfg(target_os = "linux")]
+                    {
+                        __pending_acks += 1;
+                        if #force_flush || __pending_acks >= libdd_ipc::ACK_BUFFER_SIZE {
+                            libdd_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
+                            __pending_acks = 0;
+                        }
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
+                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
+                }
+            };
+
+            quote! {
+                #enum_name::#variant { #(#field_names),* } => {
+                    #response_code
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        pub async fn #serve_fn<H: #trait_name>(
+            handler: ::std::sync::Arc<H>,
+        ) {
+            // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
+            #[cfg(target_os = "linux")]
+            let mut __pending_acks: u32 = 0;
+            loop {
+                let (mut req, fds) = match libdd_ipc::recv_raw_async(
+                    &handler.connection().async_conn(),
+                    |buf| libdd_ipc::codec::decode::<#enum_name>(buf),
+                ).await {
+                    Ok((Ok(req), fds)) => (req, fds),
+                    Ok((Err(_), _)) => {
+                        ::tracing::warn!("IPC serve: failed to decode request");
+                        break;
+                    }
+                    Err(e) => {
+                        ::tracing::trace!("IPC serve: recv (connection closed?): {e}");
+                        break;
+                    }
+                };
+                let mut __source = libdd_ipc::handles::FdSource::new(fds);
+                if libdd_ipc::handles::TransferHandles::receive_handles(
+                    &mut req,
+                    &mut __source,
+                ).is_err() {
+                    ::tracing::warn!("IPC serve: failed to receive handles");
+                    break;
+                }
+                let recv_counter = handler.recv_counter().load(::std::sync::atomic::Ordering::Relaxed) + 1;
+                ::tracing::trace!(recv_counter, ?req, pid = handler.connection().peer().pid, "IPC recv");
+
+                match req {
+                    #(#match_arms)*
+                }
+                handler.recv_counter().fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+fn gen_channel(
+    trait_name: &Ident,
+    vis: &syn::Visibility,
+    enum_name: &Ident,
+    client_enum_name: Option<&Ident>,
+    methods: &[MethodInfo],
+) -> proc_macro2::TokenStream {
+    let channel_name = format_ident!("{}Channel", trait_name);
+    let call_client_request = client_enum_name.map(|client_enum_name| {
+        quote! {
+            /// Blocking request/response call using the serialize-only client request type.
+            pub fn call_client_request_blocking<__Response>(
+                &mut self,
+                req: &#client_enum_name<'_>,
+            ) -> ::std::result::Result<__Response, libdd_ipc::codec::DecodeError>
+            where
+                __Response: ::serde::de::DeserializeOwned,
+            {
+                self.call_serialized_request_blocking(req)
+            }
+        }
+    });
+
+    let channel_methods: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let name = &m.name;
+            let params: Vec<_> = m
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo {
+                        attrs,
+                        name,
+                        server_ty,
+                        ..
+                    } = param;
+                    quote! { #(#attrs)* #name: #server_ty }
+                })
+                .collect();
+            // field_names includes leading attrs (e.g. #[cfg(windows)]) for struct init + call args.
+            let field_names: Vec<_> = m
+                .params
+                .iter()
+                .map(|param| {
+                    let ParamInfo { attrs, name, .. } = param;
+                    quote! { #(#attrs)* #name }
+                })
+                .collect();
+            let variant = &m.variant;
+
+            // Build the request and collect fds via TransferHandles.
+            let build_req_and_fds = quote! {
+                let __req = #enum_name::#variant { #(#field_names),* };
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(
+                    &__req, &mut __sink
+                ).ok();
+                let mut __data = libdd_ipc::codec::encode(&__req);
+                let __fds = __sink.into_fds();
+                {
+                    let __max = libdd_ipc::max_message_size();
+                    if __data.len() > __max {
+                        ::tracing::warn!(?__req, len = __data.len(), max = __max, "IPC message too large");
+                    }
+                }
+            };
+
+            if m.return_type.is_none() && !m.is_blocking {
+                let method_name = format_ident!("try_send_{}", name);
+                quote! {
+                    pub fn #method_name(&mut self, #(#params),*) -> bool {
+                        #build_req_and_fds
+                        self.0.try_send(&mut __data, &__fds)
+                    }
+                }
+            } else if m.return_type.is_none() {
+                let method_name = format_ident!("call_{}", name);
+                quote! {
+                    pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
+                        #build_req_and_fds
+                        self.0.call(&mut __data, &__fds)?;
+                        Ok(())
+                    }
+                }
+            } else {
+                let method_name = format_ident!("call_{}", name);
+                let ret_ty = m.return_type.as_ref().unwrap();
+                quote! {
+                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
+                        #build_req_and_fds
+                        let (__resp, _) = self.0.call(&mut __data, &__fds)
+                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                    }
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #vis struct #channel_name(pub libdd_ipc::IpcClientConn);
+
+        impl #channel_name {
+            pub fn new(conn: libdd_ipc::SeqpacketConn) -> Self {
+                Self(libdd_ipc::IpcClientConn::new(conn))
+            }
+
+            #(#channel_methods)*
+
+            /// Generic fire-and-forget send (used by SidecarSender outbox drain).
+            pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = libdd_ipc::codec::encode(req);
+                let __fds = __sink.into_fds();
+                let __max = libdd_ipc::max_message_size();
+                if __data.len() > __max {
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                }
+                self.0.try_send(&mut __data, &__fds)
+            }
+
+            /// Generic blocking send (used by SidecarSender outbox drain).
+            pub fn send_request_blocking(
+                &mut self,
+                req: &#enum_name,
+            ) -> ::std::io::Result<()> {
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = libdd_ipc::codec::encode(req);
+                let __fds = __sink.into_fds();
+                let __max = libdd_ipc::max_message_size();
+                if __data.len() > __max {
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                }
+                self.0.send_blocking(&mut __data, &__fds)
+            }
+
+            /// Generic blocking request/response call that retains ownership of the request.
+            pub fn call_request_blocking<__Response>(
+                &mut self,
+                req: &#enum_name,
+            ) -> ::std::result::Result<__Response, libdd_ipc::codec::DecodeError>
+            where
+                __Response: ::serde::de::DeserializeOwned,
+            {
+                self.call_serialized_request_blocking(req)
+            }
+
+            fn call_serialized_request_blocking<__Request, __Response>(
+                &mut self,
+                req: &__Request,
+            ) -> ::std::result::Result<__Response, libdd_ipc::codec::DecodeError>
+            where
+                __Request: ::serde::Serialize
+                    + ::std::fmt::Debug
+                    + libdd_ipc::handles::TransferHandles,
+                __Response: ::serde::de::DeserializeOwned,
+            {
+                let mut __sink = libdd_ipc::handles::FdSink::new();
+                libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = libdd_ipc::codec::encode(req);
+                let __fds = __sink.into_fds();
+                let __max = libdd_ipc::max_message_size();
+                if __data.len() > __max {
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                }
+                let (__resp, _) = self.0.call(&mut __data, &__fds)
+                    .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                libdd_ipc::codec::decode::<__Response>(&__resp)
+            }
+
+            #call_client_request
+        }
+    }
+}
+
+/// `#[service]` macro.
+///
+/// Generates from a `trait` definition:
+/// - `{Trait}Request` enum (Clone, Serialize, Deserialize, TransferHandles)
+/// - `{Trait}ClientRequest` serialize-only enum when a parameter has `#[ClientType(...)]`
+/// - Handler trait with RPIT async methods (no `async_trait`)
+/// - `serve_{trait}_connection` async dispatch function (Unix)
+/// - `{Trait}Channel` client struct with `try_send_*` / `call_*` methods (Unix)
+///
+/// Method attributes recognized (stripped before emission):
+/// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
+/// - `#[SerializedHandle]` on a parameter — the value carries an fd via SCM_RIGHTS
+/// - `#[ClientType(Type)]` on a parameter — use `Type` in the serialize-only client request
+#[proc_macro_attribute]
+pub fn service(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let item: ItemTrait = syn::parse(input).unwrap();
+
+    let trait_name = item.ident.clone();
+    let vis = item.vis.clone();
+    let enum_name = format_ident!("{}Request", trait_name);
+    let client_enum_name = format_ident!("{}ClientRequest", trait_name);
+
+    let methods = collect_methods(&item);
+    let has_client_request = has_client_request(&methods);
+
+    let enum_def = gen_request_enum(&enum_name, &methods);
+    let transfer_handles = gen_transfer_handles(&enum_name, &methods, false);
+    let (client_enum_def, client_transfer_handles) = if has_client_request {
+        (
+            gen_client_request_enum(&client_enum_name, &methods),
+            gen_transfer_handles(&client_enum_name, &methods, true),
+        )
+    } else {
+        (quote! {}, quote! {})
+    };
+    let handler_trait = gen_handler_trait(&trait_name, &vis, &methods);
+    let serve_fn = gen_serve_fn(&trait_name, &enum_name, &methods);
+    let channel = gen_channel(
+        &trait_name,
+        &vis,
+        &enum_name,
+        has_client_request.then_some(&client_enum_name),
+        &methods,
+    );
+
+    TokenStream::from(quote! {
+        #enum_def
+        #transfer_handles
+        #client_enum_def
+        #client_transfer_handles
+        #handler_trait
+        #serve_fn
+        #channel
+    })
+}

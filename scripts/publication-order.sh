@@ -8,6 +8,8 @@
 # Usage: ./publication-order.sh [OPTIONS] [CRATE...]
 #
 # If crate names are provided, shows only those crates and their dependencies in publication order.
+#
+# Important: this script is used by libddprof-build gitlab pipeline
 
 set -euo pipefail
 

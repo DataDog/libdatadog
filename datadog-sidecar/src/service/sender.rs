@@ -13,15 +13,17 @@
 
 use crate::service::{
     sidecar_interface::{
-        DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest,
+        DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
+        SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
-use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
@@ -34,6 +36,8 @@ use tracing::trace;
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
+    set_session_default_service_name: Option<SidecarInterfaceRequest>,
+    set_session_user_service_defined: Option<SidecarInterfaceRequest>,
     set_universal_service_tags: Option<SidecarInterfaceRequest>,
     set_request_config: Option<SidecarInterfaceRequest>,
     clear_queue_id: Option<SidecarInterfaceRequest>,
@@ -42,10 +46,12 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 7] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 9] {
         [
             &mut self.set_session_config,
             &mut self.set_session_process_tags,
+            &mut self.set_session_default_service_name,
+            &mut self.set_session_user_service_defined,
             &mut self.set_universal_service_tags,
             &mut self.set_request_config,
             &mut self.clear_queue_id,
@@ -120,6 +126,12 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionDefaultServiceName { .. } => {
+            outbox.set_session_default_service_name = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionUserServiceDefined { .. } => {
+            outbox.set_session_user_service_defined = Some(incoming);
         }
         SidecarInterfaceRequest::SetUniversalServiceTags { .. } => {
             outbox.set_universal_service_tags = Some(incoming);
@@ -235,6 +247,22 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    pub fn set_session_default_service_name(&mut self, name: Option<String>) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionDefaultServiceName { name },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_user_service_defined(&mut self, is_defined: bool) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionUserServiceDefined { is_defined },
+        );
+        self.try_drain_outbox();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn set_universal_service_tags(
         &mut self,
@@ -245,6 +273,7 @@ impl SidecarSender {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     ) {
         coalesce(
             &mut self.outbox,
@@ -256,6 +285,7 @@ impl SidecarSender {
                 app_version,
                 global_tags,
                 dynamic_instrumentation_state,
+                remote_config_generation,
             },
         );
         self.try_drain_outbox();
@@ -377,6 +407,48 @@ impl SidecarSender {
             .try_send_send_trace_v04_bytes(instance_id, data, headers);
     }
 
+    pub fn send_trace_v1_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_shm(
+            instance_id,
+            handle,
+            len,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
+    }
+
+    pub fn send_trace_v1_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_bytes(
+            instance_id,
+            data,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
+    }
+
     pub fn send_debugger_data_shm(
         &mut self,
         instance_id: InstanceId,
@@ -435,6 +507,19 @@ impl SidecarSender {
         self.channel.try_send_set_test_session_token(token);
     }
 
+    pub fn add_span_to_concentrator(
+        &mut self,
+        env: String,
+        version: String,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_add_span_to_concentrator(env, version, span);
+    }
+
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_read_timeout(d)
     }
@@ -443,9 +528,26 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
-    pub fn flush_traces(&mut self) -> io::Result<()> {
+    pub fn ensure_appsec_started(
+        &mut self,
+        log_file_path: Vec<u8>,
+        log_level: String,
+    ) -> Result<bool, libdd_ipc::codec::DecodeError> {
+        self.channel
+            .call_ensure_appsec_started(log_file_path, log_level)
+    }
+
+    pub fn send_appsec_message(
+        &mut self,
+        request: &SidecarInterfaceClientRequest<'_>,
+    ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
-        self.channel.call_flush_traces()
+        self.channel.call_client_request_blocking(request)
+    }
+
+    pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {
@@ -453,12 +555,12 @@ impl SidecarSender {
         self.channel.call_ping()
     }
 
-    pub fn dump(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_dump()
     }
 
-    pub fn stats(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
     }

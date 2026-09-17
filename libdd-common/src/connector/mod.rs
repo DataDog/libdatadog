@@ -1,14 +1,21 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "http-client")]
 use futures::future::BoxFuture;
+#[cfg(feature = "http-client")]
 use futures::{future, FutureExt};
+#[cfg(feature = "http-client")]
 use hyper_util::client::legacy::connect;
 
-use std::future::Future;
-use std::pin::Pin;
+#[cfg(feature = "http-client")]
+use core::future::Future;
+#[cfg(feature = "http-client")]
+use core::pin::Pin;
+#[cfg(feature = "http-client")]
+use core::task::{Context, Poll};
+#[cfg(feature = "http-client")]
 use std::sync::LazyLock;
-use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod uds;
@@ -17,36 +24,57 @@ pub mod named_pipe;
 
 pub mod errors;
 
+#[cfg(feature = "http-client")]
 mod conn_stream;
+#[cfg(feature = "http-client")]
 use conn_stream::{ConnStream, ConnStreamError};
 
+#[cfg(feature = "hyper-proxy")]
+mod proxy;
+
+#[cfg(feature = "http-client")]
 #[derive(Clone)]
+// `proxy::HttpProxyConnector` is crate internal, and the field anyway not pub.
+#[allow(private_interfaces)]
 pub enum Connector {
     Http(connect::HttpConnector),
     #[cfg(feature = "tls-core")]
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
+    #[cfg(feature = "hyper-proxy")]
+    Proxy(Box<proxy::HttpProxyConnector>),
 }
 
+#[cfg(feature = "http-client")]
 static DEFAULT_CONNECTOR: LazyLock<Connector> = LazyLock::new(Connector::new);
 
+#[cfg(feature = "http-client")]
 impl Default for Connector {
     fn default() -> Self {
         DEFAULT_CONNECTOR.clone()
     }
 }
 
+#[cfg(feature = "http-client")]
 impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
+        #[cfg(feature = "hyper-proxy")]
+        {
+            Connector::Proxy(Box::new(proxy::HttpProxyConnector::new(
+                Self::new_no_proxy(),
+            )))
+        }
+        #[cfg(not(feature = "hyper-proxy"))]
+        {
+            Self::new_no_proxy()
+        }
+    }
+
+    pub(super) fn new_no_proxy() -> Self {
         #[cfg(feature = "tls-core")]
         {
-            #[cfg(feature = "use_webpki_roots")]
-            let https_connector_fn = https::build_https_connector_with_webpki_roots;
-            #[cfg(not(feature = "use_webpki_roots"))]
-            let https_connector_fn = https::build_https_connector;
-
-            match https_connector_fn() {
+            match https::build_https_connector() {
                 Ok(connector) => Connector::Https(connector),
                 Err(_) => Connector::Http(connect::HttpConnector::new()),
             }
@@ -77,6 +105,8 @@ impl Connector {
             Self::Https(c) => {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
+            #[cfg(feature = "hyper-proxy")]
+            Self::Proxy(p) => p.build_conn_stream(uri, require_tls),
         }
     }
 }
@@ -90,7 +120,7 @@ mod https {
 
     /// Ensures the rustls default CryptoProvider is installed (ring for non-FIPS).
     /// In FIPS mode, the caller must install the FIPS provider before any TLS use.
-    #[cfg(any(not(feature = "fips"), coverage))]
+    #[cfg(feature = "https")]
     fn ensure_crypto_provider_initialized() {
         use std::sync::Once;
 
@@ -103,67 +133,59 @@ mod https {
 
     /// In FIPS mode, the caller must install the FIPS-compliant crypto provider
     /// (e.g., aws-lc-rs FIPS) before any TLS connections are established.
-    #[cfg(all(feature = "fips", not(coverage)))]
+    #[cfg(not(feature = "https"))]
     fn ensure_crypto_provider_initialized() {}
 
-    #[cfg(feature = "use_webpki_roots")]
-    pub(super) fn build_https_connector_with_webpki_roots() -> anyhow::Result<
-        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    > {
-        ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+    #[cfg(any(feature = "https", feature = "fips"))]
+    fn require_crypto_provider() -> anyhow::Result<()> {
+        Ok(())
+    }
 
-        let client_config = ClientConfig::builder()
+    #[cfg(not(any(feature = "https", feature = "fips")))]
+    fn require_crypto_provider() -> anyhow::Result<()> {
+        if rustls::crypto::CryptoProvider::get_default().is_none() {
+            anyhow::bail!("no rustls CryptoProvider installed");
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "use_webpki_roots")]
+    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+        ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        require_crypto_provider()?;
+
+        Ok(ClientConfig::builder()
             .with_webpki_roots()
-            .with_no_client_auth();
-        Ok(hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(client_config)
-            .https_or_http()
-            .enable_http1()
-            .build())
+            .with_no_client_auth())
     }
 
     #[cfg(not(feature = "use_webpki_roots"))]
+    /// Builds the client TLS config using the system trust roots.
+    /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
+    /// `rustls_platform_verifier` doc for details.
+    pub(super) fn build_tls_config() -> anyhow::Result<ClientConfig> {
+        use rustls_platform_verifier::BuilderVerifierExt;
+
+        ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
+        require_crypto_provider()?;
+
+        Ok(ClientConfig::builder()
+            .with_platform_verifier()?
+            .with_no_client_auth())
+    }
+
     pub(super) fn build_https_connector() -> anyhow::Result<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     > {
-        ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
-
-        let certs = load_root_certs()?;
-        let client_config = ClientConfig::builder()
-            .with_root_certificates(certs)
-            .with_no_client_auth();
         Ok(hyper_rustls::HttpsConnectorBuilder::new()
-            .with_tls_config(client_config)
+            .with_tls_config(build_tls_config()?)
             .https_or_http()
             .enable_http1()
             .build())
     }
-
-    #[cfg(not(feature = "use_webpki_roots"))]
-    fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
-        use super::errors;
-
-        let mut roots = rustls::RootCertStore::empty();
-
-        let cert_result = rustls_native_certs::load_native_certs();
-        if cert_result.certs.is_empty() {
-            if let Some(err) = cert_result.errors.into_iter().next() {
-                return Err(err.into());
-            }
-        }
-        // TODO(paullgdfc): log errors even if there are valid certs, instead of ignoring them
-
-        for cert in cert_result.certs {
-            //TODO: log when invalid cert is loaded
-            roots.add(cert).ok();
-        }
-        if roots.is_empty() {
-            return Err(errors::Error::NoValidCertifacteRootsFound.into());
-        }
-        Ok(roots)
-    }
 }
 
+#[cfg(feature = "http-client")]
 impl tower_service::Service<hyper::Uri> for Connector {
     type Response = ConnStream;
     type Error = ConnStreamError;
@@ -187,16 +209,19 @@ impl tower_service::Service<hyper::Uri> for Connector {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
             #[cfg(feature = "tls-core")]
             Connector::Https(c) => c.poll_ready(cx),
+            #[cfg(feature = "hyper-proxy")]
+            Connector::Proxy(p) => p.poll_ready(cx),
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "http-client"))]
 mod tests {
     use crate::http_common;
-    use std::env;
-
-    use super::*;
+    #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]
+    use {super::*, std::env};
+    #[cfg(feature = "tls-core")]
+    use {crate::http_common::Body, hyper::Request};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -217,6 +242,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
+    // Only Linux eagerly loads roots at connector construction; macOS/Windows verify lazily
+    // during the TLS handshake, so SSL_CERT_FILE/SSL_CERT_DIR cannot be exercised there.
+    #[cfg(target_os = "linux")]
     /// Verify that Connector falls back to Http when native root certificates
     /// are not available and webpki roots are not enabled.
     fn test_missing_root_certificates_only_allow_http_connections() {
@@ -227,7 +255,7 @@ mod tests {
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
         env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
-        let connector = Connector::new();
+        let connector = Connector::new_no_proxy();
 
         assert!(matches!(connector, Connector::Http(_)));
 
@@ -246,9 +274,31 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let connector = Connector::new();
+        let connector = Connector::new_no_proxy();
         assert!(matches!(connector, Connector::Https(_)));
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "tls-core")]
+    /// Verify that a HTTPS GET request succeeds using
+    /// the default Connector (native platform TLS verifier or webpki roots).
+    async fn test_https_request_succeeds() {
+        let client = http_common::new_default_client();
+        let request = Request::get("https://www.datadoghq.com")
+            .body(Body::empty())
+            .expect("failed to build request");
+        let response = client
+            .request(request)
+            .await
+            .expect("HTTPS request to datadoghq.com failed");
+        let status = response.status();
+        // Accept any successful (2xx) or redirect (3xx) response.
+        assert!(
+            status.is_success() || status.is_redirection(),
+            "unexpected status code: {status}"
+        );
     }
 }

@@ -2,23 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config;
+use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
 use libdd_common::MutexExt;
 use priority_queue::PriorityQueue;
 use serde::{Deserialize, Serialize};
-use std::cmp::max;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::hash::Hash;
 use std::ops::{DerefMut, Sub};
 use std::path::PathBuf;
-use std::sync::{LazyLock, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 use std::{env, io};
+use tracing::field::{Field, Visit};
 use tracing::level_filters::LevelFilter;
 use tracing::span::{Attributes, Record};
 use tracing::subscriber::Interest;
 use tracing::{Event, Id, Level, Metadata, Subscriber};
-use tracing_log::LogTracer;
+use tracing_log::{LogTracer, NormalizeEvent};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, MakeWriter};
 use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
@@ -41,7 +43,8 @@ pub struct TemporarilyRetainedMap<K, V>
 where
     K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash,
 {
-    pub maps: RwLock<HashMap<K, V>>,
+    // ArcSwap to be lock-free (nested Arc supports ArcSwap).
+    pub maps: ArcSwap<HashMap<K, Arc<V>>>,
     live_counter: Mutex<HashMap<K, i32>>,
     pending_removal: Mutex<PriorityQueue<K, Instant>>,
     pub expire_after: Duration,
@@ -53,17 +56,12 @@ where
 {
     fn default() -> Self {
         TemporarilyRetainedMap {
-            maps: RwLock::new(HashMap::new()),
+            maps: ArcSwap::from_pointee(HashMap::new()),
             live_counter: Mutex::new(HashMap::new()),
             pending_removal: Mutex::new(PriorityQueue::new()),
             expire_after: Duration::from_secs(5),
         }
     }
-}
-
-unsafe impl<K, V> Sync for TemporarilyRetainedMap<K, V> where
-    K: TemporarilyRetainedKeyParser<V> + Clone + Eq + Hash
-{
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,8 +84,13 @@ where
                 live.insert(key.clone(), 1);
 
                 if self.pending_removal.lock_or_panic().remove(&key).is_none() {
-                    #[allow(clippy::unwrap_used)]
-                    self.maps.write().unwrap().insert(key.clone(), key.parse());
+                    // Parse once (this may e.g. open a log file) outside the CoW retry loop.
+                    let value = Arc::new(key.parse());
+                    self.maps.rcu(|cur| {
+                        let mut next = (**cur).clone();
+                        next.insert(key.clone(), Arc::clone(&value));
+                        next
+                    });
                     <K as TemporarilyRetainedKeyParser<V>>::enable();
                 }
             }
@@ -99,7 +102,11 @@ where
         while let Some((_, time)) = pending.peek() {
             if *time < Instant::now().sub(self.expire_after) {
                 let (log_level, _) = pending.pop().unwrap();
-                self.maps.write().unwrap().remove(&log_level);
+                self.maps.rcu(|cur| {
+                    let mut next = (**cur).clone();
+                    next.remove(&log_level);
+                    next
+                });
                 <K as TemporarilyRetainedKeyParser<V>>::disable();
             } else {
                 break;
@@ -112,7 +119,7 @@ where
     pub fn stats(&self) -> TemporarilyRetainedMapStats {
         #[allow(clippy::unwrap_used)]
         TemporarilyRetainedMapStats {
-            elements: self.maps.read().unwrap().len() as u32,
+            elements: self.maps.load().len() as u32,
             live_counters: self.live_counter.lock().unwrap().len() as u32,
             pending_removal: self.pending_removal.lock().unwrap().len() as u32,
         }
@@ -205,20 +212,17 @@ impl TemporarilyRetainedKeyParser<EnvFilter> for String {
 
 impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     fn enabled(&self, meta: &Metadata<'_>, cx: &Context<'_, S>) -> bool {
-        #[allow(clippy::unwrap_used)]
         self.map
             .maps
-            .read()
-            .unwrap()
+            .load()
             .values()
-            .any(|f| (f as &dyn Filter<S>).enabled(meta, cx))
+            .any(|f| (f.as_ref() as &dyn Filter<S>).enabled(meta, cx))
     }
 
     fn callsite_enabled(&self, meta: &'static Metadata<'static>) -> Interest {
         let mut callsite_interest = Interest::never();
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            let interest = (f as &dyn Filter<S>).callsite_enabled(meta);
+        for f in self.map.maps.load().values() {
+            let interest = (f.as_ref() as &dyn Filter<S>).callsite_enabled(meta);
             if interest.is_always() {
                 return interest;
             }
@@ -230,14 +234,12 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn event_enabled(&self, event: &Event<'_>, cx: &Context<'_, S>) -> bool {
-        #[allow(clippy::unwrap_used)]
         let enabled = self
             .map
             .maps
-            .read()
-            .unwrap()
+            .load()
             .values()
-            .any(|f| (f as &dyn Filter<S>).event_enabled(event, cx));
+            .any(|f| (f.as_ref() as &dyn Filter<S>).event_enabled(event, cx));
 
         if enabled {
             let mut map = self.logs_created.lock_or_panic();
@@ -247,49 +249,42 @@ impl<S: Subscriber> Filter<S> for &MultiEnvFilter {
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        #[allow(clippy::unwrap_used)]
         self.map
             .maps
-            .read()
-            .unwrap()
+            .load()
             .values()
-            .map(|f| f.max_level_hint())
+            .map(|f| (f.as_ref() as &dyn Filter<S>).max_level_hint())
             .max()
             .flatten()
     }
 
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            (f as &dyn Filter<S>).on_new_span(attrs, id, ctx.clone());
+        for f in self.map.maps.load().values() {
+            (f.as_ref() as &dyn Filter<S>).on_new_span(attrs, id, ctx.clone());
         }
     }
 
     fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            (f as &dyn Filter<S>).on_record(id, values, ctx.clone());
+        for f in self.map.maps.load().values() {
+            (f.as_ref() as &dyn Filter<S>).on_record(id, values, ctx.clone());
         }
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            (f as &dyn Filter<S>).on_enter(id, ctx.clone());
+        for f in self.map.maps.load().values() {
+            (f.as_ref() as &dyn Filter<S>).on_enter(id, ctx.clone());
         }
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            (f as &dyn Filter<S>).on_exit(id, ctx.clone());
+        for f in self.map.maps.load().values() {
+            (f.as_ref() as &dyn Filter<S>).on_exit(id, ctx.clone());
         }
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
-        #[allow(clippy::unwrap_used)]
-        for f in self.map.maps.read().unwrap().values() {
-            (f as &dyn Filter<S>).on_close(id.clone(), ctx.clone());
+        for f in self.map.maps.load().values() {
+            (f.as_ref() as &dyn Filter<S>).on_close(id.clone(), ctx.clone());
         }
     }
 }
@@ -332,45 +327,120 @@ where
     }
 }
 
+struct AppSecMessageVisitor<'writer> {
+    writer: Writer<'writer>,
+    result: core::fmt::Result,
+}
+
+impl Visit for AppSecMessageVisitor<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn core::fmt::Debug) {
+        if field.name() == "message" && self.result.is_ok() {
+            self.result = write!(self.writer, "{value:?}");
+        }
+    }
+}
+
+struct AppSecLogFormatter;
+
+impl<S, N> FormatEvent<S, N> for AppSecLogFormatter
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> core::fmt::Result {
+        let normalized = event.normalized_metadata();
+        let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
+        let target = metadata.target();
+        if target != "ddappsec_helper" && !target.starts_with("ddappsec_helper::") {
+            return Ok(());
+        }
+
+        write!(
+            writer,
+            "{} {} ",
+            DateTime::<Utc>::from(SystemTime::now()).format("%Y-%m-%dT%H:%M:%SZ"),
+            metadata.level()
+        )?;
+
+        let mut visitor = AppSecMessageVisitor {
+            writer: writer.by_ref(),
+            result: Ok(()),
+        };
+        event.record(&mut visitor);
+        visitor.result?;
+
+        let module = metadata.module_path().unwrap_or(target);
+        let module = module.strip_prefix("ddappsec_helper::").unwrap_or(module);
+        writeln!(writer, " at mod {module}")
+    }
+}
+
+/// A single log output target, writable through a shared reference:
+/// We trivially rely on O_APPEND log-files to be mostly atomic (log lines small enough).
+pub enum LogWriter {
+    File(std::fs::File),
+    Stdout,
+    Stderr,
+    Disabled,
+}
+
+impl LogWriter {
+    fn write_line(&self, buf: &[u8]) {
+        let _ = match self {
+            LogWriter::File(f) => io::Write::write_all(&mut &*f, buf),
+            LogWriter::Stdout => io::Write::write_all(&mut io::stdout(), buf),
+            LogWriter::Stderr => io::Write::write_all(&mut io::stderr(), buf),
+            LogWriter::Disabled => Ok(()),
+        };
+    }
+
+    fn flush_target(&self) {
+        let _ = match self {
+            LogWriter::File(f) => io::Write::flush(&mut &*f),
+            LogWriter::Stdout => io::Write::flush(&mut io::stdout()),
+            LogWriter::Stderr => io::Write::flush(&mut io::stderr()),
+            LogWriter::Disabled => Ok(()),
+        };
+    }
+}
+
 /// Have exactly one log writer per target file.
 /// Ensure that we can write for at least a few seconds after session disconnect.
-pub type MultiWriter = TemporarilyRetainedMap<config::LogMethod, Box<dyn io::Write + Send>>;
-pub type MultiWriterGuard<'a> =
-    TemporarilyRetainedMapGuard<'a, config::LogMethod, Box<dyn io::Write + Send>>;
+pub type MultiWriter = TemporarilyRetainedMap<config::LogMethod, LogWriter>;
+pub type MultiWriterGuard<'a> = TemporarilyRetainedMapGuard<'a, config::LogMethod, LogWriter>;
 
-impl TemporarilyRetainedKeyParser<Box<dyn io::Write + Send>> for config::LogMethod {
-    fn parse(&self) -> Box<dyn io::Write + Send> {
+impl TemporarilyRetainedKeyParser<LogWriter> for config::LogMethod {
+    fn parse(&self) -> LogWriter {
         match self {
-            config::LogMethod::Stdout => Box::new(io::stdout.make_writer()),
-            config::LogMethod::Stderr => Box::new(io::stderr.make_writer()),
-            config::LogMethod::File(path) => create_logfile(path)
-                .map_or_else::<Box<dyn io::Write + Send>, _, _>(
-                    |_| Box::new(io::sink()),
-                    |f| Box::new(f),
-                ),
-            config::LogMethod::Disabled => Box::new(io::sink()),
+            config::LogMethod::Stdout => LogWriter::Stdout,
+            config::LogMethod::Stderr => LogWriter::Stderr,
+            config::LogMethod::File(path) => {
+                create_logfile(path).map_or(LogWriter::Disabled, LogWriter::File)
+            }
+            config::LogMethod::Disabled => LogWriter::Disabled,
         }
     }
 }
 
 impl io::Write for &MultiWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        #[allow(clippy::manual_try_fold)] // we want the array to be fully iterated in any case
-        #[allow(clippy::unwrap_used)]
-        self.maps
-            .write()
-            .unwrap()
-            .values_mut()
-            .fold(Ok(buf.len()), |cur, w| Ok(max(w.write(buf)?, cur?)))
+        // Lock-free snapshot of the target set
+        for w in self.maps.load().values() {
+            w.write_line(buf);
+        }
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        #[allow(clippy::unwrap_used)]
-        self.maps
-            .write()
-            .unwrap()
-            .values_mut()
-            .try_for_each(|w| w.flush())
+        for w in self.maps.load().values() {
+            w.flush_target();
+        }
+        Ok(())
     }
 }
 
@@ -382,14 +452,80 @@ impl<'writer> MakeWriter<'writer> for &MultiWriter {
     }
 }
 
+#[derive(Clone)]
+struct AppSecLogWriter {
+    writer: Arc<LogWriter>,
+}
+
+impl AppSecLogWriter {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            writer: Arc::new(create_logfile(&path).map_or(LogWriter::Disabled, LogWriter::File)),
+        }
+    }
+}
+
+struct AppSecEventWriter {
+    writer: Arc<LogWriter>,
+    buffer: Vec<u8>,
+}
+
+impl io::Write for AppSecEventWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // The formatter creates one writer per event; Drop commits the completed event.
+        Ok(())
+    }
+}
+
+impl Drop for AppSecEventWriter {
+    fn drop(&mut self) {
+        if !self.buffer.is_empty() {
+            self.writer.write_line(&self.buffer);
+        }
+    }
+}
+
+impl<'writer> MakeWriter<'writer> for AppSecLogWriter {
+    type Writer = AppSecEventWriter;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        AppSecEventWriter {
+            writer: self.writer.clone(),
+            buffer: Vec::new(),
+        }
+    }
+}
+
 pub(crate) static MULTI_LOG_FILTER: LazyLock<MultiEnvFilter> =
     LazyLock::new(MultiEnvFilter::default);
 pub(crate) static MULTI_LOG_WRITER: LazyLock<MultiWriter> = LazyLock::new(MultiWriter::default);
 
 static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, EnvFilter>> =
     OnceLock::new();
+const APPSEC_SIDECAR_LOG_PATH: &str = "<sidecar log>";
+
+fn is_sidecar_log_path(path: &OsStr) -> bool {
+    path == OsStr::new(APPSEC_SIDECAR_LOG_PATH)
+}
 
 pub(crate) fn enable_logging() -> anyhow::Result<()> {
+    let config = config::Config::get();
+    let appsec_layer = config
+        .appsec_config
+        .as_ref()
+        .filter(|appsec| !is_sidecar_log_path(&appsec.log_file_path))
+        .map(|appsec| {
+            tracing_subscriber::fmt::Layer::new()
+                .event_format(AppSecLogFormatter)
+                .with_writer(AppSecLogWriter::new(appsec.log_file_path.clone().into()))
+                .with_filter(EnvFilter::builder().parse_lossy(&appsec.log_level))
+        });
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::Layer::new()
@@ -397,6 +533,7 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
                 .with_writer(&*MULTI_LOG_WRITER)
                 .with_filter(&*MULTI_LOG_FILTER),
         )
+        .with(appsec_layer)
         .init();
 
     // Set initial log level if provided
@@ -405,7 +542,6 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
                                    // few
                                    // seconds during startup
     }
-    let config = config::Config::get();
     if !config.log_level.is_empty() {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
         _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
@@ -420,7 +556,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+        enable_logging, is_sidecar_log_path, AppSecLogFormatter, AppSecLogWriter,
+        TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
     };
     use crate::log::MultiEnvFilter;
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -432,6 +569,13 @@ mod tests {
 
     static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
     static DISABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);
+
+    #[test]
+    fn test_appsec_sidecar_log_path() {
+        assert!(is_sidecar_log_path("<sidecar log>".as_ref()));
+        assert!(!is_sidecar_log_path("<sidecar log>/helper.log".as_ref()));
+        assert!(!is_sidecar_log_path("helper.log".as_ref()));
+    }
 
     impl TemporarilyRetainedKeyParser<i32> for String {
         fn parse(&self) -> i32 {
@@ -448,13 +592,58 @@ mod tests {
     }
 
     #[test]
+    fn test_appsec_log_writer_uses_normalized_log_target() {
+        use tracing_log::log::Log;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("appsec.log");
+        let subscriber = tracing_subscriber::fmt()
+            .event_format(AppSecLogFormatter)
+            .with_writer(AppSecLogWriter::new(log_path.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let logger = tracing_log::LogTracer::new();
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("helper message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("ddappsec_helper::test")
+                    .module_path(Some("ddappsec_helper::client"))
+                    .build(),
+            );
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("sidecar message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("datadog_sidecar::test")
+                    .build(),
+            );
+            logger.log(
+                &tracing_log::log::Record::builder()
+                    .args(format_args!("similar target message"))
+                    .level(tracing_log::log::Level::Info)
+                    .target("ddappsec_helperish::test")
+                    .build(),
+            );
+        });
+
+        let contents = std::fs::read_to_string(log_path).unwrap();
+        assert!(contents.contains(" INFO helper message at mod client\n"));
+        assert!(!contents.contains("log.target"));
+        assert!(!contents.contains("[sidecar]"));
+        assert!(!contents.contains("sidecar message"));
+        assert!(!contents.contains("similar target message"));
+    }
+
+    #[test]
     fn test_refcounting_temporarily_retained_map() {
         let map = TemporarilyRetainedMap::<_, i32> {
             expire_after: Duration::from_millis(10),
             ..Default::default()
         };
         let guard1 = map.add("1".to_string());
-        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+        assert_eq!(1, **map.maps.load().get("1").unwrap());
         assert_eq!(1, ENABLED.load(Ordering::SeqCst));
 
         drop(map.add("1".to_string()));
@@ -462,19 +651,19 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         let _guard2 = map.add("2".to_string());
         // still there, even after drop of one occurrence
-        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+        assert_eq!(1, **map.maps.load().get("1").unwrap());
 
         drop(guard1);
         // Not immediately dropped
-        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+        assert_eq!(1, **map.maps.load().get("1").unwrap());
 
         std::thread::sleep(Duration::from_millis(10));
         // still there, drop should only happen after first insertion
-        assert_eq!(1, *map.maps.read().unwrap().get("1").unwrap());
+        assert_eq!(1, **map.maps.load().get("1").unwrap());
 
         drop(map.add("2".to_string()));
         // actually dropped
-        assert_eq!(None, map.maps.read().unwrap().get("1"));
+        assert_eq!(None, map.maps.load().get("1"));
 
         assert_eq!(1, DISABLED.load(Ordering::SeqCst));
         assert_eq!(2, ENABLED.load(Ordering::SeqCst));

@@ -17,6 +17,7 @@ type SamplesAndEndpointInfo<'pprof> = (
     Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
     Vec<(u64, &'pprof str)>,
 );
+type CustomTypeMappings<'pprof> = Vec<(api::SampleType, api::ValueType<'pprof>)>;
 
 pub struct Replayer<'pprof> {
     pub profile_index: ProfileIndex<'pprof>,
@@ -26,6 +27,7 @@ pub struct Replayer<'pprof> {
     pub end_time: SystemTime, // start_time + duration
     pub sample_types: Vec<api::SampleType>,
     pub period: Option<api::Period>,
+    pub custom_type_mappings: CustomTypeMappings<'pprof>,
     pub endpoints: Vec<(u64, &'pprof str)>,
     pub samples: Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
 }
@@ -55,28 +57,69 @@ impl<'pprof> Replayer<'pprof> {
         }
     }
 
-    fn sample_types<'a>(
-        profile_index: &'a ProfileIndex<'pprof>,
+    fn custom_slots() -> [api::SampleType; 5] {
+        [
+            api::SampleType::Custom1,
+            api::SampleType::Custom2,
+            api::SampleType::Custom3,
+            api::SampleType::Custom4,
+            api::SampleType::Custom5,
+        ]
+    }
+
+    fn resolve_sample_type(
+        type_str: &'pprof str,
+        unit: &'pprof str,
+        custom_type_mappings: &mut CustomTypeMappings<'pprof>,
+    ) -> anyhow::Result<api::SampleType> {
+        let borrowed = api::ValueType::new(type_str, unit);
+        if let Ok(sample_type) = api::SampleType::try_from(borrowed) {
+            return Ok(sample_type);
+        }
+
+        if let Some((slot, _)) = custom_type_mappings
+            .iter()
+            .find(|(_, value_type)| value_type.r#type == type_str && value_type.unit == unit)
+        {
+            return Ok(*slot);
+        }
+
+        let slots = Self::custom_slots();
+        let slot = *slots
+            .get(custom_type_mappings.len())
+            .ok_or_else(|| anyhow::anyhow!("pprof uses more than 5 custom sample types"))?;
+        custom_type_mappings.push((slot, api::ValueType::new(type_str, unit)));
+        Ok(slot)
+    }
+
+    fn sample_types(
+        profile_index: &ProfileIndex<'pprof>,
+        custom_type_mappings: &mut CustomTypeMappings<'pprof>,
     ) -> anyhow::Result<Vec<api::SampleType>> {
         let mut sample_types = Vec::with_capacity(profile_index.pprof.sample_types.len());
         for sample_type in profile_index.pprof.sample_types.iter() {
             let type_str = profile_index.get_string(sample_type.r#type)?;
             let unit = profile_index.get_string(sample_type.unit)?;
-            let vt = api::ValueType::new(type_str, unit);
-            sample_types.push(vt.try_into()?);
+            sample_types.push(Self::resolve_sample_type(
+                type_str,
+                unit,
+                custom_type_mappings,
+            )?);
         }
         Ok(sample_types)
     }
 
-    fn period<'a>(profile_index: &'a ProfileIndex<'pprof>) -> anyhow::Result<Option<api::Period>> {
+    fn period(
+        profile_index: &ProfileIndex<'pprof>,
+        custom_type_mappings: &mut CustomTypeMappings<'pprof>,
+    ) -> anyhow::Result<Option<api::Period>> {
         let value = profile_index.pprof.period;
 
         match profile_index.pprof.period_type {
             Some(period_type) => {
                 let type_str = profile_index.get_string(period_type.r#type)?;
                 let unit = profile_index.get_string(period_type.unit)?;
-                let vt = api::ValueType::new(type_str, unit);
-                let sample_type = vt.try_into()?;
+                let sample_type = Self::resolve_sample_type(type_str, unit, custom_type_mappings)?;
                 Ok(Some(api::Period { sample_type, value }))
             }
             None => Ok(None),
@@ -252,8 +295,9 @@ impl<'pprof> TryFrom<&'pprof prost_impls::Profile> for Replayer<'pprof> {
         let start_time = Self::start_time(pprof);
         let duration = Self::duration(pprof)?;
         let end_time = start_time.add(duration);
-        let sample_types = Self::sample_types(&profile_index)?;
-        let period = Self::period(&profile_index)?;
+        let mut custom_type_mappings = Vec::new();
+        let sample_types = Self::sample_types(&profile_index, &mut custom_type_mappings)?;
+        let period = Self::period(&profile_index, &mut custom_type_mappings)?;
         let (samples, endpoints) = Self::samples(&profile_index)?;
 
         Ok(Self {
@@ -263,6 +307,7 @@ impl<'pprof> TryFrom<&'pprof prost_impls::Profile> for Replayer<'pprof> {
             end_time,
             sample_types,
             period,
+            custom_type_mappings,
             endpoints,
             samples,
         })

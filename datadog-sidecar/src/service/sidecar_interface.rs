@@ -6,11 +6,12 @@
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
-use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -22,11 +23,19 @@ pub enum DynamicInstrumentationConfigState {
     NotSet,
 }
 
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, Serialize, Deserialize)]
+pub struct SidecarFlushOptions {
+    pub traces_and_stats: bool,
+    pub flag_evaluations: bool,
+    pub telemetry: bool,
+}
+
 /// The `SidecarInterface` trait defines the necessary methods for the sidecar service.
 ///
 /// These methods include operations such as enqueueing actions, registering services, setting
 /// session configurations, and sending traces.
-#[datadog_ipc_macros::service]
+#[libdd_ipc_macros::service]
 pub trait SidecarInterface {
     /// Enqueues a list of actions to be performed.
     ///
@@ -61,6 +70,15 @@ pub trait SidecarInterface {
     ///
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(process_tags: Vec<Tag>);
+
+    /// Records the auto-resolved default service name for the session
+    /// (thread-bound; the tracer's fallback when `DD_SERVICE` is unset).
+    /// Pass `None` to clear it.
+    async fn set_session_default_service_name(name: Option<String>);
+
+    /// Records whether `DD_SERVICE` is currently set for the session
+    /// (per-request mutable; tracer should refresh on RINIT).
+    async fn set_session_user_service_defined(is_defined: bool);
 
     /// Removes the application entry for the given queue ID from the instance.
     ///
@@ -122,6 +140,56 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
+    /// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 `TracerPayload`,
+    /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+    /// `/v1.0/traces` endpoint. Use this when the SDK speaks V1 natively.
+    ///
+    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so only
+    /// the generic bool/int flags need to cross the IPC boundary, unlike `send_trace_v04_shm`
+    /// which still needs the full `SerializedTracerHeaderTags`. `lang_interpreter`/`lang_vendor`
+    /// have no equivalent in the V1 payload model though, so those two still cross separately.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `handle` - The handle to the shared memory.
+    /// * `len` - The size of the shared memory data.
+    /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
+    /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
+    /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
+    async fn send_trace_v1_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+        len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    );
+
+    /// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 `TracerPayload`, can
+    /// inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+    /// endpoint. Use this when the SDK speaks V1 natively.
+    ///
+    /// The V1 payload already carries lang/version/tracer-version/container-id itself, so only
+    /// the generic bool/int flags need to cross the IPC boundary, unlike `send_trace_v04_bytes`
+    /// which still needs the full `SerializedTracerHeaderTags`. `lang_interpreter`/`lang_vendor`
+    /// have no equivalent in the V1 payload model though, so those two still cross separately.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `data` - The V1 trace data serialized as bytes.
+    /// * `generic` - The generic tracer header flags (stats/top-level computed, dropped counts).
+    /// * `lang_interpreter` - The tracer's language interpreter, absent from the V1 payload.
+    /// * `lang_vendor` - The tracer's language interpreter vendor, absent from the V1 payload.
+    async fn send_trace_v1_bytes(
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    );
+
     /// Transfers raw data to a live-debugger endpoint.
     ///
     /// # Arguments
@@ -170,6 +238,8 @@ pub trait SidecarInterface {
     /// * `global_tags` - Global tags which need to be propagated.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
+    /// * `remote_config_generation` - The SHM reader generation last read by the client (0 if
+    ///   unread).
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -178,6 +248,7 @@ pub trait SidecarInterface {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     );
 
     /// Sets request state which does not directly affect the RC connection.
@@ -201,9 +272,10 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
-    /// Flushes any outstanding traces queued for sending.
+    /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by
+    /// options.
     #[blocking]
-    async fn flush_traces();
+    async fn flush(options: SidecarFlushOptions);
 
     /// Sets x-datadog-test-session-token on all requests for the given session.
     ///
@@ -212,6 +284,34 @@ pub trait SidecarInterface {
     /// * `session_id` - The ID of the session.
     /// * `token` - The session token.
     async fn set_test_session_token(token: String);
+
+    /// IPC fallback: add a span directly to the sidecar's SHM concentrator for (env, version).
+    ///
+    /// Used when the PHP side cannot open the SHM concentrator yet (startup race: SHM is
+    /// created by the sidecar after processing `set_universal_service_tags`, but span
+    /// serialization may run before that message is processed).  Because the sidecar processes
+    /// IPC messages sequentially and `set_universal_service_tags` is sent first (via the
+    /// priority outbox), the concentrator is guaranteed to exist when this message is processed.
+    async fn add_span_to_concentrator(
+        env: String,
+        version: String,
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
+    );
+
+    /// Starts the AppSec backend if it has not already been initialized.
+    ///
+    /// Returns only after initialization finishes, so subsequent AppSec messages
+    /// cannot overtake initialization.
+    async fn ensure_appsec_started(log_file_path: Vec<u8>, log_level: String) -> bool;
+
+    /// Forwards an AppSec message from the PHP extension to the registered helper.
+    ///
+    /// Returns the response bytes from the helper and a flag indicating whether
+    /// the extension session should be disconnected.
+    async fn send_appsec_message(
+        client_id: u64,
+        #[ClientType(&'request [u8])] data: Vec<u8>,
+    ) -> (Vec<u8>, bool);
 
     /// Sends a ping to the service.
     #[blocking]
@@ -230,4 +330,34 @@ pub trait SidecarInterface {
     ///
     /// A string representation of the current statistics of the service.
     async fn stats() -> String;
+
+    /// Repurpose this connection as a crashtracker receiver.
+    ///
+    /// The connection must right after that start emitting crashtracker messages.
+    async fn enter_crashtracker_receiver();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+
+    #[test]
+    fn appsec_client_request_decodes_as_server_request() {
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
+            client_id: 42,
+            data: b"payload",
+        };
+
+        let encoded = libdd_ipc::codec::encode(&request);
+        let decoded: SidecarInterfaceRequest =
+            libdd_ipc::codec::decode(&encoded).expect("client request should decode");
+
+        match decoded {
+            SidecarInterfaceRequest::SendAppsecMessage { client_id, data } => {
+                assert_eq!(client_id, 42);
+                assert_eq!(data, b"payload");
+            }
+            _ => panic!("decoded the wrong request variant"),
+        }
+    }
 }

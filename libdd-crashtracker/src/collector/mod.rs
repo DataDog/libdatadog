@@ -3,6 +3,8 @@
 #![cfg(unix)]
 mod additional_tags;
 mod api;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod assert_interceptor;
 mod atomic_set;
 mod collector_manager;
 mod counters;
@@ -21,6 +23,7 @@ pub use additional_tags::{
 pub use api::*;
 pub use counters::{begin_op, end_op, reset_counters, OpTypes};
 pub use crash_handler::{
-    disable, enable, report_unhandled_exception, update_config, update_metadata,
+    disable, enable, get_expected_receiver_pid, report_unhandled_exception,
+    set_expected_receiver_pid, update_config, update_metadata,
 };
 pub use spans::{clear_spans, clear_traces, insert_span, insert_trace, remove_span, remove_trace};

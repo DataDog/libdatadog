@@ -1,0 +1,17 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+FROM rust:1.84-slim
+
+# Keep in sync with: scripts/update_license_3rdparty.sh (TOOL_VERSION) and .github/workflows/lint.yml (cache key + install step)
+ARG TOOL_VERSION=1.0.6
+
+RUN cargo install dd-rust-license-tool --version "${TOOL_VERSION}" --locked
+
+WORKDIR /build
+
+COPY . .
+
+RUN dd-rust-license-tool dump > /licenses.csv
+
+ENTRYPOINT ["cat", "/licenses.csv"]

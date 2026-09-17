@@ -7,7 +7,7 @@ pub mod test_runner;
 pub mod test_types;
 pub mod validation;
 
-use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
+use std::{collections::HashMap, env, path::PathBuf, process};
 
 use once_cell::sync::OnceCell;
 
@@ -34,27 +34,17 @@ fn get_base_target_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the target directory for a specific build configuration.
-/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
-fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
-    let base = get_base_target_dir().clone();
-
-    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
-    if c.panic_abort == Some(true) {
-        base.join("panic-abort")
-    } else {
-        base
-    }
-}
-
 /// Computes the path where the artifact will be located after building.
 pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    let target_dir = get_target_dir_for_build(c);
+    let mut artifact_path = get_base_target_dir().clone();
 
-    let mut artifact_path = target_dir;
+    // Each profile writes to its own `target/` subdirectory. The `PanicAbort`
+    // profile is a custom Cargo profile, so it lives directly under
+    // `target/panic-abort/` rather than under `debug`/`release`.
     artifact_path.push(match c.build_profile {
         BuildProfile::Debug => "debug",
         BuildProfile::Release => "release",
+        BuildProfile::PanicAbort => "panic-abort",
     });
 
     match c.artifact_type {
@@ -101,6 +91,12 @@ pub enum BuildProfile {
     #[default]
     Debug,
     Release,
+    /// Debug opt-level built with `panic = "abort"` (via the dedicated
+    /// `panic-abort` Cargo profile). Used by crash-handler tests that must
+    /// exercise the abort path. Making this a `BuildProfile` variant — rather than
+    /// a separate flag — keeps illegal combinations (e.g. release + panic=abort)
+    /// unrepresentable.
+    PanicAbort,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -110,42 +106,55 @@ pub struct ArtifactsBuild {
     pub artifact_type: ArtifactType,
     pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
-    pub panic_abort: Option<bool>,
 }
 
-fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    let artifact_path = compute_artifact_path(c)?;
+/// Runs a single `cargo build` that builds every artifact in `crates` under
+/// `profile`. All artifacts must share the same target-selector kind (`--bin`
+/// vs `-p`); see [`rebuild_artifacts`] for why the two kinds are not mixed.
+fn cargo_build_batch(profile: BuildProfile, crates: &[&ArtifactsBuild]) -> anyhow::Result<()> {
+    if crates.is_empty() {
+        return Ok(());
+    }
 
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
 
-    // For variant builds (like panic_abort), use a separate target directory
-    // so they don't conflict with standard builds
-    let target_dir = get_target_dir_for_build(c);
-    if target_dir != *get_base_target_dir() {
-        build_cmd.arg("--target-dir").arg(&target_dir);
+    match profile {
+        BuildProfile::Debug => {}
+        BuildProfile::Release => {
+            build_cmd.arg("--release");
+        }
+        BuildProfile::PanicAbort => {
+            // Build with the dedicated `panic-abort` Cargo profile (defined in the
+            // workspace root Cargo.toml with `panic = "abort"`), so artifacts land
+            // in `target/panic-abort/` under the standard target layout and
+            // Swatinem/rust-cache manages and cleans them like any other profile.
+            build_cmd.arg("--profile").arg("panic-abort");
+
+            // `-C force-unwind-tables=yes` has no profile equivalent, so it stays a
+            // scoped RUSTFLAG applied only to this build invocation. `panic=abort`
+            // strips the `.eh_frame` unwind tables that the aarch64 backtrace
+            // unwinder relies on; without them `RUST_BACKTRACE` can loop forever on
+            // certain binary layouts (rust-lang/rust#123733), hanging the test until
+            // the runner OOMs. Keep until #123733 (fix: rust-lang/rust#143613) ships
+            // in a stable toolchain.
+            let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+            let new_rustflags = if existing_rustflags.is_empty() {
+                "-C force-unwind-tables=yes".to_string()
+            } else {
+                format!("{} -C force-unwind-tables=yes", existing_rustflags)
+            };
+            build_cmd.env("RUSTFLAGS", new_rustflags);
+        }
     }
 
-    if let BuildProfile::Release = c.build_profile {
-        build_cmd.arg("--release");
-    }
-
-    match c.artifact_type {
-        ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
-        ArtifactType::Bin => build_cmd.arg("--bin"),
-    };
-
-    if c.panic_abort == Some(true) {
-        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-        let new_rustflags = if existing_rustflags.is_empty() {
-            "-C panic=abort".to_string()
-        } else {
-            format!("{} -C panic=abort", existing_rustflags)
+    for &c in crates {
+        match c.artifact_type {
+            ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
+            ArtifactType::Bin => build_cmd.arg("--bin"),
         };
-        build_cmd.env("RUSTFLAGS", new_rustflags);
+        build_cmd.arg(&c.name);
     }
-
-    build_cmd.arg(&c.name);
 
     let output = build_cmd.output()?;
     if !output.status.success() {
@@ -156,7 +165,7 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         );
     }
 
-    Ok(artifact_path)
+    Ok(())
 }
 
 /// Returns the paths of prebuilt artifacts, failing if any are missing.
@@ -181,28 +190,34 @@ pub fn fetch_built_artifacts<'b>(
     Ok(res)
 }
 
-/// Invokes `cargo build` for each artifact, letting cargo's own dependency
-/// tracking decide whether recompilation is needed.
+/// Builds all requested artifacts, batching them into one `cargo build` per
+/// profile so cargo compiles each profile's shared dependency graph once rather
+/// than once per artifact, and lets cargo's own dependency tracking decide what
+/// needs recompiling.
 pub fn rebuild_artifacts<'b>(
     crates: &[&'b ArtifactsBuild],
 ) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
-    static ARTIFACTS: OnceCell<Mutex<HashMap<ArtifactsBuild, PathBuf>>> = OnceCell::new();
-
-    let mut res = HashMap::new();
-    let artifacts = ARTIFACTS.get_or_init(|| Mutex::new(HashMap::new()));
-    for &c in crates {
-        let mut artifacts = artifacts.lock().unwrap();
-        let artifacts = artifacts.deref_mut();
-
-        if let Some(p) = artifacts.get(c) {
-            res.insert(c, p.clone());
-        } else {
-            let p = cargo_build_artifact(c)?;
-            res.insert(c, p.clone());
-            artifacts.insert(c.clone(), p);
-        }
+    for profile in [
+        BuildProfile::Debug,
+        BuildProfile::Release,
+        BuildProfile::PanicAbort,
+    ] {
+        // cargo scopes `--bin`/`--lib` target selectors to the packages named by
+        // `-p` when both appear in one invocation, so bin and package artifacts
+        // are built in separate invocations to keep each selector workspace-wide.
+        let (bins, packages): (Vec<_>, Vec<_>) = crates
+            .iter()
+            .copied()
+            .filter(|c| c.build_profile == profile)
+            .partition(|c| c.artifact_type == ArtifactType::Bin);
+        cargo_build_batch(profile, &bins)?;
+        cargo_build_batch(profile, &packages)?;
     }
-    Ok(res)
+
+    crates
+        .iter()
+        .map(|&c| Ok((c, compute_artifact_path(c)?)))
+        .collect()
 }
 
 fn shared_lib_extension(triple_target: &str) -> anyhow::Result<&'static str> {

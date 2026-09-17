@@ -46,8 +46,10 @@ impl HttpClient {
         config: HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let backend = BackendImpl::new(config.timeout(), transport)?;
-        Ok(Self { backend, config })
+        Ok(Self {
+            backend: BackendImpl::new(&config, transport)?,
+            config,
+        })
     }
 
     /// The client's configuration.
@@ -108,6 +110,7 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn new_creates_client() {
         ensure_crypto_provider();
@@ -118,6 +121,7 @@ mod tests {
         assert_eq!(client.config().timeout(), Duration::from_secs(3));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_creates_client() {
         ensure_crypto_provider();

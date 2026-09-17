@@ -2,6 +2,120 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v8.0.0..libdd-trace-stats-v9.0.0) - 2026-09-08
+
+### Added
+
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Read OTel HTTP names for the status and method dimensions ([#2323](https://github.com/datadog/libdatadog/issues/2323)) - ([c172290](https://github.com/datadog/libdatadog/commit/c1722904796778e193703397dcd516c2bbf6f577))
+
+
+
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v7.0.0..libdd-trace-stats-v8.0.0) - 2026-08-25
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+- Bump `libdd-trace-utils` to a new major version (`^10.1.0` → `^11.0.0`)
+
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v6.0.0..libdd-trace-stats-v7.0.0) - 2026-08-17
+
+### Added
+
+- Add compression option for agentless export ([#2205](https://github.com/datadog/libdatadog/issues/2205)) - ([fd59f6d](https://github.com/datadog/libdatadog/commit/fd59f6da4cb6b40e2040b3d15d5fb354b29367ba))
+- Per-field cardinality limits ([#2211](https://github.com/datadog/libdatadog/issues/2211)) - ([72fa868](https://github.com/datadog/libdatadog/commit/72fa86854c823361b7d234545f1a2f2d21f944fe))
+- String field length limit ([#2267](https://github.com/datadog/libdatadog/issues/2267)) - ([42045b9](https://github.com/datadog/libdatadog/commit/42045b9d5156ff923c4db6c9c1abcd5283a6c1bb))
+- Implement additional metric tags in libdd-trace-stats ([#2170](https://github.com/datadog/libdatadog/issues/2170)) - ([63ecad5](https://github.com/datadog/libdatadog/commit/63ecad56152f675fb74761d60adf5a861dafb1e1))
+- Make telemetry worker wasm-compatible for the TraceExporter ([#2172](https://github.com/datadog/libdatadog/issues/2172)) - ([73f23a2](https://github.com/datadog/libdatadog/commit/73f23a2c03be39971c966e444785d63b6fd52e81))
+- Add `restart_after_fork` configuration option [APMSP-3843] ([#2263](https://github.com/datadog/libdatadog/issues/2263)) - ([3f4be28](https://github.com/datadog/libdatadog/commit/3f4be2892202624702243d3f32c12fa39f21dbd6))
+- Add v1 isolated bricks for trace exporter ([#2280](https://github.com/datadog/libdatadog/issues/2280)) - ([7ba36d7](https://github.com/datadog/libdatadog/commit/7ba36d7a2ea868e2c0a6a9e68c9583acc2bbda74))
+
+### Changed
+
+- Make client clonable ([#2222](https://github.com/datadog/libdatadog/issues/2222)) - ([b9fae6d](https://github.com/datadog/libdatadog/commit/b9fae6d5365be2ddce0d11d6d771481de5c47c27))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Disable retries for stats payload sends ([#2249](https://github.com/datadog/libdatadog/issues/2249)) - ([fb65e46](https://github.com/datadog/libdatadog/commit/fb65e461614fb9819c50d1cdc1337ca9605458da))
+- Css obfuscation logic ([#2203](https://github.com/datadog/libdatadog/issues/2203)) - ([25d90c8](https://github.com/datadog/libdatadog/commit/25d90c84be91f9547c74ec060a9427c35c0ecf94))
+
+
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v5.0.0..libdd-trace-stats-v6.0.0) - 2026-07-07
+
+### Added
+
+- Export client-computed span stats as OTLP trace metrics ([#2067](https://github.com/datadog/libdatadog/issues/2067)) - ([cc2d696](https://github.com/datadog/libdatadog/commit/cc2d6963073a6f5f37c31c4429b805760e836906))
+- SharedRuntime Borrowed & Owned mode ([#2061](https://github.com/datadog/libdatadog/issues/2061)) - ([4b79b7e](https://github.com/datadog/libdatadog/commit/4b79b7ed87113bea01db583d54e13fb0c2a19e74))
+- Send telemetry for cardinality limits ([#2159](https://github.com/datadog/libdatadog/issues/2159)) - ([a4d4417](https://github.com/datadog/libdatadog/commit/a4d4417004bb0c2af4010575d56c729185d29000))
+- Add whole key cardinality limit ([#2158](https://github.com/datadog/libdatadog/issues/2158)) - ([a38b630](https://github.com/datadog/libdatadog/commit/a38b6304dcd63c91a52a752f2baa04e7d21e374d))
+
+### Changed
+
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Update protobufs to be in sync with datadog-agent ([#2180](https://github.com/datadog/libdatadog/issues/2180)) - ([b02d454](https://github.com/datadog/libdatadog/commit/b02d454576034ea56becbd61411ff2f831a89562))
+
+### Fixed
+
+- Add grpc_method to aggregation key ([#2151](https://github.com/datadog/libdatadog/issues/2151)) - ([53e20b5](https://github.com/datadog/libdatadog/commit/53e20b54ed79e04e3bf5636ce97519732bcdbfad))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v4.0.0..libdd-trace-stats-v5.0.0) - 2026-06-08
+
+### Changed
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+- Bump msrv to 1.87.0 ([#2017](https://github.com/datadog/libdatadog/issues/2017)) - ([276039d](https://github.com/datadog/libdatadog/commit/276039da8897a8e9e83ed3162912792f2241c5d7))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+
+
+
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v3.0.0..libdd-trace-stats-v4.0.0) - 2026-05-22
+
+### Added
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) - ([ecdca7d](https://github.com/datadog/libdatadog/commit/ecdca7d4ef4e7f11c0194ed2f4e25173973404e7))
+- Add encoder from v04 to v1 ([#1896](https://github.com/datadog/libdatadog/issues/1896)) - ([e2fb886](https://github.com/datadog/libdatadog/commit/e2fb8860d002d1b56d0dc8b0b185fca7954371df))
+
+
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v2.0.0..libdd-trace-stats-v3.0.0) - 2026-05-18
+
+### Added
+
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Allow worker to be stopped after fork ([#1893](https://github.com/datadog/libdatadog/issues/1893)) - ([5b798ae](https://github.com/datadog/libdatadog/commit/5b798aee0be0b47ca3cec0dedda9becc0334e1dc))
+- Add stats computation via SHM ([#1821](https://github.com/datadog/libdatadog/issues/1821)) - ([ff8e912](https://github.com/datadog/libdatadog/commit/ff8e9120c7fe1746f3b0cad5b5e7c1cefa4d99ef))
+- Propagate service source from span meta to client stats payload ([#1803](https://github.com/datadog/libdatadog/issues/1803)) - ([5cfc694](https://github.com/datadog/libdatadog/commit/5cfc694173da07ff13b7bff967a46bddc903e3db))
+- Integrate obfuscation to the stats exporter [APMSP-2764] ([#1819](https://github.com/datadog/libdatadog/issues/1819)) - ([540f186](https://github.com/datadog/libdatadog/commit/540f18646d58bd18984990fbed85254b3678ac7f))
+- Use ip quantization when aggregating peer tags for trace stats ([#1944](https://github.com/datadog/libdatadog/issues/1944)) - ([4ae8ebe](https://github.com/datadog/libdatadog/commit/4ae8ebe252451374c292efd159ce254c3f5a72e0))
+
+### Changed
+
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+
+### Fixed
+
+- Gate libdd-common TLS features in remaining internal crates + add CI guard ([#1943](https://github.com/datadog/libdatadog/issues/1943)) - ([db05e1f](https://github.com/datadog/libdatadog/commit/db05e1f8408a76075efb37ecec544d2e74217e57))
+- Align with css spec ([#1790](https://github.com/datadog/libdatadog/issues/1790)) - ([b1d5bcf](https://github.com/datadog/libdatadog/commit/b1d5bcf7a2a006e2de95925cd8aa5ec13eec4b87))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.4..libdd-trace-stats-v2.0.0) - 2026-03-25
 
 ### Changed

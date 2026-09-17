@@ -23,6 +23,7 @@ pub fn open_file_or_quiet(filename: Option<&str>) -> std::io::Result<RawFd> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::io;
     use std::io::Write;
     use std::os::fd::FromRawFd;
     use tempfile::tempdir;
@@ -143,7 +144,7 @@ mod tests {
         assert!(result.is_err());
 
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -153,7 +154,7 @@ mod tests {
         assert!(result.is_err());
 
         let error = result.unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -165,7 +166,7 @@ mod tests {
             // On some systems this might be NotFound, on others PermissionDenied
             assert!(matches!(
                 error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
             ));
         }
     }

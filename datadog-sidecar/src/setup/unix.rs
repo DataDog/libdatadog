@@ -10,13 +10,10 @@ use std::{
 
 use crate::primary_sidecar_identifier;
 use crate::setup::Liaison;
-use datadog_ipc::platform::locks::FLock;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::platform::locks::FLock;
+use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
-#[cfg(feature = "logging")]
-use log::{debug, warn};
-#[cfg(not(feature = "logging"))]
-use tracing::{debug, warn};
+use tracing::trace;
 
 pub type IpcClient = SeqpacketConn;
 pub type IpcServer = SeqpacketListener;
@@ -51,18 +48,19 @@ impl Liaison for SharedDirLiaison {
 
         let _g = match FLock::try_rw_lock(&self.lock_path) {
             Ok(lock) => lock,
-            // failing to acquire lock
-            // means that another process is creating the socket
+            // Failing to acquire the lock means another process is currently creating
+            // the socket; the caller then connects to it via connect_to_server(). This
+            // is normal under concurrent process startup.
             Err(err) => {
-                warn!("failed_locking");
+                trace!("another process is creating the sidecar socket");
                 return Err(err);
             }
         };
 
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
-            if datadog_ipc::platform::sockets::is_listening(&self.socket_path)? {
-                debug!(
+            if libdd_ipc::platform::sockets::is_listening(&self.socket_path)? {
+                trace!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
                 );
@@ -121,6 +119,11 @@ impl SharedDirLiaison {
             lock_path,
         }
     }
+
+    /// The filesystem socket path this liaison binds/connects to.
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
 }
 
 impl Default for SharedDirLiaison {
@@ -139,8 +142,8 @@ mod linux {
 
     use spawn_worker::getpid;
 
-    use datadog_ipc::platform;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::platform;
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 
@@ -187,6 +190,14 @@ mod linux {
             ));
             Self { path }
         }
+
+        /// The abstract socket name this liaison binds/connects to.
+        ///
+        /// Exposed so the crashtracker collector (in another process) can target the exact same
+        /// IPC socket the sidecar listens on.
+        pub fn path(&self) -> &std::path::Path {
+            &self.path
+        }
     }
 
     impl Default for AbstractUnixSocketLiaison {
@@ -215,7 +226,7 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
     use super::Liaison;
 

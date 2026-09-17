@@ -14,8 +14,41 @@ env:
   RUST_VERSION: 1.92.0
 
 jobs:
+  # Automation that opens a PR and labels it in two steps (`gh pr create
+  # --label` is not atomic) produces an `opened` event whose payload carries no
+  # labels, so a payload-based `if:` guard runs the check anyway. The later
+  # `labeled` runs skip correctly, but the failed check run from the `opened` run
+  # has a higher id and is the one all-checks keeps, so the PR stays red despite
+  # the label.
+  check-skip:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.labels.outputs.skip }}
+    steps:
+      - name: Check for skip-pr-title-semver-check label
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.labels[].name'); then
+            echo "ERROR: could not read labels for PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
+
+          if grep -qx 'skip-pr-title-semver-check' <<< "$LABELS"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is set; skipping semver checks."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is not set; running semver checks."
+          fi
+
   detect-changes:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: check-skip
+    if: ${{ needs.check-skip.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       changed_crates: ${{ steps.detect.outputs.crates }}
@@ -78,8 +111,8 @@ jobs:
           fi
 
   semver-check:
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       result_json: ${{ steps.semver.outputs.result_json }}
@@ -89,18 +122,25 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Install Rust ${{ env.RUST_VERSION }}
         run: |
           rustup set profile minimal
           rustup install ${{ env.RUST_VERSION }} && rustup default ${{ env.RUST_VERSION }}
-          rustup toolchain install nightly-2026-02-08
+          rustup toolchain install ${{ steps.nightly-version.outputs.version }}
           # Link the dated nightly as 'nightly' for tools (like cargo-public-api) that expect it
-          ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
+          ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
 
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
 
       - name: Install dependencies
         run: |
@@ -109,10 +149,17 @@ jobs:
       - name: Install cargo-public-api
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.50.2, cargo-semver-checks@0.45.0
+          tool: cargo-public-api@0.52.0, cargo-semver-checks@0.48.0
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
 
       - name: Run semver checks on changed crates
         id: semver
+        env:
+          # Override rust-toolchain.toml so cargo-semver-checks / cargo-public-api
+          # run on the explicit RUST_VERSION (1.92.0) the workflow installed,
+          # instead of the workspace MSRV from rust-toolchain.toml.
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
         run: |
           set -euo pipefail
 
@@ -157,8 +204,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   validate:
-    needs: [detect-changes, semver-check]
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes, semver-check]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title against semver changes

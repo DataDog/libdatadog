@@ -12,7 +12,7 @@ use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
 use crate::setup::Liaison;
 use crate::setup::NamedPipeLiaison;
-use datadog_ipc::{AsyncConn, SeqpacketListener};
+use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
 
@@ -139,7 +139,6 @@ fn run_listener_windows(
 
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
-        enable_crashtracker: false,
         external_shutdown_rx: None,
         init_shm_eagerly: true,
     };

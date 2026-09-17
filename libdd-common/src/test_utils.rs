@@ -36,7 +36,7 @@ impl Drop for TempFileGuard {
     }
 }
 
-impl std::ops::Deref for TempFileGuard {
+impl core::ops::Deref for TempFileGuard {
     type Target = PathBuf;
 
     fn deref(&self) -> &Self::Target {
@@ -158,7 +158,7 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
 
     #[cfg(windows)]
     {
-        use std::mem::{size_of, zeroed};
+        use core::mem::{size_of, zeroed};
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
             CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
@@ -529,7 +529,8 @@ mod tests {
         );
 
         // Spawn some threads and verify the count increases
-        use std::sync::{Arc, Barrier};
+        use alloc::sync::Arc;
+        use std::sync::Barrier;
         let barrier = Arc::new(Barrier::new(6)); // 5 spawned threads + main thread
 
         let handles: Vec<_> = (0..5)
@@ -537,7 +538,7 @@ mod tests {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
                     barrier.wait();
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    std::thread::sleep(core::time::Duration::from_millis(50));
                 })
             })
             .collect();

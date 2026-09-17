@@ -14,6 +14,8 @@ Compute aggregated statistics from distributed tracing spans with time-bucketed 
 - **Span Filtering**: Filter spans by top-level, measured, or span.kind
 - **Time Bucketing**: Configurable bucket sizes for aggregation
 - **Statistics Export**: Generate statistics payloads for Datadog backend
+- **Stats Exporter** *(non-wasm)*: Periodic HTTP flusher backed by any `HttpClientTrait` implementation
+- **Agentless Exporter**: Host-triggered intake export for runtimes without a background worker
 
 ## Span Concentrator
 
@@ -41,6 +43,37 @@ Only certain spans are aggregated:
 
 When flushed, the concentrator keeps the most recent buckets and returns older buckets as statistics.
 
+## Stats Exporter
+
+`StatsExporter` wraps a `FlushableConcentrator` and periodically drains it, encoding the resulting `ClientStatsPayload` as msgpack and POSTing it to the agent's `/v0.6/stats` endpoint.
+
+```rust
+use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_capabilities_impl::NativeCapabilities;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+let exporter = StatsExporter::<NativeCapabilities>::new(
+    Duration::from_secs(10),
+    Arc::new(Mutex::new(concentrator)),
+    StatsMetadata { service: "my-service".into(), ..Default::default() },
+    endpoint,
+    NativeCapabilities::new_client(),
+);
+
+// Flush and send (force=true drains all buckets on shutdown)
+exporter.send(false).await?;
+```
+
+`AgentlessStatsExporter` accepts decoded v0.4 traces and owns top-level detection,
+aggregation, payload encoding, and intake delivery. Its caller supplies the flush
+schedule and calls `send(true)` before shutdown or reconfiguration. Enable the
+`stats-obfuscation` feature to construct it because no Agent can obfuscate direct
+intake payloads. Construction requires a non-zero bucket size and returns
+`AgentlessStatsExporterError::InvalidBucketSize` otherwise.
+Use `create_agentless_concentrator` when another exporter owns the flush schedule
+and delivery but needs the same validated agentless aggregation configuration.
+
 ## Example Usage
 
 ```rust
@@ -53,9 +86,10 @@ let mut concentrator = SpanConcentrator::new(
     SystemTime::now(),
     vec!["client".to_string(), "server".to_string()], // eligible span kinds
     vec!["peer.service".to_string()], // peer tag keys
+    vec!["example.key".to_string()], // additional metric tag keys
 );
 
-// Add spans
+// Add one span
 // concentrator.add_span(&span);
 
 // Flush statistics

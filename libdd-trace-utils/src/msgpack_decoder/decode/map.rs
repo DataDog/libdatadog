@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 use rmp::{decode, decode::RmpRead, Marker};
 use std::collections::HashMap;
@@ -44,6 +45,27 @@ where
     F: Fn(&mut B) -> Result<(K, V), DecodeError>,
 {
     let mut map = HashMap::with_capacity(len);
+    for _ in 0..len {
+        let (k, v) = read_pair(buf)?;
+        map.insert(k, v);
+    }
+    Ok(map)
+}
+
+/// Reads a map from the buffer and returns it as a `VecMap<K, V>`.
+///
+/// Like `read_map` but returns pairs in a VecMap instead of HashMap for better
+/// cache locality when iteration order doesn't matter.
+#[inline]
+pub fn read_map_vec<K, V, F, B>(
+    len: usize,
+    buf: &mut B,
+    read_pair: F,
+) -> Result<VecMap<K, V>, DecodeError>
+where
+    F: Fn(&mut B) -> Result<(K, V), DecodeError>,
+{
+    let mut map = VecMap::with_capacity(len);
     for _ in 0..len {
         let (k, v) = read_pair(buf)?;
         map.insert(k, v);

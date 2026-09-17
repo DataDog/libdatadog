@@ -1,15 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
+use alloc::borrow::Cow;
+use core::time::Duration;
 use libdd_common::Endpoint;
-use std::borrow::Cow;
-use std::time::Duration;
 
-use super::{CrashtrackerConfiguration, StacktraceCollection};
+use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
 
 #[derive(Debug, Default)]
 pub struct CrashtrackerConfigurationBuilder {
     additional_files: Vec<String>,
+    collect_all_threads: bool,
     create_alt_stack: bool,
     demangle_names: bool,
     endpoint_url: Option<String>,
@@ -17,16 +18,24 @@ pub struct CrashtrackerConfigurationBuilder {
     endpoint_timeout_ms: Option<u64>,
     endpoint_test_token: Option<String>,
     endpoint_use_system_resolver: bool,
+    max_threads: Option<usize>,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
     timeout: Option<Duration>,
     unix_socket_path: Option<String>,
+    #[cfg(unix)]
+    unix_socket_connector: Option<fn(&str) -> std::os::fd::RawFd>,
     use_alt_stack: bool,
 }
 
 impl CrashtrackerConfigurationBuilder {
     pub fn additional_files(mut self, files: Vec<String>) -> Self {
         self.additional_files = files;
+        self
+    }
+
+    pub fn collect_all_threads(mut self, collect: bool) -> Self {
+        self.collect_all_threads = collect;
         self
     }
 
@@ -72,6 +81,11 @@ impl CrashtrackerConfigurationBuilder {
         self
     }
 
+    pub fn max_threads(mut self, max: usize) -> Self {
+        self.max_threads = Some(max);
+        self
+    }
+
     pub fn resolve_frames(mut self, resolve: StacktraceCollection) -> Self {
         self.resolve_frames = resolve;
         self
@@ -89,6 +103,11 @@ impl CrashtrackerConfigurationBuilder {
 
     pub fn unix_socket_path(mut self, path: String) -> Self {
         self.unix_socket_path = Some(path);
+        self
+    }
+
+    pub fn unix_socket_connector(mut self, connector: fn(&str) -> std::os::fd::RawFd) -> Self {
+        self.unix_socket_connector = Some(connector);
         self
     }
 
@@ -138,13 +157,18 @@ impl CrashtrackerConfigurationBuilder {
         // before the receiver is started when using an async-receiver.
         Ok(CrashtrackerConfiguration {
             additional_files: self.additional_files,
+            collect_all_threads: self.collect_all_threads,
             create_alt_stack: self.create_alt_stack,
             use_alt_stack: self.use_alt_stack,
             endpoint,
+            max_threads: self.max_threads.unwrap_or(default_max_threads()),
             resolve_frames: self.resolve_frames,
             signals,
             timeout,
             unix_socket_path: self.unix_socket_path,
+            unix_socket_connector: self
+                .unix_socket_connector
+                .unwrap_or(super::default_unix_socket_connector),
             demangle_names: self.demangle_names,
         })
     }
@@ -154,7 +178,7 @@ impl CrashtrackerConfigurationBuilder {
 mod tests {
     use super::*;
     use crate::{default_signals, shared::constants};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn test_build_defaults() -> anyhow::Result<()> {

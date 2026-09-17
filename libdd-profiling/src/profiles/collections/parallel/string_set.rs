@@ -265,7 +265,7 @@ mod tests {
 
         // Share the set across threads using try_clone (which clones the internal Arc)
         let num_threads = 4;
-        let operations_per_thread = 50;
+        let operations_per_thread = if cfg!(miri) { 10 } else { 50 };
 
         // Keep a clone of the original set for final verification
         let original_set = set.try_clone().unwrap();

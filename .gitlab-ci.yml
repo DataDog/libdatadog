@@ -5,9 +5,21 @@ variables:
     value: "main"
     description: "downstream jobs are triggered on this branch"
 
+  # To bump: docker buildx imagetools inspect registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:941d9b580302c07194e9bd2141d5f47c6cfb97d5a73c8ce9af2fce7a76034a0b
+
+  # To bump: get commit sha from repo: https://gitlab.ddbuild.io/DataDog/benchmarking-platform branch: libdatadog/benchmarks
+  BENCHMARKING_PLATFORM_SHA: "1d6ed8466bbe6e8fca75f899a7ec3bdc3003ce4e"
+
 include:
+  - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+
+.untrusted_ref_guard:
+  rules:
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_REPOSITORY && $CI_EXTERNAL_PULL_REQUEST_SOURCE_REPOSITORY != $CI_EXTERNAL_PULL_REQUEST_TARGET_REPOSITORY'
+      when: never
 
 trigger_internal_build:
   variables:
@@ -21,10 +33,16 @@ trigger_internal_build:
     LIBDATADOG_COMMIT_TITLE: $CI_COMMIT_TITLE
     LIBDATADOG_ENABLE_MACOS_JOBS: "false"
     LIBDATADOG_IS_RELEASE_BRANCH: "false"
+    LIBDATADOG_IS_HOTFIX_BRANCH: "false"
   rules:
     - if: '$CI_COMMIT_BRANCH =~ /^release\//'
       variables:
         LIBDATADOG_IS_RELEASE_BRANCH: "true"
+      when: always
+    - if: '$CI_COMMIT_BRANCH =~ /^hotfix\//'
+      variables:
+        LIBDATADOG_IS_RELEASE_BRANCH: "true"
+        LIBDATADOG_IS_HOTFIX_BRANCH: "true"
       when: always
     - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^release\//'
       when: always

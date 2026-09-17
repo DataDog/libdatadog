@@ -12,9 +12,9 @@ use futures::future;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
-use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
+use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
@@ -24,13 +24,13 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
-    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+    debugger_config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
+    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::DogStatsDClient>>>,
     remote_config_options: Arc<Mutex<Option<ConfigOptions>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
@@ -45,30 +45,10 @@ pub(crate) struct SessionInfo {
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
-}
-
-impl Clone for SessionInfo {
-    fn clone(&self) -> Self {
-        SessionInfo {
-            runtimes: self.runtimes.clone(),
-            session_config: self.session_config.clone(),
-            debugger_config: self.debugger_config.clone(),
-            tracer_config: self.tracer_config.clone(),
-            dogstatsd: self.dogstatsd.clone(),
-            remote_config_options: self.remote_config_options.clone(),
-            agent_infos: self.agent_infos.clone(),
-            remote_config_interval: self.remote_config_interval.clone(),
-            #[cfg(windows)]
-            remote_config_notify_function: self.remote_config_notify_function.clone(),
-            #[cfg(windows)]
-            process_handle: self.process_handle.clone(),
-            log_guard: self.log_guard.clone(),
-            session_id: self.session_id.clone(),
-            pid: self.pid.clone(),
-            remote_config_enabled: self.remote_config_enabled.clone(),
-            process_tags: self.process_tags.clone(),
-        }
-    }
+    pub(crate) auto_resolved_service_name: Arc<Mutex<Option<String>>>,
+    pub(crate) user_service_defined: Arc<Mutex<bool>>,
+    pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
+    otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
 }
 
 impl SessionInfo {
@@ -117,22 +97,6 @@ impl SessionInfo {
         future::join_all(runtimes_shutting_down).await;
     }
 
-    /// Shuts down all running instances in the session.
-    pub(crate) async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-
-        let instances_shutting_down: Vec<_> = runtimes
-            .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
-            .collect();
-
-        future::join_all(instances_shutting_down).await;
-    }
-
     /// Shuts down a specific runtime in the session.
     ///
     /// # Arguments
@@ -151,6 +115,31 @@ impl SessionInfo {
 
     pub(crate) fn lock_runtimes(&self) -> MutexGuard<'_, HashMap<String, RuntimeInfo>> {
         self.runtimes.lock_or_panic()
+    }
+
+    pub(crate) fn process_tags_with_svc_source(&self) -> Vec<Tag> {
+        let mut tags = self.process_tags.lock_or_panic().clone();
+        if *self.user_service_defined.lock_or_panic() {
+            if let Ok(tag) = Tag::new("svc.user", "true") {
+                tags.push(tag);
+            }
+        } else if let Some(name) = self.auto_resolved_service_name.lock_or_panic().as_ref() {
+            if let Ok(tag) = Tag::new("svc.auto", name.clone()) {
+                tags.push(tag);
+            }
+        }
+        tags
+    }
+
+    pub(crate) fn refresh_stats_process_tags(&self) {
+        if let Some(stats) = self.stats_config.lock_or_panic().as_mut() {
+            stats.process_tags = self
+                .process_tags_with_svc_source()
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+        }
     }
 
     pub(crate) fn get_telemetry_config(
@@ -174,6 +163,26 @@ impl SessionInfo {
         }
     }
 
+    pub(crate) fn modify_stats_config<F>(&self, f: F)
+    where
+        F: FnOnce(&mut crate::service::stats_flusher::StatsConfig),
+    {
+        if let Some(cfg) = &mut *self.stats_config.lock_or_panic() {
+            f(cfg)
+        }
+    }
+
+    pub(crate) fn get_otlp_metrics_endpoint(&self) -> MutexGuard<'_, Option<Endpoint>> {
+        self.otlp_metrics_endpoint.lock_or_panic()
+    }
+
+    pub(crate) fn modify_otlp_metrics_endpoint<F>(&self, f: F)
+    where
+        F: FnOnce(&mut Option<Endpoint>),
+    {
+        f(&mut self.get_otlp_metrics_endpoint());
+    }
+
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
         self.tracer_config.lock_or_panic()
     }
@@ -185,24 +194,26 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<libdd_dogstatsd_client::Client>> {
+    pub(crate) fn get_dogstatsd(
+        &self,
+    ) -> MutexGuard<'_, Option<libdd_dogstatsd_client::DogStatsDClient>> {
         self.dogstatsd.lock_or_panic()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnOnce(&mut Option<libdd_dogstatsd_client::Client>),
+        F: FnOnce(&mut Option<libdd_dogstatsd_client::DogStatsDClient>),
     {
         f(&mut self.get_dogstatsd());
     }
 
-    pub fn get_debugger_config(&self) -> MutexGuard<'_, datadog_live_debugger::sender::Config> {
+    pub fn get_debugger_config(&self) -> MutexGuard<'_, libdd_live_debugger::sender::Config> {
         self.debugger_config.lock_or_panic()
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
     where
-        F: FnMut(&mut datadog_live_debugger::sender::Config),
+        F: FnMut(&mut libdd_live_debugger::sender::Config),
     {
         f(&mut self.get_debugger_config());
     }
@@ -223,7 +234,7 @@ impl SessionInfo {
         payload: R,
     ) {
         async fn do_send(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,
@@ -269,7 +280,7 @@ impl SessionInfo {
         }
 
         async fn send<R: AsRef<[u8]> + Sync + Send>(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,
@@ -344,17 +355,6 @@ mod tests {
 
         // Test that all runtimes are shut down
         session_info.shutdown().await;
-        assert!(session_info.runtimes.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_shutdown_running_instances() {
-        let session_info = SessionInfo::default();
-        session_info.get_runtime(&"runtime1".to_string());
-
-        // Test that all running instances are shut down
-        session_info.shutdown_running_instances().await;
         assert!(session_info.runtimes.lock().unwrap().is_empty());
     }
 

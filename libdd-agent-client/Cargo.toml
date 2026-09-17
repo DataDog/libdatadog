@@ -1,0 +1,40 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-agent-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "A Datadog-agent-specialized HTTP client library"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
+publish = false
+
+[lib]
+bench = false
+
+[features]
+default = ["https", "reqwest-backend"]
+https = ["libdd-http-client/https"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
+hyper-backend = ["libdd-http-client/hyper-backend"]
+
+[dependencies]
+bytes = { workspace = true, features = ["std"] }
+flate2.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror = { workspace = true, default-features = true }
+tokio = { workspace = true, features = ["rt"] }
+libdd-http-client = { path = "../libdd-http-client", default-features = false }
+libdd-common = { version = "6.0", path = "../libdd-common", default-features = false }
+tracing.workspace = true
+
+[dev-dependencies]
+httpmock.workspace = true
+rustls = { workspace = true, features = ["ring"] }
+serial_test.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

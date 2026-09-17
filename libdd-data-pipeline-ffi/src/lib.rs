@@ -8,7 +8,9 @@
 
 mod error;
 mod response;
+mod structured_value;
 mod trace_exporter;
+mod tracer;
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {

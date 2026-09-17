@@ -1,7 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::alloc::System;
+
 use criterion::{black_box, criterion_group, Criterion};
+use libdd_common::bench_utils::{memory_allocated_criterion, AllocatedBytesMeasurement};
+use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
 use serde_json::{json, Value};
 
@@ -81,4 +85,71 @@ pub fn deserialize_msgpack_to_internal(c: &mut Criterion) {
     );
 }
 
-criterion_group!(deserialize_benches, deserialize_msgpack_to_internal);
+fn deserialize_msgpack_to_internal_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
+    let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
+        .expect("Failed to serialize test spans.");
+    let data_as_bytes = libdd_tinybytes::Bytes::copy_from_slice(&data);
+
+    c.bench_function(
+        "benching deserializing traces from msgpack to their internal representation (allocs)",
+        |b| {
+            b.iter_batched(
+                || data_as_bytes.clone(),
+                |data_as_bytes| {
+                    let result =
+                        black_box(decode_to_trace_chunks(data_as_bytes, TraceEncoding::V04));
+                    assert!(result.is_ok());
+                    result
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
+/// Slice/borrowed deserialization path: decodes into `SpanSlice` (backed by `SliceData`, whose
+/// `Text` is `Cow<'a, str>`). This is the path affected by the `&str` -> `Cow` `SpanText` change,
+/// unlike `decode_to_trace_chunks` which decodes into owned `BytesData`.
+fn deserialize_msgpack_to_slice(c: &mut Criterion) {
+    let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
+        .expect("Failed to serialize test spans.");
+
+    c.bench_function(
+        "benching deserializing traces from msgpack to borrowed slice representation",
+        |b| {
+            b.iter(|| {
+                let result = black_box(msgpack_decoder::v04::from_slice(&data));
+                assert!(result.is_ok());
+                result
+            });
+        },
+    );
+}
+
+fn deserialize_msgpack_to_slice_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
+    let data = rmp_serde::to_vec(&generate_trace_chunks(20, 2_075))
+        .expect("Failed to serialize test spans.");
+
+    c.bench_function(
+        "benching deserializing traces from msgpack to borrowed slice representation (allocs)",
+        |b| {
+            b.iter(|| {
+                let result = black_box(msgpack_decoder::v04::from_slice(&data));
+                assert!(result.is_ok());
+                result
+            });
+        },
+    );
+}
+
+criterion_group!(
+    deserialize_benches,
+    deserialize_msgpack_to_internal,
+    deserialize_msgpack_to_slice
+);
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+pub fn deserialize_alloc_benches() {
+    let mut criterion = memory_allocated_criterion(&super::GLOBAL);
+    deserialize_msgpack_to_internal_allocs(&mut criterion);
+    deserialize_msgpack_to_slice_allocs(&mut criterion);
+}

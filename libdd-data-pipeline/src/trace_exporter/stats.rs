@@ -7,41 +7,63 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
-#[cfg(not(target_arch = "wasm32"))]
+pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
+
+use super::add_path;
+use super::TracerMetadata;
 use crate::agent_info::schema::AgentInfo;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::stats_exporter;
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
-#[cfg(not(target_arch = "wasm32"))]
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
+pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
+use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_stats::span_concentrator::{
+    SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
+};
+use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
+// std::time::SystemTime::now() panics on wasm32.
+use web_time::SystemTime;
 
-#[cfg(not(target_arch = "wasm32"))]
-use super::add_path;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
-    ["client", "server", "producer", "consumer"];
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
-#[cfg(not(target_arch = "wasm32"))]
+/// The maximum obfuscation version this tracer supports.
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
+
 /// Context struct that groups immutable parameters used by stats functions
-pub(crate) struct StatsContext<'a> {
-    pub metadata: &'a super::TracerMetadata,
+pub(crate) struct StatsContext<
+    'a,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> {
+    pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
-    pub shared_runtime: &'a SharedRuntime,
+    pub shared_runtime: &'a R,
+    pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    pub additional_metric_tag_keys: &'a [String],
+    /// Configuration option to pass to [SharedRuntime::spawn_worker]
+    pub restart_after_fork: bool,
+    /// Optional DogStatsD client forwarded to the [`StatsExporter`].
+    pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
+    /// Optional telemetry handle forwarded to the [`StatsExporter`].
+    #[cfg(feature = "telemetry")]
+    pub telemetry: Option<libdd_telemetry::worker::TelemetryWorkerHandle<C>>,
+    #[cfg(not(feature = "telemetry"))]
+    pub(crate) _phantom: std::marker::PhantomData<fn() -> C>,
 }
 
 #[derive(Debug)]
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum StatsComputationStatus {
     /// Client-side stats has been disabled by the tracer
     Disabled,
@@ -56,118 +78,173 @@ pub(crate) enum StatsComputationStatus {
     },
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub(crate) struct StatsComputationConfig {
+    pub(crate) status: ArcSwap<StatsComputationStatus>,
+    pub(crate) stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    pub(crate) additional_metric_tag_keys: Vec<String>,
+    #[cfg(feature = "stats-obfuscation")]
+    pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
+    /// Builder-level opt-in. When false, stats obfuscation stays off
+    /// regardless of agent support.
+    #[cfg(feature = "stats-obfuscation")]
+    pub(crate) obfuscation_enabled: bool,
+}
+
+/// Return true if the agent supports client-side stats.
+///
+/// This requires:
+/// - `client_drop_p0s` to be enabled on the agent,
+/// - the `/v0.6/stats` endpoint to be advertised by the agent.
+fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
+    agent_info.info.client_drop_p0s.is_some_and(|v| v)
+        && agent_info
+            .info
+            .endpoints
+            .as_ref()
+            .is_some_and(|endpoints| endpoints.iter().any(|e| e == STATS_ENDPOINT))
+}
+
+/// Return true if the agent's obfuscation version is supported by this tracer
+#[cfg(feature = "stats-obfuscation")]
+fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
+    agent_info
+        .info
+        .obfuscation_version
+        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
+}
+
 /// Get span kinds for stats computation with default fallback
 fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
     agent_info
         .info
         .span_kinds_stats_computed
         .clone()
-        .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
+        .unwrap_or_else(default_stats_eligible_span_kinds)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
-pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'static>(
-    ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
+pub(crate) fn start_stats_computation<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+>(
+    ctx: &StatsContext<C, R>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
-    client: H,
+    capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
-    if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
+    if let StatsComputationStatus::DisabledByAgent { bucket_size } =
+        **client_side_stats.status.load()
+    {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
             bucket_size,
-            std::time::SystemTime::now(),
+            SystemTime::now(),
             span_kinds,
             peer_tags,
+            ctx.stats_cardinality_limits,
+            ctx.additional_metric_tag_keys.to_vec(),
+            #[cfg(feature = "stats-obfuscation")]
+            Some(client_side_stats.obfuscation_config.clone()),
         )));
-        create_and_start_stats_worker(
-            ctx,
-            bucket_size,
-            &stats_concentrator,
-            client_side_stats,
-            client,
-        )?;
+        create_and_start_stats_worker(ctx, &stats_concentrator, capabilities, client_side_stats)?;
     }
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Create stats exporter and worker, start the worker, and update the state
-fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static>(
-    ctx: &StatsContext,
-    bucket_size: Duration,
+fn create_and_start_stats_worker<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+>(
+    ctx: &StatsContext<C, R>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: H,
+    capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
-    let stats_exporter = stats_exporter::StatsExporter::<H>::new(
+    let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
+    let stats_exporter = StatsExporter::<C>::new(
         bucket_size,
         stats_concentrator.clone(),
-        ctx.metadata.clone(),
+        StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
-        client,
+        capabilities.clone(),
+        #[cfg(feature = "stats-obfuscation")]
+        SUPPORTED_OBFUSCATION_VERSION_STR,
+        #[cfg(feature = "telemetry")]
+        ctx.telemetry.clone(),
+        ctx.dogstatsd.clone(),
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter)
+        .spawn_worker(stats_exporter, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
-    client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
-        stats_concentrator: stats_concentrator.clone(),
-        worker_handle,
-    }));
+    client_side_stats
+        .status
+        .store(Arc::new(StatsComputationStatus::Enabled {
+            stats_concentrator: stats_concentrator.clone(),
+            worker_handle,
+        }));
 
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// Stops the stats exporter and disable stats computation
-///
-/// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-) {
+/// Transition from `Enabled` to `DisabledByAgent`, awaiting the stats worker shutdown.
+pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
+    // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
+    let snapshot = client_side_stats.load_full();
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         worker_handle,
-    } = &**client_side_stats.load()
+        ..
+    } = &*snapshot
     {
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
-        match ctx.shared_runtime.block_on(worker_handle.clone().stop()) {
-            Ok(Err(e)) => error!("Failed to stop stats worker: {e}"),
-            Err(e) => error!("Failed to stop stats worker: {e}"),
-            _ => {}
+        if let Err(e) = worker_handle.clone().stop().await {
+            error!("Failed to stop stats worker: {e}");
         }
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when agent changes from disabled to enabled
-pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sync + 'static>(
-    ctx: &StatsContext,
+pub(crate) fn handle_stats_disabled_by_agent<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+>(
+    ctx: &StatsContext<C, R>,
     agent_info: &Arc<AgentInfo>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: H,
+    capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if is_stats_computation_supported(agent_info) {
         let status = start_stats_computation(
             ctx,
-            client_side_stats,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
-            client,
+            capabilities,
+            client_side_stats,
         );
         match status {
-            Ok(()) => debug!("Client-side stats enabled"),
+            Ok(()) => {
+                if let StatsComputationStatus::Enabled {
+                    stats_concentrator, ..
+                } = &**client_side_stats.status.load()
+                {
+                    stats_concentrator
+                        .lock_or_panic()
+                        .set_big_resource(agent_info.is_big_resource_enabled());
+                }
+                #[cfg(feature = "stats-obfuscation")]
+                update_obfuscation_config(agent_info, client_side_stats);
+                debug!("Client-side stats enabled");
+            }
             Err(_) => error!("Failed to start stats computation"),
         }
     } else {
@@ -175,73 +252,213 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// Handle stats computation when it's already enabled
-pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
+#[cfg(feature = "stats-obfuscation")]
+fn update_obfuscation_config(
     agent_info: &Arc<AgentInfo>,
-    stats_concentrator: &Mutex<SpanConcentrator>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if matches!(
+        &**client_side_stats.status.load(),
+        StatsComputationStatus::Enabled { .. }
+    ) {
+        let obfuscation_active =
+            client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
+        // FIXME(APMSP-3720): there is more than this to obfuscation config
+        let sql_obfuscation_mode = (|| {
+            agent_info
+                .info
+                .config
+                .as_ref()?
+                .obfuscation
+                .as_ref()?
+                .sql_obfuscation_mode
+        })()
+        .unwrap_or_default();
+        client_side_stats
+            .obfuscation_config
+            .store(Arc::new(StatsComputationObfuscationConfig {
+                enabled: obfuscation_active,
+                sql_obfuscation_mode,
+            }));
+    }
+}
+
+pub(crate) async fn handle_stats_enabled(
+    agent_info: &Arc<AgentInfo>,
+    stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
+    client_side_stats: &StatsComputationConfig,
+) {
+    if is_stats_computation_supported(agent_info) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
+        concentrator.set_big_resource(agent_info.is_big_resource_enabled());
+        #[cfg(feature = "stats-obfuscation")]
+        update_obfuscation_config(agent_info, client_side_stats);
     } else {
-        stop_stats_computation(ctx, client_side_stats);
+        stop_stats_computation(&client_side_stats.status).await;
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
 
-/// Add all spans from the given iterator into the stats concentrator
+/// Add all spans from the given iterator into the stats concentrator, optionally obfuscating
+/// resource names for client-side stats.
+///
 /// # Panic
-/// Will panic if another thread panicked will holding the lock on `stats_concentrator`
+/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
 fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
-    traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
+    traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
+    client_computed_top_level: bool,
 ) {
-    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+    if !client_computed_top_level {
+        for trace in traces.iter_mut() {
+            compute_top_level_span(trace);
+        }
+    }
 
-    let spans = traces.iter().flat_map(|trace| trace.iter());
-    for span in spans {
+    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+    for span in traces.iter().flatten() {
         stats_concentrator.add_span(span);
     }
 }
 
 /// Process traces for stats computation and update header tags accordingly.
-/// Returns the number of P0 traces and spans that were dropped.
-pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
-    traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
+///
+/// If a telemetry client is provided and stats are enabled, dropped P0 counts
+/// will be sent to telemetry.
+///
+/// Returns true if stats were computed for the traces passed
+pub(crate) fn process_traces_for_stats<
+    T: libdd_trace_utils::span::TraceData,
+    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+        + libdd_capabilities::SleepCapability
+        + libdd_capabilities::MaybeSend
+        + Sync
+        + 'static,
+>(
+    traces: &mut PooledChunks<'_, T>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    trace_filterer: &TraceFilterer,
+    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
+) -> bool {
+    let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
-    } = &**client_side_stats.load()
+    } = &**status
     {
-        if !client_computed_top_level {
-            for chunk in traces.iter_mut() {
-                libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-            }
-        }
-        add_spans_to_stats(stats_concentrator, traces);
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
+
+        add_spans_to_stats(stats_concentrator, traces, client_computed_top_level);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
         let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
-        header_tags.client_computed_top_level = true;
-        header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+        header_tags.generic.client_computed_top_level = true;
+        header_tags.generic.client_computed_stats = true;
+        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
-        dropped_p0_stats
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
+        }
+        true
     } else {
-        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
-            dropped_p0_traces: 0,
-            dropped_p0_spans: 0,
+        false
+    }
+}
+
+/// V1 counterpart of [`add_spans_to_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+///
+/// # Panic
+/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
+    stats_concentrator: &Mutex<SpanConcentrator>,
+    traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
+) {
+    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+
+    // Wrap each span with its enclosing chunk so common attributes (peer tags, origin) that are
+    // stored at the chunk level rather than on individual spans are still visible to stats.
+    for chunk in traces {
+        for span in &chunk.spans {
+            stats_concentrator.add_span(&ChunkSpanView { span, chunk });
+        }
+    }
+}
+
+/// V1 counterpart of [`process_traces_for_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+pub(crate) fn process_traces_for_stats_v1<
+    T: libdd_trace_utils::span::TraceData,
+    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+        + libdd_capabilities::SleepCapability
+        + libdd_capabilities::MaybeSend
+        + Sync
+        + 'static,
+>(
+    traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
+    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
+    client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client_computed_top_level: bool,
+    trace_filterer: &TraceFilterer,
+    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
+) {
+    let status = client_side_stats.load();
+    if let StatsComputationStatus::Enabled {
+        stats_concentrator, ..
+    } = &**status
+    {
+        let dropped_by_trace_filter = trace_filterer.filter_traces_v1(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
+
+        if !client_computed_top_level {
+            for chunk in traces.iter_mut() {
+                libdd_trace_utils::span::trace_utils_v1::compute_top_level_span(&mut chunk.spans);
+            }
+        }
+        add_spans_to_stats_v1(stats_concentrator, traces);
+        // Once stats have been computed we can drop all chunks that are not going to be
+        // sampled by the agent
+        let dropped_p0_stats = libdd_trace_utils::span::trace_utils_v1::drop_chunks(traces);
+
+        // Update the headers to indicate that stats have been computed and forward dropped
+        // traces counts
+        header_tags.generic.client_computed_top_level = true;
+        header_tags.generic.client_computed_stats = true;
+        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
         }
     }
 }
@@ -254,4 +471,253 @@ pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputatio
         **client_side_stats.load(),
         StatsComputationStatus::Enabled { .. }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_obfuscation_version_was_updated() {
+        use crate::trace_exporter::stats::{
+            SUPPORTED_OBFUSCATION_VERSION, SUPPORTED_OBFUSCATION_VERSION_STR,
+        };
+
+        assert_eq!(
+            SUPPORTED_OBFUSCATION_VERSION.to_string(),
+            SUPPORTED_OBFUSCATION_VERSION_STR
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod is_stats_computation_supported {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+
+        fn make_agent_info(
+            client_drop_p0s: Option<bool>,
+            endpoints: Option<Vec<&str>>,
+        ) -> AgentInfo {
+            AgentInfo {
+                state_hash: String::new(),
+                info: AgentInfoStruct {
+                    client_drop_p0s,
+                    endpoints: endpoints.map(|e| e.into_iter().map(String::from).collect()),
+                    ..Default::default()
+                },
+            }
+        }
+
+        #[test]
+        fn supported_when_all_requirements_met() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces", STATS_ENDPOINT]));
+            assert!(is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_client_drop_p0s_missing_or_false() {
+            let info = make_agent_info(None, Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(false), Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_stats_endpoint_absent() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces"]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(true), None);
+            assert!(!is_stats_computation_supported(&info));
+        }
+    }
+
+    mod v1 {
+        use super::super::*;
+        use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
+        use libdd_trace_utils::trace_utils::TracerHeaderTags;
+        use web_time::SystemTime;
+
+        fn top_level_span(span_id: u64, duration: i64) -> SpanBytes {
+            SpanBytes {
+                span_id,
+                service: "test-service".into(),
+                name: "test-name".into(),
+                resource: "test-resource".into(),
+                r#type: "web".into(),
+                duration,
+                attributes: vec![("_top_level".into(), AttributeValue::Float(1.0))].into(),
+                ..Default::default()
+            }
+        }
+
+        fn new_concentrator() -> Mutex<SpanConcentrator> {
+            new_concentrator_with_span_kinds(vec![])
+        }
+
+        fn new_concentrator_with_span_kinds(span_kinds: Vec<String>) -> Mutex<SpanConcentrator> {
+            Mutex::new(SpanConcentrator::new(
+                Duration::from_secs(10),
+                SystemTime::now(),
+                span_kinds,
+                vec![],
+                None,
+                vec![],
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            ))
+        }
+
+        /// Total number of spans aggregated across all flushed buckets, regardless of
+        /// obfuscation.
+        fn total_hits(concentrator: &Mutex<SpanConcentrator>) -> u64 {
+            let flushed = concentrator.lock_or_panic().flush(SystemTime::now(), true);
+            flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.hits)
+                .sum()
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_aggregates_eligible_spans_across_chunks() {
+            let stats_concentrator = new_concentrator();
+            let traces = vec![
+                TraceChunkBytes {
+                    spans: vec![top_level_span(1, 10)],
+                    ..Default::default()
+                },
+                TraceChunkBytes {
+                    spans: vec![top_level_span(2, 10)],
+                    ..Default::default()
+                },
+            ];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 2);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_skips_ineligible_spans() {
+            let stats_concentrator = new_concentrator();
+            // Not top-level, not measured, and no eligible span.kind: not eligible for stats.
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 0);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_eligibility() {
+            // The span itself is not top-level/measured and has a dedicated span_kind of
+            // Internal (the default); it's only eligible because the chunk-level attributes
+            // carry "span.kind": "client". Note the dedicated `span_kind` field always takes
+            // precedence over chunk attributes for this key once it's set to a non-default
+            // value (see `add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility`).
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    ..Default::default()
+                }],
+                attributes: vec![("span.kind".into(), AttributeValue::String("client".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_falls_back_to_chunk_attributes_for_aggregation() {
+            // The span is eligible via `_top_level` and has no own "http.method" attribute; the
+            // chunk-level attributes carry it instead, and it should still show up on the
+            // aggregated stats group.
+            let stats_concentrator = new_concentrator();
+            let traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                attributes: vec![("http.method".into(), AttributeValue::String("POST".into()))]
+                    .into(),
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            let flushed = stats_concentrator
+                .lock_or_panic()
+                .flush(SystemTime::now(), true);
+            let http_methods: Vec<&str> = flushed
+                .obfuscated_buckets
+                .iter()
+                .chain(flushed.unobfuscated_buckets.iter())
+                .flat_map(|bucket| bucket.stats.iter())
+                .map(|group| group.http_method.as_str())
+                .collect();
+            assert_eq!(http_methods, vec!["POST"]);
+        }
+
+        #[test]
+        fn add_spans_to_stats_v1_uses_dedicated_span_kind_for_eligibility() {
+            // The span itself is not top-level/measured and has no "span.kind" attribute; it's
+            // only eligible because its dedicated `span_kind` field is Client.
+            let stats_concentrator = new_concentrator_with_span_kinds(vec!["client".into()]);
+            let traces = vec![TraceChunkBytes {
+                spans: vec![SpanBytes {
+                    span_id: 1,
+                    duration: 10,
+                    span_kind: libdd_trace_utils::span::v1::SpanKind::Client,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }];
+
+            add_spans_to_stats_v1(&stats_concentrator, &traces);
+
+            assert_eq!(total_hits(&stats_concentrator), 1);
+        }
+
+        #[test]
+        fn process_traces_for_stats_v1_is_noop_when_disabled() {
+            let client_side_stats = ArcSwap::new(Arc::new(StatsComputationStatus::Disabled));
+            let mut traces = vec![TraceChunkBytes {
+                spans: vec![top_level_span(1, 10)],
+                // Negative priority would normally make `drop_chunks` remove this chunk, so
+                // this also verifies drop_chunks is never reached while disabled.
+                priority: Some(-1),
+                ..Default::default()
+            }];
+            let mut header_tags = TracerHeaderTags::default();
+            let trace_filterer = TraceFilterer::default();
+
+            process_traces_for_stats_v1(
+                &mut traces,
+                &mut header_tags,
+                &client_side_stats,
+                false,
+                &trace_filterer,
+                #[cfg(feature = "telemetry")]
+                None::<
+                    &crate::telemetry::TelemetryClient<libdd_capabilities_impl::NativeCapabilities>,
+                >,
+            );
+
+            assert_eq!(traces.len(), 1);
+            assert!(!header_tags.generic.client_computed_top_level);
+            assert!(!header_tags.generic.client_computed_stats);
+        }
+    }
 }

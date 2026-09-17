@@ -3,11 +3,9 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
-use std::ffi::CString;
-
 use crate::config::Config;
 use crate::enter_listener_loop;
-use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
@@ -16,7 +14,7 @@ use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "linux")]
 use crate::config::LogMethod;
@@ -28,8 +26,6 @@ use libdd_crashtracker::{
 use spawn_worker::{entrypoint, get_dl_path_raw};
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
-#[cfg(target_os = "linux")]
-use tracing::warn;
 
 #[no_mangle]
 #[allow(unused)]
@@ -45,18 +41,20 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(target_os = "linux")]
-    if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
+    if let Err(e) = init_crashtracker(if trampoline_data.argc > 0 {
+        Some(trampoline_data.dependency_paths)
+    } else {
+        None
+    }) {
         warn!("Failed to initialize crashtracker: {e}");
     }
 
     let buf_size = Config::get().pipe_buffer_size;
     if buf_size > 0 {
-        datadog_ipc::platform::set_socket_buffer_size(buf_size);
+        libdd_ipc::platform::set_socket_buffer_size(buf_size);
     }
 
     let now = Instant::now();
-
-    let appsec_started = maybe_start_appsec();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
@@ -80,10 +78,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
         }
-    }
-
-    if appsec_started {
-        shutdown_appsec();
     }
 
     info!(
@@ -125,6 +119,9 @@ async fn accept_socket_loop(
                                 }
                                 handler(conn);
                             }
+                            Ok(Err(e)) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                                warn!("IPC accept: oversized datagram discarded (EMSGSIZE)");
+                            }
                             Ok(Err(e)) => {
                                 error!("IPC accept error: {e}");
                                 break;
@@ -164,89 +161,68 @@ pub fn primary_sidecar_identifier() -> u32 {
 /// The master PID is now tracked by MasterListener::start() directly.
 pub fn set_sidecar_master_pid(_pid: u32) {}
 
-fn maybe_start_appsec() -> bool {
-    let cfg = &Config::get().appsec_config;
-    if cfg.is_none() {
-        return false;
-    }
-
-    info!("Starting appsec helper");
-    #[allow(clippy::unwrap_used)]
-    let entrypoint_sym_name = CString::new("appsec_helper_main").unwrap();
-
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, entrypoint_sym_name.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_main'");
-        return false;
-    }
-
-    let appsec_entry_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    let res = appsec_entry_fn();
-    if res != 0 {
-        error!("Appsec helper failed to start");
-        return false;
-    }
-
-    info!("Appsec helper started");
-    true
-}
-
-fn shutdown_appsec() -> bool {
-    info!("Shutting down appsec helper");
-
-    #[allow(clippy::unwrap_used)]
-    let shutdown_sym_name = CString::new("appsec_helper_shutdown").unwrap();
-
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, shutdown_sym_name.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_shutdown'");
-        return false;
-    }
-    let appsec_shutdown_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    let res = appsec_shutdown_fn();
-    if res != 0 {
-        error!("Appsec helper failed to shutdown");
-        return false;
-    }
-
-    info!("Appsec helper shutdown");
-    true
-}
-
+/// Allow initializing crashtracker independently for thread-mode sidecar.
 #[cfg(target_os = "linux")]
-fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
+pub fn build_crashtracker_receiver_config(
+    dependency_paths: Option<*const *const libc::c_char>,
+    output: Option<String>,
+) -> anyhow::Result<CrashtrackerReceiverConfig> {
     let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
     let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
         (Some(path), _) => path,
         _ => anyhow::bail!("Failed to find crashtracker entrypoint"),
     };
+    let entrypoint_path_str = entrypoint_path.into_string()?;
 
-    let mut receiver_args = vec![
-        "crashtracker_receiver".to_string(),
-        "".to_string(),
-        entrypoint_path.into_string()?,
-    ];
+    let mut receiver_args = vec!["crashtracker_receiver".to_string()];
+    let mut receiver_env = vec![];
+    let entrypoint_name = entrypoint.symbol_name.into_string()?;
 
-    unsafe {
-        let mut descriptors = dependency_paths;
-        if !descriptors.is_null() {
-            loop {
-                if (*descriptors).is_null() {
-                    break;
+    if let Some(dependency_paths) = dependency_paths {
+        receiver_args.push("".to_string());
+        receiver_args.push(entrypoint_path_str.clone());
+        unsafe {
+            let mut descriptors = dependency_paths;
+            if !descriptors.is_null() {
+                loop {
+                    if (*descriptors).is_null() {
+                        break;
+                    }
+                    receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
+                    descriptors = descriptors.add(1);
                 }
-                receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
-                descriptors = descriptors.add(1);
+            }
+        }
+        receiver_args.push(entrypoint_name);
+    } else {
+        // direct mode: ld.so uses argv[1] as the library to exec
+        receiver_args.push(entrypoint_path_str.clone());
+        receiver_env.push(("_DD_SIDECAR_DIRECT_EXEC".to_string(), entrypoint_name));
+        if let Ok(env) = std::env::var("_DD_SIDECAR_PATH_DEPS") {
+            if !env.is_empty() {
+                receiver_env.push(("_DD_SIDECAR_PATH_DEPS".to_string(), env));
             }
         }
     }
-    receiver_args.push(entrypoint.symbol_name.into_string()?);
 
+    CrashtrackerReceiverConfig::new(
+        receiver_args,
+        receiver_env,
+        format!("/proc/{}/exe", unsafe { libc::getpid() }),
+        output,
+        None,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> anyhow::Result<()> {
     let output = match &Config::get().log_method {
         LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
         LogMethod::Stderr => Some(format!("/proc/{}/fd/2", unsafe { libc::getpid() })),
         LogMethod::File(file) => file.to_str().map(|s| s.to_string()),
         LogMethod::Disabled => None,
     };
+    let receiver_config = build_crashtracker_receiver_config(dependency_paths, output)?;
 
     let mut config_builder = CrashtrackerConfiguration::builder()
         .create_alt_stack(true)
@@ -265,25 +241,22 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
             config_builder = config_builder.endpoint_test_token(test_token);
         }
     }
+    let tags = vec![
+        "is_crash:true".to_string(),
+        "severity:crash".to_string(),
+        format!("library_version:{}", crate::sidecar_version!()),
+        "library:sidecar".to_string(),
+        "language:php".to_string(),
+    ];
+
     libdd_crashtracker::init(
         config_builder.build()?,
-        CrashtrackerReceiverConfig::new(
-            receiver_args,
-            vec![],
-            format!("/proc/{}/exe", unsafe { libc::getpid() }),
-            output,
-            None,
-        )?,
+        receiver_config,
         Metadata::new(
             "libdatadog".to_string(),
             crate::sidecar_version!().to_string(),
             "SIDECAR".to_string(),
-            vec![
-                "is_crash:true".to_string(),
-                "severity:crash".to_string(),
-                format!("library_version:{}", crate::sidecar_version!()),
-                "library:sidecar".to_string(),
-            ],
+            tags,
         ),
     )
 }

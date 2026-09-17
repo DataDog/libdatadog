@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::ffi::CString;
 use libc::c_void;
-use std::ffi::CString;
 use std::path::Path;
 use std::path::PathBuf;
 

@@ -20,6 +20,10 @@ pub mod os {
         std::env::consts::OS
     }
 
+    pub const fn architecture() -> &'static str {
+        std::env::consts::ARCH
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub fn os_version() -> anyhow::Result<String> {
         sys_info::os_release().map_err(|e| e.into())

@@ -2,6 +2,56 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v3.0.0..libdd-library-config-v4.0.0) - 2026-08-25
+
+### Added
+
+- Otel process context reader ([#2176](https://github.com/datadog/libdatadog/issues/2176)) - ([8ef07a9](https://github.com/datadog/libdatadog/commit/8ef07a933ada98023a64411301629eecd4f8a6ac))
+
+### Changed
+
+- Reorganize Linux process context ([#2228](https://github.com/datadog/libdatadog/issues/2228)) - ([c27825f](https://github.com/datadog/libdatadog/commit/c27825faa318b4e9668f2688017cc91e87a3d2e8))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Omit absent process context attributes ([#2337](https://github.com/datadog/libdatadog/issues/2337)) - ([3dd8fa1](https://github.com/datadog/libdatadog/commit/3dd8fa1904763bf037acbc2dc9b2697bf2202d9b))
+- Update Linux process context ([#2237](https://github.com/datadog/libdatadog/issues/2237)) - ([13b2491](https://github.com/datadog/libdatadog/commit/13b2491994128f9cec5e66240a7fb8cedeae80e6))
+
+
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v2.0.0..libdd-library-config-v3.0.0) - 2026-07-07
+
+### Added
+
+- Caller-supplied threadlocal schema and extra process-context attributes ([#2162](https://github.com/datadog/libdatadog/issues/2162)) - ([7cdeb78](https://github.com/datadog/libdatadog/commit/7cdeb7896e92d1ba38bde495934e112dac2eda25))
+
+### Fixed
+
+- Put the threadlocal attributes at the right place in the context ([#2167](https://github.com/datadog/libdatadog/issues/2167)) - ([3630553](https://github.com/datadog/libdatadog/commit/36305534667a75c3125ad92c092829449439b324))
+
+
+
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v1.1.0..libdd-library-config-v2.0.0) - 2026-05-26
+
+### Added
+
+- Thread-level ctx publication ([#1791](https://github.com/datadog/libdatadog/issues/1791)) - ([660b8a8](https://github.com/datadog/libdatadog/commit/660b8a8ae71eb5bc2cdd286a206870fbcb04a62a))
+- Add Hash trait to TracerMetadata ([#1931](https://github.com/datadog/libdatadog/issues/1931)) - ([d7eef80](https://github.com/datadog/libdatadog/commit/d7eef8031192d0ee79ba64cd824804c5a57abacf))
+- Add PartialEq and Eq traits to TracerMetadata ([#1922](https://github.com/datadog/libdatadog/issues/1922)) - ([971c407](https://github.com/datadog/libdatadog/commit/971c407d856db58baf1078bd7802abe13bac4f9f))
+- Root_span_id handling in otel thread ctx ([#1834](https://github.com/datadog/libdatadog/issues/1834)) - ([4be1fcc](https://github.com/datadog/libdatadog/commit/4be1fccc01264b1f48f4423460c64f6140580153))
+- Extend tracer metadata with thread ctx attrbutes ([#1831](https://github.com/datadog/libdatadog/issues/1831)) - ([a1d45fc](https://github.com/datadog/libdatadog/commit/a1d45fc69308e330d04420be626f7c165f269ead))
+
+### Changed
+
+- Migrate from rustix to libc ([#1859](https://github.com/datadog/libdatadog/issues/1859)) - ([68822c5](https://github.com/datadog/libdatadog/commit/68822c55446efe8d6654d2449d696f5ff2f28d31))
+- Move otel thread ctx in dedicated crate ([#1855](https://github.com/datadog/libdatadog/issues/1855)) - ([252c693](https://github.com/datadog/libdatadog/commit/252c693e68df9fa598119dd8cff26a2881bd8140))
+- Gate behind feature ([#1843](https://github.com/datadog/libdatadog/issues/1843)) - ([11d4111](https://github.com/datadog/libdatadog/commit/11d4111c934d9af49d8124b8266dbbdda5857cb4))
+
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v1.0.0..libdd-library-config-v1.1.0) - 2026-03-13
 
 ### Added

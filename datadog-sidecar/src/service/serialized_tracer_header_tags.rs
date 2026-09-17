@@ -22,7 +22,7 @@ pub struct SerializedTracerHeaderTags {
 /// ```
 /// use bincode;
 /// use datadog_sidecar::service::SerializedTracerHeaderTags;
-/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {
@@ -32,9 +32,11 @@ pub struct SerializedTracerHeaderTags {
 ///     lang_vendor: "Mozilla",
 ///     tracer_version: "0.1.0",
 ///     container_id: "1234567890",
-///     client_computed_top_level: true,
-///     client_computed_stats: false,
-///     ..Default::default()
+///     generic: TracerGenericTags {
+///         client_computed_top_level: true,
+///         client_computed_stats: false,
+///         ..Default::default()
+///     },
 /// };
 ///
 /// let serialized: SerializedTracerHeaderTags = tracer_header_tags.try_into().unwrap();
@@ -62,7 +64,7 @@ impl<'a> TryFrom<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
 ///
 /// ```
 /// use datadog_sidecar::service::SerializedTracerHeaderTags;
-/// use libdd_trace_utils::trace_utils::TracerHeaderTags;
+/// use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 /// use std::convert::TryInto;
 ///
 /// let tracer_header_tags = TracerHeaderTags {
@@ -72,9 +74,11 @@ impl<'a> TryFrom<&'a SerializedTracerHeaderTags> for TracerHeaderTags<'a> {
 ///     lang_vendor: "Mozilla",
 ///     tracer_version: "0.1.0",
 ///     container_id: "1234567890",
-///     client_computed_top_level: true,
-///     client_computed_stats: false,
-///     ..Default::default()
+///     generic: TracerGenericTags {
+///         client_computed_top_level: true,
+///         client_computed_stats: false,
+///         ..Default::default()
+///     },
 /// };
 ///
 /// let serialized: Result<SerializedTracerHeaderTags, _> = tracer_header_tags.try_into();
@@ -95,6 +99,7 @@ impl<'a> TryFrom<TracerHeaderTags<'a>> for SerializedTracerHeaderTags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_trace_utils::trace_utils::TracerGenericTags;
     use std::convert::TryInto;
 
     #[test]
@@ -106,9 +111,11 @@ mod tests {
             lang_vendor: "Mozilla",
             tracer_version: "0.1.0",
             container_id: "1234567890",
-            client_computed_top_level: true,
-            client_computed_stats: false,
-            ..Default::default()
+            generic: TracerGenericTags {
+                client_computed_top_level: true,
+                client_computed_stats: false,
+                ..Default::default()
+            },
         };
 
         let serialized: Result<SerializedTracerHeaderTags, _> = tracer_header_tags.try_into();
@@ -125,9 +132,11 @@ mod tests {
             lang_vendor: "Mozilla",
             tracer_version: "0.1.0",
             container_id: "1234567890",
-            client_computed_top_level: true,
-            client_computed_stats: false,
-            ..Default::default()
+            generic: TracerGenericTags {
+                client_computed_top_level: true,
+                client_computed_stats: false,
+                ..Default::default()
+            },
         };
 
         let data = bincode::serialize(&tracer_header_tags).unwrap();
@@ -144,12 +153,12 @@ mod tests {
         assert_eq!(result.tracer_version, tracer_header_tags.tracer_version);
         assert_eq!(result.container_id, tracer_header_tags.container_id);
         assert_eq!(
-            result.client_computed_top_level,
-            tracer_header_tags.client_computed_top_level
+            result.generic.client_computed_top_level,
+            tracer_header_tags.generic.client_computed_top_level
         );
         assert_eq!(
-            result.client_computed_stats,
-            tracer_header_tags.client_computed_stats
+            result.generic.client_computed_stats,
+            tracer_header_tags.generic.client_computed_stats
         );
     }
 

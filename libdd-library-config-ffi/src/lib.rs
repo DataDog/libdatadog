@@ -1,13 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+extern crate alloc;
+
 pub mod tracer_metadata;
 
 use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use core::panic::AssertUnwindSafe;
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+use std::panic::catch_unwind;
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {
@@ -87,15 +91,15 @@ impl LibraryConfig {
             .into_iter()
             .map(|c| {
                 Ok(LibraryConfig {
-                    name: ffi::CString::from_std(std::ffi::CString::new(c.name)?),
-                    value: ffi::CString::from_std(std::ffi::CString::new(c.value)?),
+                    name: ffi::CString::from_std(alloc::ffi::CString::new(c.name)?),
+                    value: ffi::CString::from_std(alloc::ffi::CString::new(c.value)?),
                     source: c.source,
-                    config_id: ffi::CString::from_std(std::ffi::CString::new(
+                    config_id: ffi::CString::from_std(alloc::ffi::CString::new(
                         c.config_id.unwrap_or_default(),
                     )?),
                 })
             })
-            .collect::<Result<Vec<_>, std::ffi::NulError>>()?;
+            .collect::<Result<Vec<_>, alloc::ffi::NulError>>()?;
         Ok(ffi::Vec::from_std(cfg))
     }
 
@@ -238,7 +242,7 @@ pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'s
             lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH,
             "\0"
         );
-        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+        core::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
     })
 }
 
@@ -251,7 +255,7 @@ pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'s
             lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH,
             "\0"
         );
-        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+        core::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
     })
 }
 

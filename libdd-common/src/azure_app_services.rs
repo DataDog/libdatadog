@@ -1,8 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use regex::Regex;
-use std::env;
+use crate::regex_engine::Regex;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 const WEBSITE_OWNER_NAME: &str = "WEBSITE_OWNER_NAME";
@@ -10,26 +11,112 @@ const WEBSITE_SITE_NAME: &str = "WEBSITE_SITE_NAME";
 const WEBSITE_RESOURCE_GROUP: &str = "WEBSITE_RESOURCE_GROUP";
 const SITE_EXTENSION_VERSION: &str = "DD_AAS_DOTNET_EXTENSION_VERSION";
 const WEBSITE_OS: &str = "WEBSITE_OS";
-const INSTANCE_NAME: &str = "COMPUTERNAME";
+const COMPUTERNAME: &str = "COMPUTERNAME";
+const CONTAINER_NAME: &str = "CONTAINER_NAME";
+const WEBSITE_POD_NAME: &str = "WEBSITE_POD_NAME";
 const INSTANCE_ID: &str = "WEBSITE_INSTANCE_ID";
 const SERVICE_CONTEXT: &str = "DD_AZURE_APP_SERVICES";
 const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
 const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
-const WEBSITE_SKU: &str = "WEBSITE_SKU";
+pub const WEBSITE_SKU: &str = "WEBSITE_SKU";
+pub const REGION_NAME: &str = "REGION_NAME";
 
-const UNKNOWN_VALUE: &str = "unknown";
+pub const UNKNOWN_VALUE: &str = "unknown";
 
 enum AzureContext {
     AzureFunctions,
     AzureAppService,
 }
 
+/// Snapshot of the AAS-relevant subset of the process environment, captured at
+/// exec time.
+///
+/// On Linux we parse `/proc/self/environ` (a kernel-managed snapshot of the
+/// initial `envp` block) instead of calling `getenv`. This avoids the
+/// well-known race between libc's `getenv(3)` and `setenv(3)` from another
+/// thread, which has been observed to crash `ddog_prof_Exporter_new` when an
+/// embedder (e.g. dd-trace-py via `os.environ[...] = ...`) mutates the
+/// environment concurrently with our AAS detection.
+///
+/// `/proc/self/environ` only contains variables present at `execve()` time;
+/// later `setenv` calls are not reflected. That is exactly what AAS detection
+/// needs — every Azure App Services / Functions variable we inspect is set by
+/// the platform before the process starts.
+///
+/// **Only the AAS variable names listed in [`AAS_VAR_NAMES`] are retained**;
+/// all other entries (which on real AAS deployments commonly include unrelated
+/// app secrets, API keys, connection strings, etc.) are dropped at parse time
+/// so we don't keep a long-lived in-memory copy of them.
+///
+/// On non-Linux platforms we fall back to `std::env::var`. AAS deployments are
+/// almost exclusively Linux containers, and Windows' `GetEnvironmentVariableW`
+/// (which `std::env::var` uses) is itself thread-safe.
+#[cfg(target_os = "linux")]
+static PROC_ENVIRON: LazyLock<HashMap<String, String>> = LazyLock::new(read_proc_self_environ);
+
+/// AAS-related variable names this module reads. Only entries with one of
+/// these names are kept in [`PROC_ENVIRON`]; everything else from
+/// `/proc/self/environ` is dropped at parse time.
+#[cfg(target_os = "linux")]
+const AAS_VAR_NAMES: &[&str] = &[
+    WEBSITE_OWNER_NAME,
+    WEBSITE_SITE_NAME,
+    WEBSITE_RESOURCE_GROUP,
+    SITE_EXTENSION_VERSION,
+    WEBSITE_OS,
+    COMPUTERNAME,
+    CONTAINER_NAME,
+    WEBSITE_POD_NAME,
+    INSTANCE_ID,
+    SERVICE_CONTEXT,
+    FUNCTIONS_WORKER_RUNTIME,
+    FUNCTIONS_WORKER_RUNTIME_VERSION,
+    FUNCTIONS_EXTENSION_VERSION,
+    DD_AZURE_RESOURCE_GROUP,
+    WEBSITE_SKU,
+];
+
+#[cfg(target_os = "linux")]
+fn read_proc_self_environ() -> HashMap<String, String> {
+    let bytes = match std::fs::read("/proc/self/environ") {
+        Ok(b) => b,
+        Err(_) => return HashMap::new(),
+    };
+    let mut map = HashMap::new();
+    for entry in bytes.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let s = match core::str::from_utf8(entry) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Some(eq) = s.find('=') {
+            let key = &s[..eq];
+            if AAS_VAR_NAMES.contains(&key) {
+                map.insert(key.to_string(), s[eq + 1..].to_string());
+            }
+        }
+    }
+    map
+}
+
+fn read_aas_var(name: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        PROC_ENVIRON.get(name).cloned()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::var(name).ok()
+    }
+}
+
 macro_rules! get_trimmed_env_var {
     ($name:expr) => {
-        env::var($name)
-            .ok()
+        crate::azure_app_services::read_aas_var($name)
             .map(|v| v.trim().to_string())
             .filter(|s| !s.is_empty())
     };
@@ -141,12 +228,14 @@ impl AzureMetadata {
             _ => ("app".to_owned(), "app".to_owned()),
         };
 
+        let website_sku = query.get_var(WEBSITE_SKU);
+
         let resource_group = query
             .get_var(DD_AZURE_RESOURCE_GROUP)
             .or_else(|| query.get_var(WEBSITE_RESOURCE_GROUP))
             .or_else(|| {
                 // Check if we're in flex consumption plan first
-                match query.get_var(WEBSITE_SKU).as_deref() {
+                match website_sku.as_deref() {
                     Some("FlexConsumption") => None,
                     /* Flex Consumption plans need the `DD_AZURE_RESOURCE_GROUP` env var. If this
                      * logic ever changes, update the logic in
@@ -165,7 +254,16 @@ impl AzureMetadata {
         let operating_system = query
             .get_var(WEBSITE_OS)
             .unwrap_or(std::env::consts::OS.to_string());
-        let instance_name = query.get_var(INSTANCE_NAME);
+
+        let computer_name = query.get_var(COMPUTERNAME);
+        let pod_name = query.get_var(WEBSITE_POD_NAME);
+        let container_name = query.get_var(CONTAINER_NAME);
+        let instance_name = resolve_instance_name(
+            computer_name.as_deref(),
+            pod_name.as_deref(),
+            container_name.as_deref(),
+        );
+
         let instance_id = query.get_var(INSTANCE_ID);
 
         let runtime = query.get_var(FUNCTIONS_WORKER_RUNTIME);
@@ -310,6 +408,22 @@ impl AzureMetadata {
         ]
         .into_iter()
     }
+}
+
+/// Resolves the instance name to match the Azure integration metric's `instance` tag.
+fn resolve_instance_name(
+    computer_name: Option<&str>,
+    pod_name: Option<&str>,
+    container_name: Option<&str>,
+) -> Option<String> {
+    fn non_empty(s: Option<&str>) -> Option<&str> {
+        s.map(|v| v.trim()).filter(|v| !v.is_empty())
+    }
+
+    non_empty(computer_name)
+        .or_else(|| non_empty(pod_name))
+        .or_else(|| non_empty(container_name))
+        .map(|s| s.to_string())
 }
 
 pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
@@ -554,10 +668,10 @@ mod tests {
                 "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
             ),
             (WEBSITE_SKU, "FlexConsumption"),
-            (SERVICE_CONTEXT, "1"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env).unwrap();
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
     }
@@ -571,10 +685,10 @@ mod tests {
             ),
             (DD_AZURE_RESOURCE_GROUP, "test-flex-rg"),
             (WEBSITE_SKU, "FlexConsumption"),
-            (SERVICE_CONTEXT, "1"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env).unwrap();
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
         // Should use the DD_AZURE_RESOURCE_GROUP value instead of extracting from
         // WEBSITE_OWNER_NAME
@@ -729,7 +843,7 @@ mod tests {
             (WEBSITE_RESOURCE_GROUP, expected_resource_group.as_str()),
             (SITE_EXTENSION_VERSION, expected_site_version.as_str()),
             (WEBSITE_OS, expected_operating_system.as_str()),
-            (INSTANCE_NAME, expected_instance_name.as_str()),
+            (COMPUTERNAME, expected_instance_name.as_str()),
             (INSTANCE_ID, expected_instance_id.as_str()),
             (SERVICE_CONTEXT, "1"),
             (
@@ -775,7 +889,7 @@ mod tests {
             (WEBSITE_RESOURCE_GROUP, expected_resource_group),
             (SITE_EXTENSION_VERSION, expected_site_version),
             (WEBSITE_OS, expected_operating_system),
-            (INSTANCE_NAME, expected_instance_name),
+            (COMPUTERNAME, expected_instance_name),
             (INSTANCE_ID, expected_instance_id),
             (SERVICE_CONTEXT, "1"),
             (
@@ -847,7 +961,7 @@ mod tests {
             (WEBSITE_SITE_NAME, expected_site_name),
             (WEBSITE_RESOURCE_GROUP, expected_resource_group),
             (WEBSITE_OS, expected_operating_system),
-            (INSTANCE_NAME, expected_instance_name),
+            (COMPUTERNAME, expected_instance_name),
             (INSTANCE_ID, expected_instance_id),
             (SERVICE_CONTEXT, "1"),
             (
@@ -912,11 +1026,76 @@ mod tests {
     }
 
     #[test]
-    fn test_get_trimmed_env_var_empty_string() {
-        env::remove_var("TEST_VAR_NONE");
-        assert_eq!(get_trimmed_env_var!("TEST_VAR_NONE"), None);
+    fn test_get_trimmed_env_var_missing() {
+        // The proc-environ snapshot is frozen at exec time, so we can't inject
+        // an empty value here. Just verify the missing-var path returns None.
+        assert_eq!(
+            get_trimmed_env_var!("__LIBDD_AAS_DEFINITELY_NOT_SET__"),
+            None
+        );
+    }
 
-        env::set_var("TEST_VAR_EMPTY_STRING", "");
-        assert_eq!(get_trimmed_env_var!("TEST_VAR_EMPTY_STRING"), None);
+    #[test]
+    fn test_instance_name_computer_name_wins_over_pod_and_container() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (COMPUTERNAME, "10-20-30-40"),
+            (WEBSITE_POD_NAME, "pod-1"),
+            (CONTAINER_NAME, "container-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "10-20-30-40");
+    }
+
+    #[test]
+    fn test_instance_name_pod_name_preferred_over_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_POD_NAME, "0--abc-test"),
+            (CONTAINER_NAME, "container-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "0--abc-test");
+    }
+
+    #[test]
+    fn test_instance_name_falls_back_to_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (CONTAINER_NAME, "0--abc-test"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "0--abc-test");
+    }
+
+    #[test]
+    fn test_instance_name_empty_string_treated_as_missing() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (CONTAINER_NAME, ""),
+            (WEBSITE_POD_NAME, ""),
+            (COMPUTERNAME, "worker-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "worker-1");
+    }
+
+    #[test]
+    fn test_instance_name_whitespace_only_treated_as_missing() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (CONTAINER_NAME, "   "),
+            (WEBSITE_POD_NAME, "   "),
+            (COMPUTERNAME, "worker-2"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "worker-2");
+    }
+
+    #[test]
+    fn test_instance_name_no_instance_vars_is_unknown() {
+        let mocked_env = MockEnv::new(&[(FUNCTIONS_WORKER_RUNTIME, "node")]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), UNKNOWN_VALUE);
     }
 }

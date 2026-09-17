@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-#[cfg(unix)]
-use libdd_crashtracker;
-use spawn_worker::{entrypoint, Stdio};
+#[cfg(target_os = "linux")]
+use spawn_worker::read_pt_interp_self;
+use spawn_worker::{entrypoint, Entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
 use std::{
@@ -17,8 +17,6 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-#[cfg(unix)]
-use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
 
@@ -34,7 +32,6 @@ use crate::{ddog_daemon_entry_point, setup_daemon_process};
 /// Configuration for main_loop behavior
 pub struct MainLoopConfig {
     pub enable_ctrl_c_handler: bool,
-    pub enable_crashtracker: bool,
     pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
     /// Set to false in thread mode so the worker's UID can be obtained on the
     /// first connection and used to fchown the SHM.
@@ -45,7 +42,6 @@ impl Default for MainLoopConfig {
     fn default() -> Self {
         Self {
             enable_ctrl_c_handler: true,
-            enable_crashtracker: true,
             external_shutdown_rx: None,
             init_shm_eagerly: true,
         }
@@ -108,36 +104,27 @@ where
         });
     }
 
-    #[cfg(unix)]
-    if loop_config.enable_crashtracker {
-        tokio::spawn(async move {
-            let socket_path = crashtracker_unix_socket_path();
-            match libdd_crashtracker::get_receiver_unix_socket(
-                socket_path.to_str().unwrap_or_default(),
-            ) {
-                Ok(listener) => loop {
-                    if let Err(e) =
-                        libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener)
-                            .await
-                    {
-                        tracing::warn!("Got error while receiving crash report: {e}");
-                    }
-                },
-                Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
-            }
-        });
-    }
-
     if loop_config.init_shm_eagerly {
         drop(SHM_LIMITER.lock());
     }
 
     let server = SidecarServer::default();
+    // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
+    // actions before the receiver task gets its first poll.
+    let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
 
-    // Initialize telemetry sender synchronously before spawning the receiver task
-    // This ensures the sender is available immediately, avoiding race conditions
-    // where FFI calls might try to send telemetry before the receiver task starts
-    if let Some(rx) = init_telemetry_sender() {
+    #[cfg(unix)]
+    let server = server.with_appsec_telemetry(in_process_telemetry.clone());
+
+    #[cfg(unix)]
+    if let Some(appsec_config) = config.appsec_config.as_ref() {
+        server.ensure_appsec_started(appsec_config).await;
+    }
+
+    #[cfg(not(unix))]
+    drop(in_process_telemetry);
+
+    if let Some(rx) = telemetry_rx {
         tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
     }
 
@@ -179,6 +166,8 @@ where
     _ = telemetry_handle.await;
     server.shutdown();
     _ = server.trace_flusher.join().await;
+    #[cfg(unix)]
+    server.shutdown_appsec().await;
 
     Ok(())
 }
@@ -217,11 +206,24 @@ where
         .map_err(|e| e.into())
 }
 
-pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
+pub fn daemonize(listener: IpcServer, cfg: Config) -> anyhow::Result<()> {
+    daemonize_with_entrypoint(listener, cfg, entrypoint!(ddog_daemon_entry_point))
+}
+
+fn daemonize_with_entrypoint(
+    listener: IpcServer,
+    mut cfg: Config,
+    daemon_entrypoint: Entrypoint,
+) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
-    spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
+    #[cfg(target_os = "linux")]
+    if cfg.spawn_without_trampoline && read_pt_interp_self().is_some() {
+        spawn_cfg.spawn_method(spawn_worker::SpawnMethod::Direct);
+    }
+
+    spawn_cfg.target(daemon_entrypoint);
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {
@@ -256,17 +258,30 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     }
     spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
 
-    setup_daemon_process(listener, &mut spawn_cfg)?;
-
-    let mut lib_deps = cfg.library_dependencies;
-    if let Some(appsec) = cfg.appsec_config.as_ref() {
-        lib_deps.push(spawn_worker::LibDependency::Path(std::path::PathBuf::from(
-            appsec.shared_lib_path.clone(),
-        )));
+    // In ASAN builds the sidecar is the "main object" when exec'd directly by
+    // ld.so, so libclang_rt.asan lands behind libc in the link map. ASAN
+    // would otherwise abort with "does not come first in initial library list."
+    // set_env replaces any inherited ASAN_OPTIONS so getenv in the child finds
+    // our value first.
+    #[cfg(target_os = "linux")]
+    {
+        let asan_init =
+            unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"__asan_init".as_ptr() as *const _) };
+        if !asan_init.is_null() {
+            let existing = std::env::var("ASAN_OPTIONS").unwrap_or_default();
+            let asan_opts = if existing.is_empty() {
+                "verify_asan_link_order=0".to_owned()
+            } else {
+                format!("{}:verify_asan_link_order=0", existing)
+            };
+            spawn_cfg.set_env("ASAN_OPTIONS", asan_opts);
+        }
     }
 
+    setup_daemon_process(listener, &mut spawn_cfg)?;
+
     spawn_cfg
-        .shared_lib_dependencies(lib_deps)
+        .shared_lib_dependencies(cfg.library_dependencies)
         .wait_spawn()
         .map_err(io::Error::other)
         .context("Could not spawn the sidecar daemon")?;
@@ -275,27 +290,41 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+    start_or_connect_to_sidecar_with_entrypoint(cfg, entrypoint!(ddog_daemon_entry_point))
+}
+
+pub fn start_or_connect_to_sidecar_with_entrypoint(
+    cfg: Config,
+    daemon_entrypoint: Entrypoint,
+) -> anyhow::Result<SidecarTransport> {
     // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
     // attempt_listen so that the initial server pipe (created by this process and handed to the
     // daemon) uses the configured size.  The daemon restores the same value at startup so that
     // subsequent try_accept calls also use the right size.
     #[cfg(windows)]
     if cfg.pipe_buffer_size > 0 {
-        datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
+        libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
 
-    let liaison = match cfg.ipc_mode {
-        config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
-        config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
-    };
+    let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
-    let err = match liaison.attempt_listen() {
-        Ok(Some(listener)) => {
-            daemonize(listener, cfg)?;
-            None
+    // On macos only actually listening binds the sidecar socket, so there might be a race, unlike
+    // linux where binding the socket is sufficient. Hence we need a retry-loop on macos for this
+    // edge case.
+    let deadline = cfg!(target_os = "macos").then(|| Instant::now() + Duration::from_secs(1));
+    let err = loop {
+        match liaison.attempt_listen() {
+            Ok(Some(listener)) => {
+                daemonize_with_entrypoint(listener, cfg, daemon_entrypoint)?;
+                break None;
+            }
+            Ok(None) => break None,
+            Err(_e) if deadline.is_some_and(|d| Instant::now() < d) => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            err => break err.context("Error starting sidecar").err(),
         }
-        Ok(None) => None,
-        err => err.context("Error starting sidecar").err(),
     };
 
     Ok(SidecarTransport::from(

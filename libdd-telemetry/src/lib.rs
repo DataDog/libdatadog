@@ -18,6 +18,9 @@ pub mod info;
 pub mod metrics;
 pub mod worker;
 
+pub use libdd_common::tag::{parse_tags, Tag};
+pub use libdd_common::{parse_uri, Endpoint};
+
 pub fn build_host() -> data::Host {
     debug!("Building telemetry host information");
     let hostname = info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname"));
@@ -29,6 +32,7 @@ pub fn build_host() -> data::Host {
         host.container_id = ?container_id,
         host.os = info::os::os_name(),
         host.os_version = ?os_version,
+        host.architecture = info::os::architecture(),
         "Built telemetry host information"
     );
 
@@ -37,6 +41,7 @@ pub fn build_host() -> data::Host {
         container_id,
         os: Some(String::from(info::os::os_name())),
         os_version,
+        architecture: Some(String::from(info::os::architecture())),
         kernel_name: info::os::os_type(),
         kernel_release: info::os::os_release(),
         #[cfg(unix)]

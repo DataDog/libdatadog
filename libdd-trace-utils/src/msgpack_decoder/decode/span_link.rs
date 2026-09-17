@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::number::read_number;
-use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_strings};
+use crate::msgpack_decoder::decode::string::{handle_null_marker, read_str_map_to_hashmap};
 use crate::span::v04::SpanLink;
 use crate::span::DeserializableTraceData;
 use std::borrow::Borrow;
@@ -84,7 +84,7 @@ fn decode_span_link<T: DeserializableTraceData>(
             SpanLinkKey::TraceId => span.trace_id = read_number(buf)?,
             SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number(buf)?,
             SpanLinkKey::SpanId => span.span_id = read_number(buf)?,
-            SpanLinkKey::Attributes => span.attributes = read_str_map_to_strings(buf)?,
+            SpanLinkKey::Attributes => span.attributes = read_str_map_to_hashmap(buf)?,
             SpanLinkKey::Tracestate => span.tracestate = buf.read_string()?,
             SpanLinkKey::Flags => span.flags = read_number(buf)?,
         }
