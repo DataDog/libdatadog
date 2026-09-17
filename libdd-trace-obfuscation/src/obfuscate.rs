@@ -16,7 +16,7 @@ use crate::{
     credit_cards::{is_card_number, obfuscate_card_number},
     http::{obfuscate_url, obfuscate_url_string},
     memcached::{obfuscate_memcached, obfuscate_memcached_string},
-    obfuscation_config::{DbmsKind, ObfuscationConfig, SqlConfig, SqlObfuscationMode},
+    obfuscation_config::{DbmsKind, ObfuscationConfig, SqlConfig},
     redis::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
@@ -56,18 +56,18 @@ pub fn obfuscate_resource_for_stats(
     span_type: &str,
     resource: &str,
     dbms_hint: Option<&str>,
-    sql_obfuscation_mode: SqlObfuscationMode,
+    obfuscation_config: &SqlConfig,
 ) -> Option<String> {
     match span_type {
         "sql" | "cassandra" if !resource.is_empty() => {
             let dbms: DbmsKind = dbms_hint
                 .and_then(|d| d.try_into().ok())
                 .unwrap_or_default();
-            let config = SqlConfig {
-                obfuscation_mode: sql_obfuscation_mode,
-                ..Default::default()
-            };
-            Some(crate::sql::obfuscate_sql(resource, &config, dbms))
+            Some(crate::sql::obfuscate_sql(
+                resource,
+                obfuscation_config,
+                dbms,
+            ))
         }
         "redis" | "valkey" => Some(quantize_redis_string(resource)),
         _ => None,
@@ -433,14 +433,14 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 mod tests {
     use super::{obfuscate_pb_span, obfuscate_resource_for_stats};
     use crate::{
-        obfuscation_config::{self, SqlObfuscationMode},
+        obfuscation_config::{self, SqlConfig},
         replacer,
     };
     use libdd_trace_utils::test_utils;
 
     // test helper with default params
     fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
-        obfuscate_resource_for_stats(span_type, resource, None, SqlObfuscationMode::default())
+        obfuscate_resource_for_stats(span_type, resource, None, &SqlConfig::default())
     }
 
     #[test]

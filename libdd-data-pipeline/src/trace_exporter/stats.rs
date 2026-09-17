@@ -19,6 +19,8 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
@@ -35,9 +37,16 @@ use web_time::SystemTime;
 
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
-/// The maximum obfuscation version this tracer supports.
+/// The obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+/// The second obfuscation version this tracer supports, used when a custom obfuscation config is in
+/// effect. The agent sends this version to prevent tracers that don't implement custom-config
+/// following from enabling CSS obfuscation.
+///
+/// See https://github.com/DataDog/datadog-agent/blob/6cab2eaede9fd73ebf0d275c0b43cf5443a49d3a/pkg/trace/api/info.go#L196
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG: u32 = 2;
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
@@ -108,10 +117,14 @@ fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
 /// Return true if the agent's obfuscation version is supported by this tracer
 #[cfg(feature = "stats-obfuscation")]
 fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
-    agent_info
-        .info
-        .obfuscation_version
-        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
+    agent_info.info.obfuscation_version.is_some_and(|v| {
+        v >= 1
+            && [
+                SUPPORTED_OBFUSCATION_VERSION,
+                SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG,
+            ]
+            .contains(&v)
+    })
 }
 
 /// Get span kinds for stats computation with default fallback
@@ -263,24 +276,28 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
-        // FIXME(APMSP-3720): there is more than this to obfuscation config
-        let sql_obfuscation_mode = (|| {
-            Some(
-                agent_info
-                    .info
-                    .config
-                    .as_ref()?
-                    .obfuscation
-                    .as_ref()?
-                    .sql_obfuscation_mode,
-            )
-        })()
-        .unwrap_or_default();
+        let obfuscation_config = agent_info
+            .info
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.obfuscation.as_ref());
+        let sql_obfuscation_config = match obfuscation_config {
+            Some(obfuscation_config) => match &obfuscation_config.sql {
+                Some(sql_config) => sql_config.clone(),
+                // Fallback for the previous /info config format
+                None => SqlConfig {
+                    obfuscation_mode: obfuscation_config.sql_obfuscation_mode.unwrap_or_default(),
+                    ..Default::default()
+                },
+            },
+            None => SqlConfig::default(),
+        };
+
         client_side_stats
             .obfuscation_config
             .store(Arc::new(StatsComputationObfuscationConfig {
                 enabled: obfuscation_active,
-                sql_obfuscation_mode,
+                obfuscation_config: sql_obfuscation_config,
             }));
     }
 }
