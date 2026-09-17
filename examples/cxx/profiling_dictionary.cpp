@@ -113,15 +113,15 @@ int main() {
             std::vector<DictionaryLabel> labels{
                 DictionaryLabel{
                     .key = thread_id_key,
-                    .str = "",
+                    .str_bytes = strings::bytes(""),
                     .num = static_cast<std::int64_t>(i % 4),
-                    .num_unit = "",
+                    .num_unit = strings::bytes(""),
                 },
                 DictionaryLabel{
                     .key = sample_id_key,
-                    .str = "",
+                    .str_bytes = strings::bytes(""),
                     .num = static_cast<std::int64_t>(i),
-                    .num_unit = "",
+                    .num_unit = strings::bytes(""),
                 },
             };
 
@@ -138,8 +138,8 @@ int main() {
         std::cout << "✅ Added 100 dictionary-backed samples" << std::endl;
 
         std::cout << "Adding endpoint data..." << std::endl;
-        if (!profile->add_endpoint(12345, "/api/users")) return 1;
-        if (!profile->add_endpoint_count("/api/users", 100)) return 1;
+        if (!profile->add_endpoint(12345, strings::bytes("/api/users"))) return 1;
+        if (!profile->add_endpoint_count(strings::bytes("/api/users"), 100)) return 1;
         std::cout << "✅ Added endpoint data" << std::endl;
 
         std::cout << "Serializing profile..." << std::endl;

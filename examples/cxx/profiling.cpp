@@ -22,13 +22,13 @@ std::optional<rust::Box<ProfileExporter>> create_exporter(const char* agent_url,
         std::string dd_site = site ? site : "datadoghq.com";
         std::cout << "Creating agentless exporter (site: " << dd_site << ")..." << std::endl;
         auto exporter_result = ProfileExporter::create_agentless_exporter(
-            "dd-trace-cpp", "1.0.0", "native",
+            strings::bytes("dd-trace-cpp"), strings::bytes("1.0.0"), strings::bytes("native"),
             {
-                Tag{.key = "service", .value = "profiling-example"},
-                Tag{.key = "env", .value = "dev"},
-                Tag{.key = "example", .value = "cxx"}
+                Tag{.key = strings::bytes("service"), .value = strings::bytes("profiling-example")},
+                Tag{.key = strings::bytes("env"), .value = strings::bytes("dev")},
+                Tag{.key = strings::bytes("example"), .value = strings::bytes("cxx")}
             },
-            dd_site.c_str(), api_key, 10000, false
+            strings::bytes(dd_site), strings::bytes(api_key), 10000, false
         );
         if (!exporter_result->check_and_print()) return std::nullopt;
         return exporter_result->take_value();
@@ -38,13 +38,13 @@ std::optional<rust::Box<ProfileExporter>> create_exporter(const char* agent_url,
         // Agent mode - send to local Datadog agent
         std::cout << "Creating agent exporter (url: " << agent_url << ")..." << std::endl;
         auto exporter_result = ProfileExporter::create_agent_exporter(
-            "dd-trace-cpp", "1.0.0", "native",
+            strings::bytes("dd-trace-cpp"), strings::bytes("1.0.0"), strings::bytes("native"),
             {
-                Tag{.key = "service", .value = "profiling-example"},
-                Tag{.key = "env", .value = "dev"},
-                Tag{.key = "example", .value = "cxx"}
+                Tag{.key = strings::bytes("service"), .value = strings::bytes("profiling-example")},
+                Tag{.key = strings::bytes("env"), .value = strings::bytes("dev")},
+                Tag{.key = strings::bytes("example"), .value = strings::bytes("cxx")}
             },
-            agent_url, 10000, false
+            strings::bytes(agent_url), 10000, false
         );
         if (!exporter_result->check_and_print()) return std::nullopt;
         return exporter_result->take_value();
@@ -53,13 +53,13 @@ std::optional<rust::Box<ProfileExporter>> create_exporter(const char* agent_url,
     // File mode - dump HTTP request for debugging/testing
     std::cout << "Creating file exporter (profile_dump.txt)..." << std::endl;
     auto exporter_result = ProfileExporter::create_file_exporter(
-        "dd-trace-cpp", "1.0.0", "native",
+        strings::bytes("dd-trace-cpp"), strings::bytes("1.0.0"), strings::bytes("native"),
         {
-            Tag{.key = "service", .value = "profiling-example"},
-            Tag{.key = "env", .value = "dev"},
-            Tag{.key = "example", .value = "cxx"}
+            Tag{.key = strings::bytes("service"), .value = strings::bytes("profiling-example")},
+            Tag{.key = strings::bytes("env"), .value = strings::bytes("dev")},
+            Tag{.key = strings::bytes("example"), .value = strings::bytes("cxx")}
         },
-        "profile_dump.txt"
+        strings::bytes("profile_dump.txt")
     );
     if (!exporter_result->check_and_print()) return std::nullopt;
     return exporter_result->take_value();
@@ -152,7 +152,7 @@ int main() {
                 Location{
                     .mapping = mapping,
                     .function = Function{
-                        .name = "main",
+                        .name = strings::bytes("main"),
                         .system_name = "main",
                         .filename = "/src/main.cpp"
                     },
@@ -164,7 +164,7 @@ int main() {
                 locations.push_back(Location{
                     .mapping = mapping,
                     .function = Function{
-                        .name = "worker_loop",
+                        .name = strings::bytes("worker_loop"),
                         .system_name = "_Z11worker_loopv",
                         .filename = "/src/worker.cpp"
                     },
@@ -175,8 +175,8 @@ int main() {
 
             std::array<int64_t, 1> values{wall_time_value};
             std::array<Label, 2> labels{
-                Label{.key = "thread_id", .str = "", .num = int64_t(i % 4), .num_unit = ""},
-                Label{.key = "sample_id", .str = "", .num = int64_t(i), .num_unit = ""},
+                Label{.key = strings::bytes("thread_id"), .str_bytes = strings::bytes(""), .num = int64_t(i % 4), .num_unit = strings::bytes("")},
+                Label{.key = strings::bytes("sample_id"), .str_bytes = strings::bytes(""), .num = int64_t(i), .num_unit = strings::bytes("")},
             };
             if (!profile->add_sample(views::sample(locations, values, labels))) return 1;
         }
@@ -184,13 +184,13 @@ int main() {
         std::cout << "✅ Added 100 samples" << std::endl;
         
         std::cout << "Adding endpoint mappings..." << std::endl;
-        if (!profile->add_endpoint(12345, "/api/users")) return 1;
-        if (!profile->add_endpoint(67890, "/api/orders")) return 1;
-        if (!profile->add_endpoint(11111, "/api/products")) return 1;
+        if (!profile->add_endpoint(12345, strings::bytes("/api/users"))) return 1;
+        if (!profile->add_endpoint(67890, strings::bytes("/api/orders"))) return 1;
+        if (!profile->add_endpoint(11111, strings::bytes("/api/products"))) return 1;
         
-        if (!profile->add_endpoint_count("/api/users", 150)) return 1;
-        if (!profile->add_endpoint_count("/api/orders", 75)) return 1;
-        if (!profile->add_endpoint_count("/api/products", 200)) return 1;
+        if (!profile->add_endpoint_count(strings::bytes("/api/users"), 150)) return 1;
+        if (!profile->add_endpoint_count(strings::bytes("/api/orders"), 75)) return 1;
+        if (!profile->add_endpoint_count(strings::bytes("/api/products"), 200)) return 1;
         std::cout << "✅ Added endpoint mappings and counts" << std::endl;
         
         // Create exporter based on environment variables
@@ -229,20 +229,20 @@ int main() {
                 std::move(encoded),
                 // Files to compress and attach
                 {AttachmentFile{
-                    .name = "app_metadata.json",
+                    .name = strings::bytes("app_metadata.json"),
                     .data = {metadata_bytes.data(), metadata_bytes.size()}
                 }},
                 // Additional per-profile tags
                 {
-                    Tag{.key = "export_id", .value = "12345"},
-                    Tag{.key = "host", .value = "example-host"}
+                    Tag{.key = strings::bytes("export_id"), .value = strings::bytes("12345")},
+                    Tag{.key = strings::bytes("host"), .value = strings::bytes("example-host")}
                 },
                 // Process-level tags (comma-separated)
-                "language:cpp,profiler_version:1.0,runtime:native",
+                strings::bytes("language:cpp,profiler_version:1.0,runtime:native"),
                 // Internal metadata (JSON string)
-                R"({"profiler_version": "1.0", "custom_field": "demo"})",
+                strings::bytes(R"({"profiler_version": "1.0", "custom_field": "demo"})"),
                 // System info (JSON string)
-                R"({"os": "macos", "arch": "arm64", "cores": 8})",
+                strings::bytes(R"({"os": "macos", "arch": "arm64", "cores": 8})"),
                 *cancel_token
             ).check_and_print()) return 1;
             std::cout << "✅ Profile exported successfully!" << std::endl;
@@ -263,7 +263,7 @@ int main() {
             std::array<Location, 1> split_locations{Location{
                 .mapping = split_mapping,
                 .function = Function{
-                    .name = "split_export_function",
+                    .name = strings::bytes("split_export_function"),
                     .system_name = "_Z21split_export_functionv",
                     .filename = "/src/split_export.cpp"
                 },
@@ -271,9 +271,9 @@ int main() {
                 .line = 77
             }};
             std::array<int64_t, 1> split_values{42'000'000};
-            std::array<Label, 1> split_labels{Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}};
+            std::array<Label, 1> split_labels{Label{.key = strings::bytes("thread_id"), .str_bytes = strings::bytes(""), .num = 1, .num_unit = strings::bytes("")}};
             if (!split_profile->add_sample(views::sample(split_locations, split_values, split_labels))) return 1;
-            if (!split_profile->add_endpoint_count("/api/split-export", 1)) return 1;
+            if (!split_profile->add_endpoint_count(strings::bytes("/api/split-export"), 1)) return 1;
 
             auto encoded_profile_result = split_profile->serialize();
             if (!encoded_profile_result->ok()) return 1;
@@ -284,10 +284,10 @@ int main() {
             if (!(*exporter)->send_encoded_profile(
                 std::move(encoded_profile),
                 {},
-                {Tag{.key = "export_flow", .value = "split"}},
-                "language:cpp,profiler_version:1.0,runtime:native",
-                R"({"profiler_version": "1.0", "export_flow": "split"})",
-                R"({"os": "macos", "arch": "arm64", "cores": 8})"
+                {Tag{.key = strings::bytes("export_flow"), .value = strings::bytes("split")}},
+                strings::bytes("language:cpp,profiler_version:1.0,runtime:native"),
+                strings::bytes(R"({"profiler_version": "1.0", "export_flow": "split"})"),
+                strings::bytes(R"({"os": "macos", "arch": "arm64", "cores": 8})")
             ).check_and_print()) return 1;
             std::cout << "✅ Split profile exported successfully!" << std::endl;
             
