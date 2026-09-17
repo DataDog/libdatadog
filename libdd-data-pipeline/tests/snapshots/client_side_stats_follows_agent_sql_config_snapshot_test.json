@@ -1,0 +1,16 @@
+[[
+  {
+    "name": "postgres.query",
+    "service": "test-service",
+    "resource": "SELECT * FROM users WHERE email = 'alice@example.com' AND active = TRUE AND deleted_at IS NULL;",
+    "trace_id": 0,
+    "span_id": 1,
+    "parent_id": 0,
+    "type": "sql",
+    "metrics": {
+      "_sampling_priority_v1": 1.0,
+      "_top_level": 1.0
+    },
+    "duration": 5000000,
+    "start": 1000000000
+  }]]

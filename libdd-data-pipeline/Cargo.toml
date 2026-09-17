@@ -103,6 +103,10 @@ zrip = { workspace = true, features = ["alloc"] }
 name = "test_agentless_stats"
 required-features = ["stats-obfuscation"]
 
+[[test]]
+name = "test_stats_obfuscation"
+required-features = ["stats-obfuscation"]
+
 [[example]]
 name = "send-traces-with-stats"
 required-features = ["stats-obfuscation"]
