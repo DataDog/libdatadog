@@ -29,7 +29,7 @@ Windows:
 - Support for stack traces, frames, and metadata
 - Process and OS information
 - Automatic memory management
-- Explicit error handling
+- Exception-based error handling (crashtracker CXX bridge uses `Result<T>`, which CXX maps to C++ exceptions)
 
 **Core Types:**
 - `CrashInfoBuilder` - Builder for constructing crash information
