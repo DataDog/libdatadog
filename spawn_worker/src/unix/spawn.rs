@@ -1718,7 +1718,15 @@ mod tests {
     fn wait_success_reports_signal_death() {
         match unsafe { fork_skip_atfork_handlers(KeepChildSignalsBlocked::Yes) } {
             RawFork::Child => unsafe {
-                libc::kill(libc::getpid(), libc::SIGKILL);
+                #[cfg(target_os = "linux")]
+                let pid = {
+                    // Older glibc caches the parent's PID across a raw fork.
+                    // SYS_getpid always succeeds and returns a value that fits pid_t.
+                    libc::syscall(libc::SYS_getpid) as libc::pid_t
+                };
+                #[cfg(not(target_os = "linux"))]
+                let pid = libc::getpid();
+                libc::kill(pid, libc::SIGKILL);
                 libc::_exit(1);
             },
             RawFork::Parent(pid) => {
