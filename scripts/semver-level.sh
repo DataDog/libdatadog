@@ -182,8 +182,19 @@ crate_target_kinds_at_rev() {
 # per revision for both manifest passes below. Every workspace member is read when $1 is
 # empty, which is how list_affected_crates gets the whole workspace for one extraction.
 #
-#   <crate> dep      <name> <alias> <kind> <target> <req>  one per dependency a consumer resolves
-#   <crate> feature  <name> default|optional               one per declared feature
+#   <crate> dep      <name> <alias> <kind> <target> <req> <feats> <defaults>  per dependency
+#   <crate> feature  <name> default|optional                                  per feature
+#
+# <feats> and <defaults> are the features the crate turns on in that dependency, and
+# whether it takes the dependency's defaults. They are here to be SELECTED on, not
+# scored: enabling a dependency feature can change this crate's own API — an item
+# reached through a glob re-export appears — but the manifest alone cannot say whether
+# it did, and the passes that read rustdoc can. Without them a root
+# [workspace.dependencies] entry that only gains a feature leaves every inheriting
+# member's rows identical, list_affected_crates names nobody, and with just the root
+# manifest touched the workflow skips the jobs that would have looked. Pass 2b keys the
+# floor comparison on the columns before these, so a feature move never reads as a
+# requirement change.
 #
 # `default` on a feature row means `default` REACHES the feature, not that it lists it:
 # the closure over the feature graph, which is what a consumer writing
@@ -252,7 +263,11 @@ manifest_facts_at_rev() {
         | (
             ( $p.dependencies[]
               | select((.kind // "normal") != "dev")
-              | [$p.name, "dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req] ),
+              | [$p.name, "dep", .name, (.rename // .name), (.kind // "normal"), (.target // "any"), .req,
+                 ((.features // []) | sort | join(",")),
+                 # Not `// true`: jq treats a false left-hand side as absent, so that
+                 # spelling would report every dependency as taking the defaults.
+                 (if .uses_default_features == false then "no-defaults" else "defaults" end)] ),
             ( ($p.features // {}) as $f
               | default_closure($f) as $d
               | ($f | keys[]) as $n
@@ -694,7 +709,9 @@ compute_semver_results() {
     elif $manifest_compared; then
         local base_reqs now_reqs raised=""
         # Field 1 is the crate, identical on every row here, so the key below starts at
-        # the dependency name.
+        # the dependency name. The projection stops at the requirement: the feature
+        # columns after it are selection facts, and folding them into the key would
+        # make a dependency that only changed features look absent from the baseline.
         base_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$base_facts")
         now_reqs=$(awk -F'\t' '$2 == "dep" { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' <<< "$now_facts")
 
