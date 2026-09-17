@@ -40,9 +40,13 @@ pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 /// The obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
-/// The obfuscation version this tracer supports, given that we follow the full obfuscation config
+/// The second obfuscation version this tracer supports, used when a custom obfuscation config is in
+/// effect. The agent sends this version to prevent tracers that don't implement custom-config
+/// following from enabling CSS obfuscation.
+///
+/// See https://github.com/DataDog/datadog-agent/blob/6cab2eaede9fd73ebf0d275c0b43cf5443a49d3a/pkg/trace/api/info.go#L196
 #[cfg(feature = "stats-obfuscation")]
-pub(crate) const NEW_SUPPORTED_OBFUSCATION_VERSION: u32 = 2;
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG: u32 = 2;
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
@@ -117,7 +121,7 @@ fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
         v >= 1
             && [
                 SUPPORTED_OBFUSCATION_VERSION,
-                NEW_SUPPORTED_OBFUSCATION_VERSION,
+                SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG,
             ]
             .contains(&v)
     })

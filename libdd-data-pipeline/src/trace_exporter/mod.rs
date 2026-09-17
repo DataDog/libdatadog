@@ -3090,7 +3090,8 @@ mod single_threaded_tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_client_side_stats_obfuscation_opt_in() {
-        let next_obf_version = crate::trace_exporter::stats::NEW_SUPPORTED_OBFUSCATION_VERSION;
+        let next_obf_version =
+            crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG;
         let current_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION;
         let prev_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION - 1;
         // Opt-in OFF, agent supports → must stay disabled.
