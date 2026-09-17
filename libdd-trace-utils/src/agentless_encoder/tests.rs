@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload;
+use crate::mutable_metadata::MutableMetadataHandle;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::span::BytesData;
 use crate::tracer_metadata::TracerMetadata;
@@ -14,10 +15,12 @@ fn bs(s: &'static str) -> BytesString {
 }
 
 fn base_metadata() -> TracerMetadata {
+    let mutable_metadata = MutableMetadataHandle::default();
+    mutable_metadata.set_runtime_id("rt-1".into());
     TracerMetadata {
         hostname: "host-1".to_string(),
         env: "prod".to_string(),
-        runtime_id: "rt-1".to_string(),
+        mutable_metadata,
         service: "svc".to_string(),
         tracer_version: "1.2.3".to_string(),
         language: "nodejs".to_string(),
@@ -53,9 +56,9 @@ fn fixed_json_structure_preserves_minimal_and_optional_metadata_bytes() {
         language: "nodejs".to_string(),
         language_version: "24".to_string(),
         tracer_version: "1.2.3".to_string(),
-        runtime_id: "runtime".to_string(),
         ..Default::default()
     };
+    metadata.mutable_metadata.set_runtime_id("runtime".into());
     let trace = encode_payload::<BytesData>(&[Vec::new()], &metadata, true).unwrap();
     let container = expected_container_field();
     let expected = format!(
@@ -226,6 +229,36 @@ fn meta_struct_preserves_exact_bytes_and_propagates_malformed_values() {
         .insert(bs("malformed"), Bytes::from(vec![0xc1]));
     let error = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap_err();
     assert!(error.is_data(), "unexpected error category: {error}");
+}
+
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
+#[test]
+fn runtime_id_updates_propagate_through_the_metadata_handle() {
+    fn mk_span() -> Span<BytesData> {
+        Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 0xdeadbeef_u128,
+            span_id: 1,
+            parent_id: 0,
+            start: 2_500_000_000,
+            duration: 1_000_000,
+            ..Default::default()
+        }
+    }
+    let metadata = base_metadata();
+
+    let bytes = encode_payload(&[vec![mk_span()]], &metadata, false).unwrap();
+    let v = json_from_bytes(&bytes);
+    assert_eq!(v["traces"][0]["runtimeID"], "rt-1");
+
+    // Update the handle after the exporter was built: the next encode must
+    // serialize the new runtime_id.
+    metadata.mutable_metadata.set_runtime_id("rt-2".into());
+    let bytes = encode_payload(&[vec![mk_span()]], &metadata, false).unwrap();
+    let v = json_from_bytes(&bytes);
+    assert_eq!(v["traces"][0]["runtimeID"], "rt-2");
 }
 
 #[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri

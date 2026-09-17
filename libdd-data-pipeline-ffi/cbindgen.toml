@@ -11,6 +11,7 @@ include_guard = "DDOG_DATA_PIPELINE_H"
 includes = ["common.h"]
 after_includes = """
 typedef struct ddog_TraceExporter ddog_TraceExporter;
+typedef struct ddog_MutableMetadataHandle ddog_MutableMetadataHandle;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
@@ -21,7 +22,7 @@ typedef uint8_t ddog_TracerValueKind;
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
-exclude = ["TraceExporter", "TracerSpan", "TracerSpanEvent", "TracerTraceChunks", "TokioCancellationToken"]
+exclude = ["TraceExporter", "MutableMetadataHandle", "TracerSpan", "TracerSpanEvent", "TracerTraceChunks", "TokioCancellationToken"]
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"

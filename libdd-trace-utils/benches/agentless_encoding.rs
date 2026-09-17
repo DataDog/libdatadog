@@ -7,6 +7,7 @@
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::agentless_encoder::encode_payload;
+use libdd_trace_utils::mutable_metadata::MutableMetadataHandle;
 use libdd_trace_utils::span::v04::{Span, SpanLink, VecMap};
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -19,10 +20,12 @@ fn bytes(value: &'static str) -> BytesString {
 }
 
 fn metadata() -> TracerMetadata {
+    let mutable_metadata = MutableMetadataHandle::default();
+    mutable_metadata.set_runtime_id("f0e1d2c3-b4a5-6789-0abc-def012345678".into());
     TracerMetadata {
         hostname: "benchmark-host".to_string(),
         env: "production".to_string(),
-        runtime_id: "f0e1d2c3-b4a5-6789-0abc-def012345678".to_string(),
+        mutable_metadata,
         tracer_version: "1.2.3".to_string(),
         language: "nodejs".to_string(),
         language_version: "24.7.0".to_string(),

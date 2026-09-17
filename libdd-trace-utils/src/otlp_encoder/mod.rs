@@ -11,6 +11,7 @@ pub mod mapper_v1;
 pub use mapper::map_traces_to_otlp;
 pub use mapper_v1::map_traces_to_otlp_v1;
 
+use crate::mutable_metadata::MutableMetadataHandle;
 pub use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;
 
@@ -37,9 +38,8 @@ pub struct OtlpResourceInfo {
     pub app_version: String,
     pub language: String,
     pub tracer_version: String,
-    pub runtime_id: String,
+    pub mutable_metadata: MutableMetadataHandle,
     pub hostname: String,
-    pub process_tags: String,
     pub tracer_tags: Vec<String>,
     pub instrumentation_scope_name: String,
     pub instrumentation_scope_version: String,
