@@ -1,7 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module provides struct representing the info endpoint response
-use libdd_trace_obfuscation::{obfuscation_config, replacer::ReplaceRule};
+use libdd_trace_obfuscation::{
+    obfuscation_config::{self, ObfuscationConfig},
+    replacer::ReplaceRule,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -78,13 +81,15 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
-    pub obfuscation: Option<ObfuscationConfig>,
+    pub obfuscation: Option<AgentObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 #[serde(default)]
-pub struct ObfuscationConfig {
+// Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
+// agent exposes is slightly different
+pub struct AgentObfuscationConfig {
     // Old format from the agent, now present under sql->obfuscation_mode directly
     pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
     pub remove_stack_traces: bool,
@@ -110,8 +115,8 @@ impl AgentInfo {
     }
 }
 
-impl From<ObfuscationConfig> for libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig {
-    fn from(value: ObfuscationConfig) -> Self {
+impl From<AgentObfuscationConfig> for ObfuscationConfig {
+    fn from(value: AgentObfuscationConfig) -> Self {
         let sql_config = match value.sql {
             Some(sql_config) => sql_config,
             // Fallback for the previous /info config format
