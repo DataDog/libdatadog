@@ -259,9 +259,6 @@ pub mod ffi {
     /// string. Prefer ok() or check_and_*() methods over inspecting fields
     /// directly.
     ///
-    /// #[must_use] catches ignored statuses in Rust tests/helpers, but cxx does
-    /// not currently translate it to C++ [[nodiscard]] in generated headers.
-    #[must_use]
     #[derive(Debug)]
     enum Operation {
         CreateProfile,
@@ -287,6 +284,9 @@ pub mod ffi {
         SendEncodedProfileWithCancellation,
     }
 
+    /// #[must_use] catches ignored statuses in Rust tests/helpers, but cxx does
+    /// not currently translate it to C++ [[nodiscard]] in generated headers.
+    #[must_use]
     struct Status {
         success: bool,
         operation: Operation,
