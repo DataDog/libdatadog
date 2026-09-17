@@ -24,6 +24,7 @@ use libdd_telemetry::config::Config;
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::mutable_metadata::MutableMetadata;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
@@ -249,14 +250,17 @@ pub(crate) fn get_or_create_concentrator(
 
     let path = env_stats_shm_path(env, version, &service_name);
 
+    let mut metadata = MutableMetadata::default();
+    metadata.runtime_id = runtime_id.to_string();
+    metadata.process_tags = config.process_tags.clone();
     let meta = StatsMetadata {
         hostname: config.hostname.clone(),
         env: env.to_owned(),
         app_version: version.to_owned(),
-        runtime_id: runtime_id.to_owned(),
+        // This MutableMetadata handle is never shared and is immutable in this case.
+        mutable_metadata: metadata.into(),
         language: config.language.clone(),
         tracer_version: config.tracer_version.clone(),
-        process_tags: config.process_tags.clone(),
         service: service_name.clone(),
         ..Default::default()
     };

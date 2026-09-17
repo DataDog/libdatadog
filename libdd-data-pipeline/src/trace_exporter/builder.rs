@@ -35,6 +35,7 @@ use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
 use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
+use libdd_trace_utils::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,6 +113,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
     runtime_id: Option<String>,
+    mutable_metadata: Option<MutableMetadataHandle>,
     /// When true, traces are written as newline-delimited JSON to stdout (the
     /// Datadog Forwarder "log exporter" path) instead of being sent to an agent.
     output_to_log: bool,
@@ -185,6 +187,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_metrics_headers: Vec::new(),
             otel_trace_semantics_enabled: false,
             runtime_id: None,
+            mutable_metadata: None,
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
@@ -585,8 +588,17 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     ///
     /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
     /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    ///
+    /// Ignored when a shared handle was set via
+    /// [`TraceExporterBuilder::set_mutable_metadata`].
     pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
         self.runtime_id = Some(id.to_owned());
+        self
+    }
+
+    /// Provide a shared, updatable [`MutableMetadataHandle`].
+    pub fn set_mutable_metadata(&mut self, handle: MutableMetadataHandle) -> &mut Self {
+        self.mutable_metadata = Some(handle);
         self
     }
     /// Configure the exporter to write traces as newline-delimited JSON to stdout
@@ -871,9 +883,17 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 ..Default::default()
             }));
 
-        let runtime_id = self
-            .runtime_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let mutable_metadata = match self.mutable_metadata {
+            Some(handle) => handle,
+            None => {
+                let mut metadata = MutableMetadata::default();
+                metadata.runtime_id = self
+                    .runtime_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                metadata.process_tags = self.process_tags;
+                metadata.into()
+            }
+        };
         let metadata = TracerMetadata {
             tracer_version: self.tracer_version,
             language_version: self.language_version,
@@ -881,25 +901,24 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             language_interpreter_vendor: self.language_interpreter_vendor,
             language: self.language,
             git_commit_sha: self.git_commit_sha,
-            process_tags: self.process_tags,
+            mutable_metadata,
             client_computed_stats: self.client_computed_stats,
             client_computed_top_level: self.client_computed_top_level,
             hostname: self.hostname,
             env: self.env,
             app_version: self.app_version,
-            runtime_id,
             service: self.service,
             container_id: self.container_id,
         };
 
-        let base_otlp_resource = |rid: &str| {
+        let base_otlp_resource = || {
             let mut r = OtlpResourceInfo::default();
             r.service = metadata.service.clone();
             r.env = metadata.env.clone();
             r.app_version = metadata.app_version.clone();
             r.language = metadata.language.clone();
             r.tracer_version = metadata.tracer_version.clone();
-            r.runtime_id = rid.to_string();
+            r.mutable_metadata = metadata.mutable_metadata.clone();
             r
         };
 
@@ -923,9 +942,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 #[cfg(feature = "stats-obfuscation")]
                 Some(stats_obfuscation_config.clone()),
             )));
-            let mut resource = base_otlp_resource(&metadata.runtime_id);
+            let mut resource = base_otlp_resource();
             resource.hostname = metadata.hostname.clone();
-            resource.process_tags = metadata.process_tags.clone();
             resource.tracer_tags = self.tracer_tags.clone();
             let worker = OtlpStatsExporter {
                 flush_interval: bucket_size,
@@ -1045,7 +1063,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         }
 
         let otlp_resource_info = if let Some(mode) = otlp.as_ref() {
-            let mut r = base_otlp_resource(&metadata.runtime_id);
+            let mut r = base_otlp_resource();
             r.client_computed_stats = metadata.client_computed_stats || otlp_stats_enabled;
             match mode {
                 OtlpExportMode::Http(config) => {
