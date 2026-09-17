@@ -10,7 +10,9 @@ use std::{
     fs::Permissions,
     io::{Seek, Write},
     mem::ManuallyDrop,
-    os::unix::prelude::{AsRawFd, FromRawFd, OsStrExt, OsStringExt, PermissionsExt, RawFd},
+    os::unix::prelude::{
+        AsFd, AsRawFd, BorrowedFd, FromRawFd, OsStrExt, OsStringExt, PermissionsExt, RawFd,
+    },
 };
 
 use io_lifetimes::OwnedFd;
@@ -359,7 +361,7 @@ impl SpawnWorker {
             &self.stdin,
             &self.stdout,
             &self.stderr,
-            fd_to_pass.map(|fd| fd.as_raw_fd()),
+            fd_to_pass.map(|fd| fd.as_fd()),
             dependency_fds,
         )?;
 
@@ -548,26 +550,39 @@ impl ChildStdio {
 /// fds. Sources that could be overwritten are protected before the fork; after
 /// the mappings are installed, the plan preserves a required exec fd and tries
 /// to close higher fds using Linux close_range or a precomputed scan bound.
-pub(crate) struct ChildFdPlan {
+pub(crate) struct ChildFdPlan<'fd> {
     stdio: [ChildStdio; 3],
-    mappings: Vec<FdMapping>,
+    mappings: Vec<FdMapping<'fd>>,
     source_fd_minimum: RawFd,
     first_to_close: u32,
     fallback_last: u32,
 }
 
-struct FdMapping {
-    source: OwnedFd,
+struct FdMapping<'fd> {
+    source: MaybeOwnedFd<'fd>,
     destination: RawFd,
 }
 
-impl ChildFdPlan {
+enum MaybeOwnedFd<'fd> {
+    Owned(OwnedFd),
+    Borrowed(BorrowedFd<'fd>),
+}
+impl AsRawFd for MaybeOwnedFd<'_> {
+    fn as_raw_fd(&self) -> RawFd {
+        match self {
+            MaybeOwnedFd::Owned(fd) => fd.as_raw_fd(),
+            MaybeOwnedFd::Borrowed(fd) => fd.as_raw_fd(),
+        }
+    }
+}
+
+impl<'fd> ChildFdPlan<'fd> {
     /// Build the complete descriptor plan. Must be called before the fork.
     pub(crate) fn new<I>(
         stdin: &Stdio,
         stdout: &Stdio,
         stderr: &Stdio,
-        passed_fd: Option<RawFd>,
+        passed_fd: Option<BorrowedFd<'fd>>,
         dependency_fds: I,
     ) -> anyhow::Result<Self>
     where
@@ -601,13 +616,10 @@ impl ChildFdPlan {
         };
 
         if let Some(fd) = passed_fd {
-            plan.add_mapping(fd, 3)?;
+            plan.add_borrowed_mapping(fd, 3)?;
         }
         for (index, fd) in dependency_fds.enumerate() {
-            plan.add_mapping(
-                fd.as_raw_fd(),
-                dependency_destination + RawFd::try_from(index)?,
-            )?;
+            plan.add_owned_mapping(fd, dependency_destination + RawFd::try_from(index)?)?;
         }
 
         Ok(plan)
@@ -664,12 +676,43 @@ impl ChildFdPlan {
         }
     }
 
-    fn add_mapping(&mut self, source: RawFd, destination: RawFd) -> std::io::Result<()> {
+    fn add_borrowed_mapping(
+        &mut self,
+        source: BorrowedFd<'fd>,
+        destination: RawFd,
+    ) -> std::io::Result<()> {
+        let source = if Self::source_is_safe_without_duplication(source.as_raw_fd(), destination) {
+            MaybeOwnedFd::Borrowed(source)
+        } else {
+            MaybeOwnedFd::Owned(self.duplicate_source(source.as_raw_fd())?)
+        };
         self.mappings.push(FdMapping {
-            source: self.duplicate_source(source)?,
+            source,
             destination,
         });
         Ok(())
+    }
+
+    fn add_owned_mapping(&mut self, source: OwnedFd, destination: RawFd) -> std::io::Result<()> {
+        let source = if Self::source_is_safe_without_duplication(source.as_raw_fd(), destination) {
+            // Retain ownership so the descriptor remains open until the plan
+            // has installed it in the child.
+            MaybeOwnedFd::Owned(source)
+        } else {
+            MaybeOwnedFd::Owned(self.duplicate_source(source.as_raw_fd())?)
+        };
+        self.mappings.push(FdMapping {
+            source,
+            destination,
+        });
+        Ok(())
+    }
+
+    fn source_is_safe_without_duplication(source: RawFd, destination: RawFd) -> bool {
+        // Destinations are installed in increasing order, so a greater-numbered
+        // source cannot be overwritten before it is used. Equality is unsafe:
+        // dup2 would be a no-op and would not clear FD_CLOEXEC.
+        source > destination
     }
 
     fn duplicate_fd_at_least(fd: RawFd, minimum: RawFd) -> std::io::Result<OwnedFd> {
@@ -1191,7 +1234,7 @@ mod tests {
             &stdio[0],
             &stdio[1],
             &stdio[2],
-            Some(pipe_write.as_raw_fd()),
+            Some(pipe_write.as_fd()),
             std::iter::once(pipe_read),
         )
         .unwrap();
@@ -1214,6 +1257,44 @@ mod tests {
             RawFork::Parent(pid) => crate::assert_child_exit!(pid, 0),
             RawFork::Error(error) => panic!("fork failed with errno {error}"),
         }
+    }
+
+    #[test]
+    fn child_fd_plan_reuses_safe_sources_without_losing_ownership() {
+        let file = File::open("/dev/null").unwrap();
+        let passed = ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 4).unwrap();
+        let dependency = ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 4).unwrap();
+        let passed_source = passed.as_raw_fd();
+        let dependency_source = dependency.as_raw_fd();
+        let last_source = passed_source.max(dependency_source);
+        let dependency_count = usize::try_from(last_source - 3).unwrap();
+        let mut dependencies = Vec::with_capacity(dependency_count);
+        dependencies.push(dependency);
+        for _ in 1..dependency_count {
+            dependencies.push(ChildFdPlan::duplicate_fd_at_least(file.as_raw_fd(), 4).unwrap());
+        }
+        let stdio = [Stdio::Inherit, Stdio::Inherit, Stdio::Inherit];
+
+        let fd_plan = ChildFdPlan::new(
+            &stdio[0],
+            &stdio[1],
+            &stdio[2],
+            Some(passed.as_fd()),
+            dependencies.into_iter(),
+        )
+        .unwrap();
+
+        assert!(passed_source < fd_plan.source_fd_minimum);
+        assert!(dependency_source < fd_plan.source_fd_minimum);
+        assert!(matches!(
+            &fd_plan.mappings[0].source,
+            MaybeOwnedFd::Borrowed(fd) if fd.as_raw_fd() == passed_source
+        ));
+        assert!(matches!(
+            &fd_plan.mappings[1].source,
+            MaybeOwnedFd::Owned(fd) if fd.as_raw_fd() == dependency_source
+        ));
+        assert_ne!(unsafe { libc::fcntl(dependency_source, libc::F_GETFD) }, -1);
     }
 
     struct DropNotifier(RawFd);
