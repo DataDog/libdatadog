@@ -666,13 +666,15 @@ mod v04_tests {
         let mut span = test_span();
         span.meta
             .insert(bs("custom.tag"), bs("x βeta /foo/bar/foo"));
+        span.meta.insert(bs("absent.tag"), bs("unchanged"));
 
         let parsed_rules = replacer::parse_rules_from_string(
             r#"[
                 {"name": "custom.tag", "pattern": "absent", "repl": "bad"},
                 {"name": "custom.tag", "pattern": "x", "repl": "X"},
                 {"name": "custom.tag", "pattern": "βeta", "repl": "unicode"},
-                {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
+                {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
+                {"name": "absent.tag", "pattern": "missing", "repl": "bad"}
             ]"#,
         )
         .unwrap();
@@ -687,6 +689,7 @@ mod v04_tests {
             span.meta.get("custom.tag").unwrap().as_str(),
             "X unicode /foo/bar/extra"
         );
+        assert_eq!(span.meta.get("absent.tag").unwrap().as_str(), "unchanged");
     }
 
     #[test]

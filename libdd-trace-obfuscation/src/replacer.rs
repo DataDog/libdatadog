@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::regex_engine::{Regex, Replacer};
+use libdd_common::regex_engine::{Regex, Replacer, NEEDS_LITERAL_PREFILTER};
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::{v04, SpanText, TraceData};
 use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
@@ -195,7 +195,7 @@ fn replace_all(
     haystack: &mut String,
     scratch_space: &mut String,
 ) {
-    if !has_required_literal(re, haystack) {
+    if NEEDS_LITERAL_PREFILTER && !has_required_literal(re, haystack) {
         return;
     }
 
@@ -251,7 +251,7 @@ fn replace_all_opt(
     no_expansion: bool,
     haystack: &str,
 ) -> Option<String> {
-    if !has_required_literal(re, haystack) {
+    if NEEDS_LITERAL_PREFILTER && !has_required_literal(re, haystack) {
         return None;
     }
 
@@ -290,9 +290,9 @@ fn has_required_literal(re: &Regex, haystack: &str) -> bool {
     // RegexBuilder flags are absent from `as_str()`. Preserve possible case-insensitive matches,
     // and leave Unicode or verbose-mode-sensitive patterns to the regex engine.
     !is_literal_pattern(pattern)
-        || haystack.contains(pattern)
         || !pattern.is_ascii()
         || !haystack.is_ascii()
+        || haystack.contains(pattern)
         || haystack
             .as_bytes()
             .windows(pattern.len())
