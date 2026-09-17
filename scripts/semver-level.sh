@@ -306,15 +306,14 @@ list_affected_crates() {
         | sort -u
 }
 
-# version_gt A B — true when the dotted numeric tuple A is strictly greater than B.
-# Four components: req_min appends an exclusivity flag to the X.Y.Z triple.
+# version_gt A B — true when the dotted numeric triple A is strictly greater than B.
 # Compared in the shell rather than with `sort -V`, a GNU extension.
 version_gt() {
     local -a a=() b=()
     local i x y
     IFS='.' read -r -a a <<< "$1"
     IFS='.' read -r -a b <<< "$2"
-    for i in 0 1 2 3; do
+    for i in 0 1 2; do
         x=${a[i]:-0}
         y=${b[i]:-0}
         if (( 10#$x > 10#$y )); then
@@ -326,15 +325,22 @@ version_gt() {
     return 1
 }
 
-# Echo the lowest version requirement $1 admits, as `X.Y.Z.E` with E=1 when the bound
-# EXCLUDES that version. `>1.2.3` and `>=1.2.3` are different floors, so without E the
-# two compare equal and narrowing one into the other passes as a patch. E is an ordering
-# device only; the report quotes requirements verbatim.
+# Echo the lowest version requirement $1 admits, as `X.Y.Z`. The report quotes
+# requirements verbatim; this is for ordering only.
+#
+# An EXCLUSIVE bound is advanced to the first version it does admit, because `>`
+# excludes everything up to and including the components it states: `>1.2.3` starts at
+# 1.2.4, `>1.2` at 1.3.0 (no 1.2.x matches at all) and `>1` at 2.0.0. Reading the stated
+# version as the floor instead would make `>=1.2.1` -> `>1.2` look like a lowering
+# rather than the raise it is, and `>1.2.3` -> the equivalent `>=1.2.4` look like a
+# raise.
 #
 # Echo nothing when there is no lower bound (`*`, `<2`) or it cannot be parsed: callers
 # treat that as "no opinion", so an exotic requirement can never invent a bump. A
 # pre-release bound is compared as its release version (`1.0.0-rc.1` -> `1.0.0`), which
-# can only understate a raise.
+# can only understate a raise; an exclusive one is then left unadvanced, since
+# `>1.2.3-rc.1` admits 1.2.3 itself and that release version is already its exact floor.
+# A wildcard is treated the same way, `>` not being able to carry one legally.
 req_min() {
     local req=$1
     local -a parts=() v=()
@@ -352,11 +358,25 @@ req_min() {
             [0-9]*) bound=$part ;;
             *)      continue ;;
         esac
+        # The two spellings whose release version is already the exact floor, so that
+        # advancing below would overstate the requirement: see the note above.
+        [[ "$bound" == *-* || "$bound" == *'*'* ]] && exclusive=0
         bound=${bound%%[-+]*}   # drop pre-release and build metadata
         bound=${bound//\*/0}    # `1.*` admits 1.0.0
         [[ "$bound" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
         IFS='.' read -r -a v <<< "$bound"
-        bound="${v[0]:-0}.${v[1]:-0}.${v[2]:-0}.${exclusive}"
+        if (( exclusive )); then
+            # Advance the last component the bound states; the ones after it are zero
+            # already. 10# so that a zero-padded component is not read as octal.
+            if (( ${#v[@]} == 1 )); then
+                v=( "$(( 10#${v[0]} + 1 ))" 0 0 )
+            elif (( ${#v[@]} == 2 )); then
+                v=( "${v[0]}" "$(( 10#${v[1]} + 1 ))" 0 )
+            else
+                v=( "${v[0]}" "${v[1]}" "$(( 10#${v[2]} + 1 ))" )
+            fi
+        fi
+        bound="${v[0]:-0}.${v[1]:-0}.${v[2]:-0}"
         if [[ -z "$best" ]] || version_gt "$bound" "$best"; then
             best=$bound
         fi
