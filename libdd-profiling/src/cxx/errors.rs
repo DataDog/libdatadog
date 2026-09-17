@@ -145,12 +145,14 @@ macro_rules! impl_box_result {
 
             #[cfg(test)]
             #[track_caller]
+            #[allow(dead_code)]
             pub fn is_ok(&self) -> bool {
                 self.status.ok()
             }
 
             #[cfg(test)]
             #[track_caller]
+            #[allow(dead_code)]
             pub fn is_err(&self) -> bool {
                 !self.status.ok()
             }

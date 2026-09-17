@@ -5,15 +5,15 @@
 
 #![allow(clippy::needless_lifetimes)]
 
-pub struct DictionaryStringIdOpaque {
+pub(crate) struct DictionaryStringIdOpaque {
     _private: [u8; 0],
 }
 
-pub struct DictionaryFunctionIdOpaque {
+pub(crate) struct DictionaryFunctionIdOpaque {
     _private: [u8; 0],
 }
 
-pub struct DictionaryMappingIdOpaque {
+pub(crate) struct DictionaryMappingIdOpaque {
     _private: [u8; 0],
 }
 
@@ -610,13 +610,13 @@ mod ids;
 mod profile;
 mod profile_exporter;
 
-pub use self::cancellation::CancellationToken;
-pub use self::dictionary::ProfileDictionary;
-pub use self::errors::{
+pub(crate) use self::cancellation::CancellationToken;
+pub(crate) use self::dictionary::ProfileDictionary;
+pub(crate) use self::errors::{
     EncodedProfileResult, ProfileDictionaryResult, ProfileExporterResult, ProfileResult,
 };
-pub use self::profile::{EncodedProfile, Profile};
-pub use self::profile_exporter::ProfileExporter;
+pub(crate) use self::profile::{EncodedProfile, Profile};
+pub(crate) use self::profile_exporter::ProfileExporter;
 
 #[cfg(test)]
 mod tests;
