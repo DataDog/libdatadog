@@ -13,6 +13,22 @@ data.
 
 Linux only for now.
 
+## Ownership modes
+
+The crate provides exactly one of two context ownership flavours, selected by
+two mutually exclusive features:
+
+- `owned-context` (default): `OwnedThreadContext`, a record owned by a single
+  thread, which can be updated in place without reallocating. This is the one
+  used by the FFI.
+- `shared-context`: `SharedThreadContext`, an `Arc`-backed immutable record
+  that can be cloned and attached on several threads. To be consumed by another
+  Rust crate, Currently dd-trace-rs.
+
+They are exclusive because the thread-local slot is untyped: interleaving owned
+and shared contexts would misinterpret the pointer cause UB. If both features
+are enabled, `owned-context` wins and the build script emits a warning.
+
 ## TLS
 
 The TLS symbol `otel_thread_ctx_v1` and its TLSDESC accessor are defined
