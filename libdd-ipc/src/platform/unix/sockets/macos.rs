@@ -22,8 +22,8 @@
 //! - Success → live server.  `ECONNRESET` → stale socket file.
 
 use super::{
-    create_unix_socket, max_message_size, sendmsg, set_nonblocking, ControlMessage, MsgFlags,
-    SeqpacketConn, SeqpacketListener, UnixAddr,
+    create_unix_socket, max_message_size, poll_with_timeout, sendmsg, set_nonblocking,
+    ControlMessage, MsgFlags, SeqpacketConn, SeqpacketListener, UnixAddr,
 };
 use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
@@ -36,6 +36,7 @@ use std::{
         io::{AsRawFd, FromRawFd, OwnedFd},
     },
     path::Path,
+    time::Duration,
 };
 use tracing::error;
 
@@ -256,6 +257,50 @@ impl SeqpacketConn {
         Ok(())
     }
 
+    /// Poll for a new message and watch the liveness probe to detect any `BrokenPipe` immediately,
+    /// instead of only after the full `timeout` elapses.
+    pub(super) fn poll_readable_with_liveness(&self, timeout: Option<Duration>) -> io::Result<()> {
+        let Some(ref lw) = self.liveness else {
+            return poll_with_timeout(self.inner.as_raw_fd(), libc::POLLIN, timeout);
+        };
+        let timeout_ms: i32 = match timeout {
+            None => -1,
+            Some(d) => d.as_millis().min(i32::MAX as u128) as i32,
+        };
+        let mut pfds = [
+            libc::pollfd {
+                fd: self.inner.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: lw.as_raw_fd(),
+                events: libc::POLLHUP as libc::c_short,
+                revents: 0,
+            },
+        ];
+        loop {
+            let ret =
+                unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, timeout_ms) };
+            if ret > 0 {
+                if pfds[0].revents & libc::POLLIN != 0 {
+                    return Ok(());
+                }
+                if pfds[1].revents & (libc::POLLHUP | libc::POLLERR) != 0 {
+                    return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                }
+                return Ok(());
+            }
+            if ret == 0 {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
+    }
+
     /// Create from a connected fd plus a peer fd that must be kept alive.
     ///
     /// On macOS, the peer fd must be kept open locally to maintain the SOCK_DGRAM
@@ -371,5 +416,133 @@ mod tests {
             conn0.try_send_raw(&mut vec![42u8; 10], &[]).is_err(),
             "expected send error after dropping peer on macOS"
         );
+    }
+
+    /// A peer that disconnects while we're blocked in `recv_raw_blocking` must be detected
+    /// immediately (via the liveness pipe) rather than only once the whole read_timeout
+    /// elapses. This reproduces the real-world scenario in `broken_pipe.phpt`: the daemon
+    /// closes its connection after failing to decode a garbled message (see the IPC serve
+    /// loop's `Ok((Err(_), _)) => break` arm), and the client is waiting on a `call()`'s
+    /// `recv_raw_blocking` for the response that will now never arrive. Before this fix,
+    /// `recv_raw_blocking` only polled the data socket, so it had no way to learn the peer
+    /// was gone and just blocked for the full timeout, then returned a generic `TimedOut`
+    /// (which `with_retry` treats as non-reconnectable) instead of `BrokenPipe`.
+    #[test]
+    fn test_recv_blocking_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        // Generous timeout: if the fix regresses, this test would otherwise have to wait out
+        // this whole duration before failing, so keep it well above scheduling jitter but far
+        // below what a CI timeout would tolerate for a passing run.
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Simulate the daemon closing its connection (e.g. after a decode failure).
+        drop(server);
+
+        let start = std::time::Instant::now();
+        let err = client
+            .recv_raw_blocking(&mut [0u8; 64])
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_blocking took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not a timeout wait"
+        );
+    }
+
+    #[test]
+    fn test_recv_blocking_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let mut client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set_read_timeout");
+
+        // Start the receiver first, with nothing queued yet, so it actually enters
+        // poll_readable_with_liveness's blocking poll() -- then fire both events close
+        // together so poll() is likely to observe them simultaneously.
+        let handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 64];
+            let (n, _) = client
+                .recv_raw_blocking(&mut buf)
+                .expect("expected the queued message, not BrokenPipe");
+            buf[..n].to_vec()
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        server
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(server);
+
+        let got = handle.join().expect("receiver thread");
+        assert_eq!(got, b"final");
+    }
+
+    /// Async counterpart of `test_recv_blocking_detects_peer_disconnect_promptly`, covering
+    /// `recv_raw_async` (used by the macro-generated server dispatch loop) rather than the
+    /// client-side `recv_raw_blocking`. This reproduces the real-world
+    /// `pcntl_fork_thread_mode_orphan.phpt` hang: in thread mode, the main PHP thread connects
+    /// to its own in-process sidecar listener as a worker, and `datadog_sidecar_shutdown()`
+    /// drops that connection from the client side. Before this fix, the server-side task
+    /// handling that connection only polled the data socket via `fd.readable()`, so it never
+    /// learned the client was gone and awaited forever instead of the listener's shutdown
+    /// completing (`shutdown_complete_rx` never resolved).
+    #[tokio::test]
+    async fn test_recv_async_detects_peer_disconnect_promptly() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        // Simulate the client (e.g. the main PHP thread) disconnecting.
+        drop(client);
+
+        let start = std::time::Instant::now();
+        let err = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect_err("expected recv to fail after peer disconnect");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "recv_raw_async took {elapsed:?} to notice the disconnect; \
+             expected near-immediate detection via the liveness pipe, not an indefinite wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recv_async_drains_queued_message_before_peer_disconnect() {
+        let tmpdir = tempfile::tempdir().expect("tempdir");
+        let path = tmpdir.path().join("test.sock");
+        let listener = SeqpacketListener::bind(&path).expect("bind");
+        let client = SeqpacketConn::connect(&path).expect("connect");
+        let server = listener.try_accept().expect("try_accept");
+        let server = server.into_async_conn().expect("into_async_conn");
+
+        client
+            .try_send_raw(&mut b"final".to_vec(), &[])
+            .expect("send");
+        drop(client);
+
+        let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())
+            .await
+            .expect("expected the queued message, not BrokenPipe");
+        assert_eq!(got, b"final");
     }
 }

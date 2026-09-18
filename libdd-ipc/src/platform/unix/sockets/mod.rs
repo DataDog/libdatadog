@@ -213,6 +213,16 @@ impl IntoRawFd for SeqpacketListener {
     }
 }
 
+/// Exposes the liveness fd for the emulated `SOCK_SEQPACKET` on macos, to avoid blocking the peer
+/// on connection close.
+pub trait LivenessAware {
+    fn liveness_raw_fd(&self) -> Option<RawFd> {
+        None
+    }
+}
+
+impl LivenessAware for OwnedFd {}
+
 /// A connected socket providing message-boundary-preserving IPC.
 ///
 /// - Linux: `AF_UNIX SOCK_SEQPACKET`.
@@ -232,6 +242,13 @@ pub struct SeqpacketConn {
     liveness: Option<OwnedFd>,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+}
+
+impl LivenessAware for SeqpacketConn {
+    #[cfg(target_os = "macos")]
+    fn liveness_raw_fd(&self) -> Option<RawFd> {
+        self.liveness.as_ref().map(|l| l.as_raw_fd())
+    }
 }
 
 impl SeqpacketConn {
@@ -388,6 +405,12 @@ impl SeqpacketConn {
             match recvmsg_raw(fd, buf, MsgFlags::empty()) {
                 Ok(r) => return Ok(r),
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    // On macOS, also watch the liveness pipe so a peer that disconnects while
+                    // we're waiting for a response is detected immediately (BrokenPipe) rather
+                    // than only after the full read_timeout elapses.
+                    #[cfg(target_os = "macos")]
+                    self.poll_readable_with_liveness(self.read_timeout)?;
+                    #[cfg(not(target_os = "macos"))]
                     poll_with_timeout(fd, libc::POLLIN, self.read_timeout)?;
                 }
                 Err(e) => return Err(e),
@@ -472,7 +495,7 @@ pub type AsyncConn = AsyncFd<SeqpacketConn>;
 pub async fn recv_raw_async<F, T, C>(fd: &AsyncFd<C>, decode: F) -> io::Result<(T, Vec<OwnedFd>)>
 where
     F: FnOnce(&[u8]) -> T,
-    C: AsRawFd,
+    C: AsRawFd + LivenessAware,
 {
     thread_local! {
         /// Reusable receive buffer. Grows on first use; never shrinks.
@@ -480,8 +503,37 @@ where
     }
     // Wrap in Option to satisfy FnMut (take() is only called on successful receive).
     let mut decode = Some(decode);
+
+    // On macOS the connection exposes a liveness fd we watch alongside the data fd so a peer that
+    // disconnects while we're waiting for the next message is detected immediately as `BrokenPipe`,
+    // instead of waiting forever for a message that will now never arrive.
+    let liveness_async = match fd.get_ref().liveness_raw_fd() {
+        // SAFETY: `raw` is owned by `*fd.get_ref()`, which outlives this function's `fd`
+        // borrow; the BorrowedFd built from it is only used (and dropped) within that same
+        // lifetime, never after `fd` itself could have been dropped.
+        Some(raw) => Some(AsyncFd::new(unsafe {
+            std::os::fd::BorrowedFd::borrow_raw(raw)
+        })?),
+        None => None,
+    };
+
     loop {
-        let mut guard = fd.readable().await?;
+        let mut guard = match &liveness_async {
+            Some(liveness_async) => {
+                tokio::select! {
+                    biased;
+                    guard = fd.readable() => guard?,
+                    liveness = liveness_async.readable() => {
+                        // Peer's liveness pipe write end closed: it disconnected. Consume the
+                        // readiness guard so a future poll of this fd doesn't see stale
+                        // "not ready" state, then report the connection as gone.
+                        drop(liveness?);
+                        return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                    }
+                }
+            }
+            None => fd.readable().await?,
+        };
         match guard.try_io(|inner| {
             RECV_BUF.with_borrow_mut(|buf| {
                 let size = max_message_size();
