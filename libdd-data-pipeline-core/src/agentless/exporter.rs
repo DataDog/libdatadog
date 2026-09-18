@@ -7,12 +7,13 @@ use super::config::AgentlessTraceConfig;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_trace_types::span::TraceData;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry_and_size, CompressionStrategy, RetryBackoffType, RetryStrategy,
     SendWithRetryError, SendWithRetryResult,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, TraceData};
+use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
@@ -184,7 +185,7 @@ mod tests {
     use bytes::Bytes;
     use libdd_tinybytes::BytesString;
     use libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig;
-    use libdd_trace_utils::span::{v04::SpanBytes, BytesData};
+    use libdd_trace_types::span::{v04::SpanBytes, BytesData};
     use std::{
         sync::{Arc, Mutex},
         time::Duration,

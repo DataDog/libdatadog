@@ -212,7 +212,7 @@ pub fn read_nullable_number<T: DeserializableTraceData, R: TryFrom<Number, Error
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SliceData;
+    use libdd_trace_types::span::SliceData;
     use serde_json::json;
     use std::f64;
 

@@ -929,7 +929,7 @@ mod tests {
     use crate::error::ddog_trace_exporter_error_free;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_trace_utils::span::v04::SpanSlice;
+    use libdd_trace_types::span::v04::SpanSlice;
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]

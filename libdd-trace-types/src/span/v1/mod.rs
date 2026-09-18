@@ -3,7 +3,7 @@
 
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
-pub use thin_vec::ThinVec;
+use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
 /// Unset or unrecognized kinds default to [`SpanKind::Internal`].
@@ -94,7 +94,7 @@ impl<T: TraceData> PartialEq for AttributeValue<T> {
 /// borrowed (e.g. `&str`). To define a generic function taking any `Span<T>` you can use the
 /// [`TraceData`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v1::Span, TraceData};
+/// use libdd_trace_types::span::{v1::Span, TraceData};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.attributes.get("foo");
 /// }

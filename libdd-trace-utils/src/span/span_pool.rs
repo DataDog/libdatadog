@@ -1,8 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::v04::Span;
-use super::TraceData;
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::TraceData;
 use rand::{Rng as _, SeedableRng as _};
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
@@ -389,8 +389,10 @@ impl<T: TraceData> Drop for PooledChunks<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
     use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::vec_map::VecMap;
+    use libdd_trace_types::span::BytesData;
 
     fn span(name: &str) -> SpanBytes {
         SpanBytes {
@@ -401,7 +403,7 @@ mod tests {
 
     #[test]
     fn returned_spans_are_recycled_and_reset() {
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPool::<BytesData>::with_capacity(100);
         {
             // No drop-policy control here, but a single span is very likely retained.
             // If we drop 10% of spans, the likelyhood all spans are dropped is 1/10**100
@@ -431,14 +433,14 @@ mod tests {
 
     #[test]
     fn unpooled_chunks_do_not_feed_the_pool() {
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPool::<BytesData>::with_capacity(100);
         drop(PooledChunks::unpooled(vec![vec![span("a")]]));
         assert!(pool.is_empty());
     }
 
     #[test]
     fn into_chunks_disables_pooling() {
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPool::<BytesData>::with_capacity(100);
         let chunks = pool.wrap_chunks(vec![vec![span("a")]]);
         let inner = chunks.into_chunks();
         assert_eq!(inner.len(), 1);
@@ -447,7 +449,7 @@ mod tests {
 
     #[test]
     fn pool_is_bounded() {
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(20);
+        let pool = SpanPool::<BytesData>::with_capacity(20);
         // drop_policy keeps ~90%; push far more than capacity and check the bound holds.
         for _ in 0..1000 {
             pool.add_chunks(std::iter::once(vec![span("x")]));
@@ -556,7 +558,7 @@ mod tests {
     fn large_chunks_are_split_into_max_size_pieces() {
         // MAX_CHUNK_SIZE=20, so 50 spans => 20 + 20 + 10. Capacity holds all pieces; we want the
         // split, not the bound. Drop policy may drop the whole chunk, so retry until one makes it.
-        let pool = SpanPool::<crate::span::BytesData>::with_capacity(100);
+        let pool = SpanPool::<BytesData>::with_capacity(100);
         loop {
             let big_chunk: Vec<SpanBytes> = (0..50).map(|_| span("x")).collect();
             pool.add_chunks(std::iter::once(big_chunk));

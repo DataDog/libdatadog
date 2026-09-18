@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::{BytesData, SliceData, SpanKeyParseError, TraceData};
-use crate::tracer_payload::TraceChunks;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-pub use super::vec_map::VecMap;
+use super::vec_map::VecMap;
 
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
@@ -67,7 +66,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can use the
 /// [`SpanValue`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v04::Span, TraceData};
+/// use libdd_trace_types::span::{v04::Span, TraceData};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.meta.get("foo");
 /// }
@@ -331,13 +330,9 @@ pub type SpanEventSlice<'a> = SpanEvent<SliceData<'a>>;
 pub type AttributeAnyValueSlice<'a> = AttributeAnyValue<SliceData<'a>>;
 pub type AttributeArrayValueSlice<'a> = AttributeArrayValue<SliceData<'a>>;
 
-pub type TraceChunksBytes = TraceChunks<BytesData>;
-
 #[cfg(test)]
 mod tests {
-    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-    use crate::msgpack_decoder::decode::buffer::Buffer;
-    use crate::msgpack_decoder::v04::span::decode_span;
+    use super::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent};
     use crate::span::SliceData;
     use std::borrow::Cow;
     use std::collections::HashMap;
@@ -348,84 +343,6 @@ mod tests {
         let val: Span<SliceData<'_>> = Span::default();
         let serialized = rmp_serde::encode::to_vec_named(&val).unwrap();
         assert_eq!(expected, serialized.as_slice());
-    }
-
-    #[test]
-    fn serialize_deserialize_test() {
-        let span: Span<SliceData<'_>> = Span {
-            name: Cow::Borrowed("tracing.operation"),
-            resource: Cow::Borrowed("MyEndpoint"),
-            span_links: vec![SpanLink {
-                trace_id: 42,
-                attributes: HashMap::from([(Cow::Borrowed("span"), Cow::Borrowed("link"))]),
-                tracestate: Cow::Borrowed("running"),
-                ..Default::default()
-            }],
-            span_events: vec![SpanEvent {
-                time_unix_nano: 1727211691770716000,
-                name: Cow::Borrowed("exception"),
-                attributes: HashMap::from([
-                    (
-                        Cow::Borrowed("exception.message"),
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
-                            "Cannot divide by zero",
-                        ))),
-                    ),
-                    (
-                        Cow::Borrowed("exception.type"),
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
-                            "RuntimeError",
-                        ))),
-                    ),
-                    (
-                        Cow::Borrowed("exception.escaped"),
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
-                    ),
-                    (
-                        Cow::Borrowed("exception.count"),
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
-                    ),
-                    (
-                        Cow::Borrowed("exception.lines"),
-                        AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "  File \"<string>\", line 1, in <module>",
-                            )),
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "  File \"<string>\", line 1, in divide",
-                            )),
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "RuntimeError: Cannot divide by zero",
-                            )),
-                        ]),
-                    ),
-                ]),
-            }],
-            ..Default::default()
-        };
-
-        let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
-        let mut serialized_slice = Buffer::<SliceData<'_>>::new(serialized.as_ref());
-        let deserialized = decode_span(&mut serialized_slice).unwrap();
-
-        assert_eq!(span.name, deserialized.name);
-        assert_eq!(span.resource, deserialized.resource);
-        assert_eq!(
-            span.span_links[0].trace_id,
-            deserialized.span_links[0].trace_id
-        );
-        assert_eq!(
-            span.span_links[0].tracestate,
-            deserialized.span_links[0].tracestate
-        );
-        assert_eq!(span.span_events[0].name, deserialized.span_events[0].name);
-        assert_eq!(
-            span.span_events[0].time_unix_nano,
-            deserialized.span_events[0].time_unix_nano
-        );
-        for attribut in &deserialized.span_events[0].attributes {
-            assert!(span.span_events[0].attributes.contains_key(attribut.0))
-        }
     }
 
     #[test]

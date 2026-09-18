@@ -4,8 +4,8 @@
 //! Trace-utils functionalities implementation for V1 spans.
 
 use crate::span::trace_utils::DroppedP0Stats;
-use crate::span::v1::{AttributeValue, Span, TraceChunk};
-use crate::span::{SpanText, TraceData};
+use libdd_trace_types::span::v1::{AttributeValue, Span, TraceChunk};
+use libdd_trace_types::span::{SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
 
@@ -195,7 +195,7 @@ pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v1::{SpanBytes, TraceChunkBytes};
+    use libdd_trace_types::span::v1::{SpanBytes, TraceChunkBytes};
 
     fn create_test_span(is_top_level: bool) -> SpanBytes {
         let mut span = SpanBytes {

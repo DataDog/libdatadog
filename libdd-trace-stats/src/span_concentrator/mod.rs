@@ -12,7 +12,7 @@ use tracing::{debug, warn};
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::v1::SpanKind;
+use libdd_trace_types::span::v1::SpanKind;
 
 use aggregation::StatsBucket;
 

@@ -1,19 +1,21 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native v0.4 span encoder: `crate::span::v04::Span` → v0.4 msgpack wire.
+//! Native v0.4 span encoder: `libdd_trace_types::span::v04::Span` → v0.4 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
-use crate::span::TraceData;
+use libdd_trace_types::span::v04::{
+    AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink,
+};
+use libdd_trace_types::span::TraceData;
 use rmp::encode::{
     write_bin, write_bool, write_f64, write_i64, write_sint, write_str, write_u32, write_u64,
     write_u8, RmpWrite, ValueWriteError,
 };
 use std::borrow::Borrow;
 
-/// Encodes a [`v04::SpanLink`](crate::span::v04::SpanLink) into the v0.4 msgpack wire format
-/// (native encoding: input span shape and output wire format are both v0.4).
+/// Encodes a [`v04::SpanLink`](libdd_trace_types::span::v04::SpanLink) into the v0.4 msgpack wire
+/// format (native encoding: input span shape and output wire format are both v0.4).
 ///
 /// # Arguments
 ///
@@ -74,8 +76,8 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`v04::SpanEvent`](crate::span::v04::SpanEvent) into the v0.4 msgpack wire format
-/// (native encoding: v0.4 input → v0.4 output).
+/// Encodes a [`v04::SpanEvent`](libdd_trace_types::span::v04::SpanEvent) into the v0.4 msgpack wire
+/// format (native encoding: v0.4 input → v0.4 output).
 ///
 /// # Arguments
 ///
@@ -173,7 +175,7 @@ pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`v04::Span`](crate::span::v04::Span) into the v0.4 msgpack wire format
+/// Encodes a [`v04::Span`](libdd_trace_types::span::v04::Span) into the v0.4 msgpack wire format
 /// (native encoding: v0.4 input → v0.4 output).
 ///
 /// # Arguments
@@ -285,8 +287,8 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 #[cfg(test)]
 mod tests {
     use super::super::to_vec_from_v04;
-    use crate::span::v04::SpanLink;
-    use crate::span::BytesData;
+    use libdd_trace_types::span::v04::SpanLink;
+    use libdd_trace_types::span::BytesData;
 
     #[test]
     fn span_link_flags_are_not_masked_on_the_native_v04_wire() {
@@ -299,7 +301,7 @@ mod tests {
             flags: 0x8000_0001,
             ..Default::default()
         };
-        let span = crate::span::v04::Span::<BytesData> {
+        let span = libdd_trace_types::span::v04::Span::<BytesData> {
             span_id: 1,
             span_links: vec![link],
             ..Default::default()

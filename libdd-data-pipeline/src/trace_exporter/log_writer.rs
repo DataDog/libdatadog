@@ -11,8 +11,8 @@
 //! and submits the traces to the trace intake.
 
 use libdd_capabilities::LogWriterCapability;
+use libdd_trace_types::span::{v04::Span, v1::TracerPayload, TraceData};
 use libdd_trace_utils::json_log_encoder::{encode_traces, encode_traces_v1, EncodeStats};
-use libdd_trace_utils::span::{v04::Span, v1::TracerPayload, TraceData};
 
 /// Default maximum size of a single emitted log line, in bytes.
 ///
@@ -64,8 +64,8 @@ pub(crate) fn write_log_traces_v1<C: LogWriterCapability + ?Sized, T: TraceData>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libdd_trace_utils::span::v04::Span;
-    use libdd_trace_utils::span::SliceData;
+    use libdd_trace_types::span::v04::Span;
+    use libdd_trace_types::span::SliceData;
     use std::sync::{Arc, Mutex};
 
     /// Test capability that captures written bytes instead of touching stdout.
@@ -118,9 +118,9 @@ mod tests {
         let cap = CapturingLog::default();
         let payload = TracerPayload::<SliceData<'static>> {
             chunks: vec![
-                libdd_trace_utils::span::v1::TraceChunk::<SliceData<'static>> {
+                libdd_trace_types::span::v1::TraceChunk::<SliceData<'static>> {
                     trace_id: [0u8; 16],
-                    spans: vec![libdd_trace_utils::span::v1::Span::<SliceData<'static>> {
+                    spans: vec![libdd_trace_types::span::v1::Span::<SliceData<'static>> {
                         span_id: 2,
                         ..Default::default()
                     }],

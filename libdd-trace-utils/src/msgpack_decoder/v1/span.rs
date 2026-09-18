@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Naming convention: parent module (`v1`) = input wire format being decoded. This file decodes
-// a V1 msgpack span into a [`crate::span::v1::Span`].
+// a V1 msgpack span into a [`libdd_trace_types::span::v1::Span`].
 
 use super::{
     read_interned_string, skip_unknown_value, span_event_key, span_key, span_link_key, StringTable,
@@ -12,11 +12,12 @@ use super::{
 };
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, ThinVec};
-use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
+use libdd_trace_types::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
+use libdd_trace_types::span::vec_map::VecMap;
 use rmp::decode;
 use std::borrow::Borrow;
+use thin_vec::ThinVec;
 
 /// Decodes a V1 span (msgpack map with integer keys) into a [`Span<T>`].
 ///

@@ -1,12 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native V1 span encoder: `crate::span::v1::Span` → V1 msgpack wire.
+//! Native V1 span encoder: `libdd_trace_types::span::v1::Span` → V1 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
-use crate::span::vec_map::VecMap;
-use crate::span::TraceData;
+use libdd_trace_types::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
+use libdd_trace_types::span::vec_map::VecMap;
+use libdd_trace_types::span::TraceData;
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_map_len, write_sint, write_u64,
     write_uint, write_uint8, RmpWrite, ValueWriteError,
@@ -111,8 +111,8 @@ pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`v1::SpanLink`](crate::span::v1::SpanLink) into the V1 msgpack wire format
-/// (native encoding: V1 input → V1 output).
+/// Encodes a [`v1::SpanLink`](libdd_trace_types::span::v1::SpanLink) into the V1 msgpack wire
+/// format (native encoding: V1 input → V1 output).
 ///
 /// # Arguments
 ///
@@ -172,8 +172,8 @@ pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`v1::SpanEvent`](crate::span::v1::SpanEvent) into the V1 msgpack wire format
-/// (native encoding: V1 input → V1 output).
+/// Encodes a [`v1::SpanEvent`](libdd_trace_types::span::v1::SpanEvent) into the V1 msgpack wire
+/// format (native encoding: V1 input → V1 output).
 ///
 /// # Arguments
 ///
@@ -218,7 +218,7 @@ pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`v1::Span`](crate::span::v1::Span) into the V1 msgpack wire format
+/// Encodes a [`v1::Span`](libdd_trace_types::span::v1::Span) into the V1 msgpack wire format
 /// (native encoding: V1 input → V1 output).
 ///
 /// # Arguments
