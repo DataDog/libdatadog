@@ -638,6 +638,20 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
+    /// Permanently close the channel, dropping any buffered chunks without exporting them.
+    ///
+    /// Unlike [`Self::reset`], which reopens the channel for a worker that keeps running (e.g.
+    /// after a fork), this is for a worker that is never run again. Leaving the channel
+    /// `Running` would let a surviving [`Sender`] keep queuing chunks that no receiver will ever
+    /// take, and would leave callers blocked forever in [`Sender::wait_close_done`] or
+    /// [`Sender::wait_flush_done`].
+    fn discard(&self) -> Result<(), MutexPoisonedError> {
+        let mut state = self.lock_state()?;
+        state.batch.reset();
+        self.waiter.mark_stopped(state);
+        Ok(())
+    }
+
     async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:
@@ -964,6 +978,13 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     fn reset(&mut self) {
         let _ = self.rx.reset();
     }
+
+    // Override the default (`Worker::discard`'s `reset()` forwarding): `reset()` reopens the
+    // channel for continued use, which is wrong once this worker is permanently discarded (see
+    // `Receiver::discard`).
+    fn discard(&mut self) {
+        let _ = self.rx.discard();
+    }
 }
 
 #[cfg(test)]
@@ -972,7 +993,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, Worker};
 
     use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
@@ -1563,5 +1584,47 @@ mod tests {
 
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 2);
         rt.shutdown(None).unwrap();
+    }
+
+    #[test]
+    fn test_worker_reset_drops_buffered_chunk() {
+        let (sender, mut worker) = TraceBuffer::new(
+            TraceBufferConfig::default().flush_threshold_bytes(2),
+            Box::new(|_| {}),
+            Box::new(AssertExporter(
+                Box::new(|_| panic!("discard must not export buffered chunks")),
+                Arc::new(tokio::sync::Semaphore::new(0)),
+            )),
+        );
+
+        sender.send_chunk(vec![()]).unwrap();
+        assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 1);
+
+        worker.reset();
+        assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 0);
+    }
+
+    #[test]
+    fn test_worker_discard_closes_channel_without_exporting() {
+        let (sender, mut worker) = TraceBuffer::new(
+            TraceBufferConfig::default().flush_threshold_bytes(2),
+            Box::new(|_| {}),
+            Box::new(AssertExporter(
+                Box::new(|_| panic!("discard must not export buffered chunks")),
+                Arc::new(tokio::sync::Semaphore::new(0)),
+            )),
+        );
+
+        sender.send_chunk(vec![()]).unwrap();
+
+        worker.discard();
+
+        // Unlike `reset`, which reopens the channel for a worker that keeps running (e.g. after
+        // a fork), `discard` is for a worker that is never run again. A channel left `Running`
+        // would let this sender keep queuing chunks that no receiver will ever take.
+        assert!(matches!(
+            sender.send_chunk(vec![()]),
+            Err(TraceBufferError::AlreadyClosed)
+        ));
     }
 }
