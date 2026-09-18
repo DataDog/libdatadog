@@ -88,12 +88,7 @@ pub fn set_pipe_buffer_size(size: usize) {
     PIPE_BUFFER_SIZE.store(size, Ordering::Relaxed);
 }
 
-/// Credentials of the connected peer.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PeerCredentials {
-    pub pid: u32,
-    pub uid: u32,
-}
+pub use crate::platform::peer_credentials::PeerCredentials;
 
 /// Append `handles` (duplicated into `peer_pid`) followed by the 4-byte count to `data`.
 ///
@@ -613,6 +608,7 @@ impl SeqpacketConn {
         Ok(PeerCredentials {
             pid: self.peer_pid,
             uid: 0,
+            gid: 0,
         })
     }
 

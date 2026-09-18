@@ -17,6 +17,7 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
+use crate::auth::{ConnectionAuthorizer, Decision};
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
 
@@ -25,7 +26,6 @@ use crate::setup::{self, IpcClient, IpcServer, Liaison};
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
 use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
-use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
@@ -36,6 +36,10 @@ pub struct MainLoopConfig {
     /// Set to false in thread mode so the worker's UID can be obtained on the
     /// first connection and used to fchown the SHM.
     pub init_shm_eagerly: bool,
+    /// Decides which peers may be served. The default expects an out-of-process sidecar
+    /// spawned by a PHP process; in-process listeners must supply
+    /// [`ConnectionAuthorizer::for_in_process_listener`] instead.
+    pub authorizer: Arc<ConnectionAuthorizer>,
 }
 
 impl Default for MainLoopConfig {
@@ -44,6 +48,7 @@ impl Default for MainLoopConfig {
             enable_ctrl_c_handler: true,
             external_shutdown_rx: None,
             init_shm_eagerly: true,
+            authorizer: Arc::new(ConnectionAuthorizer::for_spawned_sidecar()),
         }
     }
 }
@@ -105,7 +110,7 @@ where
     }
 
     if loop_config.init_shm_eagerly {
-        drop(SHM_LIMITER.lock());
+        crate::tracer::init_shm_limiter();
     }
 
     let server = SidecarServer::default();
@@ -137,6 +142,7 @@ where
     let watchdog_handle = watchdog.spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
+    let authorizer = loop_config.authorizer;
     listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
@@ -147,8 +153,27 @@ where
             let cloned_counter = Arc::clone(&counter);
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
+            let authorizer = authorizer.clone();
             tokio::spawn(async move {
-                server.accept_connection(socket).await;
+                // The peer is authenticated before a single request is decoded: the socket
+                // itself does not restrict who may connect (see crate::auth).
+                match socket.peer_credentials() {
+                    Ok(peer) => {
+                        let decision = authorizer.authorize(&peer);
+                        authorizer.log_denied(&peer, decision);
+                        match decision {
+                            Decision::Allow => server.accept_connection(socket).await,
+                            // Dropping `socket` closes the connection.
+                            Decision::Deny => {}
+                        }
+                    }
+                    Err(e) => {
+                        // Without credentials there is no basis to authorize; refuse.
+                        tracing::warn!(
+                            "IPC: rejected connection with unreadable peer credentials: {e}"
+                        );
+                    }
+                }
                 cloned_counter.fetch_add(-1, Ordering::AcqRel);
                 tracing::info!("connection closed");
 
@@ -319,6 +344,13 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
                 break None;
             }
             Ok(None) => break None,
+            // A refusal from the directory checks is a hard failure, retrying that is pointless.
+            Err(ref e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                break Some(
+                    anyhow::Error::from(io::Error::new(e.kind(), e.to_string()))
+                        .context("Refusing to start the sidecar"),
+                );
+            }
             Err(_e) if deadline.is_some_and(|d| Instant::now() < d) => {
                 std::thread::sleep(Duration::from_millis(5));
                 continue;

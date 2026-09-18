@@ -60,6 +60,17 @@ mod helper {
             self.ptrs[index] = item.as_ptr();
             self.items[index] = item;
         }
+
+        /// Point an entry at a string this vector does not own.
+        ///
+        /// For post-`fork` callers, which must not allocate: the pointee only has to outlive the
+        /// `execve` that follows, so a buffer in the calling stack frame is fine. The previous
+        /// `CString` stays in `items`, keeping that slot's own allocation alive.
+        /// Only the Linux `FdExec` fallback needs this.
+        #[cfg(target_os = "linux")]
+        pub fn set_ptr(&mut self, index: usize, ptr: *const libc::c_char) {
+            self.ptrs[index] = ptr;
+        }
     }
 }
 
@@ -79,6 +90,7 @@ use std::fs::File;
 
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
+
 use std::io;
 use std::ops::RangeInclusive;
 use std::{
@@ -521,49 +533,70 @@ impl SpawnWorker {
                     // if we're here then exec has failed
                     let fexecve_error = std::io::Error::last_os_error();
 
+                    // Fall back to writing the trampoline out and exec'ing it by path. Reached
+                    // only where fexecve on a memfd is unavailable, which is why all of it stays
+                    // here in the child and allocates nothing.
                     let mut temp_path = [0u8; 256];
-                    let tmpdir = libc::getenv("TMPDIR".as_ptr() as *const libc::c_char)
-                        as *const libc::c_char;
+                    // `c"TMPDIR"` is NUL-terminated; a plain "TMPDIR" literal is not, so the
+                    // previous `getenv("TMPDIR".as_ptr())` read past the end of it.
+                    let tmpdir = libc::getenv(c"TMPDIR".as_ptr());
                     let tmpdir = if tmpdir.is_null() {
-                        b"/tmp"
+                        b"/tmp".as_slice()
                     } else {
                         CStr::from_ptr(tmpdir).to_bytes()
                     };
-                    if tmpdir.len() < 220 {
+                    // getrandom(2) - async signal safe and unguessable.
+                    let mut random = [0u8; 8];
+                    let got = libc::syscall(
+                        libc::SYS_getrandom,
+                        random.as_mut_ptr(),
+                        random.len(),
+                        0 as libc::c_uint,
+                    );
+
+                    if tmpdir.len() < 200 && got == random.len() as libc::c_long {
+                        const HEX: &[u8; 16] = b"0123456789abcdef";
                         temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
                         let mut off = tmpdir.len();
                         let spawn_prefix = b"/dd-ipc-spawn_";
                         temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
                         off += spawn_prefix.len();
-                        for _ in 0..8 {
-                            temp_path[off] = fastrand::alphanumeric() as u8;
-                            off += 1;
+                        for byte in random {
+                            temp_path[off] = HEX[(byte >> 4) as usize];
+                            temp_path[off + 1] = HEX[(byte & 0xf) as usize];
+                            off += 2;
                         }
+                        temp_path[off] = 0;
 
-                        let path = Vec::from_raw_parts(temp_path.as_mut_ptr(), off, off);
-                        let path = CString::from_vec_with_nul_unchecked(path);
+                        let path = CStr::from_bytes_with_nul_unchecked(&temp_path[..=off]);
                         let path_ptr = path.as_ptr();
+
+                        // O_EXCL: if anything is already at this path then somebody else put it
+                        // there - write nothing and execute nothing, rather than filling in
+                        // their file and running it. O_NOFOLLOW refuses a symlink for the same
+                        // reason. With an unpredictable name, this is what stops another local
+                        // user from getting code executed as us here.
                         let tmpfd = libc::open(
                             path_ptr,
-                            libc::O_CREAT | libc::O_RDWR,
+                            libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_RDWR,
                             libc::S_IRWXU as libc::c_uint,
                         );
-                        if tmpfd < 0 {
-                            // We'll leak it, executing Drop of path is forbidden.
-                            std::mem::forget(path);
-                        } else {
-                            libc::sendfile(
+                        if tmpfd >= 0 {
+                            let expected = crate::TRAMPOLINE_BIN.len();
+                            let written = libc::sendfile(
                                 tmpfd,
                                 fd.as_raw_fd(),
                                 std::ptr::null_mut(),
-                                crate::TRAMPOLINE_BIN.len(),
+                                expected,
                             );
                             libc::close(tmpfd);
-                            argv.set(1, path);
-
-                            libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
-
-                            libc::unlink(temp_path.as_ptr() as *const libc::c_char);
+                            // Only exec what was written in full: a short or failed copy would
+                            // otherwise mean exec'ing a truncated binary.
+                            if written == expected as isize {
+                                argv.set_ptr(1, path_ptr);
+                                libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
+                            }
+                            libc::unlink(path_ptr);
                         }
                     }
 

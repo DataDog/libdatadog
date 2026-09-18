@@ -235,7 +235,13 @@ impl TransferHandles for ShmHandle {
         &mut self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {
-        self.handle.receive_handles(transport)
+        self.handle.receive_handles(transport)?;
+
+        if let Err(e) = self.limit_size_to_backing() {
+            tracing::error!("Could not size shared memory against its backing file: {e}");
+            self.size = 0;
+        }
+        Ok(())
     }
 }
 
@@ -284,5 +290,78 @@ mod tests {
         let mut exp = vec![0u8; other.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
         assert_eq!(other.as_slice(), exp.as_slice());
+    }
+
+    /// A handle's size arrives over IPC and is whatever the peer put there; only its
+    /// descriptor is vouched for by the kernel. Mapping more than the file holds would
+    /// `SIGBUS` on the tail - and in thread mode that tail is inside the PHP master, which may
+    /// be root while the peer is a worker that dropped privileges.
+    #[test]
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg_attr(miri, ignore)]
+    fn test_shm_size_is_clamped_to_its_backing() {
+        let mut shm = ShmHandle::new(4096).unwrap();
+
+        // Stands in for a peer that declared far more than it allocated.
+        shm.size = 1 << 30;
+        shm.limit_size_to_backing().unwrap();
+        assert_eq!(
+            shm.size, 4096,
+            "a declared size beyond the backing file must be clamped to it"
+        );
+
+        // Declaring less than the file holds is legitimate - the writer may have used only
+        // part of it - and must be left alone.
+        shm.size = 128;
+        shm.limit_size_to_backing().unwrap();
+        assert_eq!(shm.size, 128, "an under-declared size must be preserved");
+    }
+
+    /// The clamp has to happen when the handle is received, not when a consumer remembers to
+    /// ask: a caller that forgets would map past the end of the peer's segment.
+    #[test]
+    // Same gating as the test above: the clamp is a deliberate no-op where segments are a fixed
+    // size that carries its committed length internally.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg_attr(miri, ignore)]
+    fn received_shm_size_is_clamped_to_its_backing() {
+        use crate::handles::TransferHandles;
+        use crate::platform::FdSource;
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+        let shm = ShmHandle::new(4096).unwrap();
+        // Stands in for the descriptor arriving over SCM_RIGHTS.
+        let raw = shm.handle.as_owned_fd().unwrap().as_raw_fd();
+        let sent = unsafe { OwnedFd::from_raw_fd(nix::unistd::dup(raw).unwrap()) };
+
+        // ... paired with a size the peer made up.
+        let mut received = shm.clone();
+        received.size = 1 << 30;
+
+        let mut source = FdSource::new(vec![sent]);
+        received.receive_handles(&mut source).unwrap();
+
+        assert_eq!(
+            received.size, 4096,
+            "receiving a handle must clamp its declared size to the backing file"
+        );
+    }
+
+    /// Creating a segment is exclusive (`O_EXCL`) so that one planted by another user is
+    /// refused rather than adopted - but shared memory outlives the process that made it, so a
+    /// segment left behind by an earlier sidecar of our own must still be picked up, not
+    /// rejected. Without this, restarting a sidecar would fail on every one of its own segments.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_named_shm_recreate_adopts_our_own() {
+        let path = CString::new("/recreate-own").unwrap();
+        let first = NamedShmHandle::create(path.clone(), 5).unwrap();
+        let mut mapped = first.map().unwrap();
+        _ = mapped.as_slice_mut().write(&[9, 8, 7, 6, 5]).unwrap();
+
+        let again = NamedShmHandle::create(path.clone(), 5)
+            .expect("a pre-existing segment of our own must be adopted");
+        let again = again.map().unwrap();
+        assert_eq!(&again.as_slice()[..5], &[9, 8, 7, 6, 5]);
     }
 }

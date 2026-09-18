@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ShmHandle, ShmPath,
 };
@@ -15,7 +16,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 27; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
@@ -73,23 +74,6 @@ pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
-const NO_OWNER_UID: u32 = u32::MAX;
-
-static SHM_OWNER_UID: AtomicU32 = AtomicU32::new(NO_OWNER_UID);
-
-pub fn set_shm_owner_uid(uid: u32) {
-    SHM_OWNER_UID.store(uid, Ordering::Relaxed);
-}
-
-fn shm_owner_uid() -> Option<u32> {
-    let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
-    if uid == NO_OWNER_UID {
-        None
-    } else {
-        Some(uid)
-    }
-}
-
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
         let path = format!(
@@ -97,11 +81,9 @@ impl ShmHandle {
             unsafe { libc::getpid() },
             ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
         );
-        let fd = shm_open(
-            path.as_bytes(),
-            OFlag::O_CREAT | OFlag::O_RDWR,
-            Mode::empty(),
-        )?;
+        let fd = shm_open_exclusive(path.as_bytes(), Mode::S_IRUSR | Mode::S_IWUSR, || {
+            path.clone()
+        })?;
         ftruncate(&fd, MAPPING_MAX_SIZE as off_t)?;
         _ = shm_unlink(path.as_bytes());
         Ok(ShmHandle {
@@ -114,6 +96,28 @@ impl ShmHandle {
         Self::new(size)
     }
 }
+/// Open a segment we intend to own, refusing one another user got to first.
+///
+/// `O_EXCL` is what makes the difference: without it `O_CREAT` silently adopts an existing
+/// segment and ignores `mode`, so a pre-planted one would be used as if we had made it. With
+/// it, pre-existence becomes visible and can be checked - and a segment that is legitimately
+/// ours already (left behind by an earlier sidecar, since shm outlives the process) is still
+/// adopted, so no state is lost across restarts.
+fn shm_open_exclusive<F>(name: &[u8], mode: Mode, display: F) -> nix::Result<OwnedFd>
+where
+    F: FnOnce() -> String,
+{
+    match shm_open(name, OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR, mode) {
+        Ok(fd) => Ok(fd),
+        Err(Errno::EEXIST) => {
+            let fd = shm_open(name, OFlag::O_RDWR, mode)?;
+            shm_guard::verify_owner(&fd, display)?;
+            Ok(fd)
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn path_slice(path: &CStr) -> &[u8] {
     assert_eq!(path.to_bytes()[0], b'/');
     &path.to_bytes()[1..]
@@ -125,7 +129,9 @@ impl NamedShmHandle {
     }
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path_slice(&path), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
+        let fd = shm_open_exclusive(path_slice(&path), mode, || {
+            path.to_string_lossy().into_owned()
+        })?;
         let truncate = ftruncate(&fd, MAPPING_MAX_SIZE as off_t);
         if let Err(error) = truncate {
             // ignore if already exists
@@ -141,6 +147,9 @@ impl NamedShmHandle {
 
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path_slice(path), OFlag::O_RDWR, Mode::empty())?;
+        // A reader is the more exposed side: it maps whatever is under the name and trusts the
+        // contents. Check the descriptor before mapping it.
+        shm_guard::verify_owner(&fd, || path.to_string_lossy().into_owned())?;
         Self::new(fd, None, 0)
     }
 
@@ -206,6 +215,12 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
 
 impl ShmHandle {
     /// Refresh the size of the shared memory segment
+    /// No-op on macOS: every segment is `ftruncate`d to `MAPPING_MAX_SIZE` and carries its
+    /// committed length in its own last page (see [`mmap_handle`]).
+    pub(crate) fn limit_size_to_backing(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
     pub fn adjust_to_file_size(&mut self) -> io::Result<()> {
         self.size = NOT_COMMITTED;
         Ok(())

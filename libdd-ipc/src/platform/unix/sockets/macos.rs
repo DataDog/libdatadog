@@ -347,6 +347,9 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     .is_ok())
 }
 
+/// Credentials of the peer on a connection established by the handshake above.
+///
+/// A pid reuse race is only theoretical and not achievable in practice, so we don't handle this.
 pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     let mut pid: libc::pid_t = 0;
     let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
@@ -362,10 +365,11 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     {
         return Err(io::Error::last_os_error());
     }
-    Ok(PeerCredentials {
-        pid: pid as u32,
-        uid: 0,
-    })
+    let pid = pid as u32;
+    // ESRCH rather than a formatted message to keep it async-signal-safe.
+    let (uid, gid) = crate::platform::process::effective_ids_of(pid)
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::ESRCH))?;
+    Ok(PeerCredentials { pid, uid, gid })
 }
 
 #[cfg(test)]

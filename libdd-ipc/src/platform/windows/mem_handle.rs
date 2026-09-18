@@ -113,6 +113,13 @@ impl ShmHandle {
     }
 
     /// Refresh the size of the shared memory segment
+    /// No-op on Windows: the view is a fixed size and carries its committed length in itself,
+    /// so a wire-supplied size cannot make a mapping exceed its backing. Kept so callers
+    /// guarding a peer-supplied handle need no `cfg`.
+    pub(crate) fn limit_size_to_backing(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     pub fn adjust_to_file_size(&mut self) -> std::io::Result<()> {
         self.size = NOT_COMMITTED;
         Ok(())

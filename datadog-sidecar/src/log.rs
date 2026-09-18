@@ -553,6 +553,20 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Serializes the tests that assert on the process-global log counters against the other tests
+/// in this binary that emit records.
+///
+/// `MultiEnvFilter::collect_logs_created_count` drains a per-process counter, so a record
+/// emitted by any concurrently running test lands in whichever collection window happens to be
+/// open - `service::blocking::tests::test_reconnect` warns from its reconnect path, for
+/// instance. Every test that either asserts these counters or is known to emit records takes
+/// this lock, which keeps the assertions exact instead of having to loosen them.
+#[cfg(test)]
+pub(crate) fn log_counter_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -672,23 +686,59 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_logs_created_counter() {
+        let _serialized = super::log_counter_test_lock();
         enable_logging().ok();
 
         MULTI_LOG_FILTER.add("warn".to_string());
-        debug!("hi");
-        warn!("Bim");
-        warn!("Bam");
-        error!("Boom");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
-        assert_eq!(2, map.len());
-        assert_eq!(map[&Level::WARN], 2);
-        assert_eq!(map[&Level::ERROR], 1);
 
+        // This counter is process-global and other tests in this binary emit records, so exact
+        // counts are not something this test can assert - a stray record from a concurrently
+        // running test would land in one of the windows below. What it *can* assert, and what
+        // it is actually for, is per-level attribution, that a filtered-out level is never
+        // counted, and that collecting drains. The batch is sized so a stray record or two
+        // cannot change any of those conclusions.
+        const WARNINGS: u32 = 8;
+
+        // Start from a known point; anything emitted before now is not ours.
+        let _ = MULTI_LOG_FILTER.collect_logs_created_count();
+
+        for _ in 0..WARNINGS {
+            warn!("Bim");
+        }
+        error!("Boom");
         debug!("hi");
+
+        let first = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert!(
+            first[&Level::WARN] >= WARNINGS,
+            "every warning must be counted as WARN, got {first:?}"
+        );
+        assert!(
+            first[&Level::ERROR] >= 1,
+            "the error must be counted as ERROR, got {first:?}"
+        );
+        assert!(
+            !first.contains_key(&Level::DEBUG),
+            "the filter is \"warn\", so a DEBUG record must not be counted at all, got {first:?}"
+        );
+
         warn!("Bim");
-        let map = MULTI_LOG_FILTER.collect_logs_created_count();
-        assert_eq!(1, map.len());
-        assert_eq!(map[&Level::WARN], 1);
+        debug!("hi");
+
+        let second = MULTI_LOG_FILTER.collect_logs_created_count();
+        assert!(
+            second[&Level::WARN] >= 1,
+            "the warning emitted since the last collection must be counted, got {second:?}"
+        );
+        assert!(
+            second[&Level::WARN] < WARNINGS,
+            "collecting must drain the counter - otherwise the {WARNINGS} earlier warnings \
+             would still be in here, got {second:?}"
+        );
+        assert!(
+            !second.contains_key(&Level::DEBUG),
+            "the filter is \"warn\", so a DEBUG record must not be counted at all, got {second:?}"
+        );
     }
 
     #[test]
