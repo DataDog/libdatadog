@@ -36,8 +36,12 @@ libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false,
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
 
 [dev-dependencies]
+build_common = { path = "../build-common", features = ["cbindgen"] }
+cc.workspace = true
 http = { workspace = true, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
+tempfile.workspace = true
+tools = { path = "../tools" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

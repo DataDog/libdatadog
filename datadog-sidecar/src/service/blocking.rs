@@ -300,6 +300,15 @@ pub fn set_session_config(
     Ok(())
 }
 
+/// Sets the explicit EVP transport for this session.
+pub fn set_session_evp_transport(
+    transport: &mut SidecarTransport,
+    config: crate::service::EvpTransportConfigWithIdentity,
+) -> anyhow::Result<()> {
+    lock_sender(transport)?.set_session_evp_transport(config);
+    Ok(())
+}
+
 /// Updates the process tags for an existing session.
 pub fn set_session_process_tags(
     transport: &mut SidecarTransport,

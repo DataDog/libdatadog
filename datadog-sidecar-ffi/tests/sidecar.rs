@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use datadog_sidecar::service::blocking::SidecarTransport;
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
@@ -12,6 +13,9 @@ macro_rules! assert_maybe_no_error {
 }
 
 use libdd_common::Endpoint;
+use libdd_common_ffi::{CharSlice, MaybeError};
+use std::path::PathBuf;
+use std::process::Command;
 use std::ptr::{null, null_mut};
 use std::time::Duration;
 #[cfg(unix)]
@@ -21,6 +25,95 @@ use std::{
     io::Write,
     os::unix::prelude::{AsRawFd, FromRawFd},
 };
+
+#[test]
+fn evp_transport_has_expected_rust_abi_signature() {
+    // Keep the Rust symbol and its exact C-facing signature under compile-time
+    // test coverage independently of cbindgen's generated declaration.
+    let _: unsafe extern "C" fn(
+        &mut Box<SidecarTransport>,
+        EvpTransportMode,
+        &Endpoint,
+        *const Endpoint,
+        CharSlice<'_>,
+        &EvpProducerIdentity<'_>,
+    ) -> MaybeError = ddog_sidecar_session_set_evp_transport;
+}
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "header generation and C compilation spawn native processes"
+)]
+fn generated_header_exposes_native_evp_transport_abi() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let generated = tempfile::tempdir().unwrap();
+    build_common::generate_header(
+        workspace.join("libdd-common-ffi"),
+        "common.h",
+        generated.path().to_path_buf(),
+    );
+    // Windows-only sidecar declarations use crashtracker metadata. Include
+    // those definitions in the shared header just as the release builder does.
+    build_common::generate_header(
+        workspace.join("libdd-crashtracker-ffi"),
+        "crashtracker.h",
+        generated.path().to_path_buf(),
+    );
+    build_common::generate_header(
+        workspace.join("datadog-sidecar-ffi"),
+        "sidecar.h",
+        generated.path().to_path_buf(),
+    );
+
+    let include_dir = generated.path().join(build_common::HEADER_PATH);
+    let common_header = include_dir.join("common.h");
+    let crashtracker_header = include_dir.join("crashtracker.h");
+    let sidecar_header = include_dir.join("sidecar.h");
+    tools::headers::dedup_headers(
+        common_header.to_str().unwrap(),
+        &[
+            crashtracker_header.to_str().unwrap(),
+            sidecar_header.to_str().unwrap(),
+        ],
+    );
+
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let version = Command::new(rustc).arg("-vV").output().unwrap();
+    assert!(version.status.success());
+    let host = String::from_utf8(version.stdout)
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .unwrap()
+        .to_owned();
+
+    let mut compiler = cc::Build::new();
+    compiler
+        .cargo_metadata(false)
+        .out_dir(generated.path())
+        .host(&host)
+        .target(&host)
+        .opt_level(0)
+        .debug(false)
+        .include(include_dir)
+        .file(
+            workspace
+                .join("datadog-sidecar-ffi")
+                .join("tests/evp_transport_abi.c"),
+        )
+        .warnings(true)
+        .warnings_into_errors(true);
+    if compiler.get_compiler().is_like_msvc() {
+        // Match examples/ffi/CMakeLists.txt: generated headers deliberately
+        // use anonymous structs/unions; keep all other warnings as errors.
+        compiler.flag("/wd4201");
+    }
+    compiler.try_compile("sidecar_evp_transport_abi").unwrap();
+}
 
 fn set_sidecar_per_process() {
     std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
@@ -125,6 +218,52 @@ fn test_ddog_sidecar_register_app() {
             "".into(),
         )
         .unwrap_none();
+
+        let direct_endpoint = Endpoint {
+            url: http::Uri::from_static("https://event-platform-intake.datadoghq.com/"),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        let producer = EvpProducerIdentity {
+            origin: "dd-trace-rb".into(),
+            version: "3.0.0".into(),
+        };
+
+        // Bind direct credentials to the consumer's declared intake target.
+        match ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::PreferLocalThenDirect,
+            &agent_endpoint,
+            &direct_endpoint,
+            "errors-intake".into(),
+            &producer,
+        ) {
+            libdd_common_ffi::Option::Some(error) => assert!(error
+                .to_string()
+                .contains("host must be errors-intake.<site>")),
+            libdd_common_ffi::Option::None => {
+                panic!("EVP transport accepted a mismatched direct intake")
+            }
+        }
+
+        // Clients stay Agent-only unless they explicitly select fallback.
+        assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::AgentOnly,
+            &agent_endpoint,
+            null(),
+            "event-platform-intake".into(),
+            &producer,
+        ));
+        assert_maybe_no_error!(ddog_sidecar_session_set_evp_transport(
+            &mut transport,
+            EvpTransportMode::PreferLocalThenDirect,
+            &agent_endpoint,
+            &direct_endpoint,
+            "event-platform-intake".into(),
+            &producer,
+        ));
 
         let meta = ddog_sidecar_runtimeMeta_build(
             "language_name".into(),
