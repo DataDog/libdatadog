@@ -80,6 +80,9 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
     if socket::connect(fd.as_raw_fd(), &addr).is_err() {
         return -1;
     }
+    if !crate::setup::server_is_acceptable(fd.as_raw_fd()) {
+        return -1;
+    }
     if socket::send(
         fd.as_raw_fd(),
         crashtracker_receiver_request_bytes(),

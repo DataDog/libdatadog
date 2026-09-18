@@ -139,5 +139,6 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     Ok(PeerCredentials {
         pid: cred.pid as u32,
         uid: cred.uid,
+        gid: cred.gid,
     })
 }
