@@ -27,7 +27,7 @@ use std::{
 };
 
 #[test]
-fn generated_header_exposes_native_evp_transport_abi() {
+fn evp_transport_has_expected_rust_abi_signature() {
     // Keep the Rust symbol and its exact C-facing signature under compile-time
     // test coverage independently of cbindgen's generated declaration.
     let _: unsafe extern "C" fn(
@@ -38,7 +38,14 @@ fn generated_header_exposes_native_evp_transport_abi() {
         CharSlice<'_>,
         &EvpProducerIdentity<'_>,
     ) -> MaybeError = ddog_sidecar_session_set_evp_transport;
+}
 
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "header generation and C compilation spawn native processes"
+)]
+fn generated_header_exposes_native_evp_transport_abi() {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -49,6 +56,13 @@ fn generated_header_exposes_native_evp_transport_abi() {
         "common.h",
         generated.path().to_path_buf(),
     );
+    // Windows-only sidecar declarations use crashtracker metadata. Include
+    // those definitions in the shared header just as the release builder does.
+    build_common::generate_header(
+        workspace.join("libdd-crashtracker-ffi"),
+        "crashtracker.h",
+        generated.path().to_path_buf(),
+    );
     build_common::generate_header(
         workspace.join("datadog-sidecar-ffi"),
         "sidecar.h",
@@ -57,10 +71,14 @@ fn generated_header_exposes_native_evp_transport_abi() {
 
     let include_dir = generated.path().join(build_common::HEADER_PATH);
     let common_header = include_dir.join("common.h");
+    let crashtracker_header = include_dir.join("crashtracker.h");
     let sidecar_header = include_dir.join("sidecar.h");
     tools::headers::dedup_headers(
         common_header.to_str().unwrap(),
-        &[sidecar_header.to_str().unwrap()],
+        &[
+            crashtracker_header.to_str().unwrap(),
+            sidecar_header.to_str().unwrap(),
+        ],
     );
 
     let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
@@ -73,7 +91,8 @@ fn generated_header_exposes_native_evp_transport_abi() {
         .unwrap()
         .to_owned();
 
-    cc::Build::new()
+    let mut compiler = cc::Build::new();
+    compiler
         .cargo_metadata(false)
         .out_dir(generated.path())
         .host(&host)
@@ -87,9 +106,13 @@ fn generated_header_exposes_native_evp_transport_abi() {
                 .join("tests/evp_transport_abi.c"),
         )
         .warnings(true)
-        .warnings_into_errors(true)
-        .try_compile("sidecar_evp_transport_abi")
-        .unwrap();
+        .warnings_into_errors(true);
+    if compiler.get_compiler().is_like_msvc() {
+        // Match examples/ffi/CMakeLists.txt: generated headers deliberately
+        // use anonymous structs/unions; keep all other warnings as errors.
+        compiler.flag("/wd4201");
+    }
+    compiler.try_compile("sidecar_evp_transport_abi").unwrap();
 }
 
 fn set_sidecar_per_process() {
