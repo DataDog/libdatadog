@@ -117,14 +117,12 @@ impl AgentInfo {
 
 impl From<AgentObfuscationConfig> for ObfuscationConfig {
     fn from(value: AgentObfuscationConfig) -> Self {
-        let sql_config = match value.sql {
-            Some(sql_config) => sql_config,
+        let sql_config = value.sql.unwrap_or_else(||
             // Fallback for the previous /info config format
-            None => obfuscation_config::SqlConfig {
+            obfuscation_config::SqlConfig {
                 obfuscation_mode: value.sql_obfuscation_mode,
                 ..Default::default()
-            },
-        };
+        });
         Self {
             tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
             http: value.http,
