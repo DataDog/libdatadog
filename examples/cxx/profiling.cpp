@@ -152,7 +152,7 @@ int main() {
                 Location{
                     .mapping = mapping,
                     .function = Function{
-                        .name = strings::bytes("main"),
+                        .name = "main",
                         .system_name = "main",
                         .filename = "/src/main.cpp"
                     },
@@ -164,7 +164,7 @@ int main() {
                 locations.push_back(Location{
                     .mapping = mapping,
                     .function = Function{
-                        .name = strings::bytes("worker_loop"),
+                        .name = "worker_loop",
                         .system_name = "_Z11worker_loopv",
                         .filename = "/src/worker.cpp"
                     },
@@ -175,8 +175,8 @@ int main() {
 
             std::array<int64_t, 1> values{wall_time_value};
             std::array<Label, 2> labels{
-                Label{.key = strings::bytes("thread_id"), .str_bytes = strings::bytes(""), .num = int64_t(i % 4), .num_unit = strings::bytes("")},
-                Label{.key = strings::bytes("sample_id"), .str_bytes = strings::bytes(""), .num = int64_t(i), .num_unit = strings::bytes("")},
+                Label{.key = "thread_id", .str = "", .num = int64_t(i % 4), .num_unit = ""},
+                Label{.key = "sample_id", .str = "", .num = int64_t(i), .num_unit = ""},
             };
             if (!profile->add_sample(views::sample(locations, values, labels))) return 1;
         }
@@ -263,7 +263,7 @@ int main() {
             std::array<Location, 1> split_locations{Location{
                 .mapping = split_mapping,
                 .function = Function{
-                    .name = strings::bytes("split_export_function"),
+                    .name = "split_export_function",
                     .system_name = "_Z21split_export_functionv",
                     .filename = "/src/split_export.cpp"
                 },
@@ -271,7 +271,7 @@ int main() {
                 .line = 77
             }};
             std::array<int64_t, 1> split_values{42'000'000};
-            std::array<Label, 1> split_labels{Label{.key = strings::bytes("thread_id"), .str_bytes = strings::bytes(""), .num = 1, .num_unit = strings::bytes("")}};
+            std::array<Label, 1> split_labels{Label{.key = "thread_id", .str = "", .num = 1, .num_unit = ""}};
             if (!split_profile->add_sample(views::sample(split_locations, split_values, split_labels))) return 1;
             if (!split_profile->add_endpoint_count(strings::bytes("/api/split-export"), 1)) return 1;
 

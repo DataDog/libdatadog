@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! CXX bindings for profiling module - provides a safe and idiomatic C++ API
+//! CXX bindings for the profiling module — C++ API via the cxx bridge.
 
 #![allow(clippy::needless_lifetimes)]
 

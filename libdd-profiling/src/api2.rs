@@ -35,7 +35,7 @@ pub struct Label<'a> {
     /// Specifies the units of num.
     /// Use arbitrary string (for example, "requests") as a custom count unit.
     /// If no unit is specified, consumer may apply heuristic to deduce the unit.
-    /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
+    /// Consumers may also interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
     pub num_unit: Cow<'a, str>,
