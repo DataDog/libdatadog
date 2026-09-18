@@ -118,7 +118,8 @@ https = [
     "libdd-dogstatsd-client/https",
 ]
 stats-obfuscation = [
-    "libdd-trace-stats/stats-obfuscation"
+    "libdd-data-pipeline-core/stats-obfuscation",
+    "libdd-trace-stats/stats-obfuscation",
 ]
 
 fips = [
