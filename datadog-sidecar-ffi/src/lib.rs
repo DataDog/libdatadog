@@ -338,11 +338,9 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
+pub extern "C" fn ddog_sidecar_connect_master() -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
-    #[cfg(unix)]
-    datadog_sidecar::set_sidecar_master_pid(pid as u32);
-    try_c!(MasterListener::start(pid, cfg));
+    try_c!(MasterListener::start(cfg));
 
     MaybeError::None
 }
@@ -365,9 +363,18 @@ pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
     MaybeError::None
 }
 
+/// Remove the master listener's socket and lock file, for SAPIs that exit without running
+/// PHP's module shutdown - php-fpm's master calls `exit()` straight from `fpm_pctl_exit()`, so
+/// `ddog_sidecar_shutdown_master_listener` never runs there. Safe to call more than once, and a
+/// no-op in a process that did not bind them.
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
-    MasterListener::is_active(pid)
+pub extern "C" fn ddog_sidecar_reap_master_listener_files() {
+    MasterListener::reap_bound_files_at_exit();
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_sidecar_is_master_listener_active() -> bool {
+    MasterListener::is_active()
 }
 
 #[no_mangle]

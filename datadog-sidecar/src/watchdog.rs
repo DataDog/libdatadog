@@ -53,11 +53,20 @@ impl Watchdog {
         const SHUTDOWN: u32 = u32::MAX;
 
         let interval = self.interval.period();
-        std::thread::spawn(move || {
+        let watchdog_thread = std::thread::Builder::new()
+            .name("dd-watchdog".to_string())
+            .spawn(move || {
             let mut maybe_stuck = false;
             let mut last = 0;
             loop {
                 std::thread::sleep(interval);
+                // This thread is started before any peer has been authenticated, so it cannot
+                // drop its privileges at birth the way tokio's threads do - the uid to drop to
+                // is not known yet, and no thread can change another's credentials. Retrying
+                // each tick means it stops being a root thread inside the PHP master shortly
+                // after the first worker connects. A no-op outside thread mode.
+                #[cfg(unix)]
+                crate::setup::thread_listener::drop_thread_privileges_if_known();
                 let current = still_alive_thread.load(Ordering::Relaxed);
                 if last != current {
                     if current == SHUTDOWN {
@@ -78,6 +87,9 @@ impl Watchdog {
                 }
             }
         });
+        if let Err(e) = watchdog_thread {
+            error!("Could not start the sidecar watchdog thread: {e}");
+        }
 
         let join_handle = tokio::spawn(async move {
             mem_usage_bytes.store(0, Ordering::Relaxed);

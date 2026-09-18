@@ -187,8 +187,12 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
+            // No limiter means no rate limiting: the segment could not be created, which is
+            // already reported where it happened.
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                Some(SHM_LIMITER.lock_or_panic().alloc())
+                SHM_LIMITER
+                    .as_ref()
+                    .map(|limiter| limiter.lock_or_panic().alloc())
             } else {
                 None
             },

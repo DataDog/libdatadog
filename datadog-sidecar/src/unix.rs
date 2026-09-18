@@ -11,9 +11,11 @@ use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 #[cfg(target_os = "linux")]
@@ -65,13 +67,20 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
             // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
             // while shutting down
+            let shutdown = Arc::new(Notify::new());
             let cancel = {
                 let listener_fd = async_listener.as_raw_fd();
-                move || stop_listening(listener_fd)
+                let shutdown = shutdown.clone();
+                move || {
+                    stop_listening(listener_fd);
+                    // notify_one, not notify_waiters: it leaves a permit behind if the loop is
+                    // between iterations, so the cancellation cannot be missed.
+                    shutdown.notify_one();
+                }
             };
 
             Ok((
-                move |handler| accept_socket_loop(async_listener, handler),
+                move |handler| accept_socket_loop(async_listener, handler, shutdown),
                 cancel,
             ))
         };
@@ -99,12 +108,17 @@ fn stop_listening(listener_fd: RawFd) {
 async fn accept_socket_loop(
     async_listener: tokio::io::unix::AsyncFd<SeqpacketListener>,
     handler: Box<dyn Fn(SeqpacketConn)>,
+    shutdown: Arc<Notify>,
 ) -> io::Result<()> {
     #[allow(clippy::unwrap_used)]
     let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
         select! {
             _ = termsig.recv() => {
+                stop_listening(async_listener.as_raw_fd());
+                break;
+            }
+            _ = shutdown.notified() => {
                 stop_listening(async_listener.as_raw_fd());
                 break;
             }
@@ -156,10 +170,6 @@ pub fn setup_daemon_process(
 pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
-
-/// No-op: retained for FFI compatibility.
-/// The master PID is now tracked by MasterListener::start() directly.
-pub fn set_sidecar_master_pid(_pid: u32) {}
 
 /// Allow initializing crashtracker independently for thread-mode sidecar.
 #[cfg(target_os = "linux")]
