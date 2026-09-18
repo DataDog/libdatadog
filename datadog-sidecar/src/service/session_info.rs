@@ -203,6 +203,13 @@ impl SessionInfo {
 
         if endpoint.api_key.is_none() {
             if let Ok(transport) = EvpTransport::agent_only(endpoint, intake_subdomain) {
+                if state
+                    .transports
+                    .get(intake_subdomain)
+                    .is_some_and(|current| current.has_same_configuration(&transport))
+                {
+                    return;
+                }
                 state
                     .transports
                     .insert(intake_subdomain.to_owned(), transport);
@@ -220,6 +227,13 @@ impl SessionInfo {
         let transport = EvpTransport::new_with_identity(config.transport, config.producer)?;
         let mut state = self.evp_transports.lock_or_panic();
         state.explicitly_configured.insert(intake_subdomain.clone());
+        if state
+            .transports
+            .get(&intake_subdomain)
+            .is_some_and(|current| current.has_same_configuration(&transport))
+        {
+            return Ok(());
+        }
         state.transports.insert(intake_subdomain, transport);
         Ok(())
     }
@@ -501,6 +515,83 @@ mod tests {
             .unwrap();
         let errors = session.get_evp_transport("errors-intake").unwrap();
         assert!(!ffe.shares_route_state(&errors));
+    }
+
+    #[test]
+    fn repeated_legacy_configuration_preserves_exposure_deduplication_scope() {
+        let session = SessionInfo::default();
+        let endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        session.set_default_evp_transport(endpoint.clone(), EVENT_PLATFORM_INTAKE_SUBDOMAIN);
+        let before = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        session.set_default_evp_transport(endpoint, EVENT_PLATFORM_INTAKE_SUBDOMAIN);
+        let after = session
+            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+            .unwrap();
+        assert!(before.shares_route_state(&after));
+        assert_eq!(before.deduplication_scope(), after.deduplication_scope());
+    }
+
+    #[test]
+    fn meaningful_configuration_changes_replace_the_transport() {
+        use crate::service::{EvpProducerIdentity, EvpTransportConfig, EvpTransportMode};
+
+        let config = EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig::prefer_local_then_direct(
+                Endpoint {
+                    url: "http://localhost:8126/".parse().unwrap(),
+                    ..Endpoint::default()
+                },
+                Some(Endpoint {
+                    url: "https://event-platform-intake.datadoghq.com/"
+                        .parse()
+                        .unwrap(),
+                    api_key: Some("first-key".into()),
+                    ..Endpoint::default()
+                }),
+                EVENT_PLATFORM_INTAKE_SUBDOMAIN,
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        for change in 0..5 {
+            let session = SessionInfo::default();
+            session.set_evp_transport(config.clone()).unwrap();
+            let before = session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .unwrap();
+            let mut updated = config.clone();
+            match change {
+                0 => {
+                    updated.transport.direct_endpoint.as_mut().unwrap().api_key =
+                        Some("second-key".into())
+                }
+                1 => {
+                    updated.transport.agent_endpoint.url = "http://localhost:9126/".parse().unwrap()
+                }
+                2 => updated.transport.mode = EvpTransportMode::AgentOnly,
+                3 => updated.producer = EvpProducerIdentity::new("dd-trace-rb", "3.1.0").unwrap(),
+                _ => {
+                    updated.transport.direct_endpoint.as_mut().unwrap().url =
+                        "https://event-platform-intake.datadoghq.eu/"
+                            .parse()
+                            .unwrap()
+                }
+            }
+            session.set_evp_transport(updated).unwrap();
+            let after = session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .unwrap();
+            assert!(
+                !before.shares_route_state(&after),
+                "change {change} ignored"
+            );
+            assert_ne!(before.deduplication_scope(), after.deduplication_scope());
+        }
     }
 
     #[test]

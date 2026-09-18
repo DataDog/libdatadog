@@ -440,6 +440,13 @@ impl EvpTransport {
         &self.producer
     }
 
+    /// Compare effective configuration, not route state or instance identity.
+    /// Reinstalling an unchanged session configuration must retain sticky
+    /// routing, recovery deadlines, and the exposure deduplication scope.
+    pub(crate) fn has_same_configuration(&self, other: &Self) -> bool {
+        self.config == other.config && self.producer == other.producer
+    }
+
     pub(crate) fn deduplication_scope(&self) -> String {
         format!(
             "{}\0{}\0{}",
@@ -780,6 +787,7 @@ mod tests {
     #[derive(Clone, Debug)]
     struct ScriptedCapabilities {
         inner: Arc<Mutex<Script>>,
+        info_release: Option<Arc<tokio::sync::Notify>>,
     }
 
     #[derive(Debug, Default)]
@@ -795,6 +803,7 @@ mod tests {
                     responses: responses.into(),
                     requests: Vec::new(),
                 })),
+                info_release: None,
             }
         }
 
@@ -824,13 +833,23 @@ mod tests {
         ) -> impl future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
         {
             let inner = self.inner.clone();
+            let info_release = self.info_release.clone();
             async move {
-                let mut script = inner.lock().unwrap();
-                script.requests.push(request);
-                script
-                    .responses
-                    .pop_front()
-                    .expect("missing scripted HTTP response")
+                let is_info = request.uri().path().ends_with(INFO_PATH);
+                let response = {
+                    let mut script = inner.lock().unwrap();
+                    script.requests.push(request);
+                    script
+                        .responses
+                        .pop_front()
+                        .expect("missing scripted HTTP response")
+                };
+                if is_info {
+                    if let Some(release) = info_release {
+                        release.notified().await;
+                    }
+                }
+                response
             }
         }
     }
@@ -907,9 +926,44 @@ mod tests {
             .await
     }
 
+    /// Poll both writers while the first discovery response is held. This
+    /// deterministically exercises contention without sleeps or scheduler luck.
+    async fn send_with_overlapping_discovery(
+        transport: &EvpTransport,
+        client: &mut ScriptedCapabilities,
+        expected_probes: usize,
+    ) {
+        let release = Arc::new(tokio::sync::Notify::new());
+        client.info_release = Some(release.clone());
+        let other_writer = transport.clone();
+        let exposure = send(transport, client, "/api/v2/exposures");
+        let evaluation = send(&other_writer, client, "/api/v2/flagevaluation");
+        tokio::pin!(exposure, evaluation);
+        assert!(futures::poll!(&mut exposure).is_pending());
+        assert!(futures::poll!(&mut evaluation).is_pending());
+        assert_eq!(
+            client
+                .requests()
+                .iter()
+                .filter(|(url, _)| url.ends_with(INFO_PATH))
+                .count(),
+            expected_probes,
+            "the second writer must wait for the in-flight discovery"
+        );
+        release.notify_one();
+        let (exposure_sent, evaluation_sent) =
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(exposure, evaluation)
+            })
+            .await
+            .expect("writers did not finish after releasing discovery");
+        assert!(exposure_sent);
+        assert!(evaluation_sent);
+    }
+
     #[tokio::test]
     async fn concurrent_first_flush_prefers_v4_and_performs_one_shared_discovery() {
-        let client = ScriptedCapabilities::new(vec![
+        let mut client = ScriptedCapabilities::new(vec![
             info_response(&["/evp_proxy/v2/", "/evp_proxy/v4"]),
             response(202, ""),
             response(202, ""),
@@ -918,12 +972,7 @@ mod tests {
         let flag_transport = transport.clone();
         assert!(transport.shares_route_state(&flag_transport));
 
-        let (exposure_sent, evaluation_sent) = tokio::join!(
-            send(&transport, &client, "/api/v2/exposures"),
-            send(&flag_transport, &client, "/api/v2/flagevaluation")
-        );
-        assert!(exposure_sent);
-        assert!(evaluation_sent);
+        send_with_overlapping_discovery(&transport, &mut client, 1).await;
 
         let requests = client.requests();
         assert_eq!(
@@ -1260,7 +1309,7 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable_route_reprobes_once_after_cooldown_and_recovers() {
-        let client = ScriptedCapabilities::new(vec![
+        let mut client = ScriptedCapabilities::new(vec![
             info_response(&[]),
             info_response(&["/evp_proxy/v4"]),
             response(202, ""),
@@ -1284,13 +1333,7 @@ mod tests {
             let mut now = current.lock().unwrap();
             *now += cooldown;
         }
-        let other_writer = transport.clone();
-        let (exposure_sent, evaluation_sent) = tokio::join!(
-            send(&transport, &client, "/api/v2/exposures"),
-            send(&other_writer, &client, "/api/v2/flagevaluation")
-        );
-        assert!(exposure_sent);
-        assert!(evaluation_sent);
+        send_with_overlapping_discovery(&transport, &mut client, 2).await;
 
         let requests = client.requests();
         assert_eq!(
@@ -1420,6 +1463,119 @@ mod tests {
         let requests = client.requests();
         assert_eq!(requests[1].1.get("dd-api-key").unwrap(), "first-key");
         assert_eq!(requests[3].1.get("dd-api-key").unwrap(), "second-key");
+    }
+
+    #[tokio::test]
+    async fn unchanged_session_configuration_preserves_sticky_direct_and_deduplication() {
+        let session = crate::service::session_info::SessionInfo::default();
+        let template = agentless(Some("api-key"));
+        let config = EvpTransportConfigWithIdentity::new(
+            (*template.config).clone(),
+            (*template.producer).clone(),
+        )
+        .unwrap();
+        session.set_evp_transport(config.clone()).unwrap();
+        let before = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
+        let client = ScriptedCapabilities::new(vec![
+            info_response(&[]),
+            response(202, ""),
+            response(202, ""),
+        ]);
+        assert!(send(&before, &client, "/api/v2/exposures").await);
+
+        session.set_evp_transport(config).unwrap();
+        let after = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
+        assert!(before.shares_route_state(&after));
+        assert_eq!(before.deduplication_scope(), after.deduplication_scope());
+        assert!(send(&after, &client, "/api/v2/flagevaluation").await);
+        assert_eq!(client.requests().len(), 3, "configuration re-probed local");
+    }
+
+    #[tokio::test]
+    async fn unchanged_session_configuration_preserves_unavailable_cooldown() {
+        let session = crate::service::session_info::SessionInfo::default();
+        let template = agentless(None);
+        let config = EvpTransportConfigWithIdentity::new(
+            (*template.config).clone(),
+            (*template.producer).clone(),
+        )
+        .unwrap();
+        session.set_evp_transport(config.clone()).unwrap();
+        let before = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
+        let client = ScriptedCapabilities::new(vec![info_response(&[])]);
+        assert!(!send(&before, &client, "/api/v2/exposures").await);
+        session.set_evp_transport(config).unwrap();
+        let after = session.get_evp_transport(EVP_SUBDOMAIN_VALUE).unwrap();
+        assert!(before.shares_route_state(&after));
+        assert!(!send(&after, &client, "/api/v2/flagevaluation").await);
+        assert_eq!(
+            client.requests().len(),
+            1,
+            "configuration bypassed cooldown"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn native_local_delivery_does_not_follow_redirects_or_retry_responses() {
+        use httpmock::MockServer;
+        use libdd_capabilities_impl::NativeCapabilities;
+
+        for status in [202, 302, 403, 404, 405, 429, 500, 503] {
+            let server = MockServer::start_async().await;
+            let redirect = MockServer::start_async().await;
+            let redirect_mock = redirect
+                .mock_async(|_when, then| {
+                    then.status(202);
+                })
+                .await;
+            let info = server
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::GET).path("/prefix/info");
+                    then.status(200).json_body(serde_json::json!({
+                        "endpoints": ["/evp_proxy/v2", "/evp_proxy/v4"],
+                        "evp_proxy_allowed_headers": [EVP_ORIGIN_HEADER, EVP_ORIGIN_VERSION_HEADER],
+                    }));
+                })
+                .await;
+            let delivery = server
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST)
+                        .path("/prefix/evp_proxy/v4/api/v2/exposures")
+                        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
+                        .header(EVP_ORIGIN_HEADER, "dd-trace-rb")
+                        .header(EVP_ORIGIN_VERSION_HEADER, "3.0.0")
+                        .header_missing("DD-API-KEY")
+                        .body("{}");
+                    then.status(status)
+                        .header("Location", redirect.url("/redirect"));
+                })
+                .await;
+            let transport = EvpTransport::new_with_identity(
+                EvpTransportConfig::prefer_local_then_direct(
+                    endpoint(&server.url("/prefix/v0.4/traces"), Some("must-not-leak")),
+                    None,
+                    EVP_SUBDOMAIN_VALUE,
+                ),
+                EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            )
+            .unwrap();
+            let client = NativeCapabilities::new_client();
+            let sent = transport
+                .send_payload(
+                    &client,
+                    "/api/v2/exposures",
+                    "application/json",
+                    Bytes::from_static(b"{}"),
+                    "test",
+                    "batch",
+                )
+                .await;
+            assert_eq!(sent, status == 202);
+            info.assert_calls_async(1).await;
+            delivery.assert_calls_async(1).await;
+            redirect_mock.assert_calls_async(0).await;
+        }
     }
 
     #[test]

@@ -1698,18 +1698,18 @@ mod tests {
         assert_eq!(agentless_transport.producer().origin(), "dd-trace-rb");
         assert_eq!(agentless_transport.producer().version(), "3.0.0");
 
-        // macOS emulates seqpacket socketpairs with SOCK_DGRAM, which does not
-        // report peer closure. The pings above prove that both IPC messages
-        // were handled; explicitly cancel the otherwise idle test server so
-        // teardown does not depend on platform-specific disconnect behavior.
+        // Windows receives inside block_in_place: abort cannot interrupt its
+        // blocking pipe read. Close the client first so that read can finish.
+        // macOS socketpairs do not report peer closure, so also cancel the
+        // idle async server. Graceful completion may race with cancellation.
+        drop(sender);
         server_task.abort();
-        let error = server_task
+        if let Err(error) = tokio::time::timeout(TokioDuration::from_secs(5), server_task)
             .await
-            .expect_err("aborted server task should not complete normally");
-        assert!(
-            error.is_cancelled(),
-            "server task was not cancelled: {error}"
-        );
+            .expect("IPC server did not terminate after closing its client")
+        {
+            assert!(error.is_cancelled(), "server task panicked: {error}");
+        }
     }
 
     #[tokio::test]
