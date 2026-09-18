@@ -9,6 +9,8 @@ use anyhow::Context;
 pub struct UpscalingRule {
     upscaling_info: UpscalingInfo,
     values_offset: Vec<usize>,
+    // Estimated missing values, accumulated without rounding for each stack and label set.
+    poisson_corrections: FxIndexMap<Sample, Vec<f64>>,
 }
 
 impl UpscalingRule {
@@ -50,6 +52,7 @@ impl UpscalingRule {
         Self {
             values_offset,
             upscaling_info,
+            poisson_corrections: FxIndexMap::default(),
         }
     }
 }
@@ -165,7 +168,32 @@ impl UpscalingRules {
         self.rules.is_empty()
     }
 
-    pub fn upscale_values(&self, values: &mut [i64], labels: &[Label]) {
+    pub fn add_sample(&mut self, sample: Sample, values: &[i64]) {
+        for rule in self.rules.values_mut().flatten() {
+            if matches!(rule.upscaling_info, UpscalingInfo::Proportional { .. }) {
+                continue;
+            }
+            let correction_scale = rule.compute_scale(values) - 1.0;
+            if correction_scale == 0.0 {
+                continue;
+            }
+            // Match labels at serialization, when endpoint labels are also available.
+            let corrections = rule
+                .poisson_corrections
+                .entry(sample)
+                .or_insert_with(|| vec![0.0; rule.values_offset.len()]);
+            for (correction, offset) in corrections.iter_mut().zip(&rule.values_offset) {
+                *correction += values[*offset] as f64 * correction_scale;
+            }
+        }
+    }
+
+    pub fn upscale_values(
+        &self,
+        values: &mut [i64],
+        labels: &[Label],
+        aggregated_sample: Option<Sample>,
+    ) {
         if self.is_empty() {
             return;
         }
@@ -190,6 +218,18 @@ impl UpscalingRules {
 
         group_of_rules.iter().for_each(|rules| {
             rules.iter().for_each(|rule| {
+                if let Some(sample) = aggregated_sample {
+                    if !matches!(rule.upscaling_info, UpscalingInfo::Proportional { .. }) {
+                        if let Some(corrections) = rule.poisson_corrections.get(&sample) {
+                            for (offset, correction) in rule.values_offset.iter().zip(corrections) {
+                                // Round once; the cast saturates values outside i64's range.
+                                values[*offset] =
+                                    (values[*offset] as f64 + correction).round() as i64;
+                            }
+                        }
+                        return;
+                    }
+                }
                 let scale = rule.compute_scale(values);
                 rule.values_offset.iter().for_each(|offset| {
                     values[*offset] = (values[*offset] as f64 * scale).round() as i64

@@ -1082,6 +1082,20 @@ mod tests {
     fn test_profile_operations() {
         let mut profile = create_test_profile();
 
+        profile
+            .add_upscaling_rule_poisson(&[0], "thread_id", "0", 0, 0, 1000000)
+            .unwrap();
+        profile
+            .add_upscaling_rule_poisson_non_sample_type_count(
+                &[0],
+                "thread_id",
+                "2",
+                0,
+                50,
+                1000000,
+            )
+            .unwrap();
+
         // Verify profile starts empty
         assert_eq!(
             profile.inner.only_for_testing_num_aggregated_samples(),
@@ -1116,22 +1130,9 @@ mod tests {
         profile.add_endpoint(67890, "/api/other").unwrap();
         profile.add_endpoint_count("/api/test", 100).unwrap();
 
-        // Test upscaling rules (verify they don't error)
-        profile
-            .add_upscaling_rule_poisson(&[0], "thread_id", "0", 0, 0, 1000000)
-            .unwrap();
+        // Proportional rules may be added after samples.
         profile
             .add_upscaling_rule_proportional(&[0], "thread_id", "1", 100.0)
-            .unwrap();
-        profile
-            .add_upscaling_rule_poisson_non_sample_type_count(
-                &[0],
-                "thread_id",
-                "2",
-                0,
-                50,
-                1000000,
-            )
             .unwrap();
 
         // Serialize and verify output

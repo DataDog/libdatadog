@@ -745,6 +745,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_seri
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
 ///
+/// Must be called before adding samples. Each input sample must represent events
+/// of the same size; different sizes may be added as separate samples.
+///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.
 /// * `offset_values` - offset of the values
