@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload_from_v1;
+use crate::mutable_metadata::MutableMetadataHandle;
 use crate::span::v1::{
     AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
     TraceChunkBytes,
@@ -46,10 +47,12 @@ fn serde_json_serialize_map_len_hint_does_not_affect_output() {
 }
 
 fn base_metadata() -> TracerMetadata {
+    let mutable_metadata = MutableMetadataHandle::default();
+    mutable_metadata.set_runtime_id("rt-1".into());
     TracerMetadata {
         hostname: "host-1".to_string(),
         env: "prod".to_string(),
-        runtime_id: "rt-1".to_string(),
+        mutable_metadata,
         service: "svc".to_string(),
         tracer_version: "1.2.3".to_string(),
         language: "nodejs".to_string(),
@@ -60,6 +63,18 @@ fn base_metadata() -> TracerMetadata {
 
 fn json_from_bytes(b: &[u8]) -> Value {
     serde_json::from_slice(b).expect("payload must be valid JSON")
+}
+
+#[test]
+fn runtime_id_updates_propagate_through_the_metadata_handle() {
+    let metadata = base_metadata();
+    let chunks = [minimal_chunk([0; 16], SpanBytes::default())];
+    let bytes = encode_payload_from_v1(&chunks, &metadata).unwrap();
+    assert_eq!(json_from_bytes(&bytes)["traces"][0]["runtimeID"], "rt-1");
+
+    metadata.mutable_metadata.set_runtime_id("rt-2".into());
+    let bytes = encode_payload_from_v1(&chunks, &metadata).unwrap();
+    assert_eq!(json_from_bytes(&bytes)["traces"][0]["runtimeID"], "rt-2");
 }
 
 fn minimal_chunk(trace_id: [u8; 16], span: SpanBytes) -> TraceChunkBytes {

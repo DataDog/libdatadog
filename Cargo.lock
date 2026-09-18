@@ -3576,6 +3576,7 @@ name = "libdd-trace-utils"
 version = "12.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "base64 0.22.1",
  "bolero",
  "bytes",
