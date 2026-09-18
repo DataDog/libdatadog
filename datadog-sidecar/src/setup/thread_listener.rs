@@ -50,8 +50,9 @@ static SERVED_IDS: OnceLock<(u32, u32)> = OnceLock::new();
 fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: all three take no pointers and cannot fail in a way that matters here.
-        let (euid, tid, pid) = unsafe { (libc::geteuid(), libc::gettid(), libc::getpid()) };
+        // SAFETY: none of these take pointers, and none can fail in a way that matters here.
+        let (euid, pid) = unsafe { (libc::geteuid(), libc::getpid()) };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
 
         // Nothing to drop, or nothing to drop *to*.
         if euid != 0 || uid == 0 {
