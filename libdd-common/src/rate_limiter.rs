@@ -1,33 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::time::Duration;
 
-pub trait Limiter {
-    /// Takes the limit per interval.
-    /// Returns false if the limit is exceeded, otherwise true.
-    fn inc(&self, limit: u32) -> bool;
-    /// Returns the effective rate per interval.
-    /// Note: The rate is only guaranteed to be accurate immediately after a call to inc().
-    fn rate(&self) -> f64;
-    /// Updates the rate and returns it
-    fn update_rate(&self) -> f64;
-}
-
-/// A thread-safe limiter built on Atomics.
-/// Its base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
-/// Internally the limiter measures elapsed time in nanoseconds.
-/// The implementation is a sliding window: every time the limiter is increased, the amount of time
-/// that has passed is also refilled.
-#[repr(C)]
+/// A rate limiter whose complete mutable state is one atomic deadline.
+///
+/// Granularity is supplied by the caller and is not part of the limiter state.
+#[repr(transparent)]
+#[derive(Default)]
 pub struct LocalLimiter {
-    hit_count: AtomicI64,
-    last_update: AtomicU64,
-    last_limit: AtomicU32,
-    granularity: AtomicI64,
+    deadline: AtomicU64,
 }
 
-const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
+const TIME_PER_SECOND: u64 = 1_000_000_000; // nanoseconds
 
 /// When set to a non-zero value, `now()` returns this instead of the real clock.
 /// This allows tests to control time deterministically, avoiding flakiness from
@@ -37,29 +23,48 @@ static MOCK_NOW: AtomicU64 = AtomicU64::new(0);
 
 /// Monotonic nanoseconds from a system-wide clock, comparable across processes.
 pub fn now() -> u64 {
+    monotonic_now().unwrap_or(0)
+}
+
+fn monotonic_now() -> Option<u64> {
     #[cfg(test)]
     {
         let mock = MOCK_NOW.load(Ordering::Relaxed);
         if mock != 0 {
-            return mock;
+            return Some(mock);
         }
     }
     #[cfg(windows)]
-    let now = unsafe {
+    let now = {
+        use windows_sys::Win32::System::Performance::{
+            QueryPerformanceCounter, QueryPerformanceFrequency,
+        };
+
         static FREQUENCY: AtomicU64 = AtomicU64::new(0);
 
         let mut frequency = FREQUENCY.load(Ordering::Relaxed);
         if frequency == 0 {
-            windows_sys::Win32::System::Performance::QueryPerformanceFrequency(
-                &mut frequency as *mut u64 as *mut i64,
-            );
+            let mut measured_frequency = 0;
+            // SAFETY: the output pointer refers to valid writable storage.
+            if unsafe { QueryPerformanceFrequency(&mut measured_frequency) } == 0 {
+                return None;
+            }
+            frequency = u64::try_from(measured_frequency)
+                .ok()
+                .filter(|frequency| *frequency != 0)?;
             FREQUENCY.store(frequency, Ordering::Relaxed);
         }
 
-        let mut perf_counter = 0;
-        windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
-        // Nanoseconds fit in u64 for centuries, but the intermediate product needs u128.
-        (perf_counter as u128 * TIME_PER_SECOND as u128 / u128::from(frequency)) as u64
+        let mut ticks = 0;
+        // SAFETY: the output pointer refers to valid writable storage.
+        if unsafe { QueryPerformanceCounter(&mut ticks) } == 0 {
+            return None;
+        }
+        let nanos = u128::try_from(ticks)
+            .ok()?
+            .checked_mul(u128::from(TIME_PER_SECOND))?
+            .checked_div(u128::from(frequency))?;
+        u64::try_from(nanos).ok()?
     };
     #[cfg(not(windows))]
     let now = {
@@ -67,104 +72,90 @@ pub fn now() -> u64 {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-        // tv_sec is i32 on 32bit architecture
-        // https://sourceware.org/bugzilla/show_bug.cgi?id=16437
-        #[cfg(target_pointer_width = "32")]
-        {
-            (ts.tv_sec as i64 * TIME_PER_SECOND + ts.tv_nsec as i64) as u64
+        // SAFETY: ts points to valid writable storage.
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+            return None;
         }
-        #[cfg(target_pointer_width = "64")]
-        {
-            (ts.tv_sec * TIME_PER_SECOND + ts.tv_nsec) as u64
-        }
+        u64::try_from(ts.tv_sec)
+            .ok()?
+            .checked_mul(TIME_PER_SECOND)?
+            .checked_add(u64::try_from(ts.tv_nsec).ok()?)?
     };
-    now
-}
-
-impl Default for LocalLimiter {
-    fn default() -> Self {
-        LocalLimiter {
-            hit_count: Default::default(),
-            last_update: AtomicU64::from(now()),
-            last_limit: Default::default(),
-            granularity: AtomicI64::new(TIME_PER_SECOND),
-        }
-    }
+    Some(now)
 }
 
 impl LocalLimiter {
-    /// Allows setting a custom time granularity. The default() implementation is 1 second.
-    pub fn with_granularity(seconds: u32) -> LocalLimiter {
-        let limiter = LocalLimiter::default();
-        limiter
-            .granularity
-            .store(TIME_PER_SECOND * seconds as i64, Ordering::Relaxed);
-        limiter
+    /// Clear all accumulated virtual-time debt.
+    pub fn reset(&self) {
+        self.deadline.store(0, Ordering::Relaxed);
     }
 
-    /// Resets, with a given granularity.
-    pub fn reset(&self, seconds: u32) {
-        self.last_update.store(now(), Ordering::Relaxed);
-        self.hit_count.store(0, Ordering::Relaxed);
-        self.last_limit.store(0, Ordering::Relaxed);
-        self.granularity
-            .store(TIME_PER_SECOND * seconds as i64, Ordering::Relaxed);
+    /// Try to consume one of `limit` admissions per `granularity`.
+    pub fn inc(&self, limit: u32, granularity: Duration) -> bool {
+        let Some(granularity) = duration_nanos(granularity) else {
+            return false;
+        };
+        monotonic_now().is_some_and(|now| admit(&self.deadline, granularity, limit, now))
     }
 
-    fn update(&self, limit: u32, inc: i64) -> i64 {
-        let now = now();
-        let last = self.last_update.swap(now, Ordering::SeqCst);
-        // Make sure reducing the limit doesn't stall for a long time
-        let clear_limit = limit.max(self.last_limit.load(Ordering::Relaxed));
-        let clear_counter = (now as i64 - last as i64) * (clear_limit as i64);
-        let subtract = clear_counter - inc;
-        let mut previous_hits = self.hit_count.fetch_sub(subtract, Ordering::SeqCst);
-        // Handle where the limiter goes below zero
-        if previous_hits < subtract {
-            let add = clear_counter - previous_hits.max(0);
-            self.hit_count.fetch_add(add, Ordering::Acquire);
-            previous_hits += add - clear_counter;
-        }
-        previous_hits
+    /// Return the outstanding virtual-time debt as a fraction of `granularity`.
+    pub fn rate(&self, granularity: Duration) -> f64 {
+        let Some(granularity) = duration_nanos(granularity) else {
+            return 1.0;
+        };
+        monotonic_now().map_or(1.0, |now| {
+            debt(&self.deadline, granularity, now).clamp(0.0, 1.0)
+        })
+    }
+
+    /// Return whether the limiter still has outstanding virtual-time debt.
+    pub fn is_active(&self) -> bool {
+        monotonic_now().is_none_or(|now| self.deadline.load(Ordering::Relaxed) > now)
     }
 }
 
-impl Limiter for LocalLimiter {
-    fn inc(&self, limit: u32) -> bool {
-        // Read once, and never divide by it unchecked: ensure it's never zero.
-        let granularity = self.granularity.load(Ordering::Relaxed).max(1);
-        let previous_hits = self.update(limit, granularity);
-        if previous_hits / granularity >= limit as i64 {
-            self.hit_count.fetch_sub(granularity, Ordering::Acquire);
-            false
-        } else {
-            // We don't care about race conditions here:
-            // If the last limit was high enough to increase the previous_hits, we are anyway close
-            // to a number realistic to decrease the count quickly; i.e. we won't stall the limiter
-            // indefinitely when switching from a high to a low limit.
-            self.last_limit.store(limit, Ordering::Relaxed);
-            true
-        }
-    }
+fn duration_nanos(duration: Duration) -> Option<u64> {
+    let nanos = u64::try_from(duration.as_nanos()).ok()?;
+    (nanos > 0).then_some(nanos)
+}
 
-    fn rate(&self) -> f64 {
-        let last_limit = self.last_limit.load(Ordering::Relaxed);
-        let hit_count = self.hit_count.load(Ordering::Relaxed);
-        let granularity = self.granularity.load(Ordering::Relaxed).max(1);
-        (hit_count as f64 / (last_limit as i64 * granularity) as f64).clamp(0., 1.)
+/// Atomically add one admission's virtual-time debt.
+///
+/// Each admission costs `ceil(interval_ns / limit)` nanoseconds. Idle time clears debt, and
+/// the limiter accepts at most `limit` outstanding costs. The capacity uses the rounded cost,
+/// rather than `interval_ns`, so rounding still permits the full initial burst.
+fn admit(deadline: &AtomicU64, interval_ns: u64, limit: u32, now: u64) -> bool {
+    if limit == 0 {
+        return false;
     }
+    let admissions = u64::from(limit);
+    let cost_ns = interval_ns.div_ceil(admissions);
+    let Some(capacity_ns) = admissions.checked_mul(cost_ns) else {
+        return false;
+    };
+    let Some(max_deadline) = now.checked_add(capacity_ns) else {
+        return false;
+    };
+    deadline
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous_deadline| {
+            let next_deadline = previous_deadline.max(now).checked_add(cost_ns)?;
+            (next_deadline <= max_deadline).then_some(next_deadline)
+        })
+        .is_ok()
+}
 
-    fn update_rate(&self) -> f64 {
-        self.update(0, 0);
-        self.rate()
-    }
+fn debt(deadline: &AtomicU64, granularity: u64, now: u64) -> f64 {
+    // Floating-point precision is sufficient for this diagnostic ratio.
+    deadline.load(Ordering::Relaxed).saturating_sub(now) as f64 / granularity as f64
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND, now};
-    use core::sync::atomic::Ordering;
+    use crate::rate_limiter::{
+        LocalLimiter, MOCK_NOW, TIME_PER_SECOND, admit, debt, duration_nanos, now,
+    };
+    use core::sync::atomic::{AtomicU64, Ordering};
+    use core::time::Duration;
 
     fn set_mock_time(nanos: u64) {
         MOCK_NOW.store(nanos, Ordering::Relaxed);
@@ -174,74 +165,28 @@ mod tests {
         MOCK_NOW.fetch_add(nanos, Ordering::Relaxed);
     }
 
-    /// A small time tick (100ns) used to simulate minimal time passing between operations.
-    const TICK: u64 = 100;
-
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_rate_limiter() {
-        // Use mock time for deterministic behavior — real wall-clock sleeps are flaky on CI.
-        set_mock_time(1_000_000_000);
-
+        set_mock_time(TIME_PER_SECOND);
         let limiter = LocalLimiter::default();
+        let granularity = Duration::from_secs(1);
 
-        // First inc uses 1 of 2 slots: rate is exactly 0.5
-        assert!(limiter.inc(2));
-        assert_eq!(0.5, limiter.rate());
+        assert!(limiter.inc(2, granularity));
+        assert_eq!(limiter.rate(granularity), 0.5);
+        assert!(limiter.inc(2, granularity));
+        assert_eq!(limiter.rate(granularity), 1.0);
+        assert!(!limiter.inc(2, granularity));
 
-        // Second inc: rate approaches 1.0 but not quite (tiny time elapsed)
-        advance_mock_time(TICK);
-        assert!(limiter.inc(2));
-        assert!(limiter.rate() > 0.5 && limiter.rate() < 1.);
+        advance_mock_time(TIME_PER_SECOND / 2);
+        assert_eq!(limiter.rate(granularity), 0.5);
+        assert!(limiter.inc(2, granularity));
+        assert_eq!(limiter.rate(granularity), 1.0);
 
-        // Third inc fills the bucket: rate clamps to 1.0
-        advance_mock_time(TICK);
-        assert!(limiter.inc(2));
-        assert_eq!(1., limiter.rate());
-
-        // Over limit — both rejected
-        advance_mock_time(TICK);
-        assert!(!limiter.inc(2));
-        advance_mock_time(TICK);
-        assert!(!limiter.inc(2));
-
-        // 3 seconds pass — capacity fully refills, hit count goes negative then resets to zero
-        advance_mock_time(3 * TIME_PER_SECOND as u64);
-        assert!(limiter.inc(2));
-        assert_eq!(0.5, limiter.rate()); // Starting from scratch
-
-        advance_mock_time(TICK);
-        assert!(limiter.inc(2));
-        advance_mock_time(TICK);
-        assert!(limiter.inc(2));
-        advance_mock_time(TICK);
-        assert!(!limiter.inc(2));
-
-        // Test change to higher limit
-        advance_mock_time(TICK);
-        assert!(limiter.inc(3));
-        advance_mock_time(TICK);
-        assert!(!limiter.inc(3));
-
-        // Change to lower limit — no capacity available
-        assert!(!limiter.inc(1));
-
-        // 2 seconds pass — the counter resets (last successful limit was 3, so subtracting
-        // 3 per second twice clears it)
-        advance_mock_time(2 * TIME_PER_SECOND as u64);
-
-        // Now 1 succeeds again
-        assert!(limiter.inc(1));
-
-        // Refreshing the rate must not count as another hit.
-        let limiter = LocalLimiter::default();
-        assert!(limiter.inc(1));
-        advance_mock_time(TIME_PER_SECOND as u64 / 2);
-        assert_eq!(0.5, limiter.update_rate());
-
-        advance_mock_time(60 * TIME_PER_SECOND as u64);
-        assert_eq!(0., limiter.update_rate());
-        assert!(limiter.inc(1));
+        advance_mock_time(TIME_PER_SECOND);
+        assert_eq!(limiter.rate(granularity), 0.0);
+        assert!(!limiter.inc(0, granularity));
+        assert!(!limiter.inc(1, Duration::ZERO));
 
         set_mock_time(0);
     }
@@ -253,5 +198,28 @@ mod tests {
         assert!(t1 > 0);
         let t2 = now();
         assert!(t2 >= t1);
+    }
+
+    #[test]
+    fn test_local_limiter_algorithm() {
+        let deadline = AtomicU64::new(0);
+        assert!(!admit(&deadline, 100, 0, 1000));
+        for _ in 0..3 {
+            assert!(admit(&deadline, 100, 3, 1000));
+        }
+        assert!(!admit(&deadline, 100, 3, 1000));
+        assert_eq!(deadline.load(Ordering::Relaxed), 1102);
+        assert_eq!(debt(&deadline, 100, 1000), 1.02);
+        assert!(!admit(&deadline, 100, 3, 1033));
+        assert!(admit(&deadline, 100, 3, 1034));
+
+        assert_eq!(duration_nanos(Duration::ZERO), None);
+        assert_eq!(duration_nanos(Duration::from_secs(1)), Some(1_000_000_000));
+
+        let limiter = LocalLimiter::default();
+        assert_eq!(size_of::<LocalLimiter>(), size_of::<AtomicU64>());
+        limiter.deadline.store(42, Ordering::Relaxed);
+        limiter.reset();
+        assert_eq!(limiter.deadline.load(Ordering::Relaxed), 0);
     }
 }

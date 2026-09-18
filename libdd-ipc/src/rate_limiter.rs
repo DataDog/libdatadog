@@ -3,7 +3,7 @@
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use arc_swap::ArcSwapOption;
-use libdd_common::rate_limiter::{Limiter, LocalLimiter};
+use libdd_common::rate_limiter::LocalLimiter;
 use std::cell::UnsafeCell;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
@@ -11,6 +11,7 @@ use std::io;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::time::Duration;
 
 #[repr(C)]
 #[derive(Default)]
@@ -30,9 +31,8 @@ impl<Inner> ShmLimiterData<'_, Inner> {
     /// which is what makes that store a release and the matching load in `find` an acquire.
     /// Until then the slot is reserved but invisible - off the free list, and skipped by
     /// every scan.
-    fn initialise_and_publish(&self, seconds: u32, init: impl FnOnce(&Inner)) {
-        // The seconds come from an RPC argument, and zero is a divisor.
-        self.limiter.reset(seconds.max(1));
+    fn initialise_and_publish(&self, init: impl FnOnce(&Inner)) {
+        self.limiter.reset();
         init(unsafe { &*self.inner.get() });
         self.rc.store(1, Ordering::Release);
     }
@@ -123,17 +123,13 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
     /// Allocate a slot whose payload needs no initialization.
     pub fn alloc(&mut self) -> Option<ShmLimiter<Inner>> {
-        self.alloc_with_granularity(1, |_| ())
+        self.alloc_with(|_| ())
     }
 
     /// Initialize a slot before publishing it to readers. Returns `None` if the arena
     /// is retired or has no room.
-    pub fn alloc_with_granularity(
-        &mut self,
-        seconds: u32,
-        init: impl FnOnce(&Inner),
-    ) -> Option<ShmLimiter<Inner>> {
-        self.with_current(|mem| mem.alloc_with_granularity(seconds, init))
+    pub fn alloc_with(&mut self, init: impl FnOnce(&Inner)) -> Option<ShmLimiter<Inner>> {
+        self.with_current(|mem| mem.alloc(init))
     }
 
     pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
@@ -274,13 +270,9 @@ impl<Inner> ShmLimiterArena<Inner> {
         }
     }
 
-    fn alloc_with_granularity(
-        self: &Arc<Self>,
-        seconds: u32,
-        init: impl FnOnce(&Inner),
-    ) -> Option<ShmLimiter<Inner>> {
+    fn alloc(self: &Arc<Self>, init: impl FnOnce(&Inner)) -> Option<ShmLimiter<Inner>> {
         let reference = ShmLimiter::owning(self.next_free()?, self.clone());
-        reference.with_limiter(|slot| slot.initialise_and_publish(seconds, init))?;
+        reference.with_limiter(|slot| slot.initialise_and_publish(init))?;
         Some(reference)
     }
 
@@ -392,6 +384,21 @@ impl<Inner> ShmLimiter<Inner> {
         self.idx
     }
 
+    pub fn is_active(&self) -> bool {
+        self.with_limiter(|limiter| limiter.limiter.is_active())
+            .unwrap_or(false)
+    }
+
+    pub fn inc(&self, limit: u32, granularity: Duration) -> bool {
+        self.with_limiter(|limiter| limiter.limiter.inc(limit, granularity))
+            .unwrap_or(false)
+    }
+
+    pub fn rate(&self, granularity: Duration) -> f64 {
+        self.with_limiter(|limiter| limiter.limiter.rate(granularity))
+            .unwrap_or(0.0)
+    }
+
     /// # Safety
     /// Callers MUST NOT do any other operations on this instance if dropping was successful.
     pub unsafe fn drop_if_rc_1(&mut self) -> bool {
@@ -434,20 +441,6 @@ impl<Inner> ShmLimiter<Inner> {
     }
 }
 
-impl<Inner> Limiter for ShmLimiter<Inner> {
-    fn inc(&self, limit: u32) -> bool {
-        self.with_limiter(|l| l.limiter.inc(limit)).unwrap_or(false)
-    }
-
-    fn rate(&self) -> f64 {
-        self.with_limiter(|l| l.limiter.rate()).unwrap_or(0.)
-    }
-
-    fn update_rate(&self) -> f64 {
-        self.with_limiter(|l| l.limiter.update_rate()).unwrap_or(0.)
-    }
-}
-
 impl<Inner> Drop for ShmLimiter<Inner> {
     fn drop(&mut self) {
         if self.idx == 0 {
@@ -467,43 +460,15 @@ impl<Inner> Drop for ShmLimiter<Inner> {
     }
 }
 
-pub enum AnyLimiter {
-    Local(LocalLimiter),
-    Shm(ShmLimiter<()>),
-}
-
-impl AnyLimiter {
-    fn limiter(&self) -> &dyn Limiter {
-        match self {
-            AnyLimiter::Local(local) => local as &dyn Limiter,
-            AnyLimiter::Shm(shm) => shm as &dyn Limiter,
-        }
-    }
-}
-
-impl Limiter for AnyLimiter {
-    fn inc(&self, limit: u32) -> bool {
-        self.limiter().inc(limit)
-    }
-
-    fn rate(&self) -> f64 {
-        self.limiter().rate()
-    }
-
-    fn update_rate(&self) -> f64 {
-        self.limiter().update_rate()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::rate_limiter::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory};
-    use libdd_common::rate_limiter::Limiter;
     use std::ffi::CString;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::thread::sleep;
     use std::time::Duration;
+
+    const ONE_SECOND: Duration = Duration::from_secs(1);
 
     fn path() -> CString {
         CString::new("/ddlimiters-test".to_string()).unwrap()
@@ -538,7 +503,10 @@ mod tests {
                 "slot at {} escapes the {mapped}-byte mapping",
                 limiter.idx
             );
-            assert!(limiter.inc(2), "and it must be a working limiter");
+            assert!(
+                limiter.inc(2, ONE_SECOND),
+                "and it must be a working limiter"
+            );
         }
 
         // Far past the reservation: nothing to honour, and nothing allocated either.
@@ -569,17 +537,16 @@ mod tests {
         );
     }
 
-    /// The divisor and the reference count both live in peer-writable memory, so both can
-    /// hold values that make arithmetic on them panic in whichever process does the limiting.
+    /// Malformed process-local configuration and peer-writable reference counts must not panic.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn malformed_limiter_values_do_not_panic() {
         let path = CString::new("/ddlimiters-malformed".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
 
-        // Zero arrives straight from an RPC argument, and `inc` divides by it.
-        let limiter = limiters.alloc_with_granularity(0, |_| ()).unwrap();
-        let _ = limiter.inc(1);
+        // Zero arrives straight from an RPC argument and must be rejected before arithmetic.
+        let limiter = limiters.alloc().unwrap();
+        assert!(!limiter.inc(1, Duration::ZERO));
 
         // A count a peer pushed to the edge cannot be joined - but must not overflow saying so.
         limiter.with_limiter(|l| l.rc.store(i32::MAX, Ordering::Relaxed));
@@ -597,6 +564,19 @@ mod tests {
         // Put the count back where `Drop` can retire the slot, so the test leaves the arena
         // as it found it.
         limiter.with_limiter(|l| l.rc.store(1, Ordering::Relaxed));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn granularity_is_supplied_by_the_caller() {
+        let path = CString::new("/ddlimiters-granularity".to_string()).unwrap();
+        let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
+        let allocated = limiters.alloc().unwrap();
+        let acquired = limiters.get(allocated.index()).unwrap();
+
+        assert_eq!(allocated.index(), acquired.index());
+        assert!(allocated.inc(1, Duration::from_secs(60 * 60)));
+        assert!(!acquired.inc(1, Duration::from_secs(7 * 60 * 60)));
     }
 
     /// An index that never came from the allocator is refused rather than dereferenced - and
@@ -621,17 +601,7 @@ mod tests {
         let mut limiters = ShmLimiterMemory::<()>::create(path()).unwrap();
         let limiter = limiters.alloc().unwrap();
         let limiter_idx = limiter.idx;
-        // Two are allowed, then one more because a small amount of time passed since the first one
-        assert!(limiter.inc(2));
-        // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
-        sleep(Duration::from_micros(100));
-        assert!(limiter.inc(2));
-        sleep(Duration::from_micros(100));
-        assert!(limiter.inc(2));
-        sleep(Duration::from_micros(100));
-        assert!(!limiter.inc(2));
-        sleep(Duration::from_micros(100));
-        assert!(!limiter.inc(2));
+        assert!(limiter.inc(1, ONE_SECOND));
 
         // Now test the free list
         let limiter2 = limiters.alloc().unwrap();
@@ -643,6 +613,10 @@ mod tests {
 
         let limiter = limiters.alloc().unwrap();
         assert_eq!(limiter.idx, limiter_idx);
+        assert!(
+            limiter.inc(1, ONE_SECOND),
+            "reusing a slot must clear its deadline"
+        );
 
         let limiter3 = limiters.alloc().unwrap();
         assert_eq!(
@@ -662,12 +636,14 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn concurrent_allocation_across_arena_growth() {
         const THREADS: usize = 4;
-        const PER_THREAD: usize = 64;
 
         let path = CString::new("/ddlimiters-grow".to_string()).unwrap();
         let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
+        let initial_slots =
+            (0x1000 - align_of::<ShmLimiterData<()>>()) / size_of::<ShmLimiterData<()>>();
+        let per_thread = (2 * initial_slots).div_ceil(THREADS);
         assert!(
-            THREADS * PER_THREAD * size_of::<ShmLimiterData<()>>() > 0x1000,
+            THREADS * per_thread > initial_slots,
             "the test must outgrow the initial mapping to exercise growth at all"
         );
 
@@ -677,10 +653,13 @@ mod tests {
                 std::thread::spawn(move || {
                     // Held until every thread is done, so no slot is recycled and the indices
                     // below have to be distinct.
-                    (0..PER_THREAD)
+                    (0..per_thread)
                         .map(|_| {
                             let limiter = mine.alloc().expect("the arena has room");
-                            assert!(limiter.inc(1000), "a fresh limiter must admit a hit");
+                            assert!(
+                                limiter.inc(1000, ONE_SECOND),
+                                "a fresh limiter must admit a hit"
+                            );
                             limiter
                         })
                         .collect::<Vec<_>>()
@@ -695,7 +674,7 @@ mod tests {
 
         let mut indices: Vec<u32> = allocated.iter().map(|l| l.idx).collect();
         let total = indices.len();
-        assert_eq!(total, THREADS * PER_THREAD);
+        assert_eq!(total, THREADS * per_thread);
         indices.sort_unstable();
         indices.dedup();
         assert_eq!(
@@ -722,14 +701,17 @@ mod tests {
 
         // Exactly what the allocator gets, and it stays live across the call.
         let shared: &ShmLimiterData<()> = &slot;
-        shared.initialise_and_publish(7, |_| ());
+        shared.initialise_and_publish(|_| ());
 
         assert_eq!(
             shared.rc.load(Ordering::SeqCst),
             1,
             "the slot must come back published"
         );
-        assert!(shared.limiter.inc(1), "with a working limiter");
+        assert!(
+            shared.limiter.inc(1, Duration::from_secs(7)),
+            "with a working limiter"
+        );
     }
 
     /// A recycled slot must not be searchable until the allocation that took it has finished
@@ -759,7 +741,7 @@ mod tests {
         let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
 
         let first = limiters
-            .alloc_with_granularity(1, |hash| hash.store(OLD, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(OLD, Ordering::Relaxed))
             .unwrap();
         let idx = first.index();
         drop(first);
@@ -774,7 +756,7 @@ mod tests {
         // a client process does, minus the process boundary, and with nothing between them.
         let searcher = limiters.clone();
         let second = limiters
-            .alloc_with_granularity(1, |hash| {
+            .alloc_with(|hash| {
                 assert!(
                     searcher
                         .find(|h| h.load(Ordering::Relaxed) == OLD)
@@ -874,7 +856,10 @@ mod tests {
                 // The owner still holds the slot it allocated, not one reissued to somebody
                 // else in the meantime.
                 assert_eq!(owner.index(), idx);
-                assert!(owner.inc(2), "the owner's limiter must still be its own");
+                assert!(
+                    owner.inc(2, ONE_SECOND),
+                    "the owner's limiter must still be its own"
+                );
             }
         }
     }
@@ -898,7 +883,7 @@ mod tests {
 
         let mut first = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let stale = first
-            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(42, Ordering::Relaxed))
             .unwrap();
         let idx = stale.index();
         let client = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
@@ -938,7 +923,7 @@ mod tests {
             Some(42),
             "the old arena must be undisturbed"
         );
-        assert!(stale.inc(1), "and its limiter must still work");
+        assert!(stale.inc(1, ONE_SECOND), "and its limiter must still work");
 
         let reopened = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
         assert!(
@@ -975,14 +960,14 @@ mod tests {
         let path = CString::new(format!("/ddlim-swap-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let old_slot = old
-            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(11, Ordering::Relaxed))
             .unwrap();
         let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
         let pinned = reader.get(old_slot.index()).unwrap();
 
         let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
         let new_slot = new
-            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(22, Ordering::Relaxed))
             .unwrap();
         assert_eq!(old_slot.index(), new_slot.index());
         let current = reader.get(new_slot.index()).unwrap();
@@ -995,11 +980,11 @@ mod tests {
             Some(11)
         );
 
-        assert!(new_slot.inc(10));
-        let new_rate = new_slot.rate();
-        assert!(pinned.inc(1));
-        assert_eq!(new_slot.rate(), new_rate);
-        assert!(old_slot.rate() > 0.0);
+        assert!(new_slot.inc(10, ONE_SECOND));
+        let new_rate = new_slot.rate(ONE_SECOND);
+        assert!(pinned.inc(1, ONE_SECOND));
+        assert!(new_slot.rate(ONE_SECOND) <= new_rate);
+        assert!(old_slot.rate(ONE_SECOND) > 0.0);
         drop(pinned);
         assert_eq!(
             old_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
@@ -1022,7 +1007,7 @@ mod tests {
         let path = CString::new(format!("/ddlim-find-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let old_slot = old
-            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(11, Ordering::Relaxed))
             .unwrap();
         let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
         assert!(
@@ -1033,7 +1018,7 @@ mod tests {
 
         let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
         let new_slot = new
-            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(22, Ordering::Relaxed))
             .unwrap();
         assert!(
             reader
@@ -1072,7 +1057,7 @@ mod tests {
         let path = CString::new(format!("/ddlim-scan-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let old_slot = old
-            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(11, Ordering::Relaxed))
             .unwrap();
         let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
         let replacement = std::cell::RefCell::new(None);
@@ -1083,7 +1068,7 @@ mod tests {
                 if replacement.is_none() {
                     let mut new = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
                     let slot = new
-                        .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+                        .alloc_with(|hash| hash.store(22, Ordering::Relaxed))
                         .unwrap();
                     *replacement = Some((new, slot));
                 }
@@ -1119,12 +1104,12 @@ mod tests {
         let path = CString::new(format!("/ddlim-race-{}", std::process::id())).unwrap();
         let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let old_slot = old
-            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(11, Ordering::Relaxed))
             .unwrap();
         let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
         let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
         let new_slot = new
-            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(22, Ordering::Relaxed))
             .unwrap();
         let barrier = std::sync::Barrier::new(8);
 
@@ -1157,7 +1142,7 @@ mod tests {
         let path = CString::new("/ddlimiters-grown".to_string()).unwrap();
         let mut owner = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let near = owner
-            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(42, Ordering::Relaxed))
             .unwrap();
 
         // A second opener maps the arena while it is still one page long, and keeps that
@@ -1288,7 +1273,7 @@ mod tests {
         let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
 
         let limiter = limiters
-            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(42, Ordering::Relaxed))
             .unwrap();
 
         assert_eq!(
@@ -1304,7 +1289,7 @@ mod tests {
         let idx = limiter.index();
         drop(limiter);
         let reused = limiters
-            .alloc_with_granularity(1, |hash| hash.store(7, Ordering::Relaxed))
+            .alloc_with(|hash| hash.store(7, Ordering::Relaxed))
             .unwrap();
         assert_eq!(reused.index(), idx, "the free list hands the slot back");
 
