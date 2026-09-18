@@ -75,13 +75,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
     fn next_free(&mut self) -> u32 {
         let mut first_free = self.first_free_ref().load(Ordering::Relaxed);
         loop {
-            let mut target_next_free = ShmLimiter {
-                idx: first_free,
-                memory: self.clone(),
-            }
-            .limiter()
-            .next_free
-            .load(Ordering::Relaxed);
+            let mut target_next_free = self.limiter(first_free).next_free.load(Ordering::Relaxed);
             // Not yet used memory will always be 0. The next free entry will then be just above.
             if target_next_free == 0 {
                 target_next_free = first_free + std::mem::size_of::<ShmLimiterData<Inner>>() as u32;
@@ -150,23 +144,38 @@ impl<Inner> ShmLimiterMemory<Inner> {
             Self::START_OFFSET
         );
         self.ensure_index(idx)?;
-        let reference = ShmLimiter {
-            idx,
-            memory: self.clone(),
-        };
-        let limiter = reference.limiter();
+        let limiter = self.limiter(idx);
         let mut rc = limiter.rc.load(Ordering::Acquire);
         loop {
-            if rc == 0 {
+            if rc <= 0 {
                 return None;
             }
             match limiter
                 .rc
                 .compare_exchange(rc, rc + 1, Ordering::AcqRel, Ordering::Acquire)
             {
-                Ok(_) => return Some(reference),
+                Ok(_) => {
+                    return Some(ShmLimiter {
+                        idx,
+                        memory: self.clone(),
+                    });
+                }
                 Err(found) => rc = found,
             }
+        }
+    }
+
+    fn limiter(&self, idx: u32) -> &ShmLimiterData<'_, Inner> {
+        #[allow(clippy::unwrap_used)]
+        unsafe {
+            &*self
+                .mem
+                .read()
+                .unwrap()
+                .as_slice()
+                .as_ptr()
+                .add(idx as usize)
+                .cast()
         }
     }
 
@@ -210,18 +219,7 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 
 impl<Inner> ShmLimiter<Inner> {
     fn limiter(&self) -> &ShmLimiterData<'_, Inner> {
-        #[allow(clippy::unwrap_used)]
-        unsafe {
-            &*self
-                .memory
-                .mem
-                .read()
-                .unwrap()
-                .as_slice()
-                .as_ptr()
-                .offset(self.idx as isize)
-                .cast()
-        }
+        self.memory.limiter(self.idx)
     }
 
     pub fn data(&self) -> &Inner {
@@ -328,8 +326,55 @@ mod tests {
     use crate::rate_limiter::{ShmLimiterData, ShmLimiterMemory};
     use libdd_common::rate_limiter::Limiter;
     use std::ffi::CString;
+    use std::sync::atomic::Ordering;
     use std::thread::sleep;
     use std::time::Duration;
+
+    fn isolated_path(case: &str) -> CString {
+        CString::new(format!("/ddlr-{}-{case}", std::process::id())).unwrap()
+    }
+
+    #[test]
+    fn test_get_unused_preserves_zero_reference_count() {
+        let memory = ShmLimiterMemory::<()>::create(isolated_path("unused")).unwrap();
+        let idx = ShmLimiterMemory::<()>::START_OFFSET;
+        assert!(memory.get(idx).is_none());
+        assert_eq!(memory.limiter(idx).rc.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn test_get_unused_remains_unavailable() {
+        let memory = ShmLimiterMemory::<()>::create(isolated_path("repeat")).unwrap();
+        let idx = ShmLimiterMemory::<()>::START_OFFSET;
+        assert!(memory.get(idx).is_none());
+        assert!(memory.get(idx).is_none());
+    }
+
+    #[test]
+    fn test_get_rejects_negative_reference_count() {
+        let memory = ShmLimiterMemory::<()>::create(isolated_path("negative")).unwrap();
+        let idx = ShmLimiterMemory::<()>::START_OFFSET;
+        memory.limiter(idx).rc.store(-1, Ordering::Release);
+        assert!(memory.get(idx).is_none());
+        assert_eq!(memory.limiter(idx).rc.load(Ordering::Acquire), -1);
+    }
+
+    #[test]
+    fn test_next_free_preserves_zero_reference_count() {
+        let mut memory = ShmLimiterMemory::<()>::create(isolated_path("free")).unwrap();
+        let idx = memory.next_free();
+        assert_eq!(memory.limiter(idx).rc.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn test_get_released_entry_remains_unavailable() {
+        let mut memory = ShmLimiterMemory::<()>::create(isolated_path("release")).unwrap();
+        let limiter = memory.alloc();
+        let idx = limiter.index();
+        drop(limiter);
+        assert!(memory.get(idx).is_none());
+        assert!(memory.get(idx).is_none());
+    }
 
     fn path() -> CString {
         CString::new("/ddlimiters-test".to_string()).unwrap()
