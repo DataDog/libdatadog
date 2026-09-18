@@ -634,9 +634,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
         let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
             Ok(api2::Label {
                 key: label.key,
-                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                str: core::str::from_utf8(label.str.try_as_bytes()?)?.into(),
                 num: label.num,
-                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?.into(),
             })
         });
         profile
