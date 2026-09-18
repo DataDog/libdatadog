@@ -185,39 +185,40 @@ crate_target_kinds_at_rev() {
 #   <crate> dep      <name> <alias> <kind> <target> <req> <feats> <defaults>  per dependency
 #   <crate> feature  <name> default|optional                                  per feature
 #
+# Each column below earns its place by preventing one specific misread.
+#
+# <crate> leads every row so that rows from different members stay apart. The passes
+# below, which ask for one crate, cut it back off.
+#
+# <alias> is `.rename`, defaulting to the package name. A crate may alias two versions of
+# one package (`foo1`/`foo2`, both `package = "foo"`), which cargo metadata reports with
+# an identical name, kind and target. Keyed without the alias, the second matches the
+# first's baseline requirement and an unchanged pair reads as a raise.
+#
 # <feats> and <defaults> are the features the crate turns on in that dependency, and
 # whether it takes the dependency's defaults. They are here to be SELECTED on, not
-# scored: enabling a dependency feature can change this crate's own API — an item
-# reached through a glob re-export appears — but the manifest alone cannot say whether
-# it did, and the passes that read rustdoc can. Without them a root
-# [workspace.dependencies] entry that only gains a feature leaves every inheriting
-# member's rows identical, list_affected_crates names nobody, and with just the root
-# manifest touched the workflow skips the jobs that would have looked. Pass 2b keys the
-# floor comparison on the columns before these, so a feature move never reads as a
-# requirement change.
+# scored: enabling a dependency feature can change this crate's own API — an item reached
+# through a glob re-export appears — but only the passes that read rustdoc can say
+# whether it did. Without them a root [workspace.dependencies] entry that only gains a
+# feature leaves every inheriting member's rows identical, list_affected_crates names
+# nobody, and with just the root manifest touched the workflow skips the jobs that would
+# have looked. Pass 2b keys the floor comparison on the columns before these, so a feature
+# move never reads as a requirement change.
 #
 # `default` on a feature row means `default` REACHES the feature, not that it lists it:
 # the closure over the feature graph, which is what a consumer writing
-# `default-features = true` actually gets. Keyed on direct membership instead, moving
-# `default = ["foo"]` to `default = ["bundle"]` with `bundle = ["foo"]` changes nothing
-# a consumer can observe yet reads as `foo` losing its default, i.e. a major; and the
-# inverse, emptying a `bundle` that `default` still lists, is a real break that reads as
-# no change at all. cargo-semver-checks resolves the closure — its
-# `feature_not_enabled_by_default` passes the first and fails the second, verified
-# against 0.47/0.48 — so keying on direct membership would also put this pass at odds
-# with the lint backing it up.
-#
-# The crate leads every row so that rows from different members stay apart; the passes
-# below, which ask for one crate, cut it back off.
+# `default-features = true` actually gets. Direct membership would misread both
+# directions. Moving `default = ["foo"]` to `default = ["bundle"]` with `bundle = ["foo"]`
+# changes nothing a consumer can observe, yet reads as `foo` losing its default — a major.
+# Emptying a `bundle` that `default` still lists is a real break that reads as no change
+# at all. cargo-semver-checks resolves the closure too: its
+# `feature_not_enabled_by_default` passes the first and fails the second, verified against
+# 0.47/0.48, so keying on direct membership would also put this pass at odds with the lint
+# backing it up.
 #
 # Read via `cargo metadata` rather than the crate's own Cargo.toml, which would see
 # neither the version behind a `{ workspace = true }` inheritance marker nor the implicit
 # feature an `optional = true` dependency creates.
-#
-# <alias> is `.rename`, defaulting to the package name. It is in the row because a crate
-# may alias two versions of one package (`foo1`/`foo2` both `package = "foo"`), for which
-# cargo metadata reports an identical name, kind and target; keyed without it, the second
-# alias matches the first's baseline requirement and an unchanged pair reads as a raise.
 manifest_facts_at_rev() {
     local crate=$1 rev=$2
     local tree meta cargo_status label=${crate:-the workspace}
