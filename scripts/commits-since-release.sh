@@ -6,12 +6,21 @@
 # Commits Since Release Script
 # Takes JSON from publication-order.sh and finds commits since the last release tag for each crate
 #
+# A crate's commits are the ones touching a file of its own. Alongside them, `raised_floors`
+# reports the dependency requirement floors that rose since the tagged release -- including
+# a raise to a `[workspace.dependencies]` entry the crate inherits, which is in the root
+# manifest and so in no commit of the crate's own. A raised floor is not a release on its
+# own, but it is what semver-level.sh scores a minor, so it is the one thing a crate with
+# no commits still has to be able to report.
+#
 # Usage: ./commits-since-release.sh [OPTIONS] [JSON]
 #
 # Input: JSON from argument or stdin (output of publication-order.sh --format=json)
 # Output: JSON with commits grouped by crate
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 
 # Parse arguments
 FORMAT="json"
@@ -46,6 +55,11 @@ ${arg#--exclude=}"
             echo ""
             echo "Takes JSON from publication-order.sh and finds commits since the last release tag for each crate."
             echo ""
+            echo "A crate's commits are those touching a file of its own. \"raised_floors\" reports,"
+            echo "separately, the dependency requirement floors that rose since the tagged release,"
+            echo "an inherited [workspace.dependencies] entry included. Reading those needs"
+            echo "semver-level.sh alongside this script."
+            echo ""
             echo "Arguments:"
             echo "  JSON            JSON array of crates (if not provided, reads from stdin)"
             echo ""
@@ -70,7 +84,17 @@ ${arg#--exclude=}"
             echo '  [{"name":"crate-name","version":"1.0.0","path":"crate-name","tag":"crate-name-v1.0.0",'
             echo '    "tag_exists":true,"tag_ancestor":"true","tag_commit":"<sha>",'
             echo '    "tag_in_local_branch":true,"latest_tag":"crate-name-v1.0.0",'
-            echo '    "range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo '    "range":"<start-sha>..<head-sha>","commits":[...],"raised_floors":[...]}]'
+            echo ""
+            echo '  "raised_floors" holds {"dependency","kind","previous_req","current_req"} for'
+            echo '  each requirement whose lowest admitted version rose between the tagged'
+            echo '  release and HEAD. Measured from the tagged commit, not from "range" start,'
+            echo '  which steps back to a merge base when the tag is not an ancestor of HEAD;'
+            echo '  the released version states the tagged requirements. Read as one comparison'
+            echo '  of those two ends: a raise reverted before HEAD nets out to'
+            echo '  nothing. A widened, lowered or unparseable requirement, a dependency added or'
+            echo '  removed and a feature change are not raised floors and are absent. Empty for'
+            echo '  a crate with no previous release tag.'
             echo ""
             echo '  "tag_in_local_branch" is false when no local branch contains the tagged commit,'
             echo '  which is normal for squash-merged releases. Always false when there is no tag.'
@@ -108,8 +132,17 @@ if ! echo "$INPUT_JSON" | jq empty 2>/dev/null; then
     exit 1
 fi
 
-# Get cargo metadata once and cache it
-METADATA=$(cargo metadata --format-version=1 --no-deps 2>/dev/null)
+# Get cargo metadata once and cache it.
+#
+# Checked rather than left to `set -e`, which ends the script on a failing command
+# substitution with cargo's exit code and nothing on stdout -- so a manifest cargo cannot
+# parse used to leave the caller an empty result and status 101 to explain it. cargo's own
+# stderr is no longer discarded either: it names the file and the line, and it travels to
+# the job log rather than into this script's stdout, which is the JSON result.
+if ! METADATA=$(cargo metadata --format-version=1 --no-deps); then
+    echo "ERROR: could not read cargo metadata for this workspace (cargo's reason is above)" >&2
+    exit 1
+fi
 
 # Get workspace root (for determining crate paths)
 WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root' || pwd)
@@ -122,6 +155,35 @@ log_verbose() {
     if [ "$VERBOSE" = true ]; then
         echo "$@" >&2
     fi
+}
+
+# The floors raised between a baseline and HEAD, for the whole workspace at once,
+# computed on first use of a baseline and kept for the crates that share it. Two worktree
+# extractions per baseline, so the cost follows the number of distinct release points in
+# the input rather than the number of crates.
+RAISES_CACHE=$(mktemp -d)
+trap 'rm -rf "$RAISES_CACHE"' EXIT
+
+# Echo the floors that rose between revision $1 and HEAD, tab-separated as
+# <crate> <dep> <kind> <old req> <new req>.
+#
+# One comparison of the two revisions, deliberately, rather than a walk of the commits
+# between them: a raise reverted before the release, or a bound lowered and raised back,
+# nets out to nothing -- which is what the crate's own next release will conclude too.
+# Only raises, so what is reported is exactly what earns the minor.
+raised_floors_since() {
+    local baseline=$1
+    local cache="$RAISES_CACHE/$baseline"
+
+    if [ ! -f "$cache" ]; then
+        if ! "${SCRIPT_DIR}/semver-level.sh" --list-raised-floors "$baseline" "$HEAD_COMMIT" > "$cache"; then
+            # Removed so a later crate retries rather than reading a half-written list.
+            rm -f "$cache"
+            echo "ERROR: could not read the floors raised since $baseline" >&2
+            return 1
+        fi
+    fi
+    cat "$cache"
 }
 
 # Check if a commit subject should be excluded
@@ -188,6 +250,7 @@ while read -r crate; do
     RANGE=""
     RANGE_START=""
     COMMITS_JSON="[]"
+    RAISED_FLOORS_JSON="[]"
 
     if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
         TAG_EXISTS=true
@@ -241,7 +304,7 @@ while read -r crate; do
         # Use ASCII unit separator (0x1F) as delimiter - won't appear in commit messages
         COMMITS_JSON="["
         COMMIT_FIRST=true
-        
+
         while IFS=$'\x1F' read -r hash subject author date; do
             if [ -n "$hash" ]; then
                 # Check if commit should be excluded
@@ -249,7 +312,7 @@ while read -r crate; do
                     log_verbose "    Excluding: $subject"
                     continue
                 fi
-                
+
                 if [ "$COMMIT_FIRST" = true ]; then
                     COMMIT_FIRST=false
                 else
@@ -263,7 +326,7 @@ while read -r crate; do
                 COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
             fi
         done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH" 2>/dev/null || true)
-        
+
         COMMITS_JSON+="]"
 
         COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
@@ -295,6 +358,45 @@ while read -r crate; do
         if [ -n "$RANGE_START" ]; then
             RANGE="${RANGE_START}..${HEAD_COMMIT}"
             log_verbose "  Range: $RANGE"
+
+            # The dependency requirement floors this crate's consumers see rise over that
+            # same range, which the commit list cannot show: the raise may be an inherited
+            # [workspace.dependencies] entry, edited in the root manifest and so in no
+            # commit touching a file of this crate's own. Reported beside the commits and
+            # never among them, deliberately -- a raised floor is not a release on its own,
+            # since the crate's code is unchanged and the requirement its published version
+            # states is still true of that code -- but a candidate deferred for having no
+            # commits has to be able to say a floor rose, or the proposal reads as "nothing
+            # happened" where semver-level.sh scores a minor.
+            #
+            # Read from TAG_COMMIT, the published tree itself, rather than from
+            # RANGE_START. The two are the same commit while the tag is an ancestor of
+            # HEAD; when it is not, RANGE_START steps back to the merge base, or to the
+            # oldest commit's parent, both of which predate the release. What the
+            # released version states as its requirements is what the tagged manifest
+            # says, and release-version-bumps.sh scores the level against
+            # `refs/tags/$TAG` for that same reason. Measured from earlier, a floor the
+            # published version already carries reads as a new raise -- for this repo's
+            # own release flow, that is every crate whose sibling was version-bumped on a
+            # squash-merged release branch, since the bump raises the requirement on that
+            # sibling and the tag then sits off HEAD's history. RANGE_START stays the
+            # commit range's start, where stepping back is the right answer: those
+            # commits genuinely are not in HEAD's history.
+            #
+            # One comparison of the two ends, not a walk between them: a raise reverted
+            # before HEAD nets out to nothing here exactly as it will for the crate's
+            # next release. TAG_COMMIT is non-empty wherever RANGE_START is -- every path
+            # that sets RANGE_START derives it from the dereferenced tag.
+            if ! RAISES=$(raised_floors_since "$TAG_COMMIT"); then
+                exit 1
+            fi
+            RAISED_FLOORS_JSON=$(awk -F'\t' -v crate="$NAME" \
+                    '$1 == crate { printf "%s\t%s\t%s\t%s\n", $2, $3, $4, $5 }' <<< "$RAISES" \
+                | jq -R -s 'split("\n")
+                    | map(select(length > 0)
+                          | split("\t")
+                          | {dependency: .[0], kind: .[1], previous_req: .[2], current_req: .[3]})')
+            log_verbose "  Floors raised: $(jq -c 'map("\(.dependency) (\(.kind)): \(.previous_req) -> \(.current_req)")' <<< "$RAISED_FLOORS_JSON")"
         fi
     else
         log_verbose "  Tag does NOT exist - no previous release found"
@@ -307,7 +409,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON,\"raised_floors\":$RAISED_FLOORS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 
