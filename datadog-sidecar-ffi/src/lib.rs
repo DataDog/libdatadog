@@ -2340,17 +2340,16 @@ mod tests {
         // second under the coms framing, the TracesBytes form must keep both.
         let mut builder = ddog_v1_new_builder();
         let c0 = builder.push_chunk(0, 1);
-        let s0 = builder.push_span(c0);
-        {
-            let sp = builder.span_mut(c0, s0).unwrap();
+        // Safety: `c0`/`c1` are live chunk nodes, `s0`/`s1` their spans (Box-per-node handles).
+        unsafe {
+            let sp = (*(*c0).push_span()).span_mut();
             sp.service = BytesString::from_slice(b"svc-shared").unwrap();
             sp.name = BytesString::from_slice(b"op-one").unwrap();
             sp.span_id = 1;
         }
         let c1 = builder.push_chunk(0, 2);
-        let s1 = builder.push_span(c1);
-        {
-            let sp = builder.span_mut(c1, s1).unwrap();
+        unsafe {
+            let sp = (*(*c1).push_span()).span_mut();
             sp.service = BytesString::from_slice(b"svc-shared").unwrap();
             sp.name = BytesString::from_slice(b"op-two").unwrap();
             sp.span_id = 2;

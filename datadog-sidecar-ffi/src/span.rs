@@ -1,13 +1,17 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Index-based FFI builder for the native V1 trace payload
+//! Box-per-node FFI builder for the native V1 trace payload
 //! ([`libdd_trace_utils::span::v1::TracerPayload`]), storing readable [`BytesString`]s directly.
 //!
-//! Index-based (not pointer-based) so every mutation routes through a single
-//! `&mut TracerPayloadV1Builder`, never handing a `&mut` into the payload to C (which would alias
-//! under Stacked Borrows). Payload-level metadata is applied at send time (see
-//! [`populate_payload_metadata`]).
+//! Each chunk/span/link/event is its OWN heap allocation (`Box::into_raw`), stored as a raw pointer
+//! in its parent node. C is handed that node pointer directly and per-node mutators materialize
+//! `&mut *ptr` against the node's own allocation — so a held node pointer stays valid across sibling
+//! pushes (no parent-`Vec` reallocation can move an existing node) and no mutation reborrows
+//! `&mut builder` (which would pop the tag of an outstanding node pointer). This is Stacked- and
+//! Tree-Borrows clean. The boxes are folded back into the inline payload model by
+//! [`TracerPayloadV1Builder::into_payload`], or freed by its [`Drop`]. Payload-level metadata is
+//! applied at send time (see [`populate_payload_metadata`]).
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_tinybytes::BytesString;
@@ -29,107 +33,244 @@ pub const DDOG_V1_ATTR_BYTES: u32 = 4;
 pub const DDOG_V1_ATTR_KEYVALUE: u32 = 5;
 pub const DDOG_V1_ATTR_LIST: u32 = 6;
 
-/// Builds a native V1 [`TracerPayloadBytes`] holding readable strings.
-#[derive(Default)]
-pub struct TracerPayloadV1Builder {
-    /// The native V1 payload being assembled. Only chunks/spans are populated here; payload-level
-    /// metadata is applied at send time.
-    payload: TracerPayloadBytes,
+/// A chunk node in the builder: its own heap allocation, so a `*mut ChunkNode` handed to C stays
+/// valid across sibling chunk pushes. Holds the chunk's scalar fields/attributes inline; its spans
+/// live as separate `Box` allocations (raw pointers here), folded into `chunk.spans` by
+/// [`TracerPayloadV1Builder::into_payload`].
+pub struct ChunkNode {
+    chunk: TraceChunkBytes,
+    spans: Vec<*mut SpanNode>,
 }
 
-impl TracerPayloadV1Builder {
-    // Index-addressed accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`) fills
-    // the model through one `&mut TracerPayloadV1Builder` per call, never escaping a `&mut` to C.
-    pub fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
-        self.payload.chunks.get(chunk)
+impl ChunkNode {
+    pub fn chunk_mut(&mut self) -> &mut TraceChunkBytes {
+        &mut self.chunk
     }
 
-    pub fn chunk_mut(&mut self, chunk: usize) -> Option<&mut TraceChunkBytes> {
-        self.payload.chunks.get_mut(chunk)
+    pub fn span_count(&self) -> usize {
+        self.spans.len()
+    }
+
+    /// Appends an empty span, returning a pointer to its own (heap) node.
+    pub fn push_span(&mut self) -> *mut SpanNode {
+        let node = Box::into_raw(Box::new(SpanNode {
+            span: SpanBytes::default(),
+            links: Vec::new(),
+            events: Vec::new(),
+        }));
+        self.spans.push(node);
+        node
+    }
+}
+
+/// A span node in the builder: its own heap allocation, so a held `*mut SpanNode` stays valid across
+/// sibling span pushes into the same chunk (the inferred-span case). Links/events are likewise
+/// separate `Box` allocations.
+pub struct SpanNode {
+    span: SpanBytes,
+    links: Vec<*mut SpanLinkBytes>,
+    events: Vec<*mut SpanEventBytes>,
+}
+
+impl SpanNode {
+    pub fn span(&self) -> &SpanBytes {
+        &self.span
+    }
+
+    pub fn span_mut(&mut self) -> &mut SpanBytes {
+        &mut self.span
+    }
+
+    pub fn link_count(&self) -> usize {
+        self.links.len()
+    }
+
+    pub fn event_count(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Appends an empty link, returning a pointer to its own (heap) allocation.
+    pub fn push_link(&mut self) -> *mut SpanLinkBytes {
+        let link = Box::into_raw(Box::new(SpanLinkBytes::default()));
+        self.links.push(link);
+        link
+    }
+
+    /// Appends an empty event, returning a pointer to its own (heap) allocation.
+    pub fn push_event(&mut self) -> *mut SpanEventBytes {
+        let event = Box::into_raw(Box::new(SpanEventBytes::default()));
+        self.events.push(event);
+        event
+    }
+}
+
+/// Frees a chunk node and everything below it.
+///
+/// # Safety
+/// `ptr` must be a live `Box::into_raw(ChunkNode)` allocation not freed elsewhere.
+unsafe fn free_chunk_node(ptr: *mut ChunkNode) {
+    let node = Box::from_raw(ptr);
+    for &span in &node.spans {
+        free_span_node(span);
+    }
+}
+
+/// Frees a span node and its links/events.
+///
+/// # Safety
+/// `ptr` must be a live `Box::into_raw(SpanNode)` allocation not freed elsewhere.
+unsafe fn free_span_node(ptr: *mut SpanNode) {
+    let node = Box::from_raw(ptr);
+    for &link in &node.links {
+        drop(Box::from_raw(link));
+    }
+    for &event in &node.events {
+        drop(Box::from_raw(event));
+    }
+}
+
+/// Builds a native V1 [`TracerPayloadBytes`] holding readable strings. Each node is its own heap
+/// allocation (see the module docs); the builder owns the top-level chunk pointers.
+#[derive(Default)]
+pub struct TracerPayloadV1Builder {
+    chunks: Vec<*mut ChunkNode>,
+}
+
+// SAFETY: the builder owns its node boxes and is only ever driven from a single PHP request thread,
+// then consumed synchronously by the send path; the raw pointers carry no cross-thread state.
+unsafe impl Send for TracerPayloadV1Builder {}
+
+impl TracerPayloadV1Builder {
+    // Index-addressed read accessors, `pub` so the PHP-side FFI adapter (`components-rs/bytes.rs`)
+    // and the introspection getters can read the model back through a shared `&` borrow.
+    fn chunk_node(&self, chunk: usize) -> Option<&ChunkNode> {
+        // Safety: pointers in `chunks` are live `Box::into_raw` allocations owned by the builder.
+        self.chunks.get(chunk).map(|&p| unsafe { &*p })
+    }
+
+    fn span_node(&self, chunk: usize, span: usize) -> Option<&SpanNode> {
+        // Safety: as `chunk_node`.
+        self.chunk_node(chunk)?
+            .spans
+            .get(span)
+            .map(|&p| unsafe { &*p })
+    }
+
+    pub fn chunk(&self, chunk: usize) -> Option<&TraceChunkBytes> {
+        self.chunk_node(chunk).map(|n| &n.chunk)
     }
 
     pub fn span(&self, chunk: usize, span: usize) -> Option<&SpanBytes> {
-        self.payload.chunks.get(chunk)?.spans.get(span)
-    }
-
-    pub fn span_mut(&mut self, chunk: usize, span: usize) -> Option<&mut SpanBytes> {
-        self.payload.chunks.get_mut(chunk)?.spans.get_mut(span)
+        self.span_node(chunk, span).map(|n| &n.span)
     }
 
     pub fn link(&self, chunk: usize, span: usize, link: usize) -> Option<&SpanLinkBytes> {
-        self.span(chunk, span)?.span_links.get(link)
-    }
-
-    pub fn link_mut(
-        &mut self,
-        chunk: usize,
-        span: usize,
-        link: usize,
-    ) -> Option<&mut SpanLinkBytes> {
-        self.span_mut(chunk, span)?.span_links.get_mut(link)
+        // Safety: as `chunk_node`.
+        self.span_node(chunk, span)?
+            .links
+            .get(link)
+            .map(|&p| unsafe { &*p })
     }
 
     pub fn event(&self, chunk: usize, span: usize, event: usize) -> Option<&SpanEventBytes> {
-        self.span(chunk, span)?.span_events.get(event)
+        // Safety: as `chunk_node`.
+        self.span_node(chunk, span)?
+            .events
+            .get(event)
+            .map(|&p| unsafe { &*p })
     }
 
-    pub fn event_mut(
-        &mut self,
-        chunk: usize,
-        span: usize,
-        event: usize,
-    ) -> Option<&mut SpanEventBytes> {
-        self.span_mut(chunk, span)?.span_events.get_mut(event)
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.len()
     }
 
-    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning its
-    /// index.
-    pub fn push_chunk(&mut self, trace_id_high: u64, trace_id_low: u64) -> usize {
-        self.payload.chunks.push(TraceChunkBytes {
-            trace_id: trace_id_bytes(trace_id_high, trace_id_low),
-            ..Default::default()
-        });
-        self.payload.chunks.len() - 1
+    pub fn span_count(&self, chunk: usize) -> usize {
+        self.chunk_node(chunk).map_or(0, |c| c.spans.len())
     }
 
-    /// Appends an empty span to `chunk`, returning its index (0 if the chunk is out of range).
-    pub fn push_span(&mut self, chunk: usize) -> usize {
-        match self.chunk_mut(chunk) {
-            Some(c) => {
-                c.spans.push(SpanBytes::default());
-                c.spans.len() - 1
-            }
-            None => 0,
-        }
+    pub fn link_count(&self, chunk: usize, span: usize) -> usize {
+        self.span_node(chunk, span).map_or(0, |s| s.links.len())
     }
 
-    /// Appends an empty link to a span, returning its index (0 if the span is out of range).
-    pub fn push_link(&mut self, chunk: usize, span: usize) -> usize {
-        match self.span_mut(chunk, span) {
-            Some(s) => {
-                s.span_links.push(SpanLinkBytes::default());
-                s.span_links.len() - 1
-            }
-            None => 0,
-        }
+    pub fn event_count(&self, chunk: usize, span: usize) -> usize {
+        self.span_node(chunk, span).map_or(0, |s| s.events.len())
     }
 
-    /// Appends an empty event to a span, returning its index (0 if the span is out of range).
-    pub fn push_event(&mut self, chunk: usize, span: usize) -> usize {
-        match self.span_mut(chunk, span) {
-            Some(s) => {
-                s.span_events.push(SpanEventBytes::default());
-                s.span_events.len() - 1
-            }
-            None => 0,
-        }
+    // Index → node-pointer resolvers, used by the integration tests to reach a node the way C does
+    // (they hold node pointers, not indices). Returning a copy of a stored pointer, never a deref.
+    pub fn chunk_ptr(&self, chunk: usize) -> Option<*mut ChunkNode> {
+        self.chunks.get(chunk).copied()
     }
 
-    /// Consumes the builder, returning the assembled payload. Dedups attribute maps here — the one
-    /// finalize point before encoding — so the encoder can assume the invariant already holds.
+    pub fn span_ptr(&self, chunk: usize, span: usize) -> Option<*mut SpanNode> {
+        self.chunk_node(chunk)?.spans.get(span).copied()
+    }
+
+    pub fn link_ptr(&self, chunk: usize, span: usize, link: usize) -> Option<*mut SpanLinkBytes> {
+        self.span_node(chunk, span)?.links.get(link).copied()
+    }
+
+    pub fn event_ptr(&self, chunk: usize, span: usize, event: usize) -> Option<*mut SpanEventBytes> {
+        self.span_node(chunk, span)?.events.get(event).copied()
+    }
+
+    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning a pointer
+    /// to its own (heap) node.
+    pub fn push_chunk(&mut self, trace_id_high: u64, trace_id_low: u64) -> *mut ChunkNode {
+        let node = Box::into_raw(Box::new(ChunkNode {
+            chunk: TraceChunkBytes {
+                trace_id: trace_id_bytes(trace_id_high, trace_id_low),
+                ..Default::default()
+            },
+            spans: Vec::new(),
+        }));
+        self.chunks.push(node);
+        node
+    }
+
+    /// Consumes the builder, folding the node boxes back into the inline payload model. Dedups
+    /// attribute maps here — the one finalize point before encoding — so the encoder can assume the
+    /// invariant already holds.
     pub fn into_payload(mut self) -> TracerPayloadBytes {
-        self.payload.dedup();
-        self.payload
+        // Move the chunk pointers out so `Drop` (which runs at the end of this fn over the now-empty
+        // `chunks`) never double-frees the nodes reclaimed below.
+        let chunks = std::mem::take(&mut self.chunks);
+        let mut payload = TracerPayloadBytes::default();
+        for cptr in chunks {
+            // Safety: `cptr` is a live `Box::into_raw` allocation, moved out of `self` and reclaimed
+            // exactly once here.
+            let ChunkNode { mut chunk, spans } = *unsafe { Box::from_raw(cptr) };
+            for sptr in spans {
+                // Safety: as above.
+                let SpanNode {
+                    mut span,
+                    links,
+                    events,
+                } = *unsafe { Box::from_raw(sptr) };
+                span.span_links = links
+                    .into_iter()
+                    .map(|l| *unsafe { Box::from_raw(l) })
+                    .collect();
+                span.span_events = events
+                    .into_iter()
+                    .map(|e| *unsafe { Box::from_raw(e) })
+                    .collect();
+                chunk.spans.push(span);
+            }
+            payload.chunks.push(chunk);
+        }
+        payload.dedup();
+        payload
+    }
+}
+
+impl Drop for TracerPayloadV1Builder {
+    fn drop(&mut self) {
+        for &cptr in &self.chunks {
+            // Safety: every pointer in `chunks` is a live `Box::into_raw` allocation; `into_payload`
+            // empties `chunks` before drop, so a node is never freed twice.
+            unsafe { free_chunk_node(cptr) };
+        }
     }
 }
 
@@ -257,13 +398,13 @@ pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadV1Builder>) {}
 /// Number of chunks in the builder.
 #[no_mangle]
 pub extern "C" fn ddog_v1_get_chunk_count(builder: &TracerPayloadV1Builder) -> usize {
-    builder.payload.chunks.len()
+    builder.chunk_count()
 }
 
 /// Number of spans in `chunk`.
 #[no_mangle]
 pub extern "C" fn ddog_v1_get_span_count(builder: &TracerPayloadV1Builder, chunk: usize) -> usize {
-    builder.chunk(chunk).map_or(0, |c| c.spans.len())
+    builder.span_count(chunk)
 }
 
 /// Number of links on a span.
@@ -273,7 +414,7 @@ pub extern "C" fn ddog_v1_get_link_count(
     chunk: usize,
     span: usize,
 ) -> usize {
-    builder.span(chunk, span).map_or(0, |s| s.span_links.len())
+    builder.link_count(chunk, span)
 }
 
 /// Number of events on a span.
@@ -283,7 +424,7 @@ pub extern "C" fn ddog_v1_get_event_count(
     chunk: usize,
     span: usize,
 ) -> usize {
-    builder.span(chunk, span).map_or(0, |s| s.span_events.len())
+    builder.event_count(chunk, span)
 }
 
 // ---- Chunk getters ----
@@ -978,8 +1119,15 @@ fn render_attr_value(value: &AttributeValueBytes) -> String {
     }
 }
 
-/// Renders a V1 span (plus its chunk's trace id) as a readable diagnostic string.
-fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> String {
+/// Renders a V1 span (plus its chunk's trace id) as a readable diagnostic string. Link/event counts
+/// are passed explicitly because, mid-build, they live on the [`SpanNode`], not the span's own
+/// (still-empty) inline vectors.
+fn render_span_debug(
+    span: &SpanBytes,
+    chunk: Option<&TraceChunkBytes>,
+    links: usize,
+    events: usize,
+) -> String {
     let mut out = String::new();
     if let Some(c) = chunk {
         let _ = write!(out, "trace_id={} ", hex16(&c.trace_id));
@@ -1011,25 +1159,33 @@ fn render_span_debug(span: &SpanBytes, chunk: Option<&TraceChunkBytes>) -> Strin
         out,
         " attributes={{{}}} links={} events={}",
         attrs.join(", "),
-        span.span_links.len(),
-        span.span_events.len(),
+        links,
+        events,
     );
     out
 }
 
-/// Renders the span at `chunk`/`span` for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line
-/// (out-of-range index yields an empty slice). The returned owned slice must be freed with
+/// Renders a span for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line. Takes the owning
+/// chunk/span node pointers (the outer frame's still-live handles), so it works mid-build before the
+/// nodes are folded into the inline payload. The returned owned slice must be freed with
 /// [`ddog_free_charslice`].
+///
+/// # Safety
+/// `chunk`/`span` must be live node pointers previously returned by `ddog_new_chunk`/`ddog_new_span`
+/// (with `span` a span of `chunk`).
 #[no_mangle]
-pub extern "C" fn ddog_v1_span_debug_log(
-    builder: &TracerPayloadV1Builder,
-    chunk: usize,
-    span: usize,
+pub unsafe extern "C" fn ddog_v1_span_debug_log(
+    chunk: *mut ChunkNode,
+    span: *mut SpanNode,
 ) -> CharSlice<'static> {
-    let debug_str = match builder.span(chunk, span) {
-        Some(s) => render_span_debug(s, builder.chunk(chunk)),
-        None => String::new(),
-    };
+    let chunk_node = &*chunk;
+    let span_node = &*span;
+    let debug_str = render_span_debug(
+        span_node.span(),
+        Some(&chunk_node.chunk),
+        span_node.link_count(),
+        span_node.event_count(),
+    );
     // An empty (or NUL-containing, hence unrepresentable) render owns no allocation: return a
     // borrowed empty slice so a zero length always means "nothing to free" in
     // `ddog_free_charslice`.

@@ -68,8 +68,14 @@ fn clone_attr(value: &AttributeValueBytes) -> AttributeValueBytes {
     }
 }
 
+// These wrappers keep their old index-based signatures (the tests use the same handle as a builder
+// write target and as an index for the `ddog_v1_get_*` getters), resolving each index to its node
+// pointer via the builder's `*_ptr` accessors — exactly how C reaches a node under the Box-per-node
+// model. `new_*` return the freshly-pushed node's index.
+
 fn ddog_v1_builder_new_chunk(b: &mut TracerPayloadV1Builder, high: u64, low: u64) -> usize {
-    b.push_chunk(high, low)
+    b.push_chunk(high, low);
+    b.chunk_count() - 1
 }
 
 fn ddog_v1_set_chunk_sampling_priority(
@@ -77,14 +83,14 @@ fn ddog_v1_set_chunk_sampling_priority(
     chunk: usize,
     priority: i32,
 ) {
-    if let Some(c) = b.chunk_mut(chunk) {
-        c.priority = Some(priority);
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { (*c).chunk_mut().priority = Some(priority) };
     }
 }
 
 fn ddog_v1_set_chunk_origin(b: &mut TracerPayloadV1Builder, chunk: usize, origin: CharSlice) {
-    if let Some(c) = b.chunk_mut(chunk) {
-        set_string_field(&mut c.origin, origin);
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { set_string_field(&mut (*c).chunk_mut().origin, origin) };
     }
 }
 
@@ -93,14 +99,14 @@ fn ddog_v1_set_chunk_sampling_mechanism(
     chunk: usize,
     mechanism: u32,
 ) {
-    if let Some(c) = b.chunk_mut(chunk) {
-        c.sampling_mechanism = Some(mechanism);
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { (*c).chunk_mut().sampling_mechanism = Some(mechanism) };
     }
 }
 
 fn ddog_v1_set_chunk_dropped_trace(b: &mut TracerPayloadV1Builder, chunk: usize, dropped: bool) {
-    if let Some(c) = b.chunk_mut(chunk) {
-        c.dropped_trace = dropped;
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { (*c).chunk_mut().dropped_trace = dropped };
     }
 }
 
@@ -111,13 +117,16 @@ fn ddog_v1_add_chunk_attr_str(
     value: CharSlice,
 ) {
     let value = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(c) = b.chunk_mut(chunk) {
-        insert_attr(&mut c.attributes, key, value);
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { insert_attr(&mut (*c).chunk_mut().attributes, key, value) };
     }
 }
 
 fn ddog_v1_chunk_new_span(b: &mut TracerPayloadV1Builder, chunk: usize) -> usize {
-    b.push_span(chunk)
+    if let Some(c) = b.chunk_ptr(chunk) {
+        unsafe { (*c).push_span() };
+    }
+    b.span_count(chunk) - 1
 }
 
 fn set_span_string(
@@ -127,8 +136,8 @@ fn set_span_string(
     value: CharSlice,
     pick: impl FnOnce(&mut SpanBytes) -> &mut BytesString,
 ) {
-    if let Some(s) = b.span_mut(chunk, span) {
-        set_string_field(pick(s), value);
+    if let Some(s) = b.span_ptr(chunk, span) {
+        unsafe { set_string_field(pick((*s).span_mut()), value) };
     }
 }
 
@@ -155,33 +164,33 @@ fn ddog_v1_set_span_component(b: &mut TracerPayloadV1Builder, c: usize, s: usize
 }
 
 fn ddog_v1_set_span_id(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: u64) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.span_id = v;
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().span_id = v };
     }
 }
 fn ddog_v1_set_span_parent_id(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: u64) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.parent_id = v;
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().parent_id = v };
     }
 }
 fn ddog_v1_set_span_start(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: i64) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.start = v;
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().start = v };
     }
 }
 fn ddog_v1_set_span_duration(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: i64) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.duration = v;
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().duration = v };
     }
 }
 fn ddog_v1_set_span_error(b: &mut TracerPayloadV1Builder, c: usize, s: usize, v: bool) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.error = v;
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().error = v };
     }
 }
 fn ddog_v1_set_span_kind(b: &mut TracerPayloadV1Builder, c: usize, s: usize, kind: u32) {
-    if let Some(sp) = b.span_mut(c, s) {
-        sp.span_kind = SpanKind::from(kind);
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).span_mut().span_kind = SpanKind::from(kind) };
     }
 }
 
@@ -192,8 +201,8 @@ fn add_span_attr(
     key: CharSlice,
     value: AttributeValueBytes,
 ) {
-    if let Some(sp) = b.span_mut(c, s) {
-        insert_attr(&mut sp.attributes, key, value);
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { insert_attr(&mut (*sp).span_mut().attributes, key, value) };
     }
 }
 fn ddog_v1_add_span_attr_str(
@@ -262,12 +271,13 @@ fn ddog_v1_del_span_attr(
     key: CharSlice,
 ) -> bool {
     let key = to_bytes_string(key);
-    match b.span_mut(c, s) {
-        Some(sp) => {
-            let existed = sp.attributes.contains_key(&key);
-            sp.attributes.remove_slow(&key);
+    match b.span_ptr(c, s) {
+        Some(sp) => unsafe {
+            let attrs = &mut (*sp).span_mut().attributes;
+            let existed = attrs.contains_key(&key);
+            attrs.remove_slow(&key);
             existed
-        }
+        },
         None => false,
     }
 }
@@ -281,24 +291,32 @@ fn ddog_v1_transfer_span_attr(
     delete_source: bool,
 ) -> bool {
     let key = to_bytes_string(key);
-    let value = match b.span(c, from_span).and_then(|sp| sp.attributes.get(&key)) {
-        Some(v) => clone_attr(v),
+    let from = match b.span_ptr(c, from_span) {
+        Some(p) => p,
         None => return false,
     };
-    match b.span_mut(c, to_span) {
-        Some(dst) => dst.attributes.insert(key.clone(), value),
+    let to = match b.span_ptr(c, to_span) {
+        Some(p) => p,
         None => return false,
-    }
-    if delete_source {
-        if let Some(src) = b.span_mut(c, from_span) {
-            src.attributes.remove_slow(&key);
+    };
+    unsafe {
+        let value = match (*from).span().attributes.get(&key) {
+            Some(v) => clone_attr(v),
+            None => return false,
+        };
+        (*to).span_mut().attributes.insert(key.clone(), value);
+        if delete_source {
+            (*from).span_mut().attributes.remove_slow(&key);
         }
     }
     true
 }
 
 fn ddog_v1_span_new_link(b: &mut TracerPayloadV1Builder, c: usize, s: usize) -> usize {
-    b.push_link(c, s)
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).push_link() };
+    }
+    b.link_count(c, s) - 1
 }
 fn ddog_v1_set_link_trace_id(
     b: &mut TracerPayloadV1Builder,
@@ -308,8 +326,8 @@ fn ddog_v1_set_link_trace_id(
     high: u64,
     low: u64,
 ) {
-    if let Some(l) = b.link_mut(c, s, link) {
-        l.trace_id = trace_id_bytes(high, low);
+    if let Some(l) = b.link_ptr(c, s, link) {
+        unsafe { (*l).trace_id = trace_id_bytes(high, low) };
     }
 }
 fn ddog_v1_set_link_span_id(
@@ -319,13 +337,13 @@ fn ddog_v1_set_link_span_id(
     link: usize,
     v: u64,
 ) {
-    if let Some(l) = b.link_mut(c, s, link) {
-        l.span_id = v;
+    if let Some(l) = b.link_ptr(c, s, link) {
+        unsafe { (*l).span_id = v };
     }
 }
 fn ddog_v1_set_link_flags(b: &mut TracerPayloadV1Builder, c: usize, s: usize, link: usize, v: u32) {
-    if let Some(l) = b.link_mut(c, s, link) {
-        l.flags = v;
+    if let Some(l) = b.link_ptr(c, s, link) {
+        unsafe { (*l).flags = v };
     }
 }
 fn ddog_v1_set_link_tracestate(
@@ -335,8 +353,8 @@ fn ddog_v1_set_link_tracestate(
     link: usize,
     v: CharSlice,
 ) {
-    if let Some(l) = b.link_mut(c, s, link) {
-        set_string_field(&mut l.tracestate, v);
+    if let Some(l) = b.link_ptr(c, s, link) {
+        unsafe { set_string_field(&mut (*l).tracestate, v) };
     }
 }
 fn ddog_v1_add_link_attr_str(
@@ -348,13 +366,16 @@ fn ddog_v1_add_link_attr_str(
     value: CharSlice,
 ) {
     let attr = AttributeValueBytes::String(to_bytes_string(value));
-    if let Some(l) = b.link_mut(c, s, link) {
-        insert_attr(&mut l.attributes, key, attr);
+    if let Some(l) = b.link_ptr(c, s, link) {
+        unsafe { insert_attr(&mut (*l).attributes, key, attr) };
     }
 }
 
 fn ddog_v1_span_new_event(b: &mut TracerPayloadV1Builder, c: usize, s: usize) -> usize {
-    b.push_event(c, s)
+    if let Some(sp) = b.span_ptr(c, s) {
+        unsafe { (*sp).push_event() };
+    }
+    b.event_count(c, s) - 1
 }
 fn ddog_v1_set_event_time(
     b: &mut TracerPayloadV1Builder,
@@ -363,8 +384,8 @@ fn ddog_v1_set_event_time(
     event: usize,
     time_unix_nano: u64,
 ) {
-    if let Some(e) = b.event_mut(c, s, event) {
-        e.time_unix_nano = time_unix_nano;
+    if let Some(e) = b.event_ptr(c, s, event) {
+        unsafe { (*e).time_unix_nano = time_unix_nano };
     }
 }
 fn ddog_v1_set_event_name(
@@ -374,8 +395,8 @@ fn ddog_v1_set_event_name(
     event: usize,
     v: CharSlice,
 ) {
-    if let Some(e) = b.event_mut(c, s, event) {
-        set_string_field(&mut e.name, v);
+    if let Some(e) = b.event_ptr(c, s, event) {
+        unsafe { set_string_field(&mut (*e).name, v) };
     }
 }
 fn ddog_v1_add_event_attr_int(
@@ -386,8 +407,8 @@ fn ddog_v1_add_event_attr_int(
     key: CharSlice,
     value: i64,
 ) {
-    if let Some(e) = b.event_mut(c, s, event) {
-        insert_attr(&mut e.attributes, key, AttributeValueBytes::Int(value));
+    if let Some(e) = b.event_ptr(c, s, event) {
+        unsafe { insert_attr(&mut (*e).attributes, key, AttributeValueBytes::Int(value)) };
     }
 }
 
@@ -848,7 +869,9 @@ fn span_debug_log_renders_readable_string() {
     let _ = ddog_v1_span_new_link(&mut b, ci, si);
     let _ = ddog_v1_span_new_event(&mut b, ci, si);
 
-    let slice = ddog_v1_span_debug_log(&b, ci, si);
+    let slice = unsafe {
+        ddog_v1_span_debug_log(b.chunk_ptr(ci).unwrap(), b.span_ptr(ci, si).unwrap())
+    };
     let rendered = slice.to_utf8_lossy().to_string();
     assert!(!rendered.is_empty());
     assert!(
@@ -873,9 +896,4 @@ fn span_debug_log_renders_readable_string() {
     assert!(rendered.contains("events=1"));
     // Frees correctly via the same free function as the v0.4 variant.
     unsafe { ddog_free_charslice(slice) };
-
-    // Out-of-range index yields an empty (safely freeable) slice.
-    let empty = ddog_v1_span_debug_log(&b, 99, 0);
-    assert!(empty.to_utf8_lossy().is_empty());
-    unsafe { ddog_free_charslice(empty) };
 }
