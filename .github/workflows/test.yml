@@ -186,6 +186,13 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run with regex-lite"
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -q "libdd-trace-obfuscation"; then
+            cargo nextest run -p libdd-trace-obfuscation --no-default-features \
+              --features libdd-common/regex-lite --profile ci --verbose
+          fi
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"
         shell: bash
         run: |
