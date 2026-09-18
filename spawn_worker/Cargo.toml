@@ -36,12 +36,12 @@ memfd.workspace = true
 nix = { workspace = true, features = ["dir", "process"] }
 tempfile.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+getrandom = "0.3"
+linux-raw-sys = { version = "0.11", features = ["general"] }
+
 [target.'cfg(windows)'.dev-dependencies]
 tempfile.workspace = true
 
-[target.'cfg(not(windows))'.dev-dependencies]
-rlimit.workspace = true
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
-

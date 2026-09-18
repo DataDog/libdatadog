@@ -216,14 +216,12 @@ fn daemonize_with_entrypoint(
     daemon_entrypoint: Entrypoint,
 ) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
-    let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
+    let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new(daemon_entrypoint) };
 
     #[cfg(target_os = "linux")]
     if cfg.spawn_without_trampoline && read_pt_interp_self().is_some() {
         spawn_cfg.spawn_method(spawn_worker::SpawnMethod::Direct);
     }
-
-    spawn_cfg.target(daemon_entrypoint);
 
     match cfg.log_method {
         config::LogMethod::File(ref path) => {

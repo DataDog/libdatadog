@@ -4962,15 +4962,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rlimit"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8a29d87a652dc4d43c586328706bb5cdff211f3f39a530f240b53f7221dab8e"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "rmp"
 version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5571,12 +5562,13 @@ dependencies = [
  "anyhow",
  "cc_utils",
  "fastrand",
+ "getrandom 0.3.2",
  "io-lifetimes",
  "kernel32-sys",
  "libc",
+ "linux-raw-sys 0.11.0",
  "memfd",
  "nix 0.29.0",
- "rlimit",
  "tempfile",
  "winapi 0.2.8",
  "windows 0.51.1",
