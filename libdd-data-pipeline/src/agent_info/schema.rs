@@ -90,7 +90,7 @@ pub struct Config {
 // Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
 // agent exposes is slightly different
 pub struct AgentObfuscationConfig {
-    // Old format from the agent, now present under sql->obfuscation_mode directly
+    /// Old format from the agent, now present under `sql.obfuscation_mode` directly
     pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
     pub remove_stack_traces: bool,
     pub sql: Option<obfuscation_config::SqlConfig>,
