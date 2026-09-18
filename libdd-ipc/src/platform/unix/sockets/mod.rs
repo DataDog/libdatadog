@@ -32,9 +32,9 @@ pub use macos::is_listening;
 
 use crate::platform::message::MAX_FDS;
 #[cfg(not(target_os = "macos"))]
-use linux::get_peer_credentials;
+pub use linux::get_peer_credentials;
 #[cfg(target_os = "macos")]
-use macos::get_peer_credentials;
+pub use macos::get_peer_credentials;
 
 /// Global socket buffer size. Determines `max_message_size()` and is applied to new connections.
 static SOCKET_BUFFER_SIZE: AtomicUsize = AtomicUsize::new(4 * 1024 * 1024);
@@ -56,12 +56,7 @@ pub fn max_message_size() -> usize {
 /// transferred out-of-band via `SCM_RIGHTS`; non-zero on Windows (see `sockets.rs`).
 pub const HANDLE_SUFFIX_SIZE: usize = 0;
 
-/// Credentials of the connected peer, obtained once at connection time.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PeerCredentials {
-    pub pid: u32,
-    pub uid: u32,
-}
+pub use crate::platform::peer_credentials::PeerCredentials;
 
 pub(super) fn create_unix_socket(sock_type: SockType) -> io::Result<OwnedFd> {
     let fd = nix::sys::socket::socket(AddressFamily::Unix, sock_type, SockFlag::empty(), None)
