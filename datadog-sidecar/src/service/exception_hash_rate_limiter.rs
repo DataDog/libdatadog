@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::{MutexExt, rate_limiter::Limiter};
+use libdd_common::MutexExt;
 use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
 use std::ffi::CString;
 use std::io;
@@ -54,7 +54,7 @@ impl ManagedExceptionHashRateLimiter {
                     };
                     let mut this = limiter.lock_or_panic();
                     this.active.retain_mut(|limiter| {
-                        limiter.shm.update_rate() > 0. || !unsafe { limiter.shm.drop_if_rc_1() }
+                        limiter.shm.is_active() || !unsafe { limiter.shm.drop_if_rc_1() }
                     });
                 }
             }
@@ -73,6 +73,9 @@ impl ManagedExceptionHashRateLimiter {
     }
 
     pub fn add(&mut self, hash: u64, granularity: Duration) {
+        if granularity.is_zero() {
+            return;
+        }
         match self.limiter.add(hash, granularity) {
             Some(limiter) => self.active.push(limiter),
             None => tracing::warn!(
@@ -93,11 +96,12 @@ struct EntryData {
 
 pub struct HashLimiter {
     shm: ShmLimiter<EntryData>,
+    granularity: Duration,
 }
 
 impl HashLimiter {
     pub fn inc(&self) -> bool {
-        self.shm.inc(1)
+        self.shm.inc_with_duration(1, self.granularity)
     }
 }
 
@@ -128,18 +132,21 @@ impl ExceptionHashRateLimiter {
     fn add(&mut self, hash: u64, granularity: Duration) -> Option<HashLimiter> {
         let allocated = self
             .mem
-            .alloc_with_granularity(granularity.as_secs() as u32, |data| {
-                data.hash.store(hash, Ordering::Relaxed)
-            })?;
-        allocated.inc(1);
-        Some(HashLimiter { shm: allocated })
+            .alloc_with(|data| data.hash.store(hash, Ordering::Relaxed))?;
+        let limiter = HashLimiter {
+            shm: allocated,
+            granularity,
+        };
+        limiter.inc();
+        Some(limiter)
     }
 
-    pub fn find(&self, hash: u64) -> Option<HashLimiter> {
+    pub fn find(&self, hash: u64, granularity: Duration) -> Option<HashLimiter> {
         Some(HashLimiter {
             shm: self
                 .mem
                 .find(|data| data.hash.load(Ordering::Relaxed) == hash)?,
+            granularity,
         })
     }
 }
@@ -170,7 +177,7 @@ mod tests {
         let mut old = ExceptionHashRateLimiter::create().unwrap();
         let old_slot = old.add(123, Duration::from_secs(60)).unwrap();
         let reader = ExceptionHashRateLimiter::new_reader();
-        assert!(reader.find(123).is_some());
+        assert!(reader.find(123, Duration::from_secs(60)).is_some());
         let old_probe_arena =
             ShmLimiterMemory::<()>::create(crate::tracer::shm_limiter_path()).unwrap();
 
@@ -183,8 +190,12 @@ mod tests {
 
         assert!(old_probe_arena.is_retired());
         assert!(old.mem.is_retired());
-        assert!(reader.find(123).is_none());
-        assert!(ExceptionHashRateLimiter::new_reader().find(123).is_none());
+        assert!(reader.find(123, Duration::from_secs(60)).is_none());
+        assert!(
+            ExceptionHashRateLimiter::new_reader()
+                .find(123, Duration::from_secs(60))
+                .is_none()
+        );
         assert_eq!(
             old_slot
                 .shm
@@ -195,6 +206,6 @@ mod tests {
         let mut current = EXCEPTION_HASH_LIMITER.as_ref().unwrap().lock().unwrap();
         assert!(current.active.is_empty());
         current.add(456, Duration::from_secs(60));
-        assert!(reader.find(456).is_some());
+        assert!(reader.find(456, Duration::from_secs(60)).is_some());
     }
 }
