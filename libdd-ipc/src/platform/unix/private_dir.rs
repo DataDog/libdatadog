@@ -67,6 +67,23 @@ pub fn ensure(path: &Path, mode: u32) -> io::Result<()> {
             return Err(e);
         }
     }
+    // Enforced after verification, never before: chmod is only safe on a directory just
+    // confirmed to be ours. `DirBuilder::mode` alone does not settle it, because mkdir masks
+    // the mode with the umask - under one that strips owner bits (`umask 0700` turns 0700 into
+    // 0000) we would create a directory we cannot then use. `verify` would accept it, since it
+    // refuses *exposure*, not uselessness, and the failure would surface later as an
+    // unexplained EACCES from the socket bind or the lock file.
+    //
+    // A too-*permissive* mode is not repaired this way - `verify` rejects group/other write
+    // outright, so those go through the discard-and-recreate path below instead. Anything that
+    // was world-writable may already have had something planted in it.
+    fn enforce_mode(path: &Path, mode: u32) -> io::Result<()> {
+        if fs::symlink_metadata(path)?.permissions().mode() & 0o7777 == mode {
+            return Ok(());
+        }
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+    }
+
     verify(path).or_else(|first_failure| {
         // One repair attempt, then the answer is final: if the second verify still refuses, the
         // directory is not ours to fix.
@@ -102,7 +119,9 @@ pub fn ensure(path: &Path, mode: u32) -> io::Result<()> {
                 format!("{e} even after being recreated; refusing to use it"),
             )
         })
-    })
+    })?;
+
+    enforce_mode(path, mode)
 }
 
 /// Check that `path` is a directory owned by this euid that no other user can write to.
@@ -246,6 +265,31 @@ mod tests {
         fs::write(&path, b"leftover").expect("write");
         ensure(&path, 0o700).expect("a stale file of ours must be replaced");
         assert!(fs::metadata(&path).expect("stat").is_dir());
+    }
+
+    /// A directory we own but cannot use is repaired by chmod, not by deletion: `mkdir` masks
+    /// its mode with the umask, so one that strips owner bits leaves exactly this state, and
+    /// nothing in the ownership check notices - it refuses exposure, not uselessness.
+    #[test]
+    fn repairs_an_owned_directory_with_an_unusable_mode() {
+        let base = tmp();
+        let dir = base.path().join("unusable");
+        fs::create_dir(&dir).expect("create");
+        let canary = dir.join("keep-me");
+        fs::write(&canary, b"x").expect("write");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).expect("chmod");
+
+        ensure(&dir, 0o700).expect("a directory we own must be made usable, not refused");
+
+        assert_eq!(
+            fs::metadata(&dir).expect("stat").permissions().mode() & 0o777,
+            0o700,
+            "the mode must be enforced, not merely requested at mkdir time"
+        );
+        assert!(
+            canary.exists(),
+            "a mode-only problem must be chmod-ed, not resolved by discarding the contents"
+        );
     }
 
     #[test]
