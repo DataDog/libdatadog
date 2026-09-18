@@ -158,39 +158,24 @@ impl Profile {
             // this Profile. Null/default ids represent unknown values.
             unsafe { dictionary_location_from_cxx(location) }
         });
-        // Lossy-convert label byte slices to UTF-8 upfront. from_utf8_lossy
-        // returns Cow::Borrowed (zero-copy) when valid, Cow::Owned (one
-        // allocation with U+FFFD replacements) only when invalid. The Vecs
-        // keep any owned Strings alive for the labels_iter borrow below.
-        let label_strs: Vec<_> = sample
-            .labels
-            .iter()
-            .map(|l| String::from_utf8_lossy(l.str_bytes))
-            .collect();
-        let label_units: Vec<_> = sample
-            .labels
-            .iter()
-            .map(|l| String::from_utf8_lossy(l.num_unit))
-            .collect();
-
+        // from_utf8_lossy returns Cow::Borrowed (zero-copy, zero-alloc) when
+        // valid UTF-8, Cow::Owned only when invalid. The Cow travels inside
+        // the Label, so no external staging Vec is needed.
         let labels_iter = sample
             .labels
             .iter()
-            .zip(label_strs.iter().zip(label_units.iter()))
-            .map(
-                |(label, (str_val, unit_val))| -> anyhow::Result<api2::Label<'_>> {
-                    Ok(api2::Label {
-                        // SAFETY: The CXX API contract requires all non-null dictionary
-                        // ids in sample to come from the same ProfileDictionary
-                        // used to create this Profile. Null/default keys represent
-                        // the empty string.
-                        key: unsafe { dictionary_string_id_from_cxx(&label.key) },
-                        str: str_val,
-                        num: label.num,
-                        num_unit: unit_val,
-                    })
-                },
-            );
+            .map(|label| -> anyhow::Result<api2::Label<'_>> {
+                Ok(api2::Label {
+                    // SAFETY: The CXX API contract requires all non-null dictionary
+                    // ids in sample to come from the same ProfileDictionary
+                    // used to create this Profile. Null/default keys represent
+                    // the empty string.
+                    key: unsafe { dictionary_string_id_from_cxx(&label.key) },
+                    str: String::from_utf8_lossy(label.str_bytes),
+                    num: label.num,
+                    num_unit: String::from_utf8_lossy(label.num_unit),
+                })
+            });
 
         // SAFETY: The CXX API contract requires all non-null dictionary ids in sample
         // to come from the same ProfileDictionary used to create this Profile.

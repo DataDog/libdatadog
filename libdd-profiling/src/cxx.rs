@@ -102,6 +102,8 @@ pub mod ffi {
         Custom3,
         Custom4,
         Custom5,
+        GcTime,
+        GcSamples,
     }
 
     struct Period {
@@ -258,7 +260,6 @@ pub mod ffi {
     /// empty message; failure carries the operation and a human-readable error
     /// string. Prefer ok() or check_and_*() methods over inspecting fields
     /// directly.
-    ///
     #[derive(Debug)]
     enum Operation {
         CreateProfile,

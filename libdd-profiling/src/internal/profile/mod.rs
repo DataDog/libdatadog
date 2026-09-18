@@ -124,7 +124,7 @@ impl Profile {
         local_root_span_id: u64,
         endpoint: Cow<str>,
     ) -> anyhow::Result<()> {
-        let interned_endpoint = self.try_intern(endpoint.as_ref())?;
+        let interned_endpoint = self.try_intern(endpoint)?;
 
         let mappings = &mut self.endpoints.mappings;
         mappings.try_reserve(1)?;
@@ -1018,8 +1018,8 @@ impl Profile {
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
     #[inline]
-    fn try_intern(&mut self, item: &str) -> Result<StringId, string_table::Error> {
-        self.strings.try_intern(item)
+    fn try_intern(&mut self, item: impl AsRef<str>) -> Result<StringId, string_table::Error> {
+        self.strings.try_intern(item.as_ref())
     }
 
     /// Creates a profile from the period, sample types, and start time using

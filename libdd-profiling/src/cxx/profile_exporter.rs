@@ -22,7 +22,7 @@ fn tags_from_cxx(tags: Vec<ffi::Tag>) -> anyhow::Result<Vec<libdd_common::tag::T
         .map(|tag| {
             let key = String::from_utf8_lossy(tag.key);
             let value = String::from_utf8_lossy(tag.value);
-            libdd_common::tag::Tag::new(key.as_ref(), value.as_ref())
+            libdd_common::tag::Tag::new(key, value)
         })
         .collect()
 }

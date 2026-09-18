@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::datatypes::{FunctionId2, MappingId2, StringId2};
+use std::borrow::Cow;
 
 /// A location keyed by `MappingId2`/`FunctionId2` handles.
 ///
@@ -22,12 +23,12 @@ pub struct Location2 {
     pub line: i64,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Label<'a> {
     pub key: StringId2,
 
     /// At most one of `.str` and `.num` should not be empty.
-    pub str: &'a str,
+    pub str: Cow<'a, str>,
     pub num: i64,
 
     /// Should only be present when num is present.
@@ -37,25 +38,25 @@ pub struct Label<'a> {
     /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
-    pub num_unit: &'a str,
+    pub num_unit: Cow<'a, str>,
 }
 
 impl<'a> Label<'a> {
     pub const fn str(key: StringId2, str: &'a str) -> Label<'a> {
         Label {
             key,
-            str,
+            str: Cow::Borrowed(str),
             num: 0,
-            num_unit: "",
+            num_unit: Cow::Borrowed(""),
         }
     }
 
     pub const fn num(key: StringId2, num: i64, num_unit: &'a str) -> Label<'a> {
         Label {
             key,
-            str: "",
+            str: Cow::Borrowed(""),
             num,
-            num_unit,
+            num_unit: Cow::Borrowed(num_unit),
         }
     }
 }
