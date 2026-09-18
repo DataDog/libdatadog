@@ -62,6 +62,7 @@ libdd-sampling/                      @DataDog/apm-common-components-core
 libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
+libdd-trace-inferrer                 @DataDog/apm-serverless
 libdd-trace-normalization            @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-obfuscation              @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
