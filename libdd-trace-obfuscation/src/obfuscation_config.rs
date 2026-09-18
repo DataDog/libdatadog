@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 use crate::{
@@ -48,23 +48,21 @@ impl Default for CreditCardConfig {
     }
 }
 
-pub type JsonStringTransformer = fn(&str) -> String;
-
-#[derive(Debug, Clone, Deserialize)]
+/// Plain data: what a [`JsonObfuscator`] keeps and what it hands to a caller's transform. The
+/// transform itself is not configuration and is passed per call; see
+/// [`JsonObfuscator::obfuscate_with`].
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
     /// not be obfuscated.
     pub keep_keys: HashSet<String>,
-    /// `transform_keys` will specify a set of keys for which their values will be transformed
-    /// through `transformer`
-    #[serde(skip)]
+    /// `transform_keys` will specify a set of keys whose string values are passed to the
+    /// transform callback given to [`JsonObfuscator::obfuscate_with`] or
+    /// [`JsonObfuscator::obfuscate_into`]. Entry points that take no callback obfuscate these
+    /// values like any other.
     pub transform_keys: HashSet<String>,
-    /// `transformer` is an optional String -> String function which will transform values
-    /// specified in `transform_keys`
-    #[serde(skip)]
-    pub transformer: Option<JsonStringTransformer>,
 }
 
 /// Mirrors the Datadog Agent defaults for the elasticsearch,
@@ -83,7 +81,6 @@ impl JsonObfuscatorConfig {
             enabled: false,
             keep_keys: HashSet::new(),
             transform_keys: HashSet::new(),
-            transformer: None,
         }
     }
 
@@ -93,7 +90,6 @@ impl JsonObfuscatorConfig {
             enabled: true,
             keep_keys: HashSet::new(),
             transform_keys: HashSet::new(),
-            transformer: None,
         }
     }
 }

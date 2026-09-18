@@ -67,7 +67,9 @@ pub fn obfuscate_resource_for_stats(
                 obfuscation_mode: sql_obfuscation_mode,
                 ..Default::default()
             };
-            Some(crate::sql::obfuscate_sql(resource, config, dbms))
+            // A resource that obfuscates to nothing is left alone rather than replaced by an
+            // empty string, the same policy the non-empty check above applies to the input.
+            crate::sql::obfuscate_sql(resource, config, dbms).ok()
         }
         "redis" | "valkey" => Some(quantize_redis_string(resource)),
         _ => None,
@@ -141,9 +143,14 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 .map(String::as_str)
                 .and_then(|dbms| TryInto::try_into(dbms).ok())
                 .unwrap_or_default();
-            let obfuscated_query = crate::sql::obfuscate_sql(&span.resource, &config.sql, dbms);
-            span.resource.clone_from(&obfuscated_query);
-            span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
+            // A resource that obfuscates to nothing is left as sent rather than blanked; see
+            // `obfuscate_sql`.
+            if let Ok(obfuscated_query) =
+                crate::sql::obfuscate_sql(&span.resource, &config.sql, dbms)
+            {
+                span.resource.clone_from(&obfuscated_query);
+                span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
+            }
         }
         "elasticsearch" if config.elasticsearch.config().enabled => {
             if let Some(elastic_query) = span.meta.get_mut(TAG_ELASTIC_BODY) {
