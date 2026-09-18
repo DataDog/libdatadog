@@ -61,6 +61,18 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
+### If `scripts/` or the release-proposal workflows were touched
+
+`scripts/*.sh` and `.github/workflows/release-proposal-dispatch.yml` have a bats suite
+(`scripts/tests/`), because a real release is otherwise the only way to exercise them:
+
+```bash
+./scripts/tests/run.sh                                   # needs bats-core >= 1.5.0
+shellcheck -e SC2086 --severity=warning scripts/*.sh     # CI enforces this
+```
+
+See `scripts/tests/README.md` for what is covered and what is not.
+
 ### Code exploration
 
 When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts
