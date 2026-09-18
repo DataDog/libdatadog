@@ -64,13 +64,16 @@ fn drop_listener_thread_privileges(uid: u32, gid: u32) {
             return;
         }
 
-        // Groups before the uid: dropping the uid first would remove the privilege needed for this.
-        // SAFETY: setresgid/setresuid take three scalars; the raw syscall is per-thread by design.
+        // Groups before the uid: both need the privilege we are about to give up.
+        // SAFETY: setgroups takes a count and a pointer - null is valid for a count of zero;
+        // setresgid/setresuid take three scalars. The raw syscalls are per-thread by design.
+        let groups_rc =
+            unsafe { libc::syscall(libc::SYS_setgroups, 0, std::ptr::null::<libc::gid_t>()) };
         let gid_rc = unsafe { libc::syscall(libc::SYS_setresgid, gid, gid, gid) };
         let uid_rc = unsafe { libc::syscall(libc::SYS_setresuid, uid, uid, uid) };
-        if gid_rc != 0 || uid_rc != 0 {
+        if groups_rc != 0 || gid_rc != 0 || uid_rc != 0 {
             error!(
-                "Failed dropping sidecar thread {tid} to uid {uid}/gid {gid} (setresgid={gid_rc}, setresuid={uid_rc}); continuing as uid {euid}"
+                "Failed dropping sidecar thread {tid} to uid {uid}/gid {gid} (setgroups={groups_rc}, setresgid={gid_rc}, setresuid={uid_rc}); continuing as uid {euid}"
             );
             return;
         }
@@ -249,11 +252,18 @@ impl MasterListener {
         }
     }
 
-    /// Whether this process has a running master listener.
+    /// Whether *this* process has a running master listener.
+    ///
+    /// A forked child inherits the state without the thread behind it, so the pid that started
+    /// the listener is what makes this true - not the mere presence of inherited memory. That
+    /// keeps the question answerable here instead of leaving every caller to pair it with a
+    /// pid comparison of its own.
     pub fn is_active() -> bool {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         if let Ok(listener_guard) = listener_mutex.lock() {
-            listener_guard.is_some()
+            listener_guard
+                .as_ref()
+                .is_some_and(|master| master.owner_pid == std::process::id())
         } else {
             false
         }

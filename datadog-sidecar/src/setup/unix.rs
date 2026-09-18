@@ -90,12 +90,20 @@ impl SocketAccess {
                 let dir = socket_path.parent().unwrap_or_else(|| Path::new("/"));
                 private_dir::verify_owned_by(dir, primary_sidecar_identifier())
             }
-            // `None` means the pid is gone: the listener is dead, so there is nothing left to
-            // impersonate and the connect fails on its own.
+            // A dead listener is not a safe listener: the socket file outlives the process
+            // that bound it, so with no uid to check against there is nothing telling its
+            // owner apart from anyone else who may have taken the name since.
             SocketAccess::ListenerOwned { listener_pid } => {
                 match libdd_ipc::platform::process::effective_uid_of(listener_pid) {
                     Some(expected) => verify_socket_owner(socket_path, expected),
-                    None => Ok(()),
+                    None => Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        format!(
+                            "refusing the sidecar socket {}: listener pid {listener_pid} is \
+                             gone, so its owner cannot be established",
+                            socket_path.display()
+                        ),
+                    )),
                 }
             }
         }
@@ -327,8 +335,8 @@ mod linux {
         fn uid(self) -> Option<u32> {
             match self {
                 ExpectedServer::OwnUid => Some(crate::primary_sidecar_identifier()),
-                // `None` means the pid is gone: the listener is dead, so there is nothing left
-                // to impersonate and the connection will fail on its own.
+                // `None` means the pid is gone - which is not the same as nothing being
+                // there, since the socket name outlives the process. The caller refuses.
                 ExpectedServer::ListenerPid(pid) => platform::process::effective_uid_of(pid),
             }
         }
@@ -404,7 +412,14 @@ mod linux {
         path: &std::path::Path,
     ) -> io::Result<()> {
         let Some(expected) = expected else {
-            return Ok(());
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing the sidecar at @{}: the listener process is gone, so there is \
+                     nothing to check the server against. Another user may hold the name now.",
+                    path.display()
+                ),
+            ));
         };
         let cred = conn.peer_credentials()?;
         if server_uid_is_acceptable(cred.uid, expected) {
@@ -523,6 +538,26 @@ mod tests {
     use super::Liaison;
 
     /// A socket we created ourselves is exactly what the listener-owned check must accept.
+    /// The socket file outlives the process that bound it, so a listener pid that no longer
+    /// resolves leaves nothing to check the owner against - and the answer to "cannot verify"
+    /// is refuse, not proceed.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn connect_is_refused_when_the_listener_pid_is_gone() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("stale.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        // No process can hold this pid: it is above every pid_max in use.
+        let access = super::SocketAccess::ListenerOwned {
+            listener_pid: u32::MAX,
+        };
+        let err = access
+            .verify_before_connect(&path)
+            .expect_err("an unidentifiable listener must be refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
     #[test]
     #[cfg_attr(miri, ignore)]
     fn socket_owner_check_accepts_our_own_socket() {
