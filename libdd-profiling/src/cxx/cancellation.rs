@@ -28,10 +28,10 @@ impl CancellationToken {
         })
     }
 
-    /// Cancels the token.
+    /// Signals cancellation to all operations using this token or its clones.
     ///
-    /// Note that cancellation is a terminal state; calling cancel multiple times
-    /// has no additional effect.
+    /// Cancellation is a terminal state; calling cancel multiple times
+    /// has no additional effect and is safe.
     pub fn cancel(&self) {
         self.inner.cancel();
     }
