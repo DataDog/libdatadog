@@ -158,6 +158,10 @@ impl Profile {
             // this Profile. Null/default ids represent unknown values.
             unsafe { dictionary_location_from_cxx(location) }
         });
+        // TODO(https://github.com/DataDog/libdatadog/issues/2550): Replace
+        // String::from_utf8_lossy with a fallible try_from_utf8_lossy to avoid
+        // aborting on allocation failure. See libdd-profiling-ffi/src/profiles/utf8.rs.
+        //
         // from_utf8_lossy returns Cow::Borrowed (zero-copy, zero-alloc) when
         // valid UTF-8, Cow::Owned only when invalid. The Cow travels inside
         // the Label, so no external staging Vec is needed.

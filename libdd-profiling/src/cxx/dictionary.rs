@@ -84,8 +84,9 @@ impl ProfileDictionary {
     }
 
     pub fn intern_string_lossy(&self, value: &[u8], out: &mut ffi::DictionaryStringId) -> bool {
-        // Returns Cow::Borrowed (zero-copy) when valid UTF-8, Cow::Owned (one
-        // allocation with U+FFFD replacements) only when invalid.
+        // TODO(https://github.com/DataDog/libdatadog/issues/2550): Replace
+        // String::from_utf8_lossy with a fallible try_from_utf8_lossy to avoid
+        // aborting on allocation failure. See libdd-profiling-ffi/src/profiles/utf8.rs.
         let s = String::from_utf8_lossy(value);
         self.write_output(
             Operation::InternDictionaryString,
