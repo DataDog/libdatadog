@@ -15,6 +15,7 @@ authors.workspace = true
 anyhow.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+thiserror.workspace = true
 percent-encoding = { workspace = true, features = ["std"] }
 log.workspace = true
 fluent-uri.workspace = true
