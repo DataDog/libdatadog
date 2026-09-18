@@ -23,10 +23,9 @@ libdd-remote-config = { path = "../libdd-remote-config" }
 libdd-live-debugger = { path = "../libdd-live-debugger" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
-paste = "1"
 libc.workspace = true
 tracing.workspace = true
-rmp-serde = "1.1.1"
+rmp-serde.workspace = true
 serde_json.workspace = true
 
 
@@ -39,7 +38,6 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["coll
 [dev-dependencies]
 http = { workspace = true, features = ["std"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-tempfile.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
