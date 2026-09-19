@@ -241,8 +241,7 @@ pub fn shutdown_runtime(
 
 /// Shuts down a session.
 pub fn shutdown_session(transport: &mut SidecarTransport) -> io::Result<()> {
-    lock_sender(transport)?.shutdown_session();
-    Ok(())
+    lock_sender(transport)?.shutdown_session()
 }
 
 /// Enqueues a list of actions to be performed.

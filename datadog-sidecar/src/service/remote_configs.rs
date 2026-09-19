@@ -9,6 +9,8 @@ use libdd_remote_config::fetch::{
 };
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
+#[cfg(windows)]
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zwohash::HashMap;
@@ -48,17 +50,71 @@ impl<'de> serde::Deserialize<'de> for RemoteConfigNotifyFunction {
     }
 }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
-#[cfg_attr(windows, derive(Debug))]
+#[cfg_attr(not(windows), derive(Clone, Hash, Eq, PartialEq))]
 pub struct RemoteConfigNotifyTarget {
     #[cfg(unix)]
     pub pid: libc::pid_t,
     #[cfg(windows)]
-    pub process_handle: crate::service::sidecar_server::ProcessHandle,
+    process_handle: crate::service::sidecar_server::ProcessHandle,
     #[cfg(windows)]
     // contains address in that process address space of the notification function
-    pub notify_function: RemoteConfigNotifyFunction,
+    notify_function: RemoteConfigNotifyFunction,
+    #[cfg(windows)]
+    active: Arc<Mutex<bool>>,
 }
+
+#[cfg(windows)]
+impl RemoteConfigNotifyTarget {
+    pub fn new(
+        process_handle: crate::service::sidecar_server::ProcessHandle,
+        notify_function: RemoteConfigNotifyFunction,
+    ) -> Self {
+        Self {
+            process_handle,
+            notify_function,
+            active: Arc::new(Mutex::new(true)),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Clone for RemoteConfigNotifyTarget {
+    fn clone(&self) -> Self {
+        Self {
+            process_handle: self.process_handle,
+            notify_function: self.notify_function,
+            active: self.active.clone(),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Debug for RemoteConfigNotifyTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteConfigNotifyTarget")
+            .field("process_handle", &self.process_handle)
+            .field("notify_function", &self.notify_function)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(windows)]
+impl Hash for RemoteConfigNotifyTarget {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.process_handle.hash(state);
+        self.notify_function.hash(state);
+    }
+}
+
+#[cfg(windows)]
+impl PartialEq for RemoteConfigNotifyTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.process_handle == other.process_handle && self.notify_function == other.notify_function
+    }
+}
+
+#[cfg(windows)]
+impl Eq for RemoteConfigNotifyTarget {}
 
 #[cfg(unix)]
 impl Debug for RemoteConfigNotifyTarget {
@@ -76,18 +132,31 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
     #[cfg(windows)]
     #[allow(clippy::missing_transmute_annotations)]
     fn notify(&self) {
+        let active = self.active.lock_or_panic();
+        if !*active {
+            return;
+        }
+
         unsafe {
-            let dummy = 0;
-            winapi::um::processthreadsapi::CreateRemoteThread(
+            let thread = winapi::um::processthreadsapi::CreateRemoteThread(
                 self.process_handle.0,
                 std::ptr::null_mut(),
                 0,
                 Some(std::mem::transmute(self.notify_function.0)),
-                &dummy as *const i32 as winapi::shared::minwindef::LPVOID,
+                std::ptr::null_mut(),
                 0,
                 std::ptr::null_mut(),
             );
+            if !thread.is_null() {
+                winapi::um::synchapi::WaitForSingleObject(thread, winapi::um::winbase::INFINITE);
+                winapi::um::handleapi::CloseHandle(thread);
+            }
         }
+    }
+
+    #[cfg(windows)]
+    fn deactivate(&self) {
+        *self.active.lock_or_panic() = false;
     }
 }
 

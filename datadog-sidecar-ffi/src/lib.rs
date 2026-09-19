@@ -385,6 +385,15 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> Ma
 }
 
 #[no_mangle]
+pub extern "C" fn ddog_sidecar_shutdown_session(
+    transport: &mut Box<SidecarTransport>,
+) -> MaybeError {
+    try_c!(blocking::shutdown_session(transport));
+
+    MaybeError::None
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_sidecar_flush(
     transport: &mut Box<SidecarTransport>,
     options: SidecarFlushOptions,

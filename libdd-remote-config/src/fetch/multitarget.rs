@@ -152,6 +152,8 @@ impl Drop for KnownTarget {
 
 pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
     fn notify(&self);
+
+    fn deactivate(&self) {}
 }
 
 pub trait MultiTargetHandlers<
@@ -568,7 +570,9 @@ where
             info.targets.is_empty()
         };
         if last_removed {
-            runtimes.remove(runtime_id);
+            if let Some(runtime) = runtimes.remove(runtime_id) {
+                runtime.notify_target.deactivate();
+            }
         }
         Self::remove_target(self, runtime_id, session_id, target, runtimes);
     }
@@ -904,6 +908,7 @@ mod tests {
     #[derive(Default, Debug)]
     struct NotifyState {
         notifications: Mutex<HashSet<u8>>,
+        deactivations: Mutex<HashSet<u8>>,
     }
 
     impl NotifyState {
@@ -913,6 +918,14 @@ mod tests {
                 .collect::<Vec<u8>>();
             notified.sort();
             assert_eq!(notified, ids);
+        }
+
+        fn assert_deactivated(&self, ids: &[u8]) {
+            let mut deactivated = std::mem::take(&mut *self.deactivations.lock().unwrap())
+                .into_iter()
+                .collect::<Vec<u8>>();
+            deactivated.sort();
+            assert_eq!(deactivated, ids);
         }
     }
 
@@ -939,6 +952,10 @@ mod tests {
     impl NotifyTarget for Notifier {
         fn notify(&self) {
             self.state.notifications.lock().unwrap().insert(self.id);
+        }
+
+        fn deactivate(&self) {
+            self.state.deactivations.lock().unwrap().insert(self.id);
         }
     }
 
@@ -1126,9 +1143,13 @@ mod tests {
         }
 
         fetcher.delete_runtime(RT_ID_1, RT_ID_1, &OTHER_TARGET);
+        state.assert_deactivated(&[]);
         fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        state.assert_deactivated(&[1]);
         fetcher.delete_runtime(RT_ID_2, RT_ID_2, &DUMMY_TARGET);
+        state.assert_deactivated(&[2]);
         fetcher.delete_runtime(RT_ID_3, RT_ID_3, &OTHER_TARGET);
+        state.assert_deactivated(&[3]);
 
         fetcher.shutdown();
         storage.expect_expiration(&DUMMY_TARGET);
