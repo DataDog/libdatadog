@@ -728,6 +728,32 @@ impl<
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
+    /// Force an immediate flush of client-computed stats if stats computation is currently
+    /// enabled
+    pub async fn flush_client_side_stats_async(&self) -> bool {
+        let status = self.client_side_stats.status.load_full();
+        if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
+            if let Some(exporter) = flush_handle.upgrade() {
+                exporter.force_flush().await;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sync call over [`Self::flush_client_side_stats_async`]
+    /// SAFETY: panics inside an existing tokio context.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn flush_client_side_stats(&self) -> bool
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.flush_client_side_stats_async())
+            .unwrap_or_default()
+    }
+
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
