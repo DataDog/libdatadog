@@ -51,6 +51,10 @@ impl RuntimeInfo {
             self.instance_id.runtime_id, self.instance_id.session_id
         );
 
+        // Drop remote-config guards before acknowledging shutdown. On Windows this also
+        // deactivates the target and waits for any in-flight notification thread.
+        self.lock_applications().clear();
+
         debug!(
             "Successfully shut down runtime_id {} for session {}",
             self.instance_id.runtime_id, self.instance_id.session_id

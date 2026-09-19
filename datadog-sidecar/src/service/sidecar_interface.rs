@@ -110,6 +110,7 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
+    #[blocking]
     async fn shutdown_session();
 
     /// Sends a trace via shared memory.

@@ -463,10 +463,10 @@ impl SidecarServer {
             return None;
         }
         let process_handle = (*session.process_handle.lock_or_panic())?;
-        Some(RemoteConfigNotifyTarget {
+        Some(RemoteConfigNotifyTarget::new(
             process_handle,
             notify_function,
-        })
+        ))
     }
 
     #[cfg(unix)]
@@ -1056,9 +1056,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn shutdown_session(&self) {
-        let server = self.server.clone();
         let session_id = self.session_id.get().cloned().unwrap_or_default();
-        tokio::spawn(async move { server.stop_session(&session_id).await });
+        self.server.stop_session(&session_id).await;
     }
 
     async fn send_trace_v04_shm(

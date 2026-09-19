@@ -342,12 +342,9 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
-    pub fn shutdown_session(&mut self) {
-        coalesce(
-            &mut self.outbox,
-            SidecarInterfaceRequest::ShutdownSession {},
-        );
-        self.try_drain_outbox();
+    pub fn shutdown_session(&mut self) -> io::Result<()> {
+        self.drain_outbox_blocking();
+        self.channel.call_shutdown_session()
     }
 
     /// Enqueue telemetry actions.
