@@ -1,0 +1,81 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Resolve CI tool binary'
+description: >
+  Resolves a runnable binary for a package of the .github/actions workspace.
+  Downloads the artifact published for the version in the package manifest and
+  falls back to building from source when no such release exists yet.
+
+inputs:
+  tool:
+    description: 'Package name in the .github/actions workspace (e.g. crates-reporter)'
+    required: true
+
+outputs:
+  path:
+    description: 'Path to the runnable binary'
+    value: ${{ steps.resolve.outputs.path }}
+  source:
+    description: 'Where the binary came from: "release" or "build"'
+    value: ${{ steps.resolve.outputs.source }}
+  version:
+    description: 'Version resolved from the package manifest'
+    value: ${{ steps.resolve.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve ${{ inputs.tool }}
+      id: resolve
+      shell: bash
+      env:
+        TOOL: ${{ inputs.tool }}
+        ACTION_PATH: ${{ github.action_path }}
+        GH_REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        actions_dir=$(cd "$ACTION_PATH/.." && pwd)
+        manifest="$actions_dir/$TOOL/Cargo.toml"
+        if [[ ! -f "$manifest" ]]; then
+          echo "::error::no such tool in the .github/actions workspace: $TOOL"
+          exit 1
+        fi
+
+        # Read `version` from the [package] table only, so that a `version =`
+        # line under any other table cannot be picked up by mistake.
+        version=$(awk -F'"' '
+          /^\[package\]/ { in_pkg = 1; next }
+          /^\[/          { in_pkg = 0 }
+          in_pkg && /^version[[:space:]]*=/ { print $2; exit }
+        ' "$manifest")
+        if [[ -z "$version" ]]; then
+          echo "::error::could not read the [package] version of $manifest"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        tag="ci-tool-$TOOL-v$version"
+        bin="$RUNNER_TEMP/ci-tools/$TOOL"
+        mkdir -p "$(dirname "$bin")"
+
+        if err=$(gh release download "$tag" --repo "$GH_REPO" \
+                   --pattern "$TOOL" --output "$bin" 2>&1); then
+          chmod +x "$bin"
+          echo "::notice::$TOOL $version resolved from release $tag"
+          echo "source=release" >> "$GITHUB_OUTPUT"
+        else
+          # Expected on the pull request that bumps the tool: the tag is only
+          # pushed once that lands. Building from source here is also what
+          # keeps such a pull request gated by its own code rather than by the
+          # previously published binary.
+          echo "::notice::no usable release $tag, building $TOOL from source"
+          echo "$err" | sed 's/^/  gh: /'
+          (cd "$actions_dir" && cargo build --release -p "$TOOL")
+          bin="$actions_dir/target/release/$TOOL"
+          echo "source=build" >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "path=$bin" >> "$GITHUB_OUTPUT"

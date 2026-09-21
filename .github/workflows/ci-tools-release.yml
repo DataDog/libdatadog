@@ -1,0 +1,167 @@
+name: CI tools - Publish a tool binary
+
+# Publishes the prebuilt binary of a single .github/actions tool, so that the
+# workflows gating every pull request download it instead of rebuilding it.
+#
+# Triggered by a tag of the form ci-tool-<tool>-v<major>.<minor>.<patch>, e.g.
+# ci-tool-crates-reporter-v1.1.1. Each tool is versioned and tagged on its own;
+# the tag version must match the [package] version of the tool's manifest.
+#
+# The release is created as a prerelease so it is never surfaced as this
+# repository's "Latest release", which the Datadog SDKs read to pin libdatadog.
+
+on:
+  push:
+    tags:
+      - 'ci-tool-*-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-tools-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  MAIN_BRANCH: main
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0 # Full history, to check the tag is on the main branch
+
+      - name: Parse tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Greedy (.+) anchored against the trailing -v<semver> so that tool
+          # names containing hyphens parse correctly.
+          if [[ ! "$TAG" =~ ^ci-tool-(.+)-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::malformed tag '$TAG', expected ci-tool-<tool>-v<major>.<minor>.<patch>"
+            exit 1
+          fi
+          echo "tool=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+
+      - name: Check the tag is on ${{ env.MAIN_BRANCH }}
+        run: |
+          set -euo pipefail
+          # These binaries gate every pull request, so only merged code may be
+          # published.
+          # The checkout only fetched the tag, so the remote-tracking ref for
+          # the main branch has to be created explicitly.
+          git fetch --no-tags origin \
+            "+refs/heads/$MAIN_BRANCH:refs/remotes/origin/$MAIN_BRANCH"
+          if ! git merge-base --is-ancestor HEAD "origin/$MAIN_BRANCH"; then
+            echo "::error::$GITHUB_SHA is not reachable from origin/$MAIN_BRANCH; tag a merged commit"
+            exit 1
+          fi
+
+      - name: Validate tool and version
+        env:
+          TOOL: ${{ steps.tag.outputs.tool }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd .github/actions
+          # cargo metadata is the source of truth for what this tag may name:
+          # a workspace member that actually produces a binary.
+          manifest_version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r --arg tool "$TOOL" '
+                .packages[]
+                | select(.name == $tool)
+                | select(any(.targets[]; .kind | index("bin")))
+                | .version')
+          if [[ -z "$manifest_version" ]]; then
+            echo "::error::'$TOOL' is not a binary package of the .github/actions workspace"
+            exit 1
+          fi
+          if [[ "$manifest_version" != "$VERSION" ]]; then
+            echo "::error::tag says v$VERSION but $TOOL/Cargo.toml says $manifest_version"
+            exit 1
+          fi
+
+      - name: Build
+        env:
+          TOOL: ${{ steps.tag.outputs.tool }}
+        run: |
+          set -euo pipefail
+          cd .github/actions
+          cargo build --release --locked -p "$TOOL"
+          # Stripping roughly halves the asset, and the download is on the
+          # critical path of every gated workflow.
+          strip "target/release/$TOOL"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TOOL: ${{ steps.tag.outputs.tool }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset=".github/actions/target/release/$TOOL"
+
+          # These tools carry no hand-written CHANGELOG.md: the repository
+          # generates those from the conventional commits at release time, and
+          # rejects manual edits to them. Same model here, scoped to the paths
+          # the binary is built from.
+          previous=$(git tag --list "ci-tool-$TOOL-v*" --sort=-v:refname \
+                       | grep -Fxv "$TAG" | head -1 || true)
+          repo_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          if [[ -n "$previous" ]]; then
+            range="$previous..HEAD"
+            compare="Changes since [\`$previous\`]($repo_url/releases/tag/$previous):"
+          else
+            range="HEAD"
+            compare="First published build. Changes:"
+          fi
+
+          changes=$(git log --no-merges \
+                      --pretty="- %s ([\`%h\`]($repo_url/commit/%H))" \
+                      "$range" -- ".github/actions/$TOOL" ".github/actions/ci-shared")
+          if [[ -z "$changes" ]]; then
+            changes="- No changes under the tool's sources."
+          fi
+
+          notes=$(cat <<EOF
+          Prebuilt \`$TOOL\` v$VERSION for x86_64 Linux, consumed by this
+          repository's CI through \`.github/actions/ci-tools-bin\`.
+
+          Internal CI tooling; not part of the libdatadog release artifacts.
+
+          ### $compare
+
+          $changes
+          EOF
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::release $TAG exists, replacing the asset"
+            gh release upload "$TAG" "$asset" --clobber
+          else
+            gh release create "$TAG" "$asset" \
+              --prerelease \
+              --title "$TOOL v$VERSION" \
+              --notes "$notes"
+          fi
+
+      - name: Summary
+        env:
+          TAG: ${{ github.ref_name }}
+          TOOL: ${{ steps.tag.outputs.tool }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          {
+            echo "### Published \`$TOOL\` v$VERSION"
+            echo
+            echo "- Tag: \`$TAG\`"
+            echo "- Size: $(du -h ".github/actions/target/release/$TOOL" | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
