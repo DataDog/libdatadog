@@ -603,7 +603,7 @@ type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
 
 pub struct TelemetryCachedClientSet {
-    pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -646,6 +646,18 @@ impl Clone for TelemetryCachedClientSet {
 }
 
 impl TelemetryCachedClientSet {
+    /// Copy client handles without holding the map lock while inspecting a client.
+    ///
+    /// Client shutdown removes entries while holding application and client locks, so nesting
+    /// either lock below the map lock would invert that ordering and can deadlock the sidecar.
+    pub(crate) fn snapshot(&self) -> Vec<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+        self.inner
+            .lock_or_panic()
+            .values()
+            .map(|entry| Arc::clone(&entry.client))
+            .collect()
+    }
+
     fn get_existing_client(
         &self,
         service: &str,
@@ -787,6 +799,33 @@ mod tests {
     use super::*;
     use libdd_telemetry::config::TelemetryEndpoint;
     use libdd_telemetry::worker::LifecycleAction;
+
+    #[test]
+    fn client_snapshot_does_not_depend_on_map_membership() {
+        let clients = TelemetryCachedClientSet {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_handle: None,
+        };
+        let client = Arc::new(Mutex::new(None));
+        clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&client),
+            },
+        );
+
+        let client_guard = client.lock_or_panic();
+        let snapshot = clients.snapshot();
+
+        assert_eq!(snapshot.len(), 1);
+        assert!(Arc::ptr_eq(&snapshot[0], &client));
+        clients.remove_telemetry_client("service", "env");
+        assert_eq!(snapshot.len(), 1);
+
+        drop(client_guard);
+        assert!(snapshot[0].lock_or_panic().is_none());
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn new_client_queues_start_before_stop() {
