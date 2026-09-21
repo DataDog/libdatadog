@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+# A `cargo` shim placed first on PATH by the semver-level.bats suite.
+#
+# `cargo semver-checks` and `cargo public-api` need a full build of two revisions of a
+# real crate — minutes per invocation, and the very tools whose OUTPUT PARSING is what
+# semver-level.sh gets wrong when it regresses. The shim replays recorded output for
+# those two subcommands and forwards everything else to the real cargo, so the script
+# under test runs unmodified.
+#
+#   STUB_SEMVER_CHECKS_OUT / STUB_SEMVER_CHECKS_RC   canned `cargo semver-checks` result
+#   STUB_PUBLIC_API_OUT    / STUB_PUBLIC_API_RC      canned `cargo public-api` result
+#   STUB_CALL_LOG                                    file receiving one line per call
+#   STUB_REAL_CARGO                                  path to the real cargo binary
+
+set -uo pipefail
+
+if [[ -n "${STUB_CALL_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$STUB_CALL_LOG"
+fi
+
+case "${1:-}" in
+  semver-checks)
+    [[ -n "${STUB_SEMVER_CHECKS_OUT:-}" ]] && cat "$STUB_SEMVER_CHECKS_OUT"
+    exit "${STUB_SEMVER_CHECKS_RC:-0}"
+    ;;
+  public-api)
+    [[ -n "${STUB_PUBLIC_API_OUT:-}" ]] && cat "$STUB_PUBLIC_API_OUT"
+    exit "${STUB_PUBLIC_API_RC:-0}"
+    ;;
+esac
+
+exec "${STUB_REAL_CARGO:?STUB_REAL_CARGO is not set}" "$@"
