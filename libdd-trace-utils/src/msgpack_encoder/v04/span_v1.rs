@@ -459,9 +459,22 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
     for link in span_links {
         let (trace_id_low, trace_id_high) = split_trace_id(&link.trace_id);
         let attrs_dd = link.attributes.defensive_dedup();
+        // v0.4 SpanLink attributes are `String → String`. `String`/`Bool` map directly; nested
+        // `List`/`KeyValue` (and `Bytes`) become the JSON string the pre-native tracer emitted.
+        // Raw top-level `Int`/`Float` have no string slot and are dropped (the tracer never
+        // produces them for links — it stringifies scalar link attrs on the C side).
         let attr_count = attrs_dd
             .iter()
-            .filter(|(_, v)| matches!(v, AttributeValue::String(_) | AttributeValue::Bool(_)))
+            .filter(|(_, v)| {
+                matches!(
+                    v,
+                    AttributeValue::String(_)
+                        | AttributeValue::Bool(_)
+                        | AttributeValue::List(_)
+                        | AttributeValue::KeyValue(_)
+                        | AttributeValue::Bytes(_)
+                )
+            })
             .count() as u32;
 
         let link_len = 3 // trace_id, trace_id_high, span_id (always)
@@ -493,7 +506,13 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
                         write_str(writer, k.borrow())?;
                         write_bool_as_str(writer, *b)?;
                     }
-                    _ => {}
+                    AttributeValue::List(_)
+                    | AttributeValue::KeyValue(_)
+                    | AttributeValue::Bytes(_) => {
+                        write_str(writer, k.borrow())?;
+                        write_str(writer, &attr_to_php_json(v))?;
+                    }
+                    AttributeValue::Int(_) | AttributeValue::Float(_) => {}
                 }
             }
         }
@@ -525,10 +544,7 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
 
     for event in span_events {
         let attrs_dd = event.attributes.defensive_dedup();
-        let attr_count = attrs_dd
-            .iter()
-            .filter(|(_, v)| is_supported_event_attr(v))
-            .count() as u32;
+        let attr_count = attrs_dd.len() as u32;
 
         let event_len = 2 // time_unix_nano, name (always)
             + (attr_count > 0) as u32;
@@ -545,9 +561,6 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
             write_const_msgpack_str!(writer, "attributes")?;
             write_map_len(writer, attr_count)?;
             for (k, v) in attrs_dd.iter() {
-                if !is_supported_event_attr(v) {
-                    continue;
-                }
                 write_str(writer, k.borrow())?;
                 write_event_attr_value(writer, v)?;
             }
@@ -555,18 +568,6 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
     }
 
     Ok(())
-}
-
-/// Returns `true` when `v` can be downgraded to a v0.4 event-attribute (scalar or scalar list).
-fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
-    matches!(
-        v,
-        AttributeValue::String(_)
-            | AttributeValue::Bool(_)
-            | AttributeValue::Int(_)
-            | AttributeValue::Float(_)
-            | AttributeValue::List(_)
-    )
 }
 
 macro_rules! write_type {
@@ -579,8 +580,9 @@ macro_rules! write_type {
 }
 
 /// Writes a v0.4 event-attribute value as `{"type": <u8>, "..._value": ...}`. Scalars produce a
-/// 2-entry map; `List` produces `{"type": 4, "array_value": {"values": [...]}}` with each
-/// element written via `write_event_array_element`.
+/// 2-entry typed map; nested `List`/`KeyValue` (and `Bytes`) have no v0.4 event-attribute
+/// representation, so they downgrade to a `string_value` carrying the JSON string the pre-native
+/// tracer emitted (keeping the v0.4 wire unchanged for old agents).
 fn write_event_attr_value<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     v: &AttributeValue<T>,
@@ -602,79 +604,100 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
             write_type!(writer, 3, "double_value");
             write_f64(writer, *f)?;
         }
-        AttributeValue::List(arr) => {
-            write_type!(writer, 4, "array_value");
-            // Only scalar elements survive the downgrade; nested structural entries are
-            // skipped because v0.4 array elements must themselves be scalar.
-            let scalar_elems = arr.iter().filter(|e| is_scalar_array_elem(e));
-            let elem_count = scalar_elems.clone().count() as u32;
-            write_map_len(writer, 1)?;
-            write_const_msgpack_str!(writer, "values")?;
-            write_array_len(writer, elem_count)?;
-            for elem in scalar_elems {
-                write_event_array_element(writer, elem)?;
-            }
-        }
-        AttributeValue::Bytes(_) | AttributeValue::KeyValue(_) => {
-            // Filtered upstream by `is_supported_event_attr`; reachable only on a bug.
-            debug_assert!(false, "unsupported event attribute variant reached writer");
+        AttributeValue::List(_) | AttributeValue::KeyValue(_) | AttributeValue::Bytes(_) => {
+            write_type!(writer, 0, "string_value");
+            write_str(writer, &attr_to_php_json(v))?;
         }
     }
     Ok(())
 }
 
-/// Returns `true` when `v` is a scalar that fits in a v0.4 `AttributeArrayValue` (no nesting).
-fn is_scalar_array_elem<T: TraceData>(v: &AttributeValue<T>) -> bool {
-    matches!(
-        v,
-        AttributeValue::String(_)
-            | AttributeValue::Bool(_)
-            | AttributeValue::Int(_)
-            | AttributeValue::Float(_)
-    )
+/// Serializes a non-scalar link/event `AttributeValue` (`List`/`KeyValue`/`Bytes`) into a JSON
+/// string byte-identical to PHP's `json_encode($value)` with default flags — the exact bytes the
+/// tracer's C serializer produced for these attributes before native nested attributes existed.
+///
+/// v0.4 link/event attributes have no nested representation, so the pre-native wire always carried
+/// the `json_encode` string; reproducing it here keeps that wire unchanged for old agents. The C
+/// serializer only builds native nesting when every leaf is byte-parity-safe (finite decimal-range
+/// floats, ints, bools, strings, and nested lists/maps of those) and otherwise keeps the value a
+/// JSON string, so this encoder only ever meets those leaf kinds. `Bytes` cannot originate from a
+/// PHP value and is encoded defensively as a (lossy-UTF-8) JSON string.
+fn attr_to_php_json<T: TraceData>(v: &AttributeValue<T>) -> String {
+    let mut out = String::new();
+    write_attr_json(&mut out, v);
+    out
 }
 
-/// Writes a v0.4 `AttributeArrayValue` (scalar). Same `{"type", "..._value"}` shape as
-/// `write_event_attr_value`, minus the `Array` variant — v0.4 array elements are scalar only.
-fn write_event_array_element<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    v: &AttributeValue<T>,
-) -> Result<(), ValueWriteError<W::Error>> {
+fn write_attr_json<T: TraceData>(out: &mut String, v: &AttributeValue<T>) {
     match v {
-        AttributeValue::String(s) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 0)?;
-            write_const_msgpack_str!(writer, "string_value")?;
-            write_str(writer, s.borrow())?;
-        }
-        AttributeValue::Bool(b) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 1)?;
-            write_const_msgpack_str!(writer, "bool_value")?;
-            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
-        }
+        AttributeValue::String(s) => json_escape_str(out, s.borrow()),
+        AttributeValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         AttributeValue::Int(i) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 2)?;
-            write_const_msgpack_str!(writer, "int_value")?;
-            write_sint(writer, *i)?;
+            let _ = write!(out, "{i}");
         }
         AttributeValue::Float(f) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 3)?;
-            write_const_msgpack_str!(writer, "double_value")?;
-            write_f64(writer, *f)?;
+            let _ = write!(out, "{f}");
         }
-        _ => {
-            // Filtered upstream by `is_scalar_array_elem`; reachable only on a bug.
-            debug_assert!(false, "non-scalar array element reached writer");
+        AttributeValue::Bytes(b) => json_escape_str(out, &String::from_utf8_lossy(b.borrow())),
+        AttributeValue::List(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_attr_json(out, item);
+            }
+            out.push(']');
+        }
+        AttributeValue::KeyValue(map) => {
+            out.push('{');
+            for (i, (k, val)) in map.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                json_escape_str(out, k.borrow());
+                out.push(':');
+                write_attr_json(out, val);
+            }
+            out.push('}');
         }
     }
-    Ok(())
+}
+
+/// Appends `s` as a JSON string literal (surrounding quotes included), escaped exactly like PHP's
+/// `json_encode` with default flags: `"`, `\`, `/`, the `\b \f \n \r \t` shorthands, other control
+/// chars and every non-ASCII code point as a lowercase `\uXXXX` escape (UTF-16, surrogate pairs
+/// above U+FFFF). The result is therefore pure ASCII.
+fn json_escape_str(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '/' => out.push_str("\\/"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c if c.is_ascii() => out.push(c),
+            c => {
+                let cp = c as u32;
+                if cp <= 0xFFFF {
+                    let _ = write!(out, "\\u{cp:04x}");
+                } else {
+                    let v = cp - 0x10000;
+                    let hi = 0xD800 + (v >> 10);
+                    let lo = 0xDC00 + (v & 0x3FF);
+                    let _ = write!(out, "\\u{hi:04x}\\u{lo:04x}");
+                }
+            }
+        }
+    }
+    out.push('"');
 }
 
 #[cfg(test)]
@@ -683,6 +706,7 @@ mod tests {
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
+    use super::attr_to_php_json;
     use crate::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
@@ -1443,5 +1467,147 @@ mod tests {
         let ratio = map_get(attrs, "ratio").unwrap();
         assert_eq!(map_get(ratio, "type").unwrap().as_u64(), Some(3));
         assert_eq!(map_get(ratio, "double_value").unwrap().as_f64(), Some(0.75));
+    }
+
+    /// Locks `attr_to_php_json` to PHP `json_encode($v)` (default flags): slash + non-ASCII
+    /// escaping, whole-number floats without a trailing `.0`, list vs object, nested structures.
+    /// The right-hand strings are the literal bytes captured from `php -r 'echo json_encode(...)'`.
+    #[test]
+    fn attr_to_php_json_matches_php_json_encode() {
+        let list = |v: Vec<AttributeValueBytes>| AttributeValue::List(v);
+        let s = |x: &str| AttributeValue::String(bs(x));
+        let mut ab: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        ab.insert(bs("a"), AttributeValue::Int(1));
+        ab.insert(
+            bs("b"),
+            list(vec![AttributeValue::Int(2), AttributeValue::Int(3)]),
+        );
+
+        assert_eq!(
+            attr_to_php_json(&list(vec![AttributeValue::Int(3), AttributeValue::Int(4)])),
+            "[3,4]"
+        );
+        assert_eq!(
+            attr_to_php_json(&list(vec![s("5"), s("6")])),
+            r#"["5","6"]"#
+        );
+        assert_eq!(
+            attr_to_php_json(&AttributeValue::KeyValue(ab)),
+            r#"{"a":1,"b":[2,3]}"#
+        );
+        // Whole-number floats drop the fractional part; decimal-range floats round-trip shortest.
+        assert_eq!(
+            attr_to_php_json(&list(vec![AttributeValue::Float(1.0)])),
+            "[1]"
+        );
+        assert_eq!(
+            attr_to_php_json(&list(vec![AttributeValue::Float(0.75)])),
+            "[0.75]"
+        );
+        assert_eq!(
+            attr_to_php_json(&list(vec![AttributeValue::Float(1.5)])),
+            "[1.5]"
+        );
+        // String escaping: forward slash, quote/backslash, control shorthands, non-ASCII, astral.
+        assert_eq!(attr_to_php_json(&list(vec![s("a/b")])), r#"["a\/b"]"#);
+        assert_eq!(attr_to_php_json(&list(vec![s("q\"\\")])), r#"["q\"\\"]"#);
+        assert_eq!(attr_to_php_json(&list(vec![s("t\tn\n")])), r#"["t\tn\n"]"#);
+        // Build expected `\uXXXX` escapes via an explicit backslash so no literal `\u` bigram
+        // appears in this source (non-ASCII escapes are what json_encode's default flags emit).
+        let bslash = '\\';
+        assert_eq!(
+            attr_to_php_json(&list(vec![s("é")])),
+            format!("[\"{bslash}u00e9\"]")
+        );
+        assert_eq!(
+            attr_to_php_json(&list(vec![s("😀")])),
+            format!("[\"{bslash}ud83d{bslash}ude00\"]")
+        );
+        assert_eq!(
+            attr_to_php_json(&list(vec![AttributeValue::Bool(true)])),
+            "[true]"
+        );
+    }
+
+    #[test]
+    fn span_link_nested_attr_downgrades_to_json_string() {
+        // A link attribute holding a native nested list must land on the v0.4 wire as the exact
+        // JSON string the pre-native tracer emitted, not be dropped.
+        let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        link_attrs.insert(bs("plain"), AttributeValue::String(bs("v")));
+        link_attrs.insert(
+            bs("nums"),
+            AttributeValue::List(vec![AttributeValue::Int(3), AttributeValue::Int(4)]),
+        );
+        let mut kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        kv.insert(bs("a"), AttributeValue::Int(1));
+        link_attrs.insert(bs("obj"), AttributeValue::KeyValue(kv));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_links: ThinVec::from_iter([SpanLinkBytes {
+                    trace_id: [0u8; 16],
+                    span_id: 7,
+                    attributes: link_attrs,
+                    tracestate: bs(""),
+                    flags: 0,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        let links = map_get(&traces[0][0], "span_links").expect("span_links present");
+        let link = &links.as_array().expect("array")[0];
+        let attrs = map_get(link, "attributes").expect("attributes present");
+        assert_eq!(map_get(attrs, "plain").unwrap().as_str(), Some("v"));
+        assert_eq!(map_get(attrs, "nums").unwrap().as_str(), Some("[3,4]"));
+        assert_eq!(map_get(attrs, "obj").unwrap().as_str(), Some(r#"{"a":1}"#));
+    }
+
+    #[test]
+    fn span_event_nested_attr_downgrades_to_string_value_json() {
+        // A nested event attribute downgrades to `{"type":0,"string_value":<json>}` — the same
+        // `string_value` shape the pre-native tracer produced by json_encode-ing the PHP array.
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(
+            bs("int_array"),
+            AttributeValue::List(vec![AttributeValue::Int(3), AttributeValue::Int(4)]),
+        );
+        event_attrs.insert(
+            bs("string_array"),
+            AttributeValue::List(vec![
+                AttributeValue::String(bs("5")),
+                AttributeValue::String(bs("6")),
+            ]),
+        );
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_events: ThinVec::from_iter([SpanEventBytes {
+                    time_unix_nano: 1,
+                    name: bs("evt"),
+                    attributes: event_attrs,
+                }]),
+                ..minimal_span()
+            },
+        );
+
+        let traces = encode_and_decode(&payload);
+        let events = map_get(&traces[0][0], "span_events").expect("span_events present");
+        let event = &events.as_array().expect("array")[0];
+        let attrs = map_get(event, "attributes").expect("attributes present");
+
+        let ia = map_get(attrs, "int_array").unwrap();
+        assert_eq!(map_get(ia, "type").unwrap().as_u64(), Some(0));
+        assert_eq!(map_get(ia, "string_value").unwrap().as_str(), Some("[3,4]"));
+        let sa = map_get(attrs, "string_array").unwrap();
+        assert_eq!(map_get(sa, "type").unwrap().as_u64(), Some(0));
+        assert_eq!(
+            map_get(sa, "string_value").unwrap().as_str(),
+            Some(r#"["5","6"]"#)
+        );
     }
 }
