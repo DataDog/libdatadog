@@ -216,4 +216,79 @@ mod tests {
             "round-trip must preserve the allocation"
         );
     }
+
+    // Make sure the TLSDESC accessor is indeed providing a thread-local address.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn tls_slots_are_per_thread() {
+        use std::sync::{Arc, Barrier};
+
+        let barrier = Arc::new(Barrier::new(2));
+        let b = barrier.clone();
+
+        let spawned_trace_id = [0xABu8; 16];
+        let spawned_span_id = [0xCD, 0xBC, 0xAB, 0x9A, 0x89, 0x78, 0x67, 0x56];
+        let spawned_root_span_id = [0xEF, 0xDE, 0xCD, 0xBC, 0xAB, 0x9A, 0x89, 0x78];
+        let main_trace_id = [0x11u8; 16];
+        let main_span_id = [0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99];
+        let main_root_span_id = [0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA];
+
+        let handle = std::thread::spawn(move || {
+            SharedThreadContext::from(Arc::new(ThreadContext::new(
+                spawned_trace_id,
+                spawned_span_id,
+                0,
+                spawned_root_span_id,
+                &[],
+            )))
+            .attach();
+
+            // Let the main thread attach its own record and verify its slot.
+            b.wait();
+            // Wait for the main thread to finish observing before we verify ours.
+            b.wait();
+
+            // The main thread's attach must not have touched this slot.
+            let ptr = read_tls_context_ptr();
+            assert!(!ptr.is_null(), "spawned thread TLS must still be set");
+            let record = unsafe { &*ptr };
+            assert_eq!(record.trace_id, spawned_trace_id);
+            assert_eq!(record.span_id, spawned_span_id);
+            assert_eq!(&record.attrs_data[2..18], b"efdecdbcab9a8978");
+
+            let _ = SharedThreadContext::detach();
+            assert!(read_tls_context_ptr().is_null());
+        });
+
+        // Wait for the spawned thread to attach its record, then attach our own.
+        barrier.wait();
+
+        assert!(
+            read_tls_context_ptr().is_null(),
+            "main thread should see a null pointer and not another thread's context"
+        );
+
+        SharedThreadContext::from(Arc::new(ThreadContext::new(
+            main_trace_id,
+            main_span_id,
+            0,
+            main_root_span_id,
+            &[],
+        )))
+        .attach();
+
+        let ptr = read_tls_context_ptr();
+        assert!(!ptr.is_null(), "main thread TLS must be set");
+        let record = unsafe { &*ptr };
+        assert_eq!(record.trace_id, main_trace_id);
+        assert_eq!(record.span_id, main_span_id);
+        assert_eq!(&record.attrs_data[2..18], b"33445566778899aa");
+
+        barrier.wait();
+
+        let _ = SharedThreadContext::detach();
+        assert!(read_tls_context_ptr().is_null());
+
+        handle.join().unwrap();
+    }
 }
