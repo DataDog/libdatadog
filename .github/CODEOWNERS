@@ -42,7 +42,7 @@ datadog-sidecar-macros               @DataDog/libdatadog-php
 deny.toml                            @DataDog/libdatadog
 docs                                 @DataDog/libdatadog
 examples                             @DataDog/libdatadog
-libdd-ai-usage/                     @DataDog/apm-common-components-core
+libdd-ai-usage/                     @DataDog/trajectory
 libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-alloc/                         @DataDog/libdatadog-profiling
 libdd-capabilities*/                 @DataDog/apm-common-components-core
@@ -241,4 +241,4 @@ libdd-trace-utils/CHANGELOG.md               @DataDog/serverless @DataDog/libdat
 libdd-trace-utils/Cargo.toml                 @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
 
 
-libdd-ai-usage/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-ai-usage/Cargo.toml                   @DataDog/trajectory @DataDog/libdatadog-release
