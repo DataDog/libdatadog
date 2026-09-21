@@ -37,6 +37,7 @@ const TAG_METHOD_OTEL: &str = "http.request.method";
 const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
+const TAG_BASE_SERVICE: &str = "_dd.base_service";
 const TAG_ORIGIN: &str = "_dd.origin";
 const TAG_SVC_SRC: &str = "_dd.svc_src";
 const GRPC_STATUS_CODE_FIELD: &[&str] = &[
@@ -322,7 +323,17 @@ impl<'a> BorrowedAggregationKey<'a> {
         'b: 'a,
     {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
-        let peer_tags = if should_track_peer_tags(span_kind) {
+        let base_service = span.get_meta(TAG_BASE_SERVICE).unwrap_or_default();
+        // Mirrors the Go trace-agent's peerTagKeysToAggregateForSpan: peer tags are collected
+        // only when peer-tag aggregation is configured, and then either from the configured
+        // keys (client/producer/consumer spans) or, for internal spans (or spans without a
+        // kind) carrying a non-empty _dd.base_service override, from _dd.base_service alone.
+        // All other kinds, including server, get no peer tags.
+        let peer_tags = if peer_tag_keys.is_empty() {
+            // Peer-tag aggregation is disabled: no span gets peer tags, even when
+            // _dd.base_service is set.
+            vec![]
+        } else if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
             // of `peer_tag_keys`. IP address values are quantized to reduce cardinality.
             peer_tag_keys
@@ -332,9 +343,11 @@ impl<'a> BorrowedAggregationKey<'a> {
                     Some((key.as_str(), quantize_peer_ip_addresses(value)))
                 })
                 .collect()
-        } else if let Some(base_service) = span.get_meta("_dd.base_service") {
+        } else if (span_kind.is_empty() || span_kind.eq_ignore_ascii_case("internal"))
+            && !base_service.is_empty()
+        {
             // Internal spans with a base service override use only _dd.base_service as peer tag
-            vec![("_dd.base_service", Cow::Borrowed(base_service))]
+            vec![(TAG_BASE_SERVICE, Cow::Borrowed(base_service))]
         } else {
             vec![]
         };
@@ -1751,6 +1764,215 @@ mod tests {
             assert_eq!(
                 get_hash(&borrowed_key),
                 get_hash(&OwnedAggregationKey::from(&borrowed_key))
+            );
+        }
+    }
+
+    /// Table-driven regression test for peer-tag selection in the aggregation key, mirroring
+    /// the Go trace-agent's `peerTagKeysToAggregateForSpan`:
+    /// - an empty configured key list suppresses all peer tags, including _dd.base_service;
+    /// - client/producer/consumer spans use the configured keys;
+    /// - spans with an absent, empty, or internal kind and a non-empty _dd.base_service use only
+    ///   _dd.base_service;
+    /// - server and unknown kinds get no peer tags, even when _dd.base_service is configured.
+    #[test]
+    fn test_base_service_peer_tag_selection_in_aggregation_key() {
+        // (span.kind (None = absent), _dd.base_service (None = absent), configured
+        // peer_tag_keys, extra meta, expected peer tags, expected stored span kind)
+        type PeerTagSelectionCase = (
+            Option<&'static str>,
+            Option<&'static str>,
+            Vec<&'static str>,
+            Vec<(&'static str, &'static str)>,
+            Vec<(&'static str, &'static str)>,
+            &'static str,
+        );
+        let test_cases: Vec<PeerTagSelectionCase> = vec![
+            // Absent kind with a non-empty base service: fallback applies.
+            (
+                None,
+                Some("svc-a"),
+                vec!["db.instance"],
+                vec![("db.instance", "i-1")],
+                vec![("_dd.base_service", "svc-a")],
+                "",
+            ),
+            // Explicitly empty kind behaves like an absent kind.
+            (
+                Some(""),
+                Some("svc-a"),
+                vec!["db.instance"],
+                vec![],
+                vec![("_dd.base_service", "svc-a")],
+                "",
+            ),
+            // Internal kind: only _dd.base_service, the other configured key is ignored.
+            (
+                Some("internal"),
+                Some("svc-a"),
+                vec!["db.instance"],
+                vec![("db.instance", "i-1")],
+                vec![("_dd.base_service", "svc-a")],
+                "internal",
+            ),
+            // Mixed-case internal kind is selected case-insensitively but stored as-is.
+            (
+                Some("InTeRnAl"),
+                Some("svc-a"),
+                vec!["db.instance"],
+                vec![("db.instance", "i-1")],
+                vec![("_dd.base_service", "svc-a")],
+                "InTeRnAl",
+            ),
+            // Empty base-service value does not trigger the fallback.
+            (
+                Some("internal"),
+                Some(""),
+                vec!["db.instance"],
+                vec![],
+                vec![],
+                "internal",
+            ),
+            // Missing base service does not trigger the fallback.
+            (
+                Some("internal"),
+                None,
+                vec!["db.instance"],
+                vec![],
+                vec![],
+                "internal",
+            ),
+            // Server kind never gets peer tags, even with a base service and configured keys
+            // including _dd.base_service itself.
+            (
+                Some("server"),
+                Some("svc-a"),
+                vec!["db.instance", "_dd.base_service"],
+                vec![("db.instance", "i-1")],
+                vec![],
+                "server",
+            ),
+            // Unknown kind never gets peer tags either.
+            (
+                Some("gateway"),
+                Some("svc-a"),
+                vec!["db.instance", "_dd.base_service"],
+                vec![],
+                vec![],
+                "gateway",
+            ),
+            // An empty configured key list suppresses the base-service fallback.
+            (
+                Some("internal"),
+                Some("svc-a"),
+                vec![],
+                vec![],
+                vec![],
+                "internal",
+            ),
+            // ...and also suppresses the client extraction.
+            (
+                Some("client"),
+                Some("svc-a"),
+                vec![],
+                vec![("aws.s3.bucket", "bucket-a")],
+                vec![],
+                "client",
+            ),
+            // Client span with _dd.base_service itself configured: extracted via the
+            // configured keys, in configured order.
+            (
+                Some("client"),
+                Some("svc-a"),
+                vec!["db.instance", "_dd.base_service"],
+                vec![("db.instance", "i-1")],
+                vec![("db.instance", "i-1"), ("_dd.base_service", "svc-a")],
+                "client",
+            ),
+            // Same for producer and consumer.
+            (
+                Some("producer"),
+                Some("svc-a"),
+                vec!["_dd.base_service"],
+                vec![],
+                vec![("_dd.base_service", "svc-a")],
+                "producer",
+            ),
+            (
+                Some("consumer"),
+                Some("svc-a"),
+                vec!["_dd.base_service"],
+                vec![],
+                vec![("_dd.base_service", "svc-a")],
+                "consumer",
+            ),
+            // Internal span with _dd.base_service configured: the fallback still uses only
+            // _dd.base_service.
+            (
+                Some("internal"),
+                Some("svc-a"),
+                vec!["db.instance", "_dd.base_service"],
+                vec![("db.instance", "i-1")],
+                vec![("_dd.base_service", "svc-a")],
+                "internal",
+            ),
+            // Mixed-case client kind is selected case-insensitively but stored as-is.
+            (
+                Some("CLIENT"),
+                Some("svc-a"),
+                vec!["db.instance"],
+                vec![("db.instance", "i-1")],
+                vec![("db.instance", "i-1")],
+                "CLIENT",
+            ),
+        ];
+
+        for (
+            case_index,
+            (kind, base_service, peer_tag_keys, extra_meta, expected_peer_tags, expected_kind),
+        ) in test_cases.into_iter().enumerate()
+        {
+            let mut meta: Vec<(&str, &str)> = Vec::new();
+            if let Some(kind) = kind {
+                meta.push(("span.kind", kind));
+            }
+            if let Some(base_service) = base_service {
+                meta.push(("_dd.base_service", base_service));
+            }
+            meta.extend(extra_meta);
+            let span = SpanSlice {
+                service: Cow::Borrowed("service"),
+                name: Cow::Borrowed("op"),
+                resource: Cow::Borrowed("res"),
+                span_id: 1,
+                parent_id: 0,
+                meta: meta
+                    .into_iter()
+                    .map(|(k, v)| (Cow::Borrowed(k), Cow::Borrowed(v)))
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            };
+            let peer_tag_keys: Vec<String> =
+                peer_tag_keys.iter().map(|key| key.to_string()).collect();
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &peer_tag_keys, &[]);
+            let owned_key = OwnedAggregationKey::from(&borrowed_key);
+            let expected: Vec<(String, String)> = expected_peer_tags
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            assert_eq!(
+                owned_key.peer_tags, expected,
+                "unexpected peer tags for case {case_index}"
+            );
+            assert_eq!(
+                owned_key.fixed.span_kind, expected_kind,
+                "span kind must be stored with its original casing for case {case_index}"
+            );
+            assert_eq!(
+                get_hash(&borrowed_key),
+                get_hash(&owned_key),
+                "borrowed/owned hash mismatch for case {case_index}"
             );
         }
     }
