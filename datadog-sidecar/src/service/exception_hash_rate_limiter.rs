@@ -66,8 +66,12 @@ impl ManagedExceptionHashRateLimiter {
     }
 
     pub fn add(&mut self, hash: u64, granularity: Duration) {
-        let limiter = self.limiter.add(hash, granularity);
-        self.active.push(limiter);
+        match self.limiter.add(hash, granularity) {
+            Some(limiter) => self.active.push(limiter),
+            None => tracing::warn!(
+                "No exception hash rate limiter slot available for {hash:#x}; not rate limited"
+            ),
+        }
     }
 }
 
@@ -107,14 +111,13 @@ impl ExceptionHashRateLimiter {
         })
     }
 
-    fn add(&mut self, hash: u64, granularity: Duration) -> HashLimiter {
+    fn add(&mut self, hash: u64, granularity: Duration) -> Option<HashLimiter> {
         let allocated = self
             .mem
-            .alloc_with_granularity(granularity.as_secs() as u32);
-        let data = allocated.data();
-        data.hash.store(hash, Ordering::Relaxed);
+            .alloc_with_granularity(granularity.as_secs() as u32)?;
+        allocated.with_data(|data| data.hash.store(hash, Ordering::Relaxed));
         allocated.inc(1);
-        HashLimiter { shm: allocated }
+        Some(HashLimiter { shm: allocated })
     }
 
     pub fn find(&self, hash: u64) -> Option<HashLimiter> {
