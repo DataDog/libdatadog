@@ -48,7 +48,7 @@ use std::sync::{Condvar, Mutex};
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
 use http::{header, HeaderValue};
-use libdd_trace_utils::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
+use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1543,7 +1543,7 @@ mod tests {
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_trace_utils::mutable_metadata::MutableMetadataHandle;
+    use libdd_common::mutable_metadata::MutableMetadataHandle;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}

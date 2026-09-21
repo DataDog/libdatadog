@@ -7,13 +7,13 @@ pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
 };
 use libdd_trace_utils::{
-    mutable_metadata::MutableMetadataHandle,
     send_with_retry::{SendWithRetryError, SendWithRetryResult},
     trace_utils::SendDataResult,
 };
@@ -430,8 +430,9 @@ mod tests {
     use libdd_capabilities::HttpError;
     use libdd_capabilities_impl::NativeCapabilities;
 
+    use libdd_common::mutable_metadata::MutableMetadata;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
-    use libdd_trace_utils::{mutable_metadata::MutableMetadata, test_utils::poll_for_mock_hits};
+    use libdd_trace_utils::test_utils::poll_for_mock_hits;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
     // requires `Into<HttpMockRegex>`, which is only implemented for
     // `regex::Regex`, not `regex_lite::Regex`.
