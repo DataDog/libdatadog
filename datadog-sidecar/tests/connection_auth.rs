@@ -129,7 +129,10 @@ fn connect(socket_path: &std::path::Path) -> SidecarTransport {
 /// `main_loop` must consult the authorizer before serving, and serve a peer that passes. The
 /// refusal side needs a peer with a foreign uid, which a test cannot produce without privileges,
 /// so that is covered by the unit tests in `datadog_sidecar::auth` instead.
+/// Miri cannot run this: it supports only `AF_INET`/`AF_INET6`, and every socket here is
+/// `AF_UNIX`.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn an_authorized_peer_is_served() {
     let tmpdir = tempfile::tempdir().expect("tempdir");
     let socket_path = tmpdir.path().join("auth_allow.sock");
@@ -149,6 +152,10 @@ fn an_authorized_peer_is_served() {
 /// `warn!`, and `datadog_sidecar::log`'s per-level counter is process-global and asserted
 /// exactly by a unit test, so an in-process test here makes that assertion race.
 mod directory_guard {
+    // Both tests reach `private_dir::ensure`, which compares the directory's real owner against
+    // `geteuid()`. Miri answers `geteuid()` with a fixed 1000 while letting the filesystem calls
+    // through for real, so neither can hold there - and the one expecting a refusal would pass
+    // for the wrong reason.
     use datadog_sidecar::setup::{Liaison, SharedDirLiaison};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -156,6 +163,7 @@ mod directory_guard {
     /// A directory of ours left writable by others is repaired - discarded and recreated - so a
     /// recoverable mistake does not permanently disable tracing.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn listening_repairs_a_permissive_directory() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let dir = tmpdir.path().join("loose");
@@ -177,6 +185,7 @@ mod directory_guard {
     /// When the repair cannot be carried out, listening fails - and the error has to say which
     /// directory and why, because that is all an operator gets to work from.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn listening_fails_with_a_clear_error_when_the_directory_cannot_be_fixed() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let parent = tmpdir.path().join("locked");
@@ -186,6 +195,19 @@ mod directory_guard {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).expect("chmod");
         // Stands in for a directory another uid owns, which we could not remove either.
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o500)).expect("chmod");
+
+        // Probe the precondition rather than the uid: if creating inside a directory with no
+        // write permission still works, permission checks do not apply to us - we are root, as
+        // in some CI images - and the failure this test inspects cannot be staged at all.
+        let probe = parent.join("probe");
+        if fs::write(&probe, b"").is_ok() {
+            let _ = fs::remove_file(&probe);
+            eprintln!(
+                "skipping listening_fails_with_a_clear_error_when_the_directory_cannot_be_fixed: \
+                 permission checks do not apply to this user"
+            );
+            return;
+        }
 
         // `SeqpacketListener` is not Debug, so match rather than expect_err.
         let msg = match SharedDirLiaison::new(&dir).attempt_listen() {

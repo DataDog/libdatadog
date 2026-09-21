@@ -163,6 +163,10 @@ fn refuse(path: &Path, reason: String) -> io::Error {
 
 #[cfg(test)]
 mod tests {
+    // Every test in here compares a real file's owner against `geteuid()`. Miri answers
+    // `geteuid()` with a fixed 1000 while `-Zmiri-disable-isolation` lets the filesystem calls
+    // through for real, so the two never agree: the checks fail under miri, and - worse - the
+    // ones that assert a *refusal* pass for the wrong reason, testing nothing.
     use super::*;
 
     fn tmp() -> tempfile::TempDir {
@@ -171,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn creates_and_accepts_a_private_directory() {
         let base = tmp();
         let dir = base.path().join("private");
@@ -183,6 +188,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn accepts_traversable_but_not_writable() {
         let base = tmp();
         let dir = base.path().join("traversable");
@@ -190,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn refuses_a_directory_others_can_write_to() {
         let base = tmp();
         let dir = base.path().join("loose");
@@ -205,6 +212,7 @@ mod tests {
     /// a directory another process is serving from would be a denial of service dressed up as a
     /// fix - only `ensure`, the write path, may repair.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn verify_never_repairs() {
         let base = tmp();
         let dir = base.path().join("loose");
@@ -224,6 +232,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn refuses_a_symlink() {
         let base = tmp();
         let target = base.path().join("target");
@@ -236,6 +245,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn repairs_a_directory_of_ours_left_too_permissive() {
         let base = tmp();
         let dir = base.path().join("ours-but-loose");
@@ -259,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn repairs_a_stale_file_where_the_directory_belongs() {
         let base = tmp();
         let path = base.path().join("stale");
@@ -271,6 +282,7 @@ mod tests {
     /// its mode with the umask, so one that strips owner bits leaves exactly this state, and
     /// nothing in the ownership check notices - it refuses exposure, not uselessness.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn repairs_an_owned_directory_with_an_unusable_mode() {
         let base = tmp();
         let dir = base.path().join("unusable");
@@ -293,6 +305,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn fails_when_the_repair_cannot_be_carried_out() {
         // The failure is staged by removing a write permission, and root is not subject to
         // those: the repair would simply succeed and the assertion below would be wrong about
@@ -329,6 +342,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn refuses_a_directory_owned_by_someone_else() {
         let base = tmp();
         let dir = base.path().join("foreign");
