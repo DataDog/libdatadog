@@ -217,7 +217,7 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
-    #[cfg(feature = "tokio-console")]
+    #[cfg(all(feature = "tokio-console", tokio_unstable))]
     console_subscriber::init();
 
     let mut builder = tokio::runtime::Builder::new_multi_thread();
