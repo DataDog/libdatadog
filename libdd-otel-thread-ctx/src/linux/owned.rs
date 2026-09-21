@@ -168,7 +168,8 @@ impl OwnedThreadContext {
             if is_current {
                 None
             } else {
-                let prev = ThreadContextRecord::attach_raw(target.as_ptr());
+                compiler_fence(Ordering::Release);
+                let prev = slot.swap(target.as_ptr(), Ordering::Relaxed);
                 // Safety: a non-null value in the slot came from a prior `into_ptr` call.
                 NonNull::new(prev).map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
             }
