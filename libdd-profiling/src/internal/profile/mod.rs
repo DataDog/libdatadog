@@ -336,16 +336,29 @@ impl Profile {
 
         let stacktrace = self.try_add_stacktrace(locations)?;
         let sample = Sample::new(labels, stacktrace);
-        self.observations.add(sample, timestamp, values)?;
-        if timestamp.is_none() {
-            self.upscaling_rules.add_sample(sample, values);
+        if timestamp.is_none() && !self.upscaling_rules.is_empty() {
+            let label_set = self
+                .label_sets
+                .get_index(labels.to_offset())
+                .ok_or_else(oob_label_set)?;
+            let labels = label_set.iter().map(|id| {
+                self.labels
+                    .get_index(id.to_offset())
+                    .copied()
+                    .context("LabelId to have a valid interned index")
+            });
+            self.upscaling_rules
+                .add_sample(sample, values, labels, &mut self.observations)?;
+        } else {
+            self.observations.add(sample, timestamp, values)?;
         }
         Ok(())
     }
 
     /// Poisson rules must be registered before adding samples. Each input sample
     /// must represent events of the same size; different sizes may be added separately.
-    /// Proportional rules can also be registered after samples have been added.
+    /// Proportional rules can also be registered later, unless they overlap an
+    /// eagerly accumulated Poisson rule on a different label name.
     pub fn add_upscaling_rule(
         &mut self,
         offset_values: &[usize],
@@ -1957,6 +1970,129 @@ mod api_tests {
         assert_eq!(
             values,
             vec![vec![1, 10], vec![1, 231], vec![11, 105], vec![12, 336]]
+        );
+    }
+
+    #[test]
+    fn poisson_upscaling_preserves_overlapping_rule_order() {
+        for proportional_first in [false, true] {
+            for late_proportional in [false, true] {
+                let mut profile = Profile::new(
+                    &[api::SampleType::AllocSamples, api::SampleType::AllocSize],
+                    None,
+                );
+                profile
+                    .add_upscaling_rule(
+                        &[0],
+                        "kind",
+                        "allocation",
+                        UpscalingInfo::Poisson {
+                            sum_value_offset: 1,
+                            count_value_offset: 0,
+                            sampling_distance: 100,
+                        },
+                    )
+                    .unwrap();
+                if !late_proportional {
+                    profile
+                        .add_upscaling_rule(
+                            &[0],
+                            "class",
+                            "sampled",
+                            UpscalingInfo::Proportional { scale: 3.0 },
+                        )
+                        .unwrap();
+                }
+                let mut labels = vec![
+                    api::Label {
+                        key: "kind",
+                        str: "allocation",
+                        ..Default::default()
+                    },
+                    api::Label {
+                        key: "class",
+                        str: "sampled",
+                        ..Default::default()
+                    },
+                ];
+                if proportional_first {
+                    labels.reverse();
+                }
+                for size in [10, 200] {
+                    profile
+                        .try_add_sample(
+                            api::Sample {
+                                locations: vec![],
+                                values: &[1, size],
+                                labels: labels.clone(),
+                            },
+                            None,
+                        )
+                        .unwrap();
+                }
+                if late_proportional {
+                    let err = profile
+                        .add_upscaling_rule(
+                            &[0],
+                            "class",
+                            "sampled",
+                            UpscalingInfo::Proportional { scale: 3.0 },
+                        )
+                        .unwrap_err();
+                    assert!(err.to_string().contains("before adding samples"));
+                }
+                let expected_count = if late_proportional {
+                    12
+                } else if proportional_first {
+                    16
+                } else {
+                    36
+                };
+                assert_eq!(
+                    roundtrip_to_pprof(profile).unwrap().samples[0].values,
+                    vec![expected_count, 210]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn poisson_upscaling_saturates_and_preserves_signed_integers() {
+        let mut profile = Profile::new(
+            &[
+                api::SampleType::AllocSamples,
+                api::SampleType::AllocSize,
+                api::SampleType::WallTime,
+            ],
+            None,
+        );
+        profile
+            .add_upscaling_rule(
+                &[0, 1],
+                "",
+                "",
+                UpscalingInfo::Poisson {
+                    sum_value_offset: 1,
+                    count_value_offset: 0,
+                    sampling_distance: 100,
+                },
+            )
+            .unwrap();
+        for _ in 0..2 {
+            profile
+                .try_add_sample(
+                    api::Sample {
+                        locations: vec![],
+                        values: &[i64::MAX, i64::MAX, i64::MIN],
+                        labels: vec![],
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            roundtrip_to_pprof(profile).unwrap().samples[0].values,
+            vec![i64::MAX, i64::MAX, i64::MIN]
         );
     }
 

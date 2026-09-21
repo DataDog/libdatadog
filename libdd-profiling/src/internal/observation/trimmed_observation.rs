@@ -19,6 +19,7 @@ impl ObservationLength {
         self.0 == other
     }
 
+    #[cfg(test)]
     pub fn assert_eq(&self, other: usize) {
         assert_eq!(self.0, other, "Expected observation lengths to be the same");
     }
@@ -28,7 +29,9 @@ impl ObservationLength {
     }
 }
 
-/// This represents a `Vec<i64>` associated with a sample
+/// This represents the 64-bit value slots associated with a sample.
+/// Slots targeted by eager Poisson rules hold f64 bits; other slots hold i64s.
+/// The rules determine the layout, so no per-value type tags are needed.
 /// Since these vectors are all of the same length, there is no need to store
 /// `len` and `capacity` fields over and over again for each sample.
 /// Instead, just keep the pointer, and recreate the slice as needed.
@@ -48,6 +51,12 @@ pub(super) struct TrimmedObservation {
 unsafe impl Send for TrimmedObservation {}
 
 impl TrimmedObservation {
+    pub fn zeroed(len: ObservationLength) -> Self {
+        // All-zero bits represent both integer zero and floating-point zero.
+        let data = Box::into_raw(vec![0_i64; len.0].into_boxed_slice()) as *mut i64;
+        Self { data }
+    }
+
     /// Safety: the ObservationLength must have come from the same profile as the Observation
     pub unsafe fn as_mut_slice(&mut self, len: ObservationLength) -> &mut [i64] {
         unsafe { std::slice::from_raw_parts_mut(self.data, len.0) }
@@ -65,6 +74,7 @@ impl TrimmedObservation {
     /// # Safety
     /// This panics if you attempt to create an Observation with a data vector
     /// of the wrong length.
+    #[cfg(test)]
     pub fn new(v: &[i64], len: ObservationLength) -> Self {
         len.assert_eq(v.len());
 

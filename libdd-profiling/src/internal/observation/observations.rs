@@ -58,6 +58,22 @@ impl Observations {
         timestamp: Option<Timestamp>,
         values: &[i64],
     ) -> anyhow::Result<()> {
+        self.add_with(sample, timestamp, values, |totals| {
+            for (total, value) in totals.iter_mut().zip(values) {
+                *total = total.saturating_add(*value);
+            }
+        })
+    }
+
+    /// Timestamped values stay as integers. For aggregates, `accumulate` also
+    /// handles slots containing f64 bits, according to the sample's rules.
+    pub fn add_with(
+        &mut self,
+        sample: Sample,
+        timestamp: Option<Timestamp>,
+        values: &[i64],
+        accumulate: impl FnOnce(&mut [i64]),
+    ) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.inner.is_some(),
             "Use of add on Observations that were not initialized"
@@ -77,7 +93,7 @@ impl Observations {
             observations.timestamped_data.add(sample, ts, values)?;
             observations.timestamped_samples_count += 1;
         } else {
-            observations.aggregated_data.add(sample, values)?;
+            observations.aggregated_data.add_with(sample, accumulate);
         }
 
         Ok(())
@@ -144,6 +160,7 @@ impl AggregatedObservations {
         }
     }
 
+    #[cfg(test)]
     fn add(&mut self, sample: Sample, values: &[i64]) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.obs_len.eq(values.len()),
@@ -152,19 +169,21 @@ impl AggregatedObservations {
             values.len()
         );
 
-        if let Some(v) = self.data.get_mut(&sample) {
-            // SAFETY: This method is only way to build one of these, and we already checked the
-            // length matches.
-            unsafe { v.as_mut_slice(self.obs_len) }
-                .iter_mut()
-                .zip(values)
-                .for_each(|(a, b)| *a = a.saturating_add(*b));
-        } else {
-            let trimmed = TrimmedObservation::new(values, self.obs_len);
-            self.data.insert(sample, trimmed);
-        }
-
+        self.add_with(sample, |totals| {
+            for (total, value) in totals.iter_mut().zip(values) {
+                *total = total.saturating_add(*value);
+            }
+        });
         Ok(())
+    }
+
+    fn add_with(&mut self, sample: Sample, accumulate: impl FnOnce(&mut [i64])) {
+        let observation = self
+            .data
+            .entry(sample)
+            .or_insert_with(|| TrimmedObservation::zeroed(self.obs_len));
+        // SAFETY: all entries are created above with this observation length.
+        accumulate(unsafe { observation.as_mut_slice(self.obs_len) });
     }
 
     fn len(&self) -> usize {
@@ -192,7 +211,7 @@ impl Drop for AggregatedObservations {
         let o = self.obs_len;
         self.data.drain().for_each(|(_, v)| {
             // SAFETY: The only way to build one of these is through
-            // [Self::add], which already checked that the length was correct.
+            // [Self::add_with], which allocates with this observation length.
             unsafe { v.consume(o) };
         });
     }
@@ -211,7 +230,7 @@ impl Iterator for AggregatedObservationsIter {
     fn next(&mut self) -> Option<Self::Item> {
         let (sample, observation) = self.iter.next()?;
         // SAFETY: The only way to build one of these is through
-        // [Observations::add], which already checked that the length was correct.
+        // [Observations::add_with], which already checked that the length was correct.
         let vec = unsafe { observation.into_vec(self.obs_len) };
         Some((sample, None, vec))
     }
@@ -221,7 +240,7 @@ impl Drop for AggregatedObservationsIter {
     fn drop(&mut self) {
         for (_, observation) in &mut self.iter {
             // SAFETY: The only way to build one of these is through
-            // [Observations::add], which already checked that the length was correct.
+            // [Observations::add_with], which already checked that the length was correct.
             unsafe { observation.consume(self.obs_len) };
         }
     }

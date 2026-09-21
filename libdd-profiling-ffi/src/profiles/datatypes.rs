@@ -799,6 +799,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 /// Add a proportional-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
 ///
+/// May be registered after samples, unless it overlaps an eagerly accumulated
+/// Poisson rule on a different label name. Register overlapping rules first.
+///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.
 /// * `offset_values` - offset of the values
