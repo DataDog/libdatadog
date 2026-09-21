@@ -23,10 +23,10 @@ two mutually exclusive features:
   used by the FFI.
 - `shared-context`: `SharedThreadContext`, an `Arc`-backed immutable record
   that can be cloned and attached on several threads. To be consumed by another
-  Rust crate, Currently dd-trace-rs.
+  Rust crate, currently dd-trace-rs.
 
 They are exclusive because the thread-local slot is untyped: interleaving owned
-and shared contexts would misinterpret the pointer cause UB. If both features
+and shared contexts would misinterpret the pointer and cause UB. If both features
 are enabled, `owned-context` wins and the build script emits a warning.
 
 ## TLS
