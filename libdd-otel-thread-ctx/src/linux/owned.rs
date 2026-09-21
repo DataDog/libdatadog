@@ -44,7 +44,7 @@ impl ThreadContextRecord {
 /// readers through thread-level context and through the FFI. But it is a boxed
 /// `ThreadContextRecord` for all intent and purpose.
 ///
-/// Since an owned context can be modified in place, it is not thread safe: it is neither `Send` nor
+/// Since an owned context can be modified in place, it is not thread safe: it is `!Send` and
 /// `!Sync`. Readers rely on the fact that there can't be any concurrent writer while they interrupt
 /// the current thread.
 pub struct OwnedThreadContext(NonNull<ThreadContextRecord>);
