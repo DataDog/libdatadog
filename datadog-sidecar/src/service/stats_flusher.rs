@@ -23,8 +23,8 @@ use libdd_telemetry::config::Config;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
+use libdd_common::mutable_metadata::MutableMetadata;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
-use libdd_trace_utils::mutable_metadata::MutableMetadata;
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};

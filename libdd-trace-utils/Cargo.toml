@@ -47,7 +47,6 @@ rmp.workspace = true
 rustc-hash = { workspace = true, default-features = true }
 crossbeam-channel = { workspace = true, features = ["std"] }
 thread_local.workspace = true 
-arc-swap.workspace = true
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }

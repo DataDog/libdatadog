@@ -15,10 +15,10 @@ use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::mutable_metadata::MutableMetadataHandle;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
 };

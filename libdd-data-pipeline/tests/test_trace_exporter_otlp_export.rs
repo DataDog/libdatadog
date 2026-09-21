@@ -148,7 +148,7 @@ mod otlp_export_tests {
     #[tokio::test]
     async fn otlp_mutable_metadata_runtime_id_updates_propagate() {
         use httpmock::MockServer;
-        use libdd_trace_utils::mutable_metadata::MutableMetadataHandle;
+        use libdd_common::mutable_metadata::MutableMetadataHandle;
 
         let server = MockServer::start_async().await;
         // The first send carries the initial runtime_id...
