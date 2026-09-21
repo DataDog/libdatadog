@@ -11,7 +11,7 @@ pub mod mapper_v1;
 pub use mapper::map_traces_to_otlp;
 pub use mapper_v1::map_traces_to_otlp_v1;
 
-use crate::mutable_metadata::MutableMetadataHandle;
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 pub use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;
 

@@ -11,7 +11,6 @@ include_guard = "DDOG_DATA_PIPELINE_H"
 includes = ["common.h"]
 after_includes = """
 typedef struct ddog_TraceExporter ddog_TraceExporter;
-typedef struct ddog_MutableMetadataHandle ddog_MutableMetadataHandle;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerSpanEvent ddog_TracerSpanEvent;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;

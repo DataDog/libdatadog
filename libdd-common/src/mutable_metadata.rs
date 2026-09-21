@@ -18,7 +18,7 @@
 //!   lock-free snapshot. The snapshot is consistent for a single read only; values are **not**
 //!   consistent across multiple `load()` calls.
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use arc_swap::ArcSwap;
 
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn update_retries_without_losing_concurrent_changes() {
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use core::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Barrier;
 
         let handle = initial_handle();

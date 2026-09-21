@@ -13,7 +13,6 @@ mod hex;
 pub mod json_log_encoder;
 pub mod msgpack_decoder;
 pub mod msgpack_encoder;
-pub mod mutable_metadata;
 pub mod otlp_encoder;
 pub mod send_data;
 pub mod send_with_retry;

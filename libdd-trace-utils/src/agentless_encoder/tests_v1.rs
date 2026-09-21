@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload_from_v1;
-use crate::mutable_metadata::MutableMetadataHandle;
 use crate::span::v1::{
     AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
     TraceChunkBytes,
 };
 use crate::span::vec_map::VecMap;
 use crate::tracer_metadata::TracerMetadata;
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_tinybytes::BytesString;
 use serde_json::Value;
 

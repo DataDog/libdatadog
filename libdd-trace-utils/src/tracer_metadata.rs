@@ -1,9 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::mutable_metadata::MutableMetadataHandle;
 use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use http::HeaderMap;
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
