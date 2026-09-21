@@ -386,23 +386,60 @@ mod single_threaded_tests {
                 "max_cpu": 0,
                 "analyzed_spans_by_service": {},
                 "obfuscation": {
-                        "elastic_search": true,
-                        "mongo": true,
-                        "sql_exec_plan": false,
-                        "sql_exec_plan_normalize": false,
-                        "http": {
-                                "remove_query_string": false,
-                                "remove_path_digits": false
-                        },
-                        "remove_stack_traces": false,
-                        "redis": {
-                                "Enabled": true,
-                                "RemoveAllArgs": false
-                        },
-                        "memcached": {
-                                "Enabled": true,
-                                "KeepCommand": false
-                        }
+                    "elastic_search": true,
+                    "mongo": true,
+                    "sql_exec_plan": false,
+                    "sql_exec_plan_normalize": false,
+                    "sql_obfuscation_mode": "",
+                    "tag_replace_rules": null,
+                    "http": {
+                        "remove_query_string": true,
+                        "remove_path_digits": true
+                    },
+                    "remove_stack_traces": false,
+                    "redis": {
+                        "enabled": true,
+                        "remove_all_args": true
+                    },
+                    "valkey": {
+                        "enabled": true,
+                        "remove_all_args": false
+                    },
+                    "memcached": {
+                        "enabled": true,
+                        "keep_command": false
+                    },
+                    "credit_cards": {
+                        "enabled": true,
+                        "luhn": false,
+                        "keep_values": []
+                    },
+                    "sql": {
+                        "replace_digits": false,
+                        "keep_sql_alias": false,
+                        "dollar_quoted_func": false,
+                        "keep_null": false,
+                        "keep_boolean": false,
+                        "keep_positional_parameter": false,
+                        "keep_trailing_semicolon": false,
+                        "keep_identifier_quotation": false,
+                        "replace_bind_parameter": false,
+                        "remove_space_between_parentheses": false,
+                        "keep_json_path": false,
+                        "obfuscation_mode": ""
+                    },
+                    "elasticsearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "opensearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "mongodb": {
+                        "enabled": true,
+                        "keep_keys": []
+                    }
                 }
         },
         "peer_tags": ["db.hostname","http.host","aws.s3.bucket"],
@@ -432,7 +469,7 @@ mod single_threaded_tests {
         format!("{:x}", Sha256::digest(json.as_bytes()))
     }
 
-    const TEST_INFO_HASH: &str = "d0f6dde2c1ef3b7b776a58162d42574346e23f4677c3fafb440f5c7ca83a8a28";
+    const TEST_INFO_HASH: &str = "da585e5ee37588827971df914b4de574024e327aaae37f5e6f42959c9c3d6369";
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
@@ -570,13 +607,8 @@ mod single_threaded_tests {
 
         let agent_info = fetch_info::<NativeCapabilities>(&endpoint).await.unwrap();
         mock.assert();
-        assert_eq!(
-            *agent_info,
-            AgentInfo {
-                state_hash: TEST_INFO_HASH.to_string(),
-                info: serde_json::from_str(TEST_INFO).unwrap(),
-            }
-        );
+        assert_eq!(agent_info.state_hash, TEST_INFO_HASH.to_string());
+        assert_eq!(agent_info.info, serde_json::from_str(TEST_INFO).unwrap(),);
     }
 
     #[cfg_attr(miri, ignore)]
