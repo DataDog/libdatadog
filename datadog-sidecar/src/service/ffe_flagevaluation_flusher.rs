@@ -38,13 +38,19 @@ pub(crate) const FLAG_EVALUATION_REASON_PAYLOAD_LIMIT: &str = "payload_limit";
 struct DestinationKey {
     endpoint: Endpoint,
     context: FfeTelemetryContext,
+    send_config: FlagEvaluationEvpSendConfig,
 }
 
 impl DestinationKey {
-    fn new(endpoint: Endpoint, context: &FfeTelemetryContext) -> Self {
+    fn new(
+        endpoint: Endpoint,
+        context: &FfeTelemetryContext,
+        send_config: FlagEvaluationEvpSendConfig,
+    ) -> Self {
         Self {
             endpoint,
             context: context.clone(),
+            send_config,
         }
     }
 }
@@ -61,8 +67,28 @@ impl FlagEvaluationCoalescer {
         client: NativeCapabilities,
         endpoint: Endpoint,
         batch: FfeFlagEvaluationBatch,
+        origin: impl Into<String>,
+        origin_version: impl Into<String>,
     ) {
-        let destination_key = DestinationKey::new(endpoint, &batch.context);
+        let send_config = match FlagEvaluationEvpSendConfig::new(USER_AGENT, origin, origin_version)
+        {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::error!("invalid sidecar flagevaluation EVP send configuration: {error}");
+                return;
+            }
+        };
+        self.enqueue_with_config(client, endpoint, batch, send_config);
+    }
+
+    fn enqueue_with_config(
+        &self,
+        client: NativeCapabilities,
+        endpoint: Endpoint,
+        batch: FfeFlagEvaluationBatch,
+        send_config: FlagEvaluationEvpSendConfig,
+    ) {
+        let destination_key = DestinationKey::new(endpoint, &batch.context, send_config);
         if self.inner.enqueue(destination_key, batch) {
             let coalescer = self.clone();
             tokio::spawn(async move {
@@ -82,8 +108,14 @@ impl FlagEvaluationCoalescer {
             let client = client.clone();
             let coalescer = self.inner.clone();
             async move {
-                send_batch_with_writer_stats(&client, &destination.endpoint, batch, &coalescer)
-                    .await
+                send_batch_with_writer_stats(
+                    &client,
+                    &destination.endpoint,
+                    batch,
+                    &destination.send_config,
+                    &coalescer,
+                )
+                .await
             }
         }))
         .await;
@@ -120,10 +152,10 @@ async fn send_batch_with_writer_stats(
     client: &NativeCapabilities,
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
+    send_config: &FlagEvaluationEvpSendConfig,
     coalescer: &CommonFlagEvaluationEvpCoalescer<DestinationKey>,
 ) {
-    let config = FlagEvaluationEvpSendConfig::new(USER_AGENT);
-    if let Some(result) = send_flag_evaluation_batch(client, endpoint, batch, &config).await {
+    if let Some(result) = send_flag_evaluation_batch(client, endpoint, batch, send_config).await {
         coalescer.record_payload_build_result(&result);
     }
 }
@@ -217,6 +249,9 @@ mod tests {
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
                     .path(EVP_FLAGEVALUATION_PATH)
+                    .header("user-agent", USER_AGENT)
+                    .header("DD-EVP-ORIGIN", "dd-trace-php")
+                    .header("DD-EVP-ORIGIN-VERSION", "9.9.9")
                     .body_includes("\"evaluation_count\":10");
                 then.status(202);
             })
@@ -227,8 +262,8 @@ mod tests {
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
 
-        coalescer.enqueue(client.clone(), ep.clone(), batch());
-        coalescer.enqueue(client.clone(), ep, batch());
+        coalescer.enqueue(client.clone(), ep.clone(), batch(), "dd-trace-php", "9.9.9");
+        coalescer.enqueue(client.clone(), ep, batch(), "dd-trace-php", "9.9.9");
 
         for _ in 0..100 {
             if mock.calls_async().await == 1 {
@@ -238,6 +273,67 @@ mod tests {
         }
 
         mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn does_not_coalesce_different_producer_identities() {
+        const TEST_USER_AGENT: &str = "shared-user-agent";
+
+        let server = MockServer::start_async().await;
+        let baseline = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header("user-agent", TEST_USER_AGENT)
+                    .header("DD-EVP-ORIGIN", "producer-a")
+                    .header("DD-EVP-ORIGIN-VERSION", "1.0.0")
+                    .body_includes("\"evaluation_count\":5");
+                then.status(202);
+            })
+            .await;
+        let different_origin = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header("user-agent", TEST_USER_AGENT)
+                    .header("DD-EVP-ORIGIN", "producer-b")
+                    .header("DD-EVP-ORIGIN-VERSION", "1.0.0")
+                    .body_includes("\"evaluation_count\":5");
+                then.status(202);
+            })
+            .await;
+        let different_origin_version = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header("user-agent", TEST_USER_AGENT)
+                    .header("DD-EVP-ORIGIN", "producer-a")
+                    .header("DD-EVP-ORIGIN-VERSION", "2.0.0")
+                    .body_includes("\"evaluation_count\":5");
+                then.status(202);
+            })
+            .await;
+
+        let base = endpoint_for(&server);
+        let ep = flagevaluation_endpoint(&base).unwrap();
+        let client = NativeCapabilities::new_client();
+        let coalescer = FlagEvaluationCoalescer::default();
+        let baseline_config =
+            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-a", "1.0.0").unwrap();
+        let different_origin_config =
+            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-b", "1.0.0").unwrap();
+        let different_origin_version_config =
+            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-a", "2.0.0").unwrap();
+
+        coalescer.enqueue_with_config(client.clone(), ep.clone(), batch(), baseline_config);
+        coalescer.enqueue_with_config(client.clone(), ep.clone(), batch(), different_origin_config);
+        coalescer.enqueue_with_config(client.clone(), ep, batch(), different_origin_version_config);
+        coalescer.flush_now(client).await;
+
+        baseline.assert_calls_async(1).await;
+        different_origin.assert_calls_async(1).await;
+        different_origin_version.assert_calls_async(1).await;
     }
 
     #[tokio::test]
@@ -258,7 +354,7 @@ mod tests {
         let coalescer = FlagEvaluationCoalescer::default();
         let guard = coalescer.flush_mutex.lock().await;
 
-        coalescer.enqueue(client.clone(), ep, batch());
+        coalescer.enqueue(client.clone(), ep, batch(), "dd-trace-php", "9.9.9");
 
         let mut flush = tokio::spawn({
             let coalescer = coalescer.clone();

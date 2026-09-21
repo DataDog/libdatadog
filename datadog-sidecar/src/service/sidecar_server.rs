@@ -66,6 +66,9 @@ use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use serde::{Deserialize, Serialize};
 
+// FFE sidecar actions currently originate in dd-trace-php; the sidecar only transports them.
+const PHP_TRACER_EVP_ORIGIN: &str = "dd-trace-php";
+
 /// A Windows process handle used for remote config notification.
 ///
 /// Wraps a raw `HANDLE` value (from `OpenProcess`). The handle is intentionally not
@@ -629,6 +632,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                                 ffe_http_client.clone(),
                                 ep,
                                 batch.clone(),
+                                PHP_TRACER_EVP_ORIGIN,
+                                trace_config.tracer_version.clone(),
                             );
                         } else {
                             debug!(
@@ -1762,6 +1767,7 @@ mod tests {
                     ..Endpoint::default()
                 };
                 cfg.set_endpoint(endpoint).unwrap();
+                cfg.tracer_version = "9.9.9".to_owned();
             });
 
         handler
@@ -1778,6 +1784,56 @@ mod tests {
         sleep(TokioDuration::from_millis(50)).await;
         assert_eq!(flag_evaluations_mock.calls_async().await, 0);
 
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..SidecarFlushOptions::default()
+            })
+            .await;
+
+        flag_evaluations_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flag_evaluations_use_originating_php_tracer_identity() {
+        let http_server = MockServer::start_async().await;
+        let flag_evaluations_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header("DD-EVP-ORIGIN", "dd-trace-php")
+                    .header("DD-EVP-ORIGIN-VERSION", "9.9.9");
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+                cfg.language = "php".to_owned();
+                cfg.tracer_version = "9.9.9".to_owned();
+            });
+
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::FfeFlagEvaluationBatch(
+                    ffe_flag_evaluation_batch(),
+                )],
+            )
+            .await;
         handler
             .flush(SidecarFlushOptions {
                 flag_evaluations: true,
