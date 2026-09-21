@@ -3384,7 +3384,6 @@ dependencies = [
  "libdd-common",
  "libdd-remote-config",
  "libdd-trace-protobuf",
- "libdd-trace-utils",
  "libdd-tuf",
  "manual_future",
  "prost",

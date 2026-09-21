@@ -37,12 +37,20 @@ pub unsafe extern "C" fn ddog_mutable_metadata_new(
 ///
 /// Call once this handle is no longer needed. It must not be used concurrently
 /// with this call or accessed afterward. Other cloned handles remain valid.
+///
+/// # Safety
+///
+/// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_mutable_metadata_free(handle: Box<MutableMetadataHandle>) {
     drop(handle);
 }
 
 /// Replaces the `runtime_id` held by the shared mutable metadata handle.
+///
+/// # Safety
+///
+/// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
@@ -60,6 +68,10 @@ pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
 }
 
 /// Replaces the `process_tags` held by the shared mutable metadata handle.
+///
+/// # Safety
+///
+/// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_process_tags(
