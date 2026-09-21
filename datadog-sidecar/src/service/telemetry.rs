@@ -34,7 +34,7 @@ use std::time::SystemTime;
 use libdd_telemetry::config::Config;
 use libdd_telemetry::data::{self, Integration};
 use libdd_telemetry::metrics::{ContextKey, MetricContext};
-use libdd_telemetry::worker::{LifecycleAction, TelemetryActions};
+use libdd_telemetry::worker::TelemetryActions;
 
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
@@ -450,13 +450,7 @@ impl TelemetryCachedClient {
         let (handle, _join) = builder.spawn();
         info!("spawned telemetry worker {config:?}");
 
-        let worker = handle.clone();
-        tokio::spawn(async move {
-            worker
-                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await
-                .ok();
-        });
+        handle.send_start().ok();
 
         Self {
             worker: handle,
@@ -791,6 +785,48 @@ fn get_telemetry_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_telemetry::config::TelemetryEndpoint;
+    use libdd_telemetry::worker::LifecycleAction;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn new_client_queues_start_before_stop() {
+        let output = tempfile::NamedTempFile::new().expect("create telemetry output");
+        let mut config = Config::default();
+        config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(format!("file://{}", output.path().display())),
+                ..Default::default()
+            })
+            .expect("configure telemetry output");
+
+        let client = TelemetryCachedClient::new(
+            "service",
+            "env",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8.4", "1.0"),
+            || config,
+            vec![],
+        );
+        client.worker.send_stop().expect("queue stop");
+
+        let mut content = String::new();
+        for _ in 0..100 {
+            content = std::fs::read_to_string(output.path()).expect("read telemetry output");
+            if content.contains("\"request_type\":\"app-closing\"") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert!(
+            content.contains("\"request_type\":\"app-started\""),
+            "telemetry output: {content}"
+        );
+        assert!(
+            content.contains("\"request_type\":\"app-closing\""),
+            "telemetry output: {content}"
+        );
+    }
 
     #[test]
     fn in_process_client_keeps_instance_and_rebinds_application() {
