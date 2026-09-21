@@ -587,8 +587,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     /// Set the runtime identifier supplied by the language tracer.
     ///
-    /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
-    /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    /// Used for traces, stats, and telemetry. If unset, uses the telemetry configuration's
+    /// runtime ID, or generates a fresh UUID.
     ///
     /// Ignored when a shared handle was set via
     /// [`TraceExporterBuilder::set_mutable_metadata`].
@@ -768,6 +768,32 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
+        let mutable_metadata = match self.mutable_metadata {
+            Some(handle) => {
+                if self.runtime_id.is_some() {
+                    warn!("`set_runtime_id` value is ignored because `set_mutable_metadata` is also set");
+                }
+                if !self.process_tags.is_empty() {
+                    warn!("`set_process_tags` value is ignored because `set_mutable_metadata` is also set");
+                }
+                handle
+            }
+            None => {
+                let runtime_id = self.runtime_id;
+                #[cfg(feature = "telemetry")]
+                let runtime_id = runtime_id.or_else(|| {
+                    self.telemetry
+                        .as_ref()
+                        .and_then(|config| config.runtime_id.clone())
+                });
+                let mut metadata = MutableMetadata::default();
+                metadata.runtime_id =
+                    runtime_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                metadata.process_tags = self.process_tags;
+                metadata.into()
+            }
+        };
+
         #[cfg(feature = "telemetry")]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
@@ -785,10 +811,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                         .set_tracer_version(&self.tracer_version)
                         .set_heartbeat(telemetry_config.heartbeat)
                         .set_url(base_url)
-                        .set_debug_enabled(telemetry_config.debug_enabled);
-                    if let Some(id) = telemetry_config.runtime_id {
-                        tb = tb.set_runtime_id(&id);
-                    }
+                        .set_debug_enabled(telemetry_config.debug_enabled)
+                        .set_mutable_metadata(mutable_metadata.clone());
                     if let Some(ref id) = sessions.session_id {
                         tb = tb.set_session_id(id);
                     }
@@ -884,25 +908,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 ..Default::default()
             }));
 
-        let mutable_metadata = match self.mutable_metadata {
-            Some(handle) => {
-                if self.runtime_id.is_some() {
-                    warn!("`set_runtime_id` value is ignored because `set_mutable_metadata` is also set");
-                }
-                if !self.process_tags.is_empty() {
-                    warn!("`set_process_tags` value is ignored because `set_mutable_metadata` is also set");
-                }
-                handle
-            }
-            None => {
-                let mut metadata = MutableMetadata::default();
-                metadata.runtime_id = self
-                    .runtime_id
-                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                metadata.process_tags = self.process_tags;
-                metadata.into()
-            }
-        };
         let metadata = TracerMetadata {
             tracer_version: self.tracer_version,
             language_version: self.language_version,
@@ -1362,6 +1367,34 @@ mod tests {
         assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.load().is_some());
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn telemetry_runtime_id_is_a_fallback_for_exporter_metadata() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.any_request();
+            then.status(200).body("{}");
+        });
+        for (runtime_id, expected) in [(None, "telemetry-id"), (Some("tracer-id"), "tracer-id")] {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .set_url(&server.url("/"))
+                .enable_telemetry(TelemetryConfig {
+                    runtime_id: Some("telemetry-id".into()),
+                    ..Default::default()
+                });
+            if let Some(runtime_id) = runtime_id {
+                builder.set_runtime_id(runtime_id);
+            }
+            let exporter = builder.build::<NativeCapabilities>().unwrap();
+            assert_eq!(
+                exporter.metadata.mutable_metadata.load().runtime_id,
+                expected
+            );
+        }
     }
 
     #[cfg_attr(miri, ignore)]

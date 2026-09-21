@@ -1301,6 +1301,9 @@ impl<
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,
+    /// Prefer [`TraceExporterBuilder::set_mutable_metadata`] or
+    /// [`TraceExporterBuilder::set_runtime_id`]. This is a fallback for traces, stats,
+    /// and telemetry when neither is set.
     pub runtime_id: Option<String>,
     pub debug_enabled: bool,
 }

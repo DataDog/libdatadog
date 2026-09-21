@@ -3456,6 +3456,7 @@ dependencies = [
  "libdd-common",
  "libdd-ddsketch",
  "libdd-shared-runtime",
+ "libdd-trace-utils",
  "serde",
  "serde_json",
  "strum",

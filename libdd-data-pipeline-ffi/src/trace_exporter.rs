@@ -412,8 +412,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
 
 /// Shares a mutable metadata handle with the exporter config.
 ///
-/// When set, this supersedes the `process_tags` configured via
-/// `ddog_trace_exporter_config_set_process_tags`.
+/// When set, this supersedes `ddog_trace_exporter_config_set_process_tags` and the
+/// runtime ID in `TelemetryClientConfig`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_mutable_metadata(
     config: Option<&mut TraceExporterConfig>,
