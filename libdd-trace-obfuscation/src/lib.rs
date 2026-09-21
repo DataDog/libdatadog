@@ -13,3 +13,5 @@ pub mod redis;
 pub mod redis_tokenizer;
 pub mod replacer;
 pub mod sql;
+
+mod repeat_cache;
