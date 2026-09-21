@@ -318,44 +318,36 @@ mod tests {
     }
 
     #[duplicate_item(
-        [
-        test_name   [test_replace_tags]
-        rules       [r#"[
+    test_name rules input expected;
+    [test_replace_tags] [r#"[
                         {"name": "http.url", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("http.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
-        [
-        test_name   [test_replace_tags_with_exceptions]
-        rules       [r#"[
+    [test_replace_tags_with_exceptions] [r#"[
                         {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "*", "pattern": "this", "repl": "that"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
                         {"name": "resource.name", "pattern": "prod", "repl": "stage"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("resource.name", "this is prod"),
                             ("http.url", "some/[REDACTED]/token/abcdef/abc"),
                             ("other.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("resource.name", "that is stage"),
                             ("http.url", "some/[REDACTED]/token/?/abc"),
@@ -363,7 +355,6 @@ mod tests {
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
     )]
     #[test]
     #[cfg_attr(miri, ignore)]

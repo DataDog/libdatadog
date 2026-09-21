@@ -88,7 +88,7 @@ Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, 
 Breaking changes: append `!` — e.g. `feat!: remove deprecated API`
 
 ### Licenses
-All source files must have Apache 2.0 license headers (except `symbolizer-ffi`). Use `./scripts/reformat_copyright.sh` to add or fix headers automatically. The third-party license CSV (`LICENSE-3rdparty.csv`) is validated in CI. To regenerate:
+All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) must have Apache 2.0 license headers (except `symbolizer-ffi`). Use `./scripts/reformat_copyright.sh` to add or fix headers automatically. JSON files do **not** get license headers (JSON has no comment syntax); do not add them. The third-party license CSV (`LICENSE-3rdparty.csv`) is validated in CI. To regenerate:
 ```bash
 ./scripts/update_license_3rdparty.sh
 ```
