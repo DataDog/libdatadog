@@ -8,6 +8,8 @@
 //! values. Observations can overlap; only `quantities` are suitable for additive accounting.
 //! It performs no I/O, reads no configuration, and owns no background work.
 
+#![warn(missing_docs)]
+
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Largest integer exactly representable by downstream floating-point metric transports.
@@ -19,9 +21,13 @@ pub const MAX_COUNT: u64 = 1 << 53;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Value {
     #[default]
+    /// No value was reported.
     Missing,
+    /// An integer counter; values above MAX_COUNT are rejected during normalization.
     Integer(u64),
+    /// A duration in seconds; must be finite, nonnegative, and no greater than MAX_COUNT.
     Fraction(f64),
+    /// The adapter encountered a value of the wrong type or outside its integer range.
     Invalid,
 }
 
@@ -53,6 +59,7 @@ impl Value {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InputBasis {
     #[default]
+    /// The input total already includes both cache reads and writes.
     IncludesCache,
     /// For example, native Anthropic Messages input (not LiteLLM-normalized prompt usage).
     ExcludesCache,
@@ -61,18 +68,31 @@ pub enum InputBasis {
 /// Reported details are observations, not additional tokens to add to a total.
 #[derive(Clone, Debug, Default)]
 pub struct Details {
+    /// Reported text tokens; an observation, not an additional quantity.
     pub text_tokens: Value,
+    /// Reported audio tokens; an observation, not an additional quantity.
     pub audio_tokens: Value,
+    /// Reported image tokens; an observation, not an additional quantity.
     pub image_tokens: Value,
+    /// Reported video tokens; an observation, not an additional quantity.
     pub video_tokens: Value,
+    /// Reported cache detail; set UsageInput.cache_read separately for accounting.
     pub cached_tokens: Value,
+    /// Reported reasoning tokens; an observation, not an additional quantity.
     pub reasoning_tokens: Value,
+    /// Reported tool use tokens; an observation, not an additional quantity.
     pub tool_use_tokens: Value,
+    /// Reported character count; an observation, not an additional quantity.
     pub character_count: Value,
+    /// Reported image count; an observation, not an additional quantity.
     pub image_count: Value,
+    /// Reported accepted prediction tokens; an observation, not an additional quantity.
     pub accepted_prediction_tokens: Value,
+    /// Reported rejected prediction tokens; an observation, not an additional quantity.
     pub rejected_prediction_tokens: Value,
+    /// Reported audio length seconds; an observation, not an additional quantity.
     pub audio_length_seconds: Value,
+    /// Reported video length seconds; an observation, not an additional quantity.
     pub video_length_seconds: Value,
 }
 
@@ -104,7 +124,9 @@ impl Details {
 /// Equal counts are counted once; a disagreement suppresses tool quantities.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ToolCount {
+    /// Count from the original provider response.
     pub native: Value,
+    /// Count from the SDK-normalized response.
     pub normalized: Value,
 }
 
@@ -112,27 +134,42 @@ pub struct ToolCount {
 /// SDK aliases and authenticated identity selection belong in the caller's adapter.
 #[derive(Clone, Debug, Default)]
 pub struct UsageInput {
+    /// Reported input tokens, interpreted according to input_basis.
     pub input: Value,
+    /// Reported output tokens, including any reasoning subset.
     pub output: Value,
+    /// Whether caches are included in the reported input count.
     pub input_basis: InputBasis,
     /// Prompt-only embedding responses need not report output or cache detail.
     pub embedding: bool,
+    /// Authoritative cache-read count selected by the adapter, separate from detail observations.
     pub cache_read: Value,
+    /// Authoritative cache-write count selected by the adapter.
     pub cache_write: Value,
+    /// Cache-write tokens with a reported five-minute lifetime.
     pub cache_write_5m: Value,
+    /// Cache-write tokens with a reported one-hour lifetime.
     pub cache_write_1h: Value,
+    /// Additional input observations; never automatically added to token totals.
     pub input_details: Details,
+    /// Additional output observations; reasoning and audio cannot exceed output tokens.
     pub output_details: Details,
+    /// Reported web search requests.
     pub web_search_requests: ToolCount,
+    /// Reported tool search requests.
     pub tool_search_requests: ToolCount,
+    /// Reported browser open requests.
     pub browser_open_requests: ToolCount,
+    /// Reported google maps grounding requests.
     pub google_maps_grounding_requests: ToolCount,
 }
 
 /// Integer counters retain their type, including at the maximum supported count.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Measurement {
+    /// An exact nonnegative integer count.
     Count(u64),
+    /// A validated duration in seconds; fractions are preserved.
     Duration(f64),
 }
 
@@ -148,19 +185,30 @@ impl Measurement {
 /// Machine-readable reasons why all or part of a request cannot be partitioned safely.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Issue {
+    /// No response usage was available.
     MissingUsage,
+    /// A selected value had an invalid type, range, or nonfinite value.
     InvalidUsage,
+    /// Required input or output totals were missing.
     UnsupportedUsageShape,
+    /// A subset exceeded its enclosing input or output total.
     InconsistentUsage,
+    /// Cache-write lifetime subtotals exceeded reported cache writes.
     InconsistentCacheTtl,
+    /// Cache reads were not reported, so uncached input is unknown.
     CacheReadDetailMissing,
+    /// Cache writes were not reported, so uncached input is unknown.
     CacheWriteDetailMissing,
+    /// Some cache writes had no reported lifetime.
     CacheWriteTtlUnknown,
+    /// Media/cache overlap prevents a safe disjoint partition.
     MultimodalPartitionUnsupported,
+    /// Native and normalized tool counts disagreed.
     ConflictingToolUsage,
 }
 
 impl Issue {
+    /// Stable wire label used by integrations for this issue.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::MissingUsage => "missing_usage",
@@ -180,8 +228,11 @@ impl Issue {
 /// Disjoint quantities and potentially overlapping observations. Units are in the names.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Usage {
+    /// Non-overlapping reported token/cache quantities and separate tool request counts.
     pub quantities: BTreeMap<&'static str, u64>,
+    /// Reported values and diagnostics; these can overlap and must not be added together.
     pub observations: BTreeMap<String, Measurement>,
+    /// Reasons why some or all quantities could not be derived.
     pub issues: BTreeSet<Issue>,
 }
 
