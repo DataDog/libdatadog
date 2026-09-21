@@ -220,9 +220,11 @@ impl SymbolOverrides {
             return;
         }
 
-        // Pointer width alone does not make a relocation safely substitutable. A RELA entry must
-        // resolve to exactly the symbol address S, not S + A with a non-zero addend, because the
-        // target and hook have unrelated code layouts. REL entries use an implicit addend that is
+        // Pointer width alone does not make a relocation safely substitutable; see
+        // `is_rela_got_pointer_reloc`. GOT slots (`GLOB_DAT` / `JUMP_SLOT`) resolve to exactly the
+        // symbol address `S` because the dynamic linker ignores the addend, while absolute
+        // pointer-width relocations resolve to `S + A` and so need a zero addend, since the target
+        // and hook have unrelated code layouts. REL entries use an implicit addend that is
         // no longer reliably recoverable after dynamic linking, so skip them conservatively.
         for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
             if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
