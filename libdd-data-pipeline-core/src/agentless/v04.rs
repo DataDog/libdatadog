@@ -207,11 +207,10 @@ mod tests {
     }
 
     fn metadata() -> TracerMetadata {
-        TracerMetadata {
+        let metadata = TracerMetadata {
             hostname: "host-1".to_string(),
             env: "prod".to_string(),
             app_version: "2.0.0".to_string(),
-            runtime_id: "runtime-1".to_string(),
             service: "service-1".to_string(),
             tracer_version: "1.2.3".to_string(),
             language: "nodejs".to_string(),
@@ -219,7 +218,11 @@ mod tests {
             language_interpreter: "v8".to_string(),
             container_id: "container-1".to_string(),
             ..Default::default()
-        }
+        };
+        metadata
+            .mutable_metadata
+            .set_runtime_id("runtime-1".to_string());
+        metadata
     }
 
     fn trace_config() -> AgentlessTraceConfig {
