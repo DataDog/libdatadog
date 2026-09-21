@@ -507,9 +507,20 @@ mod linux {
         let own_uid = crate::primary_sidecar_identifier();
 
         verify_server(&conn, Some(own_uid), &path).expect("our own uid must be accepted");
-        verify_server(&conn, Some(0), &path)
-            .expect("root must be accepted: it can read our memory regardless");
-        verify_server(&conn, None, &path).expect("an unknown expectation is no basis to refuse");
+
+        // Not knowing who to expect is not a reason to proceed: the socket name outlives the
+        // pid it was derived from, so anyone may hold it once that pid is gone.
+        let err = verify_server(&conn, None, &path)
+            .expect_err("a server that cannot be identified must be refused");
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        // The root allowance is about the *server's* uid, and a test cannot make itself serve
+        // as root without privileges - so that clause is checked on the predicate directly
+        // rather than by passing 0 as the *expected* uid, which asserts something else.
+        assert!(
+            server_uid_is_acceptable(0, own_uid + 1),
+            "a root server must be accepted whatever we expected: it can read our memory anyway"
+        );
 
         let err = verify_server(&conn, Some(own_uid + 1), &path)
             .expect_err("a server running as another uid must be refused");
