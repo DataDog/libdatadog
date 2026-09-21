@@ -48,6 +48,7 @@ use std::sync::{Condvar, Mutex};
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
 use http::{header, HeaderValue};
+use libdd_trace_utils::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -69,7 +70,7 @@ macro_rules! telemetry_worker_log {
     ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
-                worker.runtime_id = %$worker.runtime_id,
+                worker.runtime_id = %$worker.mutable_metadata.load().runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
                 $($arg)*
@@ -82,7 +83,7 @@ macro_rules! telemetry_worker_log {
     ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
-                worker.runtime_id = %$worker.runtime_id,
+                worker.runtime_id = %$worker.mutable_metadata.load().runtime_id,
                 worker.debug_logging = $worker.config.telemetry_debug_logging_enabled,
                 $fmt_str,
                 $($arg)*
@@ -154,7 +155,7 @@ pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
-    runtime_id: String,
+    mutable_metadata: MutableMetadataHandle,
     capabilities: C,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
@@ -176,7 +177,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Deb
             .field("mailbox", &self.mailbox)
             .field("cancellation_token", &self.cancellation_token)
             .field("seq_id", &self.seq_id)
-            .field("runtime_id", &self.runtime_id)
+            .field("mutable_metadata", &self.mutable_metadata)
             .field("metrics_flush_interval", &self.metrics_flush_interval)
             .field("deadlines", &self.deadlines)
             .field("data", &self.data)
@@ -199,7 +200,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
             // a hot loop re-emitting Lifecycle::Stop on every iteration; the runtime will
             // tear the worker down via the handle.
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 "Telemetry worker mailbox closed; parking until shutdown"
             );
             std::future::pending::<()>().await;
@@ -214,7 +215,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Take the action that was stored by trigger()
         if let Some(action) = self.next_action.take() {
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
@@ -880,7 +881,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
     async fn send_payload(&self, payload: &data::Payload) -> anyhow::Result<()> {
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             payload.type = payload.request_type(),
             seq_id = self.seq_id.load(Ordering::Acquire),
             "Sending telemetry payload"
@@ -889,13 +890,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let result = self.send_request(req).await;
         match &result {
             Ok(resp) => debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 payload.type = payload.request_type(),
                 response.status = resp.status().as_u16(),
                 "Successfully sent telemetry payload"
             ),
             Err(e) => debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 payload.type = payload.request_type(),
                 error = ?e,
                 "Failed to send telemetry payload"
@@ -906,12 +907,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
     fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http::Request<Bytes>> {
         let seq_id = self.next_seq_id();
+        let metadata = self.mutable_metadata.load();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
             tracer_time: time::SystemTime::UNIX_EPOCH
                 .elapsed()
                 .map_or(0, |d| d.as_secs()),
-            runtime_id: &self.runtime_id,
+            runtime_id: &metadata.runtime_id,
             seq_id,
             host: &self.data.host,
             origin: None,
@@ -963,7 +965,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         let timeout = time::Duration::from_millis(timeout_ms);
 
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             http.timeout_ms = timeout_ms,
             "Sending HTTP request"
         );
@@ -972,14 +974,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     "Telemetry request cancelled"
                 );
                 Err(HttpError::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = sleeper.sleep(timeout) => {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
@@ -1008,14 +1010,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     async fn run_loop(mut self) {
         debug!(
             worker.flavor = ?self.flavor,
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             "Starting telemetry worker"
         );
 
         loop {
             if self.cancellation_token.is_cancelled() {
                 debug!(
-                    worker.runtime_id = %self.runtime_id,
+                    worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                     "Telemetry worker cancelled, shutting down"
                 );
                 return;
@@ -1023,7 +1025,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
 
             let action = self.recv_next_action().await;
             debug!(
-                worker.runtime_id = %self.runtime_id,
+                worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
@@ -1039,7 +1041,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 ControlFlow::Continue(()) => {}
                 ControlFlow::Break(()) => {
                     debug!(
-                        worker.runtime_id = %self.runtime_id,
+                        worker.runtime_id = %self.mutable_metadata.load().runtime_id,
                         worker.restartable = self.config.restartable,
                         "Telemetry worker received break signal"
                     );
@@ -1051,7 +1053,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         }
 
         debug!(
-            worker.runtime_id = %self.runtime_id,
+            worker.runtime_id = %self.mutable_metadata.load().runtime_id,
             "Telemetry worker stopped"
         );
     }
@@ -1345,6 +1347,8 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
+    /// When provided, overrides `runtime_id`.
+    pub mutable_metadata: Option<MutableMetadataHandle>,
     pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
@@ -1397,6 +1401,7 @@ impl TelemetryWorkerBuilder {
                 ..Default::default()
             },
             runtime_id: None,
+            mutable_metadata: None,
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
@@ -1431,6 +1436,13 @@ impl TelemetryWorkerBuilder {
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
+        let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
+            let mut metadata = MutableMetadata::default();
+            metadata.runtime_id = self
+                .runtime_id
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            metadata.into()
+        });
         let worker = TelemetryWorker {
             flavor: self.flavor,
             data: TelemetryWorkerData {
@@ -1452,9 +1464,7 @@ impl TelemetryWorkerBuilder {
             config,
             mailbox,
             seq_id: AtomicU64::new(1),
-            runtime_id: self
-                .runtime_id
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            mutable_metadata,
             capabilities,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
@@ -1533,6 +1543,7 @@ mod tests {
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_trace_utils::mutable_metadata::MutableMetadataHandle;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1571,6 +1582,40 @@ mod tests {
         let rt = Runtime::new().unwrap();
         b.build_worker::<NativeCapabilities>(Some(rt.handle().clone()))
             .1
+    }
+
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    #[test]
+    fn telemetry_requests_observe_shared_runtime_id_updates() {
+        let metadata = MutableMetadataHandle::default();
+        metadata.set_runtime_id("initial".into());
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "service".into(),
+            "rust".into(),
+            "1".into(),
+            "1".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.runtime_id = Some("ignored".into());
+        builder.mutable_metadata = Some(metadata.clone());
+        let rt = Runtime::new().unwrap();
+        let (_, worker) = builder.build_worker::<NativeCapabilities>(Some(rt.handle().clone()));
+        let first = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let first: serde_json::Value = serde_json::from_slice(first.body()).unwrap();
+        assert_eq!(first["runtime_id"], "initial");
+        metadata.set_runtime_id("updated".into());
+        let second = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let second: serde_json::Value = serde_json::from_slice(second.body()).unwrap();
+        assert_eq!(second["runtime_id"], "updated");
+        assert_eq!(first["runtime_id"], "initial");
+        assert_eq!(second["seq_id"], first["seq_id"].as_u64().unwrap() + 1);
     }
 
     #[cfg_attr(miri, ignore)] // reqwest in build_worker

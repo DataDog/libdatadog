@@ -182,18 +182,45 @@ mod otlp_export_tests {
             })
             .await;
 
+        #[cfg(feature = "telemetry")]
+        let telemetry_new = server
+            .mock_async(|when, then| {
+                when.method("POST")
+                    .path("/telemetry/proxy/api/v2/apmtelemetry")
+                    .body_includes(r#""runtime_id":"rt-updated""#);
+                then.status(200).body("");
+            })
+            .await;
+        #[cfg(feature = "telemetry")]
+        let telemetry_legacy = server
+            .mock_async(|when, then| {
+                when.method("POST")
+                    .path("/telemetry/proxy/api/v2/apmtelemetry")
+                    .body_includes("ignored-telemetry-id");
+                then.status(200).body("");
+            })
+            .await;
+
         let handle = MutableMetadataHandle::default();
         handle.set_runtime_id("rt-initial".into());
 
+        let base_url = server.url("/");
         let otlp_endpoint = format!("http://localhost:{}/v1/traces", server.port());
         let task_result = task::spawn_blocking(move || {
             let mut builder = TraceExporterBuilder::default();
             builder
+                .set_url(&base_url)
                 .set_otlp_endpoint(&otlp_endpoint)
                 .set_language("test-lang")
                 // Ignored: the shared handle supersedes the legacy setter.
                 .set_runtime_id("ignored-legacy-id")
                 .set_mutable_metadata(handle.clone());
+            #[cfg(feature = "telemetry")]
+            builder.enable_telemetry(libdd_data_pipeline::trace_exporter::TelemetryConfig {
+                heartbeat: 60_000,
+                runtime_id: Some("ignored-telemetry-id".into()),
+                debug_enabled: false,
+            });
             let trace_exporter = builder
                 .build::<NativeCapabilities>()
                 .expect("Unable to build TraceExporter");
@@ -207,6 +234,9 @@ mod otlp_export_tests {
             handle.set_runtime_id("rt-updated".into());
             let response = trace_exporter.send(data.as_ref());
             assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
+            trace_exporter
+                .shutdown(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
         })
         .await;
 
@@ -214,6 +244,11 @@ mod otlp_export_tests {
         assert_eq!(mock_old.calls_async().await, 1);
         assert_eq!(mock_new.calls_async().await, 1);
         assert_eq!(mock_legacy.calls_async().await, 0);
+        #[cfg(feature = "telemetry")]
+        {
+            assert!(telemetry_new.calls_async().await > 0);
+            assert_eq!(telemetry_legacy.calls_async().await, 0);
+        }
     }
 
     #[cfg_attr(miri, ignore)]
