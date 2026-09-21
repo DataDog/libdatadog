@@ -522,6 +522,18 @@ mod linux {
             "a root server must be accepted whatever we expected: it can read our memory anyway"
         );
 
+        // Staging a refusal needs a server that is not root, and the server here is this very
+        // process. Run as root - as some CI images do - every expectation is satisfied by the
+        // root allowance, so there is nothing left to refuse and the assertions below would be
+        // testing that allowance rather than the refusal they describe.
+        if own_uid == 0 {
+            eprintln!(
+                "skipping the refusal half of abstract_client_refuses_a_server_of_another_uid: \
+                 running as root, which is accepted whatever was expected"
+            );
+            return;
+        }
+
         let err = verify_server(&conn, Some(own_uid + 1), &path)
             .expect_err("a server running as another uid must be refused");
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
