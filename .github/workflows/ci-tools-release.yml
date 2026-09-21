@@ -147,10 +147,35 @@ jobs:
             echo "::notice::release $TAG exists, replacing the asset"
             gh release upload "$TAG" "$asset" --clobber
           else
+            # These tools are properly released, they are just not part of the
+            # product, so they are ordinary releases that decline the "Latest"
+            # badge rather than prereleases. The step below asserts that this
+            # is enough to keep them away from it.
             gh release create "$TAG" "$asset" \
-              --prerelease \
+              --latest=false \
               --title "$TOOL v$VERSION" \
               --notes "$notes"
+          fi
+
+      - name: Check the latest release is still a libdatadog release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # make_latest=false is documented as declining the "Latest" release,
+          # while GET /releases/latest is documented as returning the most
+          # recent non-prerelease release sorted by date, without mentioning
+          # make_latest. Rather than rely on one reading, assert the invariant
+          # that matters: what the SDKs resolve when they ask this repository
+          # for its latest release has to be a libdatadog version, never a CI
+          # tool. If this fails, publish these as prereleases instead.
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+                     --jq '.tag_name' 2>/dev/null || echo '')
+          echo "GET /releases/latest resolves to '${latest:-<none>}'"
+          if [[ "$latest" == ci-tool-* ]]; then
+            echo "::error::$latest became this repository's latest release;" \
+                 "add --prerelease back to the publish step"
+            exit 1
           fi
 
       - name: Summary
