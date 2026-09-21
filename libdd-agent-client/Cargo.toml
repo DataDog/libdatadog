@@ -37,3 +37,8 @@ tracing.workspace = true
 httpmock.workspace = true
 rustls = { workspace = true, features = ["ring"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
+
+[package.metadata.semver-level]
+# Same as libdd-http-client: the empty feature list does not build, because this
+# crate re-exports that crate's backend selection. See scripts/semver-level.sh.
+explicit-features = ["https", "hyper-backend"]
