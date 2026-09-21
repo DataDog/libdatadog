@@ -192,7 +192,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
                 SHM_LIMITER
                     .as_ref()
-                    .map(|limiter| limiter.lock_or_panic().alloc())
+                    .and_then(|limiter| limiter.lock_or_panic().alloc())
             } else {
                 None
             },

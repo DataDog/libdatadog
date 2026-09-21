@@ -128,10 +128,11 @@ impl LocalLimiter {
 
 impl Limiter for LocalLimiter {
     fn inc(&self, limit: u32) -> bool {
-        let previous_hits = self.update(limit, self.granularity);
-        if previous_hits / self.granularity >= limit as i64 {
-            self.hit_count
-                .fetch_sub(self.granularity, Ordering::Acquire);
+        // Read once, and never divide by it unchecked: ensure it's never zero.
+        let granularity = self.granularity.max(1);
+        let previous_hits = self.update(limit, granularity);
+        if previous_hits / granularity >= limit as i64 {
+            self.hit_count.fetch_sub(granularity, Ordering::Acquire);
             false
         } else {
             // We don't care about race conditions here:
@@ -146,7 +147,7 @@ impl Limiter for LocalLimiter {
     fn rate(&self) -> f64 {
         let last_limit = self.last_limit.load(Ordering::Relaxed);
         let hit_count = self.hit_count.load(Ordering::Relaxed);
-        (hit_count as f64 / (last_limit as i64 * self.granularity) as f64).clamp(0., 1.)
+        (hit_count as f64 / (last_limit as i64 * self.granularity.max(1)) as f64).clamp(0., 1.)
     }
 
     fn update_rate(&self) -> f64 {
