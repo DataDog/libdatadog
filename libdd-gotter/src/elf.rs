@@ -284,7 +284,7 @@ impl<'a> DynamicInfo<'a> {
         let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
         let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
 
-        let strtab_slice = try_as_slice(strtab as *const u8, strtab_size);
+        let strtab_slice = try_as_slice(strtab.cast::<u8>(), strtab_size);
         // u32 -> usize: lossless on 64-bit (crate cfg gate).
         let symtab_slice = try_as_slice(symtab, u32_to_usize(sym_count));
         let rels_slice = try_as_slice(rels, rels_count);
