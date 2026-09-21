@@ -105,6 +105,23 @@ pub mod linux {
         sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
+    struct ThreadContextOwner;
+
+    impl Drop for ThreadContextOwner {
+        fn drop(&mut self) {
+            let detached = ThreadContext::detach();
+            #[cfg(test)]
+            if detached.is_some() {
+                RECORDS_FREED_ON_THREAD_EXIT.fetch_add(1, Ordering::Relaxed);
+            }
+            drop(detached);
+        }
+    }
+
+    thread_local! {
+        static THREAD_CONTEXT_OWNER_GUARD: ThreadContextOwner = const { ThreadContextOwner };
+    }
+
     // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
     // the dynamic symbol table. It must be an exported ELF `STT_TLS` object accessed via the
     // TLSDESC dialect, as mandated by the OTel thread-level context sharing spec.
@@ -508,6 +525,10 @@ pub mod linux {
             slot: &AtomicPtr<ThreadContextRecord>,
             tgt: *mut ThreadContextRecord,
         ) -> Option<ThreadContext> {
+            if !tgt.is_null() {
+                THREAD_CONTEXT_OWNER_GUARD.with(|_| {});
+            }
+
             // Safety: a non-null value in the slot came from a prior `into_ptr` call.
             NonNull::new(slot.swap(tgt, Ordering::Relaxed))
                 .map(|ptr| unsafe { ThreadContext::from_ptr(ptr) })
@@ -641,6 +662,10 @@ pub mod linux {
             }
         }
     }
+
+    #[cfg(test)]
+    static RECORDS_FREED_ON_THREAD_EXIT: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
 
     #[cfg(test)]
     // The tests are set to be ignored by Miri, since the inline-asm TLSDESC access isn't supported.
@@ -1013,6 +1038,20 @@ pub mod linux {
         }
 
         // Make sure the TLSDESC accessor is indeed providing a thread-local address.
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn attached_record_is_freed_on_thread_exit() {
+            let freed_before = super::RECORDS_FREED_ON_THREAD_EXIT.load(Ordering::Relaxed);
+
+            std::thread::spawn(|| {
+                ThreadContext::update([1; 16], [2; 8], 0, [3; 8], &[]);
+            })
+            .join()
+            .unwrap();
+
+            assert!(super::RECORDS_FREED_ON_THREAD_EXIT.load(Ordering::Relaxed) > freed_before);
+        }
+
         #[test]
         #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {
