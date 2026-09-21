@@ -10,8 +10,9 @@
 //! encoders in sync because there is only one IR.
 
 use super::OtlpResourceInfo;
-use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
+use libdd_trace_types::span::v04::{Span, SpanEvent, SpanLink};
+use libdd_trace_types::span::TraceData;
 use std::borrow::Borrow;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
@@ -274,8 +275,10 @@ fn collect_span_attributes<T: TraceData>(
 }
 
 /// A single event/link attribute value → prost (events carry typed single/array values).
-fn event_attr_value<T: TraceData>(av: &crate::span::v04::AttributeArrayValue<T>) -> ProtoValue {
-    use crate::span::v04::AttributeArrayValue;
+fn event_attr_value<T: TraceData>(
+    av: &libdd_trace_types::span::v04::AttributeArrayValue<T>,
+) -> ProtoValue {
+    use libdd_trace_types::span::v04::AttributeArrayValue;
     match av {
         AttributeArrayValue::String(s) => ProtoValue::StringValue(s.borrow().to_string()),
         AttributeArrayValue::Boolean(b) => ProtoValue::BoolValue(*b),
@@ -285,7 +288,7 @@ fn event_attr_value<T: TraceData>(av: &crate::span::v04::AttributeArrayValue<T>)
 }
 
 fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValue> {
-    use crate::span::v04::AttributeAnyValue;
+    use libdd_trace_types::span::v04::AttributeAnyValue;
     ev.attributes
         .iter()
         .map(|(k, v)| {
@@ -510,7 +513,7 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<ProtoEvent>, u
 mod tests {
     use super::*;
     use crate::otlp_encoder::OtlpResourceInfo;
-    use crate::span::BytesData;
+    use libdd_trace_types::span::BytesData;
 
     #[test]
     fn maps_native_span_to_prost_ir() {

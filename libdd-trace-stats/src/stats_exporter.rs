@@ -223,9 +223,9 @@ impl<Cap: HttpClientCapability + SleepCapability> AgentlessStatsExporter<Cap> {
     }
 
     /// Add decoded v0.4 traces to the stats concentrator.
-    pub fn add_traces<T: libdd_trace_utils::span::TraceData>(
+    pub fn add_traces<T: libdd_trace_types::span::TraceData>(
         &self,
-        traces: &mut [Vec<libdd_trace_utils::span::v04::Span<T>>],
+        traces: &mut [Vec<libdd_trace_types::span::v04::Span<T>>],
         client_computed_top_level: bool,
     ) {
         if !client_computed_top_level {
@@ -758,7 +758,8 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
-    use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
+    use libdd_trace_types::span::v04::SpanSlice;
+    use libdd_trace_utils::span::trace_utils;
     use libdd_trace_utils::test_utils::{poll_for_mock_hit, poll_for_mock_hits};
     use std::borrow::Cow;
     use time::Duration;
@@ -1270,10 +1271,9 @@ mod tests {
     #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
     fn get_collapsed_concentrator(per_key_collapsed: bool) -> SpanConcentrator {
         use crate::span_concentrator::CardinalityLimitConfig;
-        use libdd_trace_utils::span::{
-            trace_utils,
-            v04::{SpanSlice, VecMap},
-        };
+        use libdd_trace_types::span::v04::SpanSlice;
+        use libdd_trace_types::span::vec_map::VecMap;
+        use libdd_trace_utils::span::trace_utils;
 
         let mut cardinality_limit_config = CardinalityLimitConfig {
             whole_key_limit: 2, // max 2 distinct key → third distinct span collapses

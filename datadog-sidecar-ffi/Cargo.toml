@@ -15,6 +15,7 @@ bench = false
 libdd-telemetry = { path = "../libdd-telemetry" }
 datadog-sidecar = { path = "../datadog-sidecar" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-types = { version = "1.0.0", path = "../libdd-trace-types" }
 libdd-ipc = { path = "../libdd-ipc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }

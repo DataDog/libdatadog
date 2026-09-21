@@ -10,8 +10,9 @@
 
 use super::mapper::{build_resource, proto_kv, MAX_ATTRIBUTES_PER_SPAN};
 use super::OtlpResourceInfo;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
+use libdd_trace_types::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
+use libdd_trace_types::span::TraceData;
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 
@@ -455,10 +456,10 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
 #[cfg(test)]
 mod tests_v1 {
     use super::*;
-    use crate::span::v1::SpanKind;
-    use crate::span::BytesData;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
+    use libdd_trace_types::span::v1::SpanKind;
+    use libdd_trace_types::span::BytesData;
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_string(s.to_string())
@@ -681,7 +682,7 @@ mod tests_v1 {
     #[test]
     fn keyvalue_attribute_maps_to_kvlist_value() {
         let mut span = minimal_span();
-        let mut nested = crate::span::vec_map::VecMap::new();
+        let mut nested = libdd_trace_types::span::vec_map::VecMap::new();
         nested.insert(bs("nested_key"), AttributeValue::String(bs("nested_val")));
         span.attributes
             .insert(bs("kv"), AttributeValue::KeyValue(nested));

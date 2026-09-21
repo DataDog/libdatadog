@@ -1,37 +1,17 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod dict;
-
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
-use crate::span::{SharedDictBytes, SpanText, TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
 use anyhow::Result;
-use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
+use libdd_trace_types::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
+use libdd_trace_types::span::v05::dict::SharedDictBytes;
+use libdd_trace_types::span::v05::Span;
+use libdd_trace_types::span::TraceData;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::collections::HashMap;
-
-/// Structure that represent a TraceChunk Span which String fields are interned in a shared
-/// dictionary. The number of elements is fixed by the spec and they all need to be serialized, in
-/// case of adding more items the constant msgpack_decoder::v05::SPAN_ELEM_COUNT need to be
-/// updated.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-pub struct Span {
-    pub service: u32,
-    pub name: u32,
-    pub resource: u32,
-    pub trace_id: u64,
-    pub span_id: u64,
-    pub parent_id: u64,
-    pub start: i64,
-    pub duration: i64,
-    pub error: i32,
-    pub meta: HashMap<u32, u32>,
-    pub metrics: HashMap<u32, f64>,
-    pub r#type: u32,
-}
 
 /// Serializes a slice of [`SpanLink`]s into the JSON array the Datadog agent and backend
 /// expect under the `_dd.span_links` meta key.
@@ -183,22 +163,8 @@ impl<'a, T: TraceData> Serialize for AttributeArrayValueV05<'a, T> {
     }
 }
 
-/// Gets the index of the interned string. If the string is not part of the dictionary it is
-/// added and its corresponding index returned.
-///
-/// Checks if the span text is already interned before creating a
-/// new ByteString instance from it.
-fn get_or_insert(
-    dict: &mut SharedDictBytes,
-    str: &impl SpanText,
-) -> Result<u32, std::num::TryFromIntError> {
-    let entry = dict.map.raw_entry_mut_v1().from_key(str.borrow());
-    let idx = entry.index();
-    entry.or_insert_with(|| (str.to_bytes_string(), ()));
-    idx.try_into()
-}
-
-/// Converts a v0.4 [`Span`](crate::span::v04::Span) into its v0.5 dictionary-encoded form.
+/// Converts a v0.4 [`Span`](libdd_trace_types::span::v04::Span) into its v0.5 dictionary-encoded
+/// form.
 ///
 /// The v0.5 format is a fixed 12-element positional array (service, name, resource, trace_id,
 /// span_id, parent_id, start, duration, error, meta, metrics, type). It predates `span_links`,
@@ -217,7 +183,7 @@ fn get_or_insert(
 /// dictionary always owns its strings ([`SharedDictBytes`]). Borrowed input text is copied into
 /// the dictionary; owned text is reference-counted.
 pub fn from_v04_span<T: TraceData>(
-    span: &crate::span::v04::Span<T>,
+    span: &libdd_trace_types::span::v04::Span<T>,
     dict: &mut SharedDictBytes,
 ) -> Result<Span> {
     let meta_len = span.meta.len();
@@ -245,13 +211,16 @@ pub fn from_v04_span<T: TraceData>(
 
     // Intern fields in the same order as the base conversion to keep dictionary indices
     // stable; the span links / events keys are appended to `meta` afterwards.
-    let service = get_or_insert(dict, &span.service)?;
-    let name = get_or_insert(dict, &span.name)?;
-    let resource = get_or_insert(dict, &span.resource)?;
+    let service = dict.get_or_insert_from_span_text(&span.service)?;
+    let name = dict.get_or_insert_from_span_text(&span.name)?;
+    let resource = dict.get_or_insert_from_span_text(&span.resource)?;
     let mut meta = span.meta.iter().try_fold(
         HashMap::with_capacity(meta_len + extra_meta),
         |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-            meta.insert(get_or_insert(dict, k)?, get_or_insert(dict, v)?);
+            meta.insert(
+                dict.get_or_insert_from_span_text(k)?,
+                dict.get_or_insert_from_span_text(v)?,
+            );
             Ok(meta)
         },
     )?;
@@ -270,11 +239,11 @@ pub fn from_v04_span<T: TraceData>(
     let metrics = span.metrics.iter().try_fold(
         HashMap::with_capacity(metrics_len),
         |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-            metrics.insert(get_or_insert(dict, k)?, *v);
+            metrics.insert(dict.get_or_insert_from_span_text(k)?, *v);
             Ok(metrics)
         },
     )?;
-    let r#type = get_or_insert(dict, &span.r#type)?;
+    let r#type = dict.get_or_insert_from_span_text(&span.r#type)?;
 
     Ok(Span {
         service,
@@ -295,9 +264,10 @@ pub fn from_v04_span<T: TraceData>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
-    use crate::span::BytesData;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::vec_map::VecMap;
+    use libdd_trace_types::span::BytesData;
 
     /// Returns the JSON string interned in `meta` under `key`, if present.
     fn meta_json(dict: &SharedDictBytes, span: &Span, key: &str) -> Option<String> {

@@ -7,7 +7,8 @@ use tracing::debug;
 
 use crate::span::span_pool::PooledChunks;
 
-use super::{v04::Span, SpanText, TraceData};
+use libdd_trace_types::span::v04::Span;
+use libdd_trace_types::span::{SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
@@ -215,7 +216,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
+    use libdd_trace_types::span::v04::SpanBytes;
+    use libdd_trace_types::span::vec_map::VecMap;
 
     fn create_test_span(
         trace_id: u64,

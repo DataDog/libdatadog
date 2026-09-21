@@ -16,8 +16,9 @@
 //! `T: Serialize` bound — keeping the public exporter API free of that bound.
 
 use crate::hex::{hex_low_u64, hex_u128, hex_u64};
-use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::SPAN_LINK_FLAGS_SET_SENTINEL;
+use libdd_trace_types::span::v04::{Span, SpanEvent, SpanLink};
+use libdd_trace_types::span::TraceData;
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;

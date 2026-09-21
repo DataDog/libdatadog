@@ -168,7 +168,7 @@ mod tests {
     use bytes::Bytes;
     use libdd_capabilities::HttpError;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use libdd_trace_types::span::v04::SpanBytes;
 
     use super::*;
 
