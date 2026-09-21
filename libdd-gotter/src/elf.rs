@@ -21,7 +21,8 @@
 //!
 //! * 64-bit Linux ELF only (`Elf64_*`).
 //! * Supports `DT_GNU_HASH` and falls back to `DT_HASH` (sysv) for determining dynsym entry count.
-//! * REL / RELA / JMPREL relocation arrays.
+//! * RELA / JMPREL relocation arrays. REL arrays are parsed but conservatively skipped when
+//!   patching because their implicit addends cannot be recovered reliably after relocation.
 
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::slice;
@@ -875,26 +876,38 @@ pub fn elf64_r_type(info: u64) -> u32 {
     (info & 0xffff_ffff) as u32
 }
 
-/// Return whether the relocation type represents a pointer-width slot
-/// that is safe to overwrite with a function pointer.
+/// Return whether the relocation type represents a pointer-width slot that may be overwritten
+/// with a function pointer when its explicit RELA addend is zero.
 ///
 /// Accepted types:
 /// - `GLOB_DAT` / `JUMP_SLOT` -- GOT entries filled by the dynamic linker.
 /// - `R_X86_64_64` / `R_AARCH64_ABS64` -- absolute pointer-width relocations used for data-section
 ///   function pointers (`void *(*fn)(size_t) = malloc;`).
 ///
-/// Narrow or PC-relative types (`R_X86_64_PC32`, `R_AARCH64_TLSDESC`, etc.)
-/// are excluded since they have different widths and addend semantics
-pub fn is_got_pointer_reloc(r_type: u32) -> bool {
-    // x86_64
-    const R_X86_64_64: u32 = 1;
-    const R_X86_64_GLOB_DAT: u32 = 6;
-    const R_X86_64_JUMP_SLOT: u32 = 7;
-    // aarch64
-    const R_AARCH64_ABS64: u32 = 257;
-    const R_AARCH64_GLOB_DAT: u32 = 1025;
-    const R_AARCH64_JUMP_SLOT: u32 = 1026;
+/// Pointer width alone is not sufficient for safe substitution; depending on the relocation type
+/// the explicit addend either is ignored or must be zero (see [`is_rela_got_pointer_reloc`]).
+/// `Elf64_Rel` entries must be skipped because their implicit addend is no longer reliably
+/// recoverable after the dynamic linker has processed the relocation. REL has little practical use
+/// on our targets: the x86-64 ABI requires RELA relocation sections, and AArch64 likewise uses
+/// RELA, keeping the 64-bit addend explicit instead of embedding it in the relocated field.
+///
+/// Narrow, PC-relative, or special-purpose types (`R_X86_64_PC32`, `R_AARCH64_TLSDESC`, etc.) are
+/// excluded because they have different widths and relocation semantics. These relocation types
+/// may occur elsewhere in an ELF object, but they do not represent ordinary dynamically linked
+/// function calls or function pointers, so they are not expected for hook targets.
+// Relocation types whose pointer-width slot may be overwritten with a hook address. `GLOB_DAT` /
+// `JUMP_SLOT` entries are filled by the dynamic linker to exactly the symbol address `S`; their
+// relocation computation ignores the explicit addend, so the resolved value is `S` even for a
+// non-zero `A`. The absolute pointer-width types (`R_X86_64_64` / `R_AARCH64_ABS64`) instead
+// compute `S + A`, so a non-zero addend points into the middle of the target function.
+const R_X86_64_64: u32 = 1;
+const R_X86_64_GLOB_DAT: u32 = 6;
+const R_X86_64_JUMP_SLOT: u32 = 7;
+const R_AARCH64_ABS64: u32 = 257;
+const R_AARCH64_GLOB_DAT: u32 = 1025;
+const R_AARCH64_JUMP_SLOT: u32 = 1026;
 
+pub fn is_got_pointer_reloc(r_type: u32) -> bool {
     matches!(
         r_type,
         R_X86_64_64
@@ -904,6 +917,22 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
             | R_AARCH64_GLOB_DAT
             | R_AARCH64_JUMP_SLOT
     )
+}
+
+/// Return whether a RELA relocation resolves to exactly a supported symbol address.
+///
+/// `GLOB_DAT` / `JUMP_SLOT` entries resolve to exactly `S` (the dynamic linker fills them and
+/// ignores the addend), so they are always safe to overwrite with the hook address regardless of
+/// the RELA addend. Absolute pointer-width relocations (`R_X86_64_64` / `R_AARCH64_ABS64`) resolve
+/// to `S + A`, where a non-zero addend would point into the middle of the target function;
+/// replacing `S + A` with the hook address or the hook address plus `A` is incorrect because the
+/// target and hook have unrelated code layouts, so only zero addends are accepted for those.
+pub fn is_rela_got_pointer_reloc(r_type: u32, r_addend: i64) -> bool {
+    match r_type {
+        R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_AARCH64_GLOB_DAT | R_AARCH64_JUMP_SLOT => true,
+        R_X86_64_64 | R_AARCH64_ABS64 => r_addend == 0,
+        _ => false,
+    }
 }
 
 /// Look up a symbol across loaded objects, returning the first
@@ -1135,9 +1164,12 @@ unsafe fn hook_symbol_impl(
 
 /// Patch GOT entries in one library for the target symbol.
 ///
-/// Only patches relocations of type `GLOB_DAT`, `JUMP_SLOT`, or
-/// pointer-width absolute (`R_X86_64_64` / `R_AARCH64_ABS64`).
-/// Narrow or PC-relative relocation types are skipped.
+/// Only patches RELA relocations of type `GLOB_DAT`, `JUMP_SLOT`, or pointer-width absolute
+/// (`R_X86_64_64` / `R_AARCH64_ABS64`). `GLOB_DAT` / `JUMP_SLOT` entries always resolve to exactly
+/// `S` (the dynamic linker fills them and ignores the addend), so they are patched regardless of
+/// the addend. Absolute pointer-width relocations resolve to `S + A`, so only zero addends are
+/// patched. Narrow or PC-relative types, RELA relocations resolving to `S + A` for non-zero `A`,
+/// and all REL relocations are skipped.
 ///
 /// # Safety
 /// `dyn_info` must have been produced by [`DynamicInfo::from_phdr`] for a
@@ -1151,36 +1183,26 @@ unsafe fn patch_got_entries(
     patched: &mut usize,
     failed: &mut usize,
 ) {
-    // Both REL and RELA relocations carry r_info (symbol + type) and
-    // r_offset (GOT slot address). RELA has an additional r_addend we
-    // don't use. This helper processes one relocation by those two fields.
-    let mut try_patch = |r_info: u64, r_offset: u64| {
-        if !is_got_pointer_reloc(elf64_r_type(r_info)) {
-            return;
+    // The AMD64 SysV ABI states on page 73: "The AMD64 LP64 ABI architecture uses only
+    // Elf64_Rela relocation entries with explicit addends":
+    // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
+    // AArch64 likewise uses RELA, so fortunately REL entries should be very unusual on our targets.
+    // If one is encountered, its implicit addend is no longer reliably distinguishable from the
+    // resolved symbol address after dynamic linking, so conservatively skip it.
+    for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
+        if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
+            continue;
         }
-        let sym_idx = elf64_r_sym(r_info);
+        let sym_idx = elf64_r_sym(reloc.r_info);
         if let Some(cstr) = dyn_info.sym_name(sym_idx) {
             if cstr.to_bytes() == symbol_name {
-                let addr = u64_to_usize(r_offset) + dyn_info.base_address();
+                let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
                 if guard.override_entry(addr, hook_fn) {
                     *patched += 1;
                 } else {
                     *failed += 1;
                 }
             }
-        }
-    };
-
-    // NOTE: the SysV x86-64 ABI specifies that only RELA entries are
-    // used on AMD64 (spec page 64). ARM64 appears similar. REL
-    // processing is kept for defensive completeness but may be
-    // dead code on both architectures. We should revisit this.
-    for reloc in dyn_info.rels() {
-        try_patch(reloc.r_info, reloc.r_offset);
-    }
-    for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
-        for reloc in relocs {
-            try_patch(reloc.r_info, reloc.r_offset);
         }
     }
 }
@@ -1481,8 +1503,36 @@ mod tests {
         assert!(!is_got_pointer_reloc(10)); // R_X86_64_32
         assert!(!is_got_pointer_reloc(11)); // R_X86_64_32S
         assert!(!is_got_pointer_reloc(258)); // R_AARCH64_ABS32
-        assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLSDESC
+        assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLS_DTPREL64
+        assert!(!is_got_pointer_reloc(1031)); // R_AARCH64_TLSDESC
         assert!(!is_got_pointer_reloc(u32::MAX));
+    }
+
+    #[test]
+    fn test_is_rela_got_pointer_reloc_addend_is_ignored_for_got_slots() {
+        const R_X86_64_64: u32 = 1;
+        const R_X86_64_GLOB_DAT: u32 = 6;
+        const R_X86_64_JUMP_SLOT: u32 = 7;
+        const R_AARCH64_ABS64: u32 = 257;
+        const R_AARCH64_GLOB_DAT: u32 = 1025;
+        const R_AARCH64_JUMP_SLOT: u32 = 1026;
+        const R_X86_64_PC32: u32 = 2;
+
+        // GLOB_DAT / JUMP_SLOT resolve to exactly `S`; the addend is ignored, so any value is ok.
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, 0));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, 8));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, -8));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_JUMP_SLOT, 8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_GLOB_DAT, -8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_JUMP_SLOT, 8));
+
+        // Absolute pointer-width relocations resolve to `S + A`, so only a zero addend is accepted.
+        assert!(is_rela_got_pointer_reloc(R_X86_64_64, 0));
+        assert!(!is_rela_got_pointer_reloc(R_X86_64_64, 8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_ABS64, 0));
+        assert!(!is_rela_got_pointer_reloc(R_AARCH64_ABS64, -8));
+
+        assert!(!is_rela_got_pointer_reloc(R_X86_64_PC32, 0));
     }
 
     /// Verify that `hook_symbol_excluding_self` skips the library
