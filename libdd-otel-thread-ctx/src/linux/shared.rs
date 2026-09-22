@@ -291,4 +291,91 @@ mod tests {
 
         handle.join().unwrap();
     }
+
+    // A single shared context (`Arc<ThreadContext>`) attached on several threads at the same
+    // time: every thread must observe the very same record through its own TLS slot.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn shared_context_attached_on_multiple_threads() {
+        use std::sync::Barrier;
+
+        const THREADS: usize = 4;
+
+        let trace_id = [0x5Au8; 16];
+        let span_id = [0x6Bu8; 8];
+        let root_span_id = [0x7Cu8; 8];
+
+        let cell: Arc<ThreadContext> = Arc::new(ThreadContext::new(
+            trace_id,
+            span_id,
+            NO_TRACE_FLAGS,
+            root_span_id,
+            &[],
+        ));
+
+        // `ThreadContext` is `repr(transparent)` over the internal record, so the `Arc` data
+        // pointer is also the record pointer each thread's TLS slot must hold.
+        let record_addr = Arc::as_ptr(&cell) as usize;
+
+        let barrier = Arc::new(Barrier::new(THREADS + 1));
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let shared = SharedThreadContext::from(cell.clone());
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    assert!(shared.attach().is_none(), "nothing was attached before");
+
+                    let ptr = read_tls_context_ptr();
+                    assert!(!ptr.is_null(), "thread {i}: TLS must be set after attach");
+                    // All threads attached clones of the same `Arc`: they must all observe the
+                    // very same record.
+                    assert_eq!(ptr as usize, record_addr, "thread {i}: same record");
+                    // Safety: the record is immutable once initialized (not data race possible) and
+                    // is alive as long as it is still attached.
+                    let record = unsafe { &*ptr };
+                    assert_eq!(record.trace_id, trace_id, "thread {i}");
+                    assert_eq!(record.span_id, span_id, "thread {i}");
+                    assert_eq!(record.valid.load(Ordering::Relaxed), 1, "thread {i}");
+                    assert_eq!(&record.attrs_data[2..18], b"7c7c7c7c7c7c7c7c", "thread {i}");
+
+                    // All threads are now attached concurrently. Wait for everyone to observe
+                    // the record, then for the main thread to check the strong count, so that
+                    // nobody detaches too early.
+                    barrier.wait();
+                    barrier.wait();
+
+                    let detached = SharedThreadContext::detach().expect("a context to detach");
+                    assert!(
+                        read_tls_context_ptr().is_null(),
+                        "thread {i}: slot must be empty"
+                    );
+                    // The detached handle still wraps the same shared record.
+                    let back: Arc<ThreadContext> = detached.into();
+                    assert_eq!(Arc::as_ptr(&back) as usize, record_addr, "thread {i}");
+                    drop(back);
+                })
+            })
+            .collect();
+
+        // Wait until every thread has attached and observed the shared record.
+        barrier.wait();
+
+        // While all threads are attached, each slot holds its own strong reference to the
+        // record, on top of the main one.
+        assert_eq!(Arc::strong_count(&cell), 1 + THREADS);
+
+        // Let the threads detach and drop their handles.
+        barrier.wait();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(
+            Arc::strong_count(&cell),
+            1,
+            "only the main reference must remain once every thread detached"
+        );
+    }
 }
