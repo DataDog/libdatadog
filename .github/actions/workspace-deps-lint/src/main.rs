@@ -13,12 +13,12 @@
 //! Rule 1 accepts an exception when the dependency carries a `# allow(workspace-deps):
 //! <justification>` comment on the line(s) directly above it.
 //!
-//! Rule 2 accepts an exception when the workspace entry carries a `# allow(workspace-deps-features):
-//! <justification>` comment on the line(s) directly above it.
+//! Rule 2 accepts an exception when the workspace entry carries a `#
+//! allow(workspace-deps-features): <justification>` comment on the line(s) directly above it.
 //!
 //! Path dependencies are crates of this repository, not external dependencies, so they are ignored.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,10 @@ struct Args {
     /// GitHub Actions runner.
     #[arg(long, env = "GITHUB_ACTIONS")]
     annotate: bool,
+
+    /// Restrict the checks to the specificed packages of the workspace.
+    #[arg(short, long)]
+    package: Vec<String>,
 }
 
 fn main() -> Result<()> {
@@ -69,8 +73,22 @@ fn main() -> Result<()> {
     let mut manifests: Vec<PathBuf> = metadata
         .packages
         .iter()
-        .map(|package| PathBuf::from(package.manifest_path.as_std_path()))
+        .filter_map(|package| {
+            // If an explicit list of packages is provided through `--package/-p`, filter out the
+            // others.
+            if !args.package.is_empty() && !args.package.contains(&package.name) {
+                return None;
+            }
+
+            Some(PathBuf::from(package.manifest_path.as_std_path()))
+        })
         .collect();
+
+    // Sanity check: if we selected less packages than args.package, it means that some of them
+    // don't exist.
+    if manifests.len() < args.package.len() {
+        bail!("One (or more) of the packages specified through `--packages`/`--p` couldn't be found in the root workspace manifest: {}", args.package.join(","));
+    }
 
     manifests.sort();
 

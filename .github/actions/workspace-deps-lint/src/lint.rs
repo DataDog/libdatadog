@@ -19,7 +19,7 @@ pub const ALLOW_FEATURES_MARKER: &str = "allow(workspace-deps-features)";
 
 /// The dependency tables a manifest can declare, both at the top level and
 /// under `[target.<cfg>]`.
-const DEP_TABLES: [&str; 3] = [
+const DEP_TABLES: [&str; 5] = [
     "dependencies",
     "dev-dependencies",
     "build-dependencies",
@@ -205,7 +205,7 @@ fn is_path_dependency(item: &Item) -> bool {
 }
 
 /// Describe how a `[workspace.dependencies]` entry deviates from "version-only, `default-features =
-/// false`", or `None` if it complies.
+/// false`". Return `None` if it complies.
 fn feature_problem(item: &Item) -> Option<String> {
     let Some(dep) = item.as_table_like() else {
         // `dep = "1.2"`: shorthand, so default features are on.
