@@ -729,7 +729,14 @@ impl<
     }
 
     /// Force an immediate flush of client-computed stats if stats computation is currently
-    /// enabled
+    /// enabled.
+    ///
+    /// # Returns
+    ///
+    /// `true` when client-side stats computation is enabled and a flush was requested.
+    /// `false` when stats computation is disabled. A `true` return does not guarantee that
+    /// the flush completed: if the stats worker was concurrently shut down (during forks
+    /// for instance), no flush is performed.
     pub async fn flush_client_side_stats_async(&self) -> bool {
         let status = self.client_side_stats.status.load_full();
         if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
@@ -743,9 +750,9 @@ impl<
     }
 
     /// Sync call over [`Self::flush_client_side_stats_async`]
-    /// 
+    ///
     /// # Panics
-    /// 
+    ///
     /// Panics if called inside an existing tokio context.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn flush_client_side_stats(&self) -> bool
@@ -754,7 +761,13 @@ impl<
     {
         self.shared_runtime
             .block_on(self.flush_client_side_stats_async())
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                debug!(
+                    ?e,
+                    "Failed to run client-side stats flush on the shared runtime"
+                );
+                false
+            })
     }
 
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
