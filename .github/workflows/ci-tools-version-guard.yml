@@ -68,6 +68,31 @@ jobs:
 
           failed=0
           tags=()
+
+          # A member's own version is recorded in Cargo.lock as well, so the
+          # bump this guard demands leaves the lockfile stale. The publish
+          # workflow builds with --locked and would only fail once the tag is
+          # pushed, so the mismatch is caught here instead.
+          lock_version() { # $1 = package name
+            awk -F'"' -v pkg="$1" '
+              /^name = /    { name = $2 }
+              /^version = / { if (name == pkg) { print $2; exit } }
+            ' .github/actions/Cargo.lock
+          }
+
+          for manifest in .github/actions/*/Cargo.toml; do
+            package=$(basename "$(dirname "$manifest")")
+            manifest_version=$(package_version < "$manifest")
+            locked_version=$(lock_version "$package")
+            if [[ "$manifest_version" != "$locked_version" ]]; then
+              echo "::error file=.github/actions/Cargo.lock::Cargo.lock has" \
+                   "$package ${locked_version:-missing} while its manifest says" \
+                   "$manifest_version; refresh it with 'cargo update --workspace" \
+                   "--offline --manifest-path .github/actions/Cargo.toml' and commit it"
+              failed=1
+            fi
+          done
+
           for manifest in .github/actions/*/Cargo.toml; do
             dir=$(dirname "$manifest")
             tool=$(basename "$dir")
