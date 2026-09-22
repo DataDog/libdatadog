@@ -308,8 +308,12 @@ mod tests {
         }
     }
 
-    fn send_config() -> FlagEvaluationEvpSendConfig {
+    fn send_config_without_producer_identity() -> FlagEvaluationEvpSendConfig {
         FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0")
+    }
+
+    fn send_config_with_producer_identity() -> FlagEvaluationEvpSendConfig {
+        send_config_without_producer_identity()
             .with_origin("libdd-ffe-test-origin")
             .with_origin_version("1.2.3")
     }
@@ -341,7 +345,8 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &send_config_with_producer_identity())
+            .await;
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
@@ -468,7 +473,13 @@ mod tests {
         let event = batch.flag_evaluations[0].clone();
         batch.flag_evaluations = vec![event; MAX_EVENTS_PER_POST * 2 + 1];
 
-        send_flag_evaluation_batch(&client, &ep, batch, &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch,
+            &send_config_without_producer_identity(),
+        )
+        .await;
 
         mock.assert_calls_async(3).await;
     }
@@ -505,7 +516,8 @@ mod tests {
         .next()
         .unwrap()
         .len();
-        let config = send_config().with_payload_size_limit(one_event_limit);
+        let config =
+            send_config_without_producer_identity().with_payload_size_limit(one_event_limit);
 
         send_flag_evaluation_batch(&client, &ep, batch, &config).await;
 
@@ -527,7 +539,13 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -546,7 +564,13 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
 
         let mut oversized = full_event();
         oversized.flag.key = "x".repeat(1024);
@@ -557,7 +581,7 @@ mod tests {
                 context: context(),
                 flag_evaluations: vec![oversized],
             },
-            &send_config().with_payload_size_limit(128),
+            &send_config_without_producer_identity().with_payload_size_limit(128),
         )
         .await
         .expect("payload build should succeed");
@@ -598,7 +622,13 @@ mod tests {
             ..Endpoint::default()
         };
 
-        send_flag_evaluation_batch(&HangingCapabilities, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &HangingCapabilities,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
     }
 
     #[test]
