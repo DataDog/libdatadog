@@ -34,21 +34,12 @@ use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
 use crate::span::TraceData;
 use rmp::encode::{
-    write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint,
-    write_str, write_u32, write_u64, write_u8, RmpWrite, ValueWriteError,
+    write_bin, write_f64, write_i64, write_map_len, write_sint, write_str, write_u64, RmpWrite,
+    ValueWriteError,
 };
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
-
-/// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
-/// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
-fn write_bool_as_str<W: RmpWrite>(
-    writer: &mut W,
-    b: bool,
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_str(writer, if b { "true" } else { "false" })
-}
 
 /// Reserved v0.4 `meta`/`metrics` key names written from dedicated typed fields (`span.env`,
 /// chunk `origin`, ...) rather than from the attribute maps. An attribute sharing one of these
@@ -332,6 +323,18 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let meta_leaves = dedup_first_wins(meta_leaves);
     let metrics_leaves = dedup_first_wins(metrics_leaves);
 
+    // v0.4 downgrade carries span links as the LEGACY `_dd.span_links` meta tag (a json_encode
+    // string), NOT a native top-level `span_links` field — old v0.4 agents only understand the
+    // legacy meta, and emitting both would double-count links on newer agents. The native
+    // `span_links` field stays on the v1 wire (a different encoder); only this downgrade is legacy.
+    let span_links_json =
+        (!span.span_links.is_empty()).then(|| span_links_to_legacy_json(&span.span_links));
+    // Same legacy-on-v0.4 treatment for span events: the LEGACY `events` meta tag (json_encode
+    // string), NOT a native top-level `span_events` field, since old v0.4 agents only understand
+    // the legacy meta. The native `span_events` field stays on the v1 wire (a different encoder).
+    let span_events_json =
+        (!span.span_events.is_empty()).then(|| span_events_to_legacy_json(&span.span_events));
+
     // First pass: count bucket sizes so each msgpack map header carries the exact length.
     let mut counts = BucketCounts::default();
     counts.meta += !env.is_empty() as u32;
@@ -341,6 +344,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     counts.meta += (is_root && trace_id_high != 0) as u32;
     counts.meta += (is_root && !chunk.origin.borrow().is_empty()) as u32;
     counts.meta += (is_root && chunk.sampling_mechanism.is_some()) as u32;
+    counts.meta += span_links_json.is_some() as u32;
+    counts.meta += span_events_json.is_some() as u32;
     counts.meta += meta_leaves.len() as u32;
     counts.metrics += (is_root && chunk.priority.is_some()) as u32;
     counts.metrics += metrics_leaves.len() as u32;
@@ -352,9 +357,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         + span.error as u32
         + (counts.meta > 0) as u32
         + (counts.metrics > 0) as u32
-        + (counts.meta_struct > 0) as u32
-        + (!span.span_links.is_empty()) as u32
-        + (!span.span_events.is_empty()) as u32;
+        + (counts.meta_struct > 0) as u32;
 
     write_map_len(writer, span_len)?;
 
@@ -428,6 +431,14 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
             // Always emit a leading '-' so mechanism 0 serializes as "-0", not "0".
             write_str(writer, &format!("-{mechanism}"))?;
         }
+        if let Some(links_json) = &span_links_json {
+            write_const_msgpack_str!(writer, "_dd.span_links")?;
+            write_str(writer, links_json)?;
+        }
+        if let Some(events_json) = &span_events_json {
+            write_const_msgpack_str!(writer, "events")?;
+            write_str(writer, events_json)?;
+        }
         for (k, v) in &meta_leaves {
             write_str(writer, k)?;
             write_str(writer, v)?;
@@ -463,182 +474,127 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }
     }
 
-    if !span.span_links.is_empty() {
-        encode_span_links(writer, &span.span_links)?;
-    }
-    if !span.span_events.is_empty() {
-        encode_span_events(writer, &span.span_events)?;
-    }
+    // Span links and span events are emitted as the legacy `_dd.span_links` / `events` meta tags
+    // above (v0.4 downgrade), not native top-level fields — old v0.4 agents only parse the legacy
+    // meta. The native fields stay on the v1 wire (a different encoder).
 
     Ok(())
 }
 
-/// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
-/// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings;
-/// non-string-coercible variants are dropped because v0.4 link attributes are `String → String`
-/// only.
-fn encode_span_links<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    span_links: &[SpanLink<T>],
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_const_msgpack_str!(writer, "span_links")?;
-    write_array_len(writer, span_links.len() as u32)?;
-
-    for link in span_links {
-        let (trace_id_low, trace_id_high) = split_trace_id(&link.trace_id);
-        let attrs_dd = link.attributes.defensive_dedup();
-        // v0.4 SpanLink attributes are `String → String`. `String`/`Bool` map directly; nested
-        // `List`/`KeyValue` (and `Bytes`) become the JSON string the pre-native tracer emitted.
-        // Raw top-level `Int`/`Float` have no string slot and are dropped (the tracer never
-        // produces them for links — it stringifies scalar link attrs on the C side).
-        let attr_count = attrs_dd
-            .iter()
-            .filter(|(_, v)| {
-                matches!(
-                    v,
-                    AttributeValue::String(_)
-                        | AttributeValue::Bool(_)
-                        | AttributeValue::List(_)
-                        | AttributeValue::KeyValue(_)
-                        | AttributeValue::Bytes(_)
-                )
-            })
-            .count() as u32;
-
-        let link_len = 3 // trace_id, trace_id_high, span_id (always)
-            + (attr_count > 0) as u32
-            + (!link.tracestate.borrow().is_empty()) as u32
-            + (link.flags != 0) as u32;
-
-        write_map_len(writer, link_len)?;
-
-        write_const_msgpack_str!(writer, "trace_id")?;
-        write_u64(writer, trace_id_low)?;
-
-        write_const_msgpack_str!(writer, "trace_id_high")?;
-        write_u64(writer, trace_id_high)?;
-
-        write_const_msgpack_str!(writer, "span_id")?;
-        write_u64(writer, link.span_id)?;
-
-        if attr_count > 0 {
-            write_const_msgpack_str!(writer, "attributes")?;
-            write_map_len(writer, attr_count)?;
-            for (k, v) in attrs_dd.iter() {
-                match v {
-                    AttributeValue::String(s) => {
-                        write_str(writer, k.borrow())?;
-                        write_str(writer, s.borrow())?;
-                    }
-                    AttributeValue::Bool(b) => {
-                        write_str(writer, k.borrow())?;
-                        write_bool_as_str(writer, *b)?;
-                    }
-                    AttributeValue::List(_)
-                    | AttributeValue::KeyValue(_)
-                    | AttributeValue::Bytes(_) => {
-                        write_str(writer, k.borrow())?;
-                        write_str(writer, &attr_to_php_json(v))?;
-                    }
-                    AttributeValue::Int(_) | AttributeValue::Float(_) => {}
-                }
-            }
+/// Serializes native v1 span links to the LEGACY v0.4 `_dd.span_links` meta value: a
+/// `json_encode`-byte-identical JSON array of `{trace_id, span_id, trace_state?, attributes?}`
+/// objects, exactly as master's `DDTrace\SpanLink::jsonSerialize` produced. On the v0.4 downgrade
+/// (agent speaks only v0.4) old agents understand this legacy meta tag; the native top-level
+/// `span_links` field is not emitted.
+///
+/// Format (matching master + the blessed web snapshots, byte-for-byte):
+/// * `trace_id` — the full 128-bit id as 32 lowercase hex chars (high half zero-padded).
+/// * `span_id` — 16 lowercase hex chars.
+/// * `trace_state` — emitted only when set (master leaves the property unset → `json_encode` omits
+///   it).
+/// * `attributes` — a `String → String` map, emitted only when non-empty. Scalars stringify (`Bool`
+///   → `"true"`/`"false"`); nested `List`/`KeyValue`/`Bytes` carry their `json_encode` string (the
+///   exact bytes the pre-native tracer produced); raw `Int`/`Float` have no string slot and are
+///   dropped (the tracer never emits them for links).
+/// * `dropped_attributes_count` / `flags` — not part of the legacy shape (master leaves the count
+///   property unset; flags is a native-only concept).
+fn span_links_to_legacy_json<T: TraceData>(span_links: &[SpanLink<T>]) -> String {
+    let mut out = String::from("[");
+    for (i, link) in span_links.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
         }
+        out.push_str("{\"trace_id\":");
+        json_escape_str(&mut out, &hex::encode(link.trace_id));
+        out.push_str(",\"span_id\":");
+        json_escape_str(&mut out, &format!("{:016x}", link.span_id));
 
         if !link.tracestate.borrow().is_empty() {
-            write_const_msgpack_str!(writer, "tracestate")?;
-            write_str(writer, link.tracestate.borrow())?;
+            out.push_str(",\"trace_state\":");
+            json_escape_str(&mut out, link.tracestate.borrow());
         }
 
-        if link.flags != 0 {
-            write_const_msgpack_str!(writer, "flags")?;
-            write_u32(writer, link.flags)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Encodes [`v1::SpanEvent`](crate::span::v1::SpanEvent)s into the v0.4 msgpack wire format
-/// (downgrade: v1 input → v0.4 output). Typed attributes are downgraded to the v0.4
-/// `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes` and
-/// `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
-fn encode_span_events<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    span_events: &[SpanEvent<T>],
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_const_msgpack_str!(writer, "span_events")?;
-    write_array_len(writer, span_events.len() as u32)?;
-
-    for event in span_events {
-        let attrs_dd = event.attributes.defensive_dedup();
-        let attr_count = attrs_dd.len() as u32;
-
-        let event_len = 2 // time_unix_nano, name (always)
-            + (attr_count > 0) as u32;
-
-        write_map_len(writer, event_len)?;
-
-        write_const_msgpack_str!(writer, "time_unix_nano")?;
-        write_u64(writer, event.time_unix_nano)?;
-
-        write_const_msgpack_str!(writer, "name")?;
-        write_str(writer, event.name.borrow())?;
-
-        if attr_count > 0 {
-            write_const_msgpack_str!(writer, "attributes")?;
-            write_map_len(writer, attr_count)?;
-            for (k, v) in attrs_dd.iter() {
-                write_str(writer, k.borrow())?;
-                write_event_attr_value(writer, v)?;
+        // Iterate the link attributes in their original (PHP insertion) order — `_dd.span_links` is
+        // a literal JSON string, so the attribute order must match master byte-for-byte. Link
+        // attributes come from a PHP array (unique keys), so no dedup is needed.
+        // v0.4 link attributes are String → String; Int/Float have no string slot and are dropped.
+        let has_str_attrs = link
+            .attributes
+            .iter()
+            .any(|(_, v)| !matches!(v, AttributeValue::Int(_) | AttributeValue::Float(_)));
+        if has_str_attrs {
+            out.push_str(",\"attributes\":{");
+            let mut first = true;
+            for (k, v) in link.attributes.iter() {
+                let sval = match v {
+                    AttributeValue::String(s) => s.borrow().to_owned(),
+                    AttributeValue::Bool(b) => if *b { "true" } else { "false" }.to_owned(),
+                    AttributeValue::List(_)
+                    | AttributeValue::KeyValue(_)
+                    | AttributeValue::Bytes(_) => attr_to_php_json(v),
+                    AttributeValue::Int(_) | AttributeValue::Float(_) => continue,
+                };
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                json_escape_str(&mut out, k.borrow());
+                out.push(':');
+                json_escape_str(&mut out, &sval);
             }
+            out.push('}');
         }
-    }
 
-    Ok(())
+        out.push('}');
+    }
+    out.push(']');
+    out
 }
 
-macro_rules! write_type {
-    ($writer:expr, $int_type:expr, $str_type:expr) => {{
-        write_map_len($writer, 2)?;
-        write_const_msgpack_str!($writer, "type")?;
-        write_u8($writer, $int_type)?;
-        write_str($writer, $str_type)?;
-    }};
-}
+/// Serializes native v1 span events to the LEGACY v0.4 `events` meta value: a
+/// `json_encode`-byte-identical JSON array of `{name, time_unix_nano, attributes?}` objects,
+/// exactly as master's `DDTrace\SpanEvent::jsonSerialize` produced. On the v0.4 downgrade (agent
+/// speaks only v0.4) old agents understand this legacy meta tag; the native top-level `span_events`
+/// field is not emitted.
+///
+/// Format (matching master + master's `dd_trace_span_event.phpt`, byte-for-byte):
+/// * `name` — the event name (json string).
+/// * `time_unix_nano` — the timestamp as an unquoted JSON number.
+/// * `attributes` — emitted only when non-empty. Unlike links (which are `String → String`), event
+///   attributes keep their NATIVE JSON types: `Int`/`Float` → numbers, `Bool` → `true`/`false`,
+///   nested `List`/`KeyValue` → real JSON arrays/objects (recursively typed) — the exact
+///   `json_encode` of the PHP attributes array. Values are produced by [`attr_to_php_json`].
+fn span_events_to_legacy_json<T: TraceData>(span_events: &[SpanEvent<T>]) -> String {
+    let mut out = String::from("[");
+    for (i, event) in span_events.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"name\":");
+        json_escape_str(&mut out, event.name.borrow());
+        out.push_str(",\"time_unix_nano\":");
+        let _ = write!(out, "{}", event.time_unix_nano);
 
-/// Writes a v0.4 event-attribute value as `{"type": <u8>, "..._value": ...}`. Scalars produce a
-/// 2-entry typed map; nested `List`/`KeyValue` (and `Bytes`) have no v0.4 event-attribute
-/// representation, so they downgrade to a `string_value` carrying the JSON string the pre-native
-/// tracer emitted (keeping the v0.4 wire unchanged for old agents).
-fn write_event_attr_value<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    v: &AttributeValue<T>,
-) -> Result<(), ValueWriteError<W::Error>> {
-    match v {
-        AttributeValue::String(s) => {
-            write_type!(writer, 0, "string_value");
-            write_str(writer, s.borrow())?;
+        // Iterate attributes in their original (PHP insertion) order — `events` is a literal JSON
+        // string, so order must match master byte-for-byte. Event attributes come from a PHP array
+        // (unique keys), so no dedup is needed. All types are kept (json_encode types faithfully).
+        if !event.attributes.is_empty() {
+            out.push_str(",\"attributes\":{");
+            for (j, (k, v)) in event.attributes.iter().enumerate() {
+                if j > 0 {
+                    out.push(',');
+                }
+                json_escape_str(&mut out, k.borrow());
+                out.push(':');
+                write_attr_json(&mut out, v);
+            }
+            out.push('}');
         }
-        AttributeValue::Bool(b) => {
-            write_type!(writer, 1, "bool_value");
-            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
-        }
-        AttributeValue::Int(i) => {
-            write_type!(writer, 2, "int_value");
-            write_sint(writer, *i)?;
-        }
-        AttributeValue::Float(f) => {
-            write_type!(writer, 3, "double_value");
-            write_f64(writer, *f)?;
-        }
-        AttributeValue::List(_) | AttributeValue::KeyValue(_) | AttributeValue::Bytes(_) => {
-            write_type!(writer, 0, "string_value");
-            write_str(writer, &attr_to_php_json(v))?;
-        }
+
+        out.push('}');
     }
-    Ok(())
+    out.push(']');
+    out
 }
 
 /// Serializes a non-scalar link/event `AttributeValue` (`List`/`KeyValue`/`Bytes`) into a JSON
@@ -1536,34 +1492,93 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
-        let links = map_get(&traces[0][0], "span_links").expect("span_links present");
-        let links_arr = links.as_array().expect("span_links is array");
-        assert_eq!(links_arr.len(), 1);
-        let link = &links_arr[0];
+        let span = &traces[0][0];
+        // No native span_links field on the v0.4 downgrade — links go to `_dd.span_links` meta.
+        assert!(map_get(span, "span_links").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        // Full 128-bit trace_id as 32 hex, span_id as 16 hex, trace_state (underscore) present,
+        // Bool stringified, Int dropped, flags/dropped_attributes_count absent (legacy shape).
+        let expected = "[{\"trace_id\":\"aaaabbbbccccdddd1111222233334444\",\
+\"span_id\":\"0000000000000007\",\"trace_state\":\"dd=t.dm:-1\",\
+\"attributes\":{\"link.name\":\"job-42\",\"link.retry\":\"true\"}}]";
+        assert_eq!(
+            map_get(meta, "_dd.span_links").unwrap().as_str(),
+            Some(expected)
+        );
+    }
 
-        assert_eq!(
-            map_get(link, "trace_id").unwrap().as_u64(),
-            Some(0x1111_2222_3333_4444)
-        );
-        assert_eq!(
-            map_get(link, "trace_id_high").unwrap().as_u64(),
-            Some(0xAAAA_BBBB_CCCC_DDDD)
-        );
-        assert_eq!(map_get(link, "span_id").unwrap().as_u64(), Some(7));
-        assert_eq!(
-            map_get(link, "tracestate").unwrap().as_str(),
-            Some("dd=t.dm:-1")
-        );
-        assert_eq!(map_get(link, "flags").unwrap().as_u64(), Some(3));
+    #[test]
+    fn span_links_downgrade_to_legacy_dd_span_links_meta_bytematch() {
+        // v0.4 downgrade (agent speaks only v0.4): native span links serialize to the LEGACY
+        // `_dd.span_links` meta JSON string (byte-identical to master's SpanLink::jsonSerialize),
+        // and the native top-level `span_links` field is NOT emitted. Byte target is the blessed
+        // snapshot tests/snapshots/tests.integrations.kafka_test.test_span_links_*.json.
+        let mut link_tid = [0u8; 16]; // high = 0, low = 0xc151df7d6ee5e2d6
+        link_tid[8..].copy_from_slice(&0xc151_df7d_6ee5_e2d6_u64.to_be_bytes());
+        let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        link_attrs.insert(bs("_dd.p.dm"), AttributeValue::String(bs("-0")));
 
-        let attrs = map_get(link, "attributes").expect("string attrs preserved");
-        assert_eq!(
-            map_get(attrs, "link.name").unwrap().as_str(),
-            Some("job-42")
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_links: ThinVec::from_iter([SpanLinkBytes {
+                    trace_id: link_tid,
+                    span_id: 0xc151_df7d_6ee5_e2d6,
+                    attributes: link_attrs,
+                    tracestate: bs("dd=t.dm:-0"),
+                    flags: 0,
+                }]),
+                ..minimal_span()
+            },
         );
-        assert_eq!(map_get(attrs, "link.retry").unwrap().as_str(), Some("true"));
-        // Int attr was dropped — v0.4 SpanLink schema cannot carry it.
-        assert!(map_get(attrs, "link.count").is_none());
+
+        let traces = encode_and_decode(&payload);
+        let span = &traces[0][0];
+
+        // Native span_links field must be ABSENT on the v0.4 wire.
+        assert!(
+            map_get(span, "span_links").is_none(),
+            "native span_links field must not be emitted on the v0.4 downgrade"
+        );
+
+        // Legacy `_dd.span_links` meta present and byte-identical to master's json_encode output.
+        let meta = map_get(span, "meta").expect("meta present");
+        let expected = "[{\"trace_id\":\"0000000000000000c151df7d6ee5e2d6\",\
+\"span_id\":\"c151df7d6ee5e2d6\",\"trace_state\":\"dd=t.dm:-0\",\
+\"attributes\":{\"_dd.p.dm\":\"-0\"}}]";
+        assert_eq!(
+            map_get(meta, "_dd.span_links").unwrap().as_str(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn span_links_legacy_meta_omits_tracestate_and_attributes_when_unset() {
+        // A link with no tracestate and no attributes: legacy JSON carries only trace_id/span_id
+        // (master omits trace_state and attributes when their PHP properties are unset).
+        let mut link_tid = [0u8; 16];
+        link_tid[8..].copy_from_slice(&0x1111_2222_3333_4444_u64.to_be_bytes());
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                span_links: ThinVec::from_iter([SpanLinkBytes {
+                    trace_id: link_tid,
+                    span_id: 7,
+                    attributes: VecMap::new(),
+                    tracestate: bs(""),
+                    flags: 0,
+                }]),
+                ..minimal_span()
+            },
+        );
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        let expected =
+            "[{\"trace_id\":\"00000000000000001111222233334444\",\"span_id\":\"0000000000000007\"}]";
+        assert_eq!(
+            map_get(meta, "_dd.span_links").unwrap().as_str(),
+            Some(expected)
+        );
     }
 
     #[test]
@@ -1587,40 +1602,15 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
-        let events = map_get(&traces[0][0], "span_events").expect("span_events present");
-        let events_arr = events.as_array().expect("span_events is array");
-        assert_eq!(events_arr.len(), 1);
-        let event = &events_arr[0];
-
-        assert_eq!(map_get(event, "name").unwrap().as_str(), Some("oops"));
-        assert_eq!(
-            map_get(event, "time_unix_nano").unwrap().as_u64(),
-            Some(1_700_000_000_000_000_000)
-        );
-
-        // Each typed attribute decodes to a `{"type": <u8>, "<kind>_value": value}` map.
-        let attrs = map_get(event, "attributes").expect("event attributes present");
-        let kind = map_get(attrs, "kind").unwrap();
-        assert_eq!(map_get(kind, "type").unwrap().as_u64(), Some(0));
-        assert_eq!(
-            map_get(kind, "string_value").unwrap().as_str(),
-            Some("exception")
-        );
-
-        let escaped = map_get(attrs, "escaped").unwrap();
-        assert_eq!(map_get(escaped, "type").unwrap().as_u64(), Some(1));
-        assert_eq!(
-            map_get(escaped, "bool_value").unwrap().as_bool(),
-            Some(true)
-        );
-
-        let count = map_get(attrs, "count").unwrap();
-        assert_eq!(map_get(count, "type").unwrap().as_u64(), Some(2));
-        assert_eq!(map_get(count, "int_value").unwrap().as_i64(), Some(3));
-
-        let ratio = map_get(attrs, "ratio").unwrap();
-        assert_eq!(map_get(ratio, "type").unwrap().as_u64(), Some(3));
-        assert_eq!(map_get(ratio, "double_value").unwrap().as_f64(), Some(0.75));
+        let span = &traces[0][0];
+        // No native span_events field on the v0.4 downgrade — events go to the legacy `events`
+        // meta, json_encode-byte-identical to master (native attribute types preserved:
+        // bool/int/float stay JSON bool/number, NOT the native `{"type":..}` shape).
+        assert!(map_get(span, "span_events").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        let expected = "[{\"name\":\"oops\",\"time_unix_nano\":1700000000000000000,\
+\"attributes\":{\"kind\":\"exception\",\"escaped\":true,\"count\":3,\"ratio\":0.75}}]";
+        assert_eq!(map_get(meta, "events").unwrap().as_str(), Some(expected));
     }
 
     /// Locks `attr_to_php_json` to PHP `json_encode($v)` (default flags): slash + non-ASCII
@@ -1712,19 +1702,27 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
-        let links = map_get(&traces[0][0], "span_links").expect("span_links present");
-        let link = &links.as_array().expect("array")[0];
-        let attrs = map_get(link, "attributes").expect("attributes present");
-        assert_eq!(map_get(attrs, "plain").unwrap().as_str(), Some("v"));
-        assert_eq!(map_get(attrs, "nums").unwrap().as_str(), Some("[3,4]"));
-        assert_eq!(map_get(attrs, "obj").unwrap().as_str(), Some(r#"{"a":1}"#));
+        let span = &traces[0][0];
+        assert!(map_get(span, "span_links").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        // Nested List/KeyValue link attrs carry their json_encode string inside the legacy
+        // `_dd.span_links` attributes map (the exact bytes the pre-native tracer produced).
+        let expected = "[{\"trace_id\":\"00000000000000000000000000000000\",\
+\"span_id\":\"0000000000000007\",\
+\"attributes\":{\"plain\":\"v\",\"nums\":\"[3,4]\",\"obj\":\"{\\\"a\\\":1}\"}}]";
+        assert_eq!(
+            map_get(meta, "_dd.span_links").unwrap().as_str(),
+            Some(expected)
+        );
     }
 
     #[test]
-    fn span_event_nested_attr_downgrades_to_string_value_json() {
-        // A nested event attribute downgrades to `{"type":0,"string_value":<json>}` — the same
-        // `string_value` shape the pre-native tracer produced by json_encode-ing the PHP array.
+    fn span_event_nested_attr_in_legacy_events_meta_keeps_native_json_arrays() {
+        // Unlike links (String → String), event attributes keep native JSON types in the legacy
+        // `events` meta: a nested list is a real JSON array, not a stringified `string_value`.
+        // Byte target: master's tests/ext/request-replayer/dd_trace_span_event.phpt.
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(bs("arg1"), AttributeValue::String(bs("value1")));
         event_attrs.insert(
             bs("int_array"),
             AttributeValue::List(vec![AttributeValue::Int(3), AttributeValue::Int(4)]),
@@ -1741,8 +1739,8 @@ mod tests {
             [0u8; 16],
             SpanBytes {
                 span_events: ThinVec::from_iter([SpanEventBytes {
-                    time_unix_nano: 1,
-                    name: bs("evt"),
+                    time_unix_nano: 1720037568765201300,
+                    name: bs("event-name"),
                     attributes: event_attrs,
                 }]),
                 ..minimal_span()
@@ -1750,18 +1748,11 @@ mod tests {
         );
 
         let traces = encode_and_decode(&payload);
-        let events = map_get(&traces[0][0], "span_events").expect("span_events present");
-        let event = &events.as_array().expect("array")[0];
-        let attrs = map_get(event, "attributes").expect("attributes present");
-
-        let ia = map_get(attrs, "int_array").unwrap();
-        assert_eq!(map_get(ia, "type").unwrap().as_u64(), Some(0));
-        assert_eq!(map_get(ia, "string_value").unwrap().as_str(), Some("[3,4]"));
-        let sa = map_get(attrs, "string_array").unwrap();
-        assert_eq!(map_get(sa, "type").unwrap().as_u64(), Some(0));
-        assert_eq!(
-            map_get(sa, "string_value").unwrap().as_str(),
-            Some(r#"["5","6"]"#)
-        );
+        let span = &traces[0][0];
+        assert!(map_get(span, "span_events").is_none());
+        let meta = map_get(span, "meta").expect("meta present");
+        let expected = "[{\"name\":\"event-name\",\"time_unix_nano\":1720037568765201300,\
+\"attributes\":{\"arg1\":\"value1\",\"int_array\":[3,4],\"string_array\":[\"5\",\"6\"]}}]";
+        assert_eq!(map_get(meta, "events").unwrap().as_str(), Some(expected));
     }
 }
