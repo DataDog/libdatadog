@@ -308,7 +308,7 @@ impl<
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                    [libdd_common::tag!("collapsed", "whole_key")].iter(),
                 )]);
             }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
