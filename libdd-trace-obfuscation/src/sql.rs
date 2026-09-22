@@ -2145,13 +2145,28 @@ fn collapse_limit_two_args(s: &str) -> String {
     result
 }
 
-/// What the Datadog Agent writes in place of a SQL value it failed to obfuscate.
+/// What the Datadog Agent substitutes for a SQL value it failed to obfuscate *inside a JSON
+/// document*, such as a database query plan.
 ///
-/// The message is the Agent's, byte for byte, because the value reaches the backend as part of the
-/// resource that stats are aggregated on: a different message would split the aggregation. See
-/// `sqlObfuscationTransformer` in the Agent's `pkg/obfuscate/json.go`.
+/// This is the Agent's JSON SQL-transform marker only: `sqlObfuscationTransformer` in
+/// `pkg/obfuscate/json.go` returns this string, deliberately verbose, so the failure is visible to
+/// the user in the JSON value it replaces. It is not what the Agent writes for a failed SQL span
+/// resource or stats group; that is [`SQL_NON_PARSABLE_REPLACEMENT`].
+///
+/// The message is the Agent's, byte for byte, so the same input yields the same value from either
+/// implementation.
 pub const SQL_OBFUSCATION_FAILURE_REPLACEMENT: &str =
     "Datadog-agent failed to obfuscate SQL string. Enable agent debug logs for more info.";
+
+/// What the Datadog Agent writes in place of a SQL span resource, `sql.query` tag, or stats group
+/// resource it failed to obfuscate.
+///
+/// The message is the Agent's `transform.TextNonParsable`
+/// (`pkg/trace/transform/obfuscate.go`), byte for byte, because the value reaches the backend as
+/// the resource that stats are aggregated on: a different message would split the aggregation. The
+/// Agent applies it in `obfuscateSQLSpan` and `obfuscateStatsGroup`
+/// (`pkg/trace/agent/obfuscate.go`), discarding the unobfuscated SQL rather than forwarding it.
+pub const SQL_NON_PARSABLE_REPLACEMENT: &str = "Non-parsable SQL query";
 
 /// Why a SQL string could not be obfuscated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -2169,8 +2184,11 @@ pub enum SqlObfuscationError {
 /// # Errors
 ///
 /// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind, which is
-/// what the Agent treats as a failure. Callers that want the Agent's behavior write
-/// [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] in place of the query.
+/// what the Agent treats as a failure. A failed query must never be forwarded as sent: callers
+/// replace it with the Agent's marker for their context, either
+/// [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
+/// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a
+/// JSON document.
 pub fn obfuscate_sql(
     s: &str,
     config: &SqlConfig,
@@ -2217,17 +2235,17 @@ fn obfuscate_sql_at_depth(
     }
 }
 
-/// Obfuscates a SQL string, returning `None` when there is nothing to report.
+/// Obfuscates a non-empty SQL span or stats-group resource, applying the Agent's failure policy.
 ///
-/// Non-empty SQL is obfuscated and mirrored into `sql.query` by callers, so the cases skipped are
-/// empty input and input that obfuscates to nothing. Callers that need to tell those apart, or to
-/// report the failure, call [`obfuscate_sql`].
+/// Always returns something safe to publish: the obfuscated query on success, and
+/// [`SQL_NON_PARSABLE_REPLACEMENT`] when obfuscation fails, so input that tokenizes to nothing
+/// (whitespace, a lone comment) is discarded instead of reaching the backend as sent. Callers that
+/// want to report the failure instead call [`obfuscate_sql`] directly.
+///
+/// Callers are expected to skip an exactly empty resource, which the Agent leaves untouched.
 #[must_use]
-pub fn obfuscate_sql_opt(s: &str, config: &SqlConfig, dbms: DbmsKind) -> Option<String> {
-    if s.is_empty() {
-        return None;
-    }
-    obfuscate_sql(s, config, dbms).ok()
+pub fn obfuscate_sql_resource(s: &str, config: &SqlConfig, dbms: DbmsKind) -> String {
+    obfuscate_sql(s, config, dbms).unwrap_or_else(|_| SQL_NON_PARSABLE_REPLACEMENT.to_owned())
 }
 
 /// Obfuscates a SQL string with default configuration.
@@ -2348,7 +2366,14 @@ mod tests {
     #[test]
     fn test_empty_obfuscation_result_is_a_failure() {
         let config = SqlConfig::default();
-        for input in ["", " ", "\t", "\n  \r\n"] {
+        for input in [
+            "",
+            " ",
+            "\t",
+            "\n  \r\n",
+            "-- password=hunter2",
+            "/* password=hunter2 */",
+        ] {
             assert_eq!(
                 super::obfuscate_sql(input, &config, DbmsKind::Generic),
                 Err(super::SqlObfuscationError::EmptyResult),
@@ -2359,14 +2384,44 @@ mod tests {
                 Err(super::SqlObfuscationError::EmptyResult),
                 "input: {input:?}"
             );
-            assert_eq!(
-                super::obfuscate_sql_opt(input, &config, DbmsKind::Generic),
-                None
-            );
         }
         assert_eq!(
             super::SqlObfuscationError::EmptyResult.to_string(),
             "result is empty"
+        );
+    }
+
+    /// A resource that cannot be obfuscated is replaced by the Agent's marker, never forwarded as
+    /// sent: comment-only SQL would otherwise carry the comment text through untouched.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn test_unobfuscatable_resource_becomes_non_parsable_marker() {
+        let config = SqlConfig::default();
+        for input in [
+            " ",
+            "\t",
+            "\n  \r\n",
+            "-- password=hunter2",
+            "/* password=hunter2 */",
+            "#  password=hunter2",
+        ] {
+            assert_eq!(
+                super::obfuscate_sql_resource(input, &config, DbmsKind::Generic),
+                super::SQL_NON_PARSABLE_REPLACEMENT,
+                "input: {input:?}"
+            );
+        }
+        assert_eq!(
+            super::obfuscate_sql_resource(
+                "SELECT * FROM users WHERE id = 42",
+                &config,
+                DbmsKind::Generic
+            ),
+            "SELECT * FROM users WHERE id = ?"
+        );
+        assert_eq!(
+            super::SQL_NON_PARSABLE_REPLACEMENT,
+            "Non-parsable SQL query"
         );
     }
 
