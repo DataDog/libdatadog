@@ -343,7 +343,9 @@ impl<C: StatsCap> SharedOtlpStatsExporter<C> {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<C: StatsCap> FlushableStatsExport for OtlpStatsExporter<C> {
     async fn force_flush(&self) {
-        let _ = self.send(true, OTLP_MAX_RETRIES).await;
+        if let Err(e) = self.send(true, OTLP_MAX_RETRIES).await {
+            error!(?e, "Error force flushing OTLP trace metrics");
+        }
     }
 }
 

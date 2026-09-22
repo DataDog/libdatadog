@@ -743,7 +743,10 @@ impl<
     }
 
     /// Sync call over [`Self::flush_client_side_stats_async`]
-    /// SAFETY: panics inside an existing tokio context.
+    /// 
+    /// # Panics
+    /// 
+    /// Panics if called inside an existing tokio context.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn flush_client_side_stats(&self) -> bool
     where
