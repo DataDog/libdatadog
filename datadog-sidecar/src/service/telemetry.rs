@@ -800,6 +800,61 @@ mod tests {
     use libdd_telemetry::config::TelemetryEndpoint;
     use libdd_telemetry::worker::LifecycleAction;
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn statistics_does_not_block_client_retirement() {
+        let server = SidecarServer::default();
+        let client = Arc::new(Mutex::new(None));
+        server.telemetry_clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&client),
+            },
+        );
+
+        // Retirement owns this mutex before removing the entry from the cache.
+        // Keep it locked until we know statistics has begun visiting the entry.
+        let client_guard = client.lock_or_panic();
+        let references_before_stats = Arc::strong_count(&client);
+        let stats_server = server.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let stats = std::thread::spawn(move || runtime.block_on(stats_server.compute_stats()));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stats_started = loop {
+            // A snapshot clones the client before waiting on its mutex. The old
+            // implementation instead keeps the map locked while waiting.
+            if Arc::strong_count(&client) > references_before_stats
+                || server.telemetry_clients.inner.try_lock().is_err()
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+
+        let clients = server.telemetry_clients.clone();
+        let (retired_tx, retired_rx) = std::sync::mpsc::channel();
+        let retirement = std::thread::spawn(move || {
+            clients.remove_telemetry_client("service", "env");
+            retired_tx.send(()).unwrap();
+        });
+        let retired = retired_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+
+        // Release the contended mutex before asserting so a regression fails
+        // normally rather than leaving deadlocked test threads behind.
+        drop(client_guard);
+        stats.join().unwrap();
+        retirement.join().unwrap();
+        assert!(stats_started, "statistics never visited the cached client");
+        assert!(
+            retired,
+            "statistics held the client map while waiting on the client"
+        );
+    }
+
     #[test]
     fn client_snapshot_does_not_depend_on_map_membership() {
         let clients = TelemetryCachedClientSet {
