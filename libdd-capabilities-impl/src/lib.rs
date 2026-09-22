@@ -67,9 +67,9 @@ impl HttpClientCapability for NativeCapabilities {
         Self::new()
     }
 
-    fn new_without_connection_pooling() -> Self {
+    fn new_periodic() -> Self {
         Self {
-            http: NativeHttpClient::new_without_connection_pooling(),
+            http: NativeHttpClient::new_periodic(),
             sleep: NativeSleepCapability,
             env: NativeEnvCapability,
             file: NativeFileCapability,

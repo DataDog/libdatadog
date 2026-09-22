@@ -848,7 +848,7 @@ mod tests {
             Self(Arc::new(AtomicBool::new(false)))
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self::new_client()
         }
 

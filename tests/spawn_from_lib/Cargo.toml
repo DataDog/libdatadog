@@ -15,8 +15,6 @@ bench = false
 prefer-dynamic = []
 
 [dependencies]
-libc.workspace = true
 anyhow = { workspace = true, default-features = true }
 spawn_worker = { path = "../../spawn_worker" }
 tempfile.workspace = true
-io-lifetimes = { workspace = true, features = ["close"] }
