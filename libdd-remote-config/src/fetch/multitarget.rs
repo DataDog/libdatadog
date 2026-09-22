@@ -971,7 +971,7 @@ mod tests {
         let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeCapabilities>::new(
             storage.clone(),
             server.dummy_options().invariants,
-            NativeCapabilities::new_without_connection_pooling(),
+            NativeCapabilities::new_periodic(),
         );
         fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
 

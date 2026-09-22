@@ -3,6 +3,8 @@
 GOTter implements our GOT-patching mechanism to wrap (dynamically!) linked allocators in a running process.
 This follows the same approach as `ddprof`, and may prove useful to inject via our tracing libraries into running processes such as python.
 
+Normal allocator function-pointer relocations are supported. A non-zero offset ('addend') from a function is theoretically possible but unusual, and is skipped because it cannot be redirected safely. The rarely used `Elf64_Rel` format is also skipped because its addend cannot be recovered reliably after linking.
+
 It contains:
 
 * A set of functions such as `gotter_malloc` that will be used to override the _originals_ of these functions

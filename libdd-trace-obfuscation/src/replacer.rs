@@ -4,9 +4,10 @@
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::{v04, SpanText, TraceData};
-use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Deserialize)]
+// Agent-facing representation. `re` and `no_expansion` are derived runtime state.
+#[derive(Serialize, Deserialize)]
 struct RawReplaceRule {
     name: String,
     pattern: String,
@@ -56,12 +57,12 @@ impl Serialize for ReplaceRule {
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_struct("ReplaceRule", 4)?;
-        s.serialize_field("name", &self.name)?;
-        s.serialize_field("re", &self.re.to_string())?;
-        s.serialize_field("repl", &self.repl)?;
-        s.serialize_field("no_expansion", &self.no_expansion)?;
-        s.end()
+        RawReplaceRule {
+            name: self.name.clone(),
+            pattern: self.re.as_str().to_owned(),
+            repl: self.repl.clone(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -382,6 +383,26 @@ mod tests {
     fn test_parse_rules_invalid_regex() {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_replace_rule_serde_uses_agent_fields() {
+        let agent_rules = serde_json::json!([{
+            "name": "http.url",
+            "pattern": "(token/)([^/]*)",
+            "repl": "${1}?"
+        }]);
+
+        let rules: Vec<replacer::ReplaceRule> =
+            serde_json::from_value(agent_rules.clone()).unwrap();
+        let serialized = serde_json::to_value(&rules).unwrap();
+
+        assert_eq!(serialized, agent_rules);
+        assert_eq!(
+            serde_json::from_value::<Vec<replacer::ReplaceRule>>(serialized).unwrap(),
+            rules
+        );
     }
 
     #[test]

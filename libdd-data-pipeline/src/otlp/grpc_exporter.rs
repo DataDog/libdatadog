@@ -936,10 +936,16 @@ mod integration_tests {
             socket.set_linger(Some(Duration::ZERO)).unwrap();
             let mut conn = server::handshake(socket).await.unwrap();
             let (req, _respond) = conn.accept().await.unwrap().unwrap();
+            // See the comment in `run_one_shot_grpc_server`.
             let mut body = req.into_body();
-            while let Some(chunk) = body.data().await {
-                let chunk = chunk.unwrap();
-                body.flow_control().release_capacity(chunk.len()).unwrap();
+            tokio::select! {
+                _ = async {
+                    while let Some(chunk) = body.data().await {
+                        let chunk = chunk.unwrap();
+                        body.flow_control().release_capacity(chunk.len()).unwrap();
+                    }
+                } => {}
+                _ = async { while conn.accept().await.is_some() {} } => {}
             }
             drop(conn);
         });

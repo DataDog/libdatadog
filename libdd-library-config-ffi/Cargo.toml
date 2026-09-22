@@ -28,7 +28,6 @@ regex-lite = ["libdd-common-ffi/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dev-dependencies]
-tempfile.workspace = true
 
 [lints.clippy]
 std_instead_of_alloc = "warn"
