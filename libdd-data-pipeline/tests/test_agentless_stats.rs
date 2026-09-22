@@ -7,8 +7,9 @@
 //! and calls `mock.register_on_current_thread()` before `build()` so the builder-internal
 //! capabilities share the mock queues. `shutdown()` force-flushes the stats worker.
 //!
-//! `STATS_BUCKET` is large so the periodic flush never fires during a test; shutdown is the
-//! only flush that occurs, keeping tests deterministic.
+//! `STATS_BUCKET` is large so the periodic flush never fires during a test. Only explicit
+//! flushes occur (shutdown, or `flush_client_side_stats` in the force-flush test), keeping
+//! tests deterministic.
 
 mod common;
 use common::mock_http::MockHttpCapabilities;
@@ -675,6 +676,16 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
     );
 }
 
+/// Find the `/api/v0.2/stats` request in `reqs` and decode it as a valid agentless
+/// StatsPayload (msgpack), proving a real export path ran rather than a no-op.
+fn expect_stats_request(reqs: &[common::mock_http::CapturedRequest]) -> pb::StatsPayload {
+    let req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("a request to /api/v0.2/stats should have been sent");
+    rmp_serde::from_slice(&req.body).expect("stats body must be valid msgpack")
+}
+
 /// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the
 /// agentless stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
 /// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
@@ -688,7 +699,7 @@ async fn test_flush_client_side_stats_sends_agentless_stats() {
     mock.queue_response_for_path("/api/v0.2/stats", 202, "");
 
     let mock_clone = mock.clone();
-    let flushed = task::spawn_blocking(move || {
+    let (flushed, before_shutdown) = task::spawn_blocking(move || {
         mock_clone.register_on_current_thread();
 
         let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
@@ -715,8 +726,13 @@ async fn test_flush_client_side_stats_sends_agentless_stats() {
 
         // Force an immediate flush through the dyn handle, ahead of the periodic worker.
         let flushed = exporter.flush_client_side_stats();
+        // Snapshot requests before shutdown: `Worker::shutdown` also force-flushes the stats
+        // exporter, so a stats POST captured at this point is the only proof the explicit
+        // flush drove the export path. The `flushed` return value alone cannot prove this:
+        // it stays true even when the weak handle fails to upgrade.
+        let before_shutdown = mock_clone.captured_requests();
         exporter.shutdown(None).expect("shutdown failed");
-        flushed
+        (flushed, before_shutdown)
     })
     .await
     .expect("spawn_blocking panicked");
@@ -726,14 +742,12 @@ async fn test_flush_client_side_stats_sends_agentless_stats() {
         "flush_client_side_stats must report true when stats are enabled"
     );
 
-    let reqs = mock.captured_requests();
-    let stats_req = reqs
-        .iter()
-        .find(|r| r.uri.path() == "/api/v0.2/stats")
-        .expect("explicit flush should have produced a stats request");
-    // The body must be a valid agentless StatsPayload (msgpack), proving the flush handle
-    // drove the real export path rather than being a no-op.
-    let payload: pb::StatsPayload =
-        rmp_serde::from_slice(&stats_req.body).expect("stats body must be valid msgpack");
+    // The stats request must already exist before shutdown: proves the explicit flush (not
+    // the shutdown flush) sent it, and that the flush was not a no-op.
+    let payload = expect_stats_request(&before_shutdown);
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
+
+    // After shutdown: the stats request must still be present and valid.
+    let payload = expect_stats_request(&mock.captured_requests());
     assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
 }
