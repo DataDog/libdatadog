@@ -65,11 +65,16 @@ const PROMOTED_ATTR_KEYS: &[&str] = &[
     "_sampling_priority_v1",
 ];
 
-/// Chunk-level context propagated into every span when downgrading to v0.4. Built once per
-/// chunk by the top-level encoder and passed by reference to `encode_span_v1_to_v04`. Also
-/// carries payload-level fields (`payload_env`, `payload_app_version`, `payload_attributes`),
-/// which apply as a fallback when the span itself doesn't set the equivalent field — v0.4 has
-/// neither a chunk nor a payload concept, so both levels collapse onto every span.
+/// Chunk-level context propagated into the spans of a chunk when downgrading to v0.4. Built once
+/// per chunk by the top-level encoder and passed by reference to `encode_span`. Also carries
+/// payload-level fields (`payload_env`, `payload_app_version`, `payload_attributes`), which apply
+/// as a fallback when the span itself doesn't set the equivalent field — v0.4 has neither a chunk
+/// nor a payload concept, so both levels collapse onto the spans.
+///
+/// Generic chunk/payload attributes (and env/version fallbacks) collapse onto every span, but the
+/// trace-level tags `trace_id` high half (`_dd.p.tid`), `origin` (`_dd.origin`),
+/// `sampling_mechanism` (`_dd.p.dm`) and `priority` (`_sampling_priority_v1`) are emitted only on
+/// the local-root span — see `encode_span`'s `is_root` argument.
 ///
 /// `chunk_attrs_dd` / `payload_attrs_dd` are deduped once here rather than per span: unlike the
 /// span's own attributes, they're identical for every span in the chunk.
@@ -132,6 +137,24 @@ fn split_trace_id(trace_id: &[u8; 16]) -> (u64, u64) {
     (
         u64::from_be_bytes(low_bytes),
         u64::from_be_bytes(high_bytes),
+    )
+}
+
+/// Whether `span` is the local-root of its chunk. Mirrors the v0.4 → v1 upgrade's root
+/// detection (`extract_chunk_attrs`): a span is the local root when it has no parent within the
+/// chunk (`parent_id == 0`) or is explicitly marked top-level (`_dd.top_level == 1`, set on the
+/// local root of a distributed trace whose real parent is remote). Trace-level context
+/// (`_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) belongs on this span only.
+pub(super) fn is_local_root<T: TraceData>(span: &Span<T>) -> bool {
+    if span.parent_id == 0 {
+        return true;
+    }
+    matches!(
+        span.attributes.get("_dd.top_level"),
+        Some(AttributeValue::Float(f)) if *f == 1.0
+    ) || matches!(
+        span.attributes.get("_dd.top_level"),
+        Some(AttributeValue::Int(1))
     )
 }
 
@@ -229,10 +252,16 @@ fn flatten_attr_into<T: TraceData>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
+///
+/// `is_root` marks the chunk's local-root span. Trace-level context (`_dd.p.tid`, `_dd.origin`,
+/// `_dd.p.dm`, `_sampling_priority_v1`) is emitted only for it — in v0.4 those tags live on the
+/// local root, never on child spans. Generic chunk/payload attributes still propagate to every
+/// span (v0.4 has no chunk concept, so they collapse onto each span).
 pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
     chunk: &ChunkContext<'_, T>,
+    is_root: bool,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let span_attrs_dd = span.attributes.defensive_dedup();
 
@@ -309,11 +338,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     counts.meta += !version.is_empty() as u32;
     counts.meta += !span.component.borrow().is_empty() as u32;
     counts.meta += kind_meta.is_some() as u32;
-    counts.meta += (trace_id_high != 0) as u32;
-    counts.meta += !chunk.origin.borrow().is_empty() as u32;
-    counts.meta += chunk.sampling_mechanism.is_some() as u32;
+    counts.meta += (is_root && trace_id_high != 0) as u32;
+    counts.meta += (is_root && !chunk.origin.borrow().is_empty()) as u32;
+    counts.meta += (is_root && chunk.sampling_mechanism.is_some()) as u32;
     counts.meta += meta_leaves.len() as u32;
-    counts.metrics += chunk.priority.is_some() as u32;
+    counts.metrics += (is_root && chunk.priority.is_some()) as u32;
     counts.metrics += metrics_leaves.len() as u32;
     counts.meta_struct += bytes_attrs.len() as u32;
 
@@ -380,7 +409,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
             write_const_msgpack_str!(writer, "span.kind")?;
             write_str(writer, kind_str)?;
         }
-        if trace_id_high != 0 {
+        if is_root && trace_id_high != 0 {
             // Lower-case hex without `0x` prefix — the agent expects this format.
             write_const_msgpack_str!(writer, "_dd.p.tid")?;
             let mut buf = [0u8; 16];
@@ -390,11 +419,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
                 .unwrap_or_default();
             write_str(writer, hex_str)?;
         }
-        if !chunk.origin.borrow().is_empty() {
+        if is_root && !chunk.origin.borrow().is_empty() {
             write_const_msgpack_str!(writer, "_dd.origin")?;
             write_str(writer, chunk.origin.borrow())?;
         }
-        if let Some(mechanism) = chunk.sampling_mechanism {
+        if let Some(mechanism) = chunk.sampling_mechanism.filter(|_| is_root) {
             write_const_msgpack_str!(writer, "_dd.p.dm")?;
             // Always emit a leading '-' so mechanism 0 serializes as "-0", not "0".
             write_str(writer, &format!("-{mechanism}"))?;
@@ -409,7 +438,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_const_msgpack_str!(writer, "metrics")?;
         write_map_len(writer, counts.metrics)?;
 
-        if let Some(priority) = chunk.priority {
+        if let Some(priority) = chunk.priority.filter(|_| is_root) {
             write_const_msgpack_str!(writer, "_sampling_priority_v1")?;
             write_f64(writer, priority as f64)?;
         }
@@ -1144,6 +1173,131 @@ mod tests {
             map_get(metrics, "_sampling_priority_v1").unwrap().as_f64(),
             Some(1.0)
         );
+    }
+
+    #[test]
+    fn trace_level_tags_only_on_local_root_not_children() {
+        // _dd.p.tid / _dd.origin / _dd.p.dm / _sampling_priority_v1 are trace-level in v0.4 and
+        // belong ONLY on the local-root span (parent_id == 0 here). A multi-span chunk must not
+        // stamp them onto child spans — doing so is what RC-A ("trace tags leak onto children")
+        // was: the downgrade injected chunk-level context into every span unconditionally.
+        let mut trace_id = [0u8; 16];
+        trace_id[7] = 0xAB; // non-zero high half -> _dd.p.tid
+        let root = SpanBytes {
+            span_id: 1,
+            parent_id: 0,
+            ..minimal_span()
+        };
+        let child = SpanBytes {
+            span_id: 2,
+            parent_id: 1,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id,
+                priority: Some(1),
+                origin: bs("synthetics"),
+                sampling_mechanism: Some(4),
+                spans: vec![root, child],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+        assert_eq!(trace.len(), 2);
+
+        // Root (index 0) carries every trace-level tag.
+        let root_meta = map_get(&trace[0], "meta").expect("root has meta");
+        assert!(
+            map_get(root_meta, "_dd.p.tid").is_some(),
+            "root must carry _dd.p.tid"
+        );
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("synthetics")
+        );
+        assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-4"));
+        let root_metrics = map_get(&trace[0], "metrics").expect("root has metrics");
+        assert_eq!(
+            map_get(root_metrics, "_sampling_priority_v1")
+                .unwrap()
+                .as_f64(),
+            Some(1.0)
+        );
+
+        // Child (index 1) must NOT carry any trace-level tag.
+        if let Some(child_meta) = map_get(&trace[1], "meta") {
+            assert!(
+                map_get(child_meta, "_dd.p.tid").is_none(),
+                "_dd.p.tid leaked onto child"
+            );
+            assert!(
+                map_get(child_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto child"
+            );
+            assert!(
+                map_get(child_meta, "_dd.p.dm").is_none(),
+                "_dd.p.dm leaked onto child"
+            );
+        }
+        if let Some(child_metrics) = map_get(&trace[1], "metrics") {
+            assert!(
+                map_get(child_metrics, "_sampling_priority_v1").is_none(),
+                "_sampling_priority_v1 leaked onto child"
+            );
+        }
+    }
+
+    #[test]
+    fn trace_level_tags_land_on_top_level_span_with_remote_parent() {
+        // Distributed trace: the local root has a non-zero parent_id (remote parent) but is
+        // marked _dd.top_level=1. The trace-level tags must land on it, not the first-listed span.
+        let mut top_level_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        top_level_attrs.insert(bs("_dd.top_level"), AttributeValue::Float(1.0));
+        let leaf = SpanBytes {
+            span_id: 5,
+            parent_id: 9, // remote parent, not top level
+            ..minimal_span()
+        };
+        let local_root = SpanBytes {
+            span_id: 9,
+            parent_id: 100, // remote parent
+            attributes: top_level_attrs,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("rum"),
+                sampling_mechanism: Some(3),
+                spans: vec![leaf, local_root],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        // trace[0] is the leaf (non-root) — no trace-level tags.
+        if let Some(leaf_meta) = map_get(&trace[0], "meta") {
+            assert!(
+                map_get(leaf_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto non-root"
+            );
+            assert!(
+                map_get(leaf_meta, "_dd.p.dm").is_none(),
+                "_dd.p.dm leaked onto non-root"
+            );
+        }
+        // trace[1] is the _dd.top_level local root — it carries them.
+        let root_meta = map_get(&trace[1], "meta").expect("local root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("rum")
+        );
+        assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-3"));
     }
 
     #[test]

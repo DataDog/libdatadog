@@ -249,7 +249,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{encode_span, ChunkContext};
+    use span_v1::{encode_span, is_local_root, ChunkContext};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
@@ -271,9 +271,13 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &payload.app_version,
             &payload.attributes,
         );
+        // Trace-level context lives on the local root only. Resolve it once (first span matching
+        // the v0.4 root convention; fall back to the first span so the tags are never dropped if
+        // the chunk somehow lacks a recognizable root).
+        let root_idx = chunk.spans.iter().position(is_local_root).unwrap_or(0);
         write_array_len(writer, chunk.spans.len() as u32)?;
-        for span in &chunk.spans {
-            encode_span(writer, span, &ctx)?;
+        for (i, span) in chunk.spans.iter().enumerate() {
+            encode_span(writer, span, &ctx, i == root_idx)?;
         }
     }
     Ok(())
