@@ -324,65 +324,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn attribute_encoding_basic() {
-        let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
-        OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
-
-        let ptr = read_tls_context_ptr();
-        assert!(!ptr.is_null());
-        let record = unsafe { &*ptr };
-        // 1+1+16 (root_span_id hex) + 1+1+3 (GET) + 1+1+7 (/api/v1)
-        let expected_size: u16 = (2 + 16 + 2 + 3 + 2 + 7) as u16;
-        assert_eq!(record.attrs_data_size, expected_size);
-        assert_eq!(record.attrs_data[0], 0);
-        assert_eq!(record.attrs_data[1], 16);
-        assert_eq!(&record.attrs_data[2..18], b"0000000000000000");
-        assert_eq!(record.attrs_data[18], 1);
-        assert_eq!(record.attrs_data[19], 3);
-        assert_eq!(&record.attrs_data[20..23], b"GET");
-        assert_eq!(record.attrs_data[23], 2);
-        assert_eq!(record.attrs_data[24], 7);
-        assert_eq!(&record.attrs_data[25..32], b"/api/v1");
-
-        let _ = OwnedThreadContext::detach();
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn attribute_truncation_on_overflow() {
-        // Build attributes whose combined encoded size exceeds MAX_ATTRS_DATA_SIZE.
-        // Each max entry: 1 (key) + 1 (len) + 255 (val) = 257 bytes.
-        // root_span_id: 1 (key) + 1 (len) + 16 (hex val) = 18 bytes.
-        // Two such entries: 514 bytes, plus root_span_id: 532.
-        // A third entry of 100 chars would need 102 bytes, bringing the total to 634 > 612, so
-        // the third entry must be dropped.
-        let val_a = "a".repeat(255); // 257 bytes encoded
-        let val_b = "b".repeat(255); // 257 bytes encoded → 514 total
-        let val_c = "c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
-
-        let attrs: &[(u8, &str)] = &[
-            (1, val_a.as_str()),
-            (2, val_b.as_str()),
-            (3, val_c.as_str()),
-        ];
-
-        OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
-
-        let ptr = read_tls_context_ptr();
-        assert!(!ptr.is_null());
-        let record = unsafe { &*ptr };
-        // Only the first two entries fit (514 bytes + 18 bytes for root_span_id).
-        assert_eq!(record.attrs_data_size, 532);
-        assert_eq!(record.attrs_data[18], 1);
-        assert_eq!(record.attrs_data[19], 255);
-        assert_eq!(record.attrs_data[275], 2);
-        assert_eq!(record.attrs_data[276], 255);
-
-        let _ = OwnedThreadContext::detach();
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     fn update_record_in_place() {
         let trace_id1 = [1u8; 16];
         let span_id1 = [0x01, 0x12, 0x23, 0x34, 0x45, 0x56, 0x67, 0x78];
@@ -592,31 +533,6 @@ mod tests {
         // Calling detach again is safe (no-op, returns None).
         let _ = OwnedThreadContext::detach();
         assert!(read_tls_context_ptr().is_null());
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn long_value_capped_at_255_bytes() {
-        let long_val = "a".repeat(300);
-        OwnedThreadContext::new(
-            [0u8; 16],
-            [0u8; 8],
-            NO_TRACE_FLAGS,
-            [0u8; 8],
-            &[(0, long_val.as_str())],
-        )
-        .attach();
-
-        let ptr = read_tls_context_ptr();
-        assert!(!ptr.is_null());
-        let record = unsafe { &*ptr };
-        // root_span_id occupies offset 0..18, then the attr entry starts at 18: key at [18],
-        // len at [19]
-        let val_len = record.attrs_data[2 + 16 + 1];
-        assert_eq!(val_len, 255, "value must be capped at 255 bytes");
-        assert_eq!(record.attrs_data_size, 2 + 16 + 2 + 255);
-
-        let _ = OwnedThreadContext::detach();
     }
 
     // Make sure the TLSDESC accessor is indeed providing a thread-local address.

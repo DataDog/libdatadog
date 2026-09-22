@@ -376,3 +376,80 @@ impl ThreadContext {
 fn read_tls_context_ptr() -> *const ThreadContextRecord {
     with_tls_slot(|slot| slot.load(Ordering::Relaxed))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ThreadContextRecord;
+
+    const NO_TRACE_FLAGS: u8 = 0;
+
+    // Attribute-encoding tests. They only exercise `ThreadContextRecord`'s encoding of
+    // `attrs_data` and are independent of the ownership mode, so they live here and run whether
+    // `owned-context` or `shared-context` is enabled. They don't touch the TLS slot, hence no
+    // Miri opt-out is needed.
+
+    #[test]
+    fn attribute_encoding_basic() {
+        let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
+        let record = ThreadContextRecord::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs);
+
+        // 1+1+16 (root_span_id hex) + 1+1+3 (GET) + 1+1+7 (/api/v1)
+        let expected_size: u16 = (2 + 16 + 2 + 3 + 2 + 7) as u16;
+        assert_eq!(record.attrs_data_size, expected_size);
+        assert_eq!(record.attrs_data[0], 0);
+        assert_eq!(record.attrs_data[1], 16);
+        assert_eq!(&record.attrs_data[2..18], b"0000000000000000");
+        assert_eq!(record.attrs_data[18], 1);
+        assert_eq!(record.attrs_data[19], 3);
+        assert_eq!(&record.attrs_data[20..23], b"GET");
+        assert_eq!(record.attrs_data[23], 2);
+        assert_eq!(record.attrs_data[24], 7);
+        assert_eq!(&record.attrs_data[25..32], b"/api/v1");
+    }
+
+    #[test]
+    fn attribute_truncation_on_overflow() {
+        // Build attributes whose combined encoded size exceeds MAX_ATTRS_DATA_SIZE.
+        // Each max entry: 1 (key) + 1 (len) + 255 (val) = 257 bytes.
+        // root_span_id: 1 (key) + 1 (len) + 16 (hex val) = 18 bytes.
+        // Two such entries: 514 bytes, plus root_span_id: 532.
+        // A third entry of 100 chars would need 102 bytes, bringing the total to 634 > 612, so
+        // the third entry must be dropped.
+        let val_a = "a".repeat(255); // 257 bytes encoded
+        let val_b = "b".repeat(255); // 257 bytes encoded → 514 total
+        let val_c = "c".repeat(100); // 102 bytes encoded → 626 total: must be dropped
+
+        let attrs: &[(u8, &str)] = &[
+            (1, val_a.as_str()),
+            (2, val_b.as_str()),
+            (3, val_c.as_str()),
+        ];
+
+        let record = ThreadContextRecord::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs);
+
+        // Only the first two entries fit (514 bytes + 18 bytes for root_span_id).
+        assert_eq!(record.attrs_data_size, 532);
+        assert_eq!(record.attrs_data[18], 1);
+        assert_eq!(record.attrs_data[19], 255);
+        assert_eq!(record.attrs_data[275], 2);
+        assert_eq!(record.attrs_data[276], 255);
+    }
+
+    #[test]
+    fn long_value_capped_at_255_bytes() {
+        let long_val = "a".repeat(300);
+        let record = ThreadContextRecord::new(
+            [0u8; 16],
+            [0u8; 8],
+            NO_TRACE_FLAGS,
+            [0u8; 8],
+            &[(0, long_val.as_str())],
+        );
+
+        // root_span_id occupies offset 0..18, then the attr entry starts at 18: key at [18],
+        // len at [19]
+        let val_len = record.attrs_data[2 + 16 + 1];
+        assert_eq!(val_len, 255, "value must be capped at 255 bytes");
+        assert_eq!(record.attrs_data_size, 2 + 16 + 2 + 255);
+    }
+}
