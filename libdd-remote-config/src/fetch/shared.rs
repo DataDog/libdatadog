@@ -460,7 +460,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 
@@ -525,7 +525,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 

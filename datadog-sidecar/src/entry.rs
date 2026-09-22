@@ -308,13 +308,23 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
-    let err = match liaison.attempt_listen() {
-        Ok(Some(listener)) => {
-            daemonize_with_entrypoint(listener, cfg, daemon_entrypoint)?;
-            None
+    // On macos only actually listening binds the sidecar socket, so there might be a race, unlike
+    // linux where binding the socket is sufficient. Hence we need a retry-loop on macos for this
+    // edge case.
+    let deadline = cfg!(target_os = "macos").then(|| Instant::now() + Duration::from_secs(1));
+    let err = loop {
+        match liaison.attempt_listen() {
+            Ok(Some(listener)) => {
+                daemonize_with_entrypoint(listener, cfg, daemon_entrypoint)?;
+                break None;
+            }
+            Ok(None) => break None,
+            Err(_e) if deadline.is_some_and(|d| Instant::now() < d) => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            err => break err.context("Error starting sidecar").err(),
         }
-        Ok(None) => None,
-        err => err.context("Error starting sidecar").err(),
     };
 
     Ok(SidecarTransport::from(

@@ -4,7 +4,7 @@
 use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
 mod scanner;
 use scanner::{Op, Scanner};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value belongs to a
 /// key listed in `keep_keys`, in which case it is left verbatim.
@@ -14,7 +14,7 @@ use serde::Deserialize;
 ///
 /// Multiple concatenated JSON objects in the input are each obfuscated independently.
 /// On a parse error the output so far is returned with `"..."` appended.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug, Default, PartialEq)]
 #[serde(transparent)]
 pub struct JsonObfuscator {
     config: JsonObfuscatorConfig,
@@ -274,6 +274,18 @@ mod tests {
         let (res, err) = obf(&[]).obfuscate(input);
         assert_eq!(res, expected);
         assert_eq!(err, expected_error);
+    }
+
+    /// The obfuscator copies keys in the order it reads them, because it is a scanner rather than a
+    /// `serde_json::Map`, which is why this crate does not need `serde_json/preserve_order` - a
+    /// feature it cannot enable without enabling it for every crate in a dependent's workspace.
+    #[test]
+    fn test_key_order_is_the_input_order() {
+        let input = r#"{"z":1,"a":{"y":2,"b":3},"m":4}"#;
+        let expected = r#"{"z":"?","a":{"y":"?","b":"?"},"m":"?"}"#;
+        let (result, err) = obf(&[]).obfuscate(input);
+        assert_eq!(err, None);
+        assert_eq!(result, expected);
     }
 
     #[test]

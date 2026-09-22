@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use libdd_gotter::lookup_symbol;
 use libdd_gotter::{
-    dlpi_name, elf64_r_sym, elf64_r_type, is_got_pointer_reloc, is_vdso_or_dynamic_linker,
+    dlpi_name, elf64_r_sym, elf64_r_type, is_rela_got_pointer_reloc, is_vdso_or_dynamic_linker,
     iterate_libraries, DynamicInfo, PageProtGuard,
 };
 
@@ -220,13 +220,14 @@ impl SymbolOverrides {
             return;
         }
 
-        // NOTE: the SysV x86-64 ABI:
-        // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
-        // specifies that only RELA entries are used on AMD64 (spec page 64).
-        // ARM64 appears similar. REL processing is kept for defensive completeness
-        // but may be dead code on both architectures. We should revisit this.
-        for reloc in dyn_info.rels() {
-            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+        // Pointer width alone does not make a relocation safely substitutable; see
+        // `is_rela_got_pointer_reloc`. GOT slots (`GLOB_DAT` / `JUMP_SLOT`) resolve to exactly the
+        // symbol address `S` because the dynamic linker ignores the addend, while absolute
+        // pointer-width relocations resolve to `S + A` and so need a zero addend, since the target
+        // and hook have unrelated code layouts. REL entries use an implicit addend that is
+        // no longer reliably recoverable after dynamic linking, so skip them conservatively.
+        for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
+            if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
                 continue;
             }
             Self::process_relocation(
@@ -236,20 +237,6 @@ impl SymbolOverrides {
                 reloc.r_offset as usize,
                 guard,
             );
-        }
-        for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
-            for reloc in relocs {
-                if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
-                    continue;
-                }
-                Self::process_relocation(
-                    &self.overrides,
-                    dyn_info,
-                    elf64_r_sym(reloc.r_info),
-                    reloc.r_offset as usize,
-                    guard,
-                );
-            }
         }
     }
 

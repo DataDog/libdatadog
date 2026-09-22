@@ -969,11 +969,13 @@ impl<
                 .await;
         }
 
-        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
-        // Unlike the agent path, there is no downstream agent to drop unsampled traces,
-        // so drop_chunks is always called here regardless of whether stats are enabled.
         if let Some(otlp) = &self.otlp {
-            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            // Unlike the agent path, there is no downstream agent to drop unsampled traces,
+            // if client-side-stats is enabled, we have already dropped chunks after performing stat
+            // computations otherwise drop here
+            if !client_side_stats {
+                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            }
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
@@ -1571,9 +1573,9 @@ mod tests {
             Self(NativeCapabilities::new_client())
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
-            Self(NativeCapabilities::new_without_connection_pooling())
+            Self(NativeCapabilities::new_periodic())
         }
 
         fn request(
@@ -2602,6 +2604,7 @@ mod tests {
             BytesString::from_static("http.url"),
             BytesString::from_static("http://foo.com/path?secret=bar"),
         );
+        span.dedup();
         let traces: Vec<Vec<SpanBytes>> = vec![vec![span]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
