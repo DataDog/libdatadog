@@ -73,7 +73,7 @@ pub struct AgentlessStatsTarget {
 pub const COLLAPSED_SPANS_HEALTH_METRIC: &str = "datadog.tracer.stats.collapsed_spans";
 
 /// Telemetry metric name for the number of spans collapsed.
-pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "tracers.stats_collapsed_spans";
+pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "stats_collapsed_spans";
 
 /// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
 #[derive(Clone, Default, Debug)]
@@ -296,7 +296,7 @@ impl<
                 let _ = handle.add_point(
                     flush.collapsed_spans as f64,
                     key,
-                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                    vec![libdd_common::tag!("collapsed", "whole_key")],
                 );
             }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
