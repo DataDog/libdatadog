@@ -83,7 +83,7 @@ fn minimal_span() -> SpanBytes {
 }
 
 fn encode_first_span(chunks: &[TraceChunkBytes]) -> Value {
-    let bytes = encode_payload_from_v1(chunks, &base_metadata()).expect("encode ok");
+    let bytes = encode_payload_from_v1(chunks, &base_metadata(), false).expect("encode ok");
     let v = json_from_bytes(&bytes);
     v["traces"][0]["spans"][0].clone()
 }
@@ -92,7 +92,7 @@ fn encode_first_span(chunks: &[TraceChunkBytes]) -> Value {
 #[test]
 fn top_level_payload_shape_and_metadata() {
     let chunk = minimal_chunk([0u8; 16], minimal_span());
-    let bytes = encode_payload_from_v1(&[chunk], &base_metadata()).unwrap();
+    let bytes = encode_payload_from_v1(&[chunk], &base_metadata(), false).unwrap();
     let v = json_from_bytes(&bytes);
 
     assert!(v.is_object());
@@ -256,7 +256,7 @@ fn chunk_attributes_propagate_to_every_span() {
         ],
         ..Default::default()
     };
-    let bytes = encode_payload_from_v1(&[chunk], &base_metadata()).unwrap();
+    let bytes = encode_payload_from_v1(&[chunk], &base_metadata(), false).unwrap();
     let v = json_from_bytes(&bytes);
     let spans = v["traces"][0]["spans"].as_array().unwrap();
     assert_eq!(spans.len(), 2);
@@ -265,6 +265,16 @@ fn chunk_attributes_propagate_to_every_span() {
     // Only the first span in the chunk gets _dd.compute_stats.
     assert_eq!(spans[0]["meta"]["_dd.compute_stats"], "1");
     assert!(spans[1]["meta"].get("_dd.compute_stats").is_none());
+}
+
+#[cfg_attr(miri, ignore)]
+#[test]
+fn client_side_stats_suppresses_compute_stats_injection() {
+    let chunk = minimal_chunk([0u8; 16], minimal_span());
+    let bytes = encode_payload_from_v1(&[chunk], &base_metadata(), true).unwrap();
+    let v = json_from_bytes(&bytes);
+    let spans = v["traces"][0]["spans"].as_array().unwrap();
+    assert!(spans[0]["meta"].get("_dd.compute_stats").is_none());
 }
 
 #[cfg_attr(miri, ignore)]
@@ -347,7 +357,7 @@ fn top_level_metric_is_serialized_as_integer_not_float() {
         attributes: attrs,
         ..minimal_span()
     };
-    let bytes = encode_payload_from_v1(&[minimal_chunk([0u8; 16], span)], &base_metadata())
+    let bytes = encode_payload_from_v1(&[minimal_chunk([0u8; 16], span)], &base_metadata(), false)
         .expect("encode ok");
     let text = String::from_utf8(bytes).expect("utf8");
     assert!(

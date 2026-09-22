@@ -9,7 +9,8 @@ use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
 use crate::span::span_pool::PooledChunks;
-use crate::span::v1::{AttributeValue, SpanKind, TraceChunk};
+use crate::span::v1::chunk_pool::PooledTraceChunks;
+use crate::span::v1::{AttributeValue, SpanKind};
 use crate::span::vec_map::VecMap;
 use crate::span::{self, trace_utils::get_root_span_index, trace_utils_v1, TraceData};
 
@@ -293,10 +294,11 @@ impl TraceFilterer {
     }
 
     /// V1 counterpart of [`Self::filter_traces`]: removes chunks that fail filter checks
-    /// in-place. Returns the number of chunks dropped.
-    pub fn filter_traces_v1<T: TraceData>(&self, traces: &mut Vec<TraceChunk<T>>) -> usize {
+    /// in-place, returning dropped chunks to the pool (if any) instead of dropping their
+    /// allocations outright. Returns the number of chunks dropped.
+    pub fn filter_traces_v1<T: TraceData>(&self, traces: &mut PooledTraceChunks<'_, T>) -> usize {
         let traces_count_before = traces.len();
-        traces.retain(|chunk| {
+        traces.retain_mut(|chunk| {
             let Ok(root_span_index) = trace_utils_v1::get_root_span_index(&chunk.spans) else {
                 return true;
             };
@@ -404,6 +406,7 @@ mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;
     use crate::span::v04::{SpanBytes, VecMap};
+    use crate::span::v1::chunk_pool::PooledTraceChunks;
     use crate::span::v1::{
         AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
     };
@@ -800,21 +803,22 @@ mod tests {
 
     #[test]
     fn v1_reject_string_exact_match_drops() {
-        let mut traces = vec![v1_chunk_with("r", &[("env", "prod")])];
+        let mut traces = PooledTraceChunks::unpooled(vec![v1_chunk_with("r", &[("env", "prod")])]);
         reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
         assert!(traces.is_empty());
     }
 
     #[test]
     fn v1_reject_string_wrong_value_keeps() {
-        let mut traces = vec![v1_chunk_with("r", &[("env", "staging")])];
+        let mut traces =
+            PooledTraceChunks::unpooled(vec![v1_chunk_with("r", &[("env", "staging")])]);
         reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
         assert_eq!(traces.len(), 1);
     }
 
     #[test]
     fn v1_ignore_resources_match_drops() {
-        let mut traces = vec![v1_chunk_with("GET /health", &[])];
+        let mut traces = PooledTraceChunks::unpooled(vec![v1_chunk_with("GET /health", &[])]);
         ignore_resources(&["GET /health"]).filter_traces_v1(&mut traces);
         assert!(traces.is_empty());
     }
@@ -823,7 +827,10 @@ mod tests {
     fn v1_reject_matches_chunk_level_attribute() {
         // The root span itself has no "env" tag, only the chunk does; the filter should still
         // see it via the chunk-attributes fallback.
-        let mut traces = vec![v1_chunk_with_chunk_attributes("r", &[("env", "prod")])];
+        let mut traces = PooledTraceChunks::unpooled(vec![v1_chunk_with_chunk_attributes(
+            "r",
+            &[("env", "prod")],
+        )]);
         reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
         assert!(traces.is_empty());
     }
@@ -835,7 +842,7 @@ mod tests {
         chunk.attributes = [("env".into(), AttributeValueV1::String("prod".into()))]
             .into_iter()
             .collect();
-        let mut traces = vec![chunk];
+        let mut traces = PooledTraceChunks::unpooled(vec![chunk]);
         reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
         assert_eq!(traces.len(), 1, "span-level value should take precedence");
     }
@@ -844,7 +851,7 @@ mod tests {
     fn v1_reject_matches_dedicated_promoted_fields() {
         // env/version/component/span.kind are stored in dedicated fields rather than
         // `attributes`; the filter must still see them there.
-        let mut traces = vec![TraceChunk {
+        let mut traces = PooledTraceChunks::unpooled(vec![TraceChunk {
             spans: vec![SpanBytesV1 {
                 service: "svc".into(),
                 name: "op".into(),
@@ -858,7 +865,7 @@ mod tests {
                 ..Default::default()
             }],
             ..Default::default()
-        }];
+        }]);
 
         reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
         assert!(
