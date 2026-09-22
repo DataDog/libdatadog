@@ -334,6 +334,7 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
             str,
             num: label.num,
             num_unit,
+            hidden: false,
         })
     }
 }

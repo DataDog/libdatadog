@@ -160,7 +160,7 @@ impl Profile {
             lbls.try_reserve_exact(sample.labels.len())?;
             for label in &sample.labels {
                 let key = self.try_intern(label.key)?;
-                let internal_label = if !label.str.is_empty() {
+                let mut internal_label = if !label.str.is_empty() {
                     let str = self.try_intern(label.str)?;
                     Label::str(key, str)
                 } else {
@@ -168,6 +168,7 @@ impl Profile {
                     let num_unit = self.try_intern(label.num_unit)?;
                     Label::num(key, num, num_unit)
                 };
+                internal_label.hidden = label.hidden;
 
                 let id = self.labels.try_dedup(internal_label)?;
                 lbls.push(id);
@@ -629,16 +630,16 @@ impl Profile {
                 // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            if omit_local_root_span_id {
-                pprof_labels.extend(
-                    labels
-                        .iter()
-                        .filter(|label| label.get_key() != local_root_span_id_label)
-                        .map(protobuf::Label::from),
-                );
-            } else {
-                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
-            }
+            pprof_labels.extend(
+                labels
+                    .iter()
+                    .filter(|label| {
+                        !label.hidden
+                            && (!omit_local_root_span_id
+                                || label.get_key() != local_root_span_id_label)
+                    })
+                    .map(protobuf::Label::from),
+            );
             if timestamp.is_some() {
                 labels.pop();
             }
@@ -1369,12 +1370,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "pid",
             str: "",
             num: 101,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
 
@@ -1386,12 +1389,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "pid",
             str: "",
             num: 101,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
 
@@ -1401,12 +1406,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "end_timestamp_ns",
             str: "",
             num: 42,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
         let key = string_table_fetch(&profile, label.key);
@@ -1488,6 +1495,7 @@ mod api_tests {
             str: "10", // bad value, should use .num instead for local root span id
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample = api::Sample {
@@ -1510,6 +1518,7 @@ mod api_tests {
             str: "",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let id2_label = api::Label {
@@ -1517,6 +1526,7 @@ mod api_tests {
             str: "",
             num: 11,
             num_unit: "",
+            hidden: false,
         };
 
         let other_label = api::Label {
@@ -1524,6 +1534,7 @@ mod api_tests {
             str: "test",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {
@@ -1600,12 +1611,21 @@ mod api_tests {
         let sample = api::Sample {
             locations: vec![],
             values: &[1, 10000],
-            labels: vec![api::Label {
-                key: "local root span id",
-                str: "",
-                num: 10,
-                num_unit: "",
-            }],
+            labels: vec![
+                api::Label {
+                    key: "local root span id",
+                    str: "",
+                    num: 10,
+                    num_unit: "",
+                    hidden: false,
+                },
+                api::Label {
+                    key: "allocation_size",
+                    num: 125,
+                    hidden: true,
+                    ..Default::default()
+                },
+            ],
         };
 
         for profile in [&mut regular_profile, &mut omit_profile] {
@@ -1701,12 +1721,14 @@ mod api_tests {
                 str: "",
                 num: 5738080760940355267_i64,
                 num_unit: "",
+                hidden: false,
             },
             api::Label {
                 key: "local root span id",
                 str: "",
                 num: 8182855815056056749_i64,
                 num_unit: "",
+                hidden: false,
             },
         ];
 
@@ -1720,6 +1742,98 @@ mod api_tests {
     }
 
     #[test]
+    fn hidden_labels_partition_poisson_samples() {
+        for timestamp in [None, Timestamp::new(42)] {
+            let mut profile = Profile::new(
+                &[api::SampleType::AllocSamples, api::SampleType::AllocSize],
+                None,
+            );
+            profile
+                .add_upscaling_rule(
+                    &[0, 1],
+                    "kind",
+                    "allocation",
+                    UpscalingInfo::Poisson {
+                        sum_value_offset: 1,
+                        count_value_offset: 0,
+                        sampling_distance: 100,
+                    },
+                )
+                .unwrap();
+            let visible = create_label("thread", "main");
+            for size in [10, 10, 200, 200] {
+                profile
+                    .try_add_sample(
+                        api::Sample {
+                            locations: vec![],
+                            values: &[1, size],
+                            labels: vec![
+                                visible,
+                                api::Label {
+                                    hidden: true,
+                                    ..create_label("kind", "allocation")
+                                },
+                                api::Label {
+                                    key: "allocation_size",
+                                    num: size,
+                                    num_unit: "bytes",
+                                    hidden: true,
+                                    ..Default::default()
+                                },
+                            ],
+                        },
+                        timestamp,
+                    )
+                    .unwrap();
+            }
+            let pprof = roundtrip_to_pprof(profile).unwrap();
+            let mut values: Vec<_> = pprof.samples.iter().map(|s| s.values.clone()).collect();
+            values.sort();
+            let mut expected_labels = vec![visible];
+            if let Some(ts) = timestamp {
+                assert_eq!(
+                    values,
+                    vec![vec![1, 231], vec![1, 231], vec![11, 105], vec![11, 105]]
+                );
+                expected_labels.push(api::Label {
+                    key: "end_timestamp_ns",
+                    num: ts.get(),
+                    ..Default::default()
+                });
+            } else {
+                assert_eq!(values, vec![vec![2, 463], vec![21, 210]]);
+            }
+            for sample in api::Profile::try_from(&pprof).unwrap().samples {
+                assert_eq!(sample.labels, expected_labels);
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_label_visibility_is_part_of_identity() {
+        let mut profile = Profile::new(&[api::SampleType::CpuSamples], None);
+        let visible = create_label("kind", "allocation");
+        assert!(!api::Label::default().hidden);
+        for hidden in [false, true] {
+            profile
+                .try_add_sample(
+                    api::Sample {
+                        locations: vec![],
+                        values: &[1],
+                        labels: vec![api::Label { hidden, ..visible }],
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        let pprof = roundtrip_to_pprof(profile).unwrap();
+        let mut label_counts: Vec<_> = pprof.samples.iter().map(|s| s.labels.len()).collect();
+        label_counts.sort();
+        assert_eq!(label_counts, vec![0, 1]);
+        assert!(pprof.samples.iter().all(|s| s.values == [1]));
+    }
+
+    #[test]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1730,6 +1844,7 @@ mod api_tests {
             str: "coco",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {
@@ -1765,6 +1880,7 @@ mod api_tests {
             str,
             num: 0,
             num_unit: "",
+            hidden: false,
         }
     }
 
@@ -2303,6 +2419,7 @@ mod api_tests {
             str: "foobar",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let sample2 = api::Sample {
@@ -2716,6 +2833,7 @@ mod api_tests {
             str: "",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let large_span_id = u64::MAX;
@@ -2732,6 +2850,7 @@ mod api_tests {
             str: "",
             num: large_num,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {

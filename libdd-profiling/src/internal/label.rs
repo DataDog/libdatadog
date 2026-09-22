@@ -14,6 +14,7 @@ pub enum LabelValue {
 pub struct Label {
     key: StringId,
     value: LabelValue,
+    pub(crate) hidden: bool,
 }
 
 impl Label {
@@ -37,6 +38,7 @@ impl Label {
         Self {
             key,
             value: LabelValue::Num { num, num_unit },
+            hidden: false,
         }
     }
 
@@ -44,6 +46,7 @@ impl Label {
         Self {
             key,
             value: LabelValue::Str(v),
+            hidden: false,
         }
     }
 }

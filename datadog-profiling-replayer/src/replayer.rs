@@ -139,6 +139,7 @@ impl<'pprof> Replayer<'pprof> {
                     str: profile_index.get_string(label.str)?,
                     num: label.num,
                     num_unit: profile_index.get_string(label.num_unit)?,
+                    hidden: false,
                 })
             })
             .collect();

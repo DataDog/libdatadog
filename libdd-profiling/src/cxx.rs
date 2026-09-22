@@ -468,6 +468,7 @@ impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
             str: label.str,
             num: label.num,
             num_unit: label.num_unit,
+            hidden: false,
         }
     }
 }

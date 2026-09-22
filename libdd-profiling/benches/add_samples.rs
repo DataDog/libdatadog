@@ -133,12 +133,14 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             str: "",
             num: thread_id,
             num_unit: "",
+            hidden: false,
         },
         api::Label {
             key: "thread name",
             str: "this thread",
             num: 0,
             num_unit: "",
+            hidden: false,
         },
     ];
 
