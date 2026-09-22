@@ -255,8 +255,9 @@ impl JsonObfuscator {
     /// [`JsonObfuscatorConfig::transform_keys`] through `transform`.
     ///
     /// `transform` receives the unescaped string value and returns its replacement, borrowed from
-    /// its argument, borrowed from elsewhere (a `&'static str` works), or owned. A value whose
-    /// transform returns `Err` is written as `"?"` and the error is reported; the pass continues.
+    /// its argument, borrowed from elsewhere (a `&'static str` works), or owned. The replacement
+    /// is JSON-escaped before it is written. A value whose transform returns `Err` is written as
+    /// `"?"` and the error is reported; the pass continues.
     ///
     /// This allocates an output string per call and retains nothing. Use [`Self::obfuscate_into`]
     /// on a hot path.
@@ -539,18 +540,50 @@ where
             Unescaped::Buffered => self.unescaped.as_str(),
         };
 
-        self.out.push('"');
         match transform(value) {
-            Ok(replacement) => self.out.push_str(&replacement),
+            Ok(replacement) => push_json_string(self.out, &replacement),
             Err(err) => {
                 // Fall back to the ordinary obfuscated value: a failed transform must not leak
                 // the value it could not rewrite.
-                self.out.push('?');
+                self.out.push_str(OBFUSCATED_VALUE);
                 self.report.transform_errors.push(err);
             }
         }
-        self.out.push('"');
     }
+}
+
+fn push_json_string(out: &mut String, value: &str) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    out.push('"');
+    let mut copied_through = 0;
+    for (i, byte) in value.bytes().enumerate() {
+        let escape = match byte {
+            b'"' => Some("\\\""),
+            b'\\' => Some("\\\\"),
+            b'\x08' => Some("\\b"),
+            b'\t' => Some("\\t"),
+            b'\n' => Some("\\n"),
+            b'\x0c' => Some("\\f"),
+            b'\r' => Some("\\r"),
+            0x00..=0x1f => {
+                out.push_str(&value[copied_through..i]);
+                out.push_str("\\u00");
+                out.push(char::from(HEX[usize::from(byte >> 4)]));
+                out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+                copied_through = i + 1;
+                continue;
+            }
+            _ => None,
+        };
+        if let Some(escape) = escape {
+            out.push_str(&value[copied_through..i]);
+            out.push_str(escape);
+            copied_through = i + 1;
+        }
+    }
+    out.push_str(&value[copied_through..]);
+    out.push('"');
 }
 
 /// Where the unescaped form of a JSON string literal ended up.
@@ -599,7 +632,7 @@ mod tests {
         JsonScanError, ScratchCapacity,
     };
     use crate::{
-        obfuscation_config::{DbmsKind, JsonObfuscatorConfig, SqlConfig},
+        obfuscation_config::{DbmsKind, JsonObfuscatorConfig, SqlConfig, SqlObfuscationMode},
         sql::{obfuscate_sql, SqlObfuscationError, SQL_OBFUSCATION_FAILURE_REPLACEMENT},
     };
 
@@ -895,6 +928,50 @@ mod tests {
         assert_eq!(
             out,
             format!(r#"{{"a":"one","b":"{SQL_OBFUSCATION_FAILURE_REPLACEMENT}","c":"THREE"}}"#)
+        );
+    }
+
+    #[test]
+    fn test_transform_result_is_json_escaped() {
+        let input = r#"{"query":"replace me"}"#;
+        let replacement = "quote: \"; backslash: \\; controls: \0\u{8}\t\n\u{c}\r\u{1f}";
+        let expected = serde_json::to_string(&json!({"query": replacement})).unwrap();
+        let obfuscator = obf_keys(&[], &["query"]);
+
+        let JsonObfuscationOutcome { output, report } = obfuscator.obfuscate_with(input, |_| {
+            Ok::<_, SqlObfuscationError>(Cow::Borrowed(replacement))
+        });
+        assert!(report.is_clean());
+        assert_eq!(output, expected);
+
+        let mut output = String::new();
+        let mut scratch = JsonObfuscationScratch::new();
+        let report = obfuscator.obfuscate_into(input, &mut output, &mut scratch, |_| {
+            Ok::<_, SqlObfuscationError>(Cow::Borrowed(replacement))
+        });
+        assert!(report.is_clean());
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_sql_transform_with_quoted_identifier_is_json_escaped() {
+        let input = r#"{"query":"SELECT * FROM \"users\" WHERE id = 1"}"#;
+        let config = SqlConfig {
+            obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
+            keep_identifier_quotation: true,
+            ..Default::default()
+        };
+        let JsonObfuscationOutcome { output, report } =
+            obf_keys(&[], &["query"]).obfuscate_with(input, sql_transform(&config));
+
+        assert!(report.is_clean());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output).unwrap(),
+            json!({"query": "SELECT * FROM \"users\" WHERE id = ?"})
+        );
+        assert_eq!(
+            output,
+            r#"{"query":"SELECT * FROM \"users\" WHERE id = ?"}"#
         );
     }
 
