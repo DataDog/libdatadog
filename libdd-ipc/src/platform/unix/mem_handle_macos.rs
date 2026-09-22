@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ShmHandle, ShmPath,
@@ -16,59 +17,95 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
+use std::ptr::NonNull;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 27; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
+/// The largest a segment's contents may get: the reservation, less the page holding its length.
+fn usable_max() -> usize {
+    MAPPING_MAX_SIZE - page_size::get()
+}
+
+/// The word carrying the segment's committed length, in its own last page.
+///
+/// macOS can neither grow a mapping in place nor `fallocate`, so every segment is `ftruncate`d
+/// to the whole reservation when it is created and the length actually in use is kept inside
+/// the segment, where every process that maps it can read it and raise it.
+///
+/// # Safety
+/// `ptr` must be the base of a `MAPPING_MAX_SIZE`-byte mapping of such a segment.
+unsafe fn committed_len<'a>(ptr: NonNull<libc::c_void>) -> &'a AtomicUsize {
+    AtomicUsize::from_ptr(
+        ptr.as_ptr()
+            .cast::<u8>()
+            .add(MAPPING_MAX_SIZE - page_size::get())
+            .cast(),
+    )
+}
+
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
-    let shm = handle.get_shm_mut();
-    let fd = shm.handle.as_owned_fd()?.as_fd();
-    if shm.size & NOT_COMMITTED != 0 {
-        shm.size &= !NOT_COMMITTED;
+    let declared = handle.get_shm().size;
+    #[allow(clippy::unwrap_used)] // a non-zero constant
+    let reserve = NonZeroUsize::new(MAPPING_MAX_SIZE).unwrap();
 
-        #[allow(clippy::unwrap_used)]
-        let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
+    // The whole reservation in one mapping, which puts the length word inside it too. The
+    // backing object is already this long, so nothing here can fault, and the mapping never
+    // has to move again.
+    let ptr = {
+        let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
         unsafe {
-            let ptr = mmap(
-                None,
-                page_size,
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                fd,
-                (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
-            )?;
-            if shm.size == 0 {
-                shm.size = *(ptr.as_ptr().cast());
-            } else {
-                *(ptr.as_ptr().cast()) = shm.size;
-            }
-            _ = munmap(ptr, usize::from(page_size));
-        }
-    }
-
-    // Handle transiently not yet assigned size the same than a non-existing mapping
-    let size = NonZeroUsize::new(shm.size)
-        .ok_or_else(|| io::Error::other("shared memory mapping size not yet committed"))?;
-
-    Ok(MappedMem {
-        ptr: unsafe {
             mmap(
                 None,
-                size,
+                reserve,
                 ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
                 MapFlags::MAP_SHARED,
                 fd,
                 0,
             )?
-        },
+        }
+    };
+
+    // SAFETY: the mapping is MAPPING_MAX_SIZE long, as just requested above.
+    let committed = unsafe { committed_len(ptr) };
+    let usable = if declared & NOT_COMMITTED == 0 {
+        declared.min(usable_max())
+    } else {
+        match declared & !NOT_COMMITTED {
+            // Freshly opened: the creator recorded how much of the segment it is using.
+            // Clamped, because that word lives in shared memory like everything else here.
+            0 => committed.load(Ordering::Acquire).min(usable_max()),
+            // Freshly created: publish our own length, without lowering anybody else's.
+            size => {
+                let size = size.min(usable_max());
+                committed.fetch_max(size, Ordering::AcqRel);
+                size
+            }
+        }
+    };
+
+    // Handle transiently not yet assigned size the same than a non-existing mapping
+    if usable == 0 {
+        unsafe { _ = munmap(ptr, MAPPING_MAX_SIZE) };
+        return Err(io::Error::other(
+            "shared memory mapping size not yet committed",
+        ));
+    }
+
+    handle.get_shm_mut().size = usable;
+    Ok(MappedMem {
+        ptr,
+        mapped_len: MAPPING_MAX_SIZE,
+        usable: AtomicUsize::new(usable),
         mem: handle,
     })
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &MappedMem<T>) {
     unsafe {
-        _ = munmap(mapped.ptr, mapped.mem.get_size());
+        // The whole reservation, not the part in use: that is what was mapped.
+        _ = munmap(mapped.ptr, mapped.mapped_len);
     }
 }
 
@@ -169,47 +206,28 @@ impl NamedShmHandle {
     }
 }
 
-impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
-        if expected_size <= self.mem.get_shm().size {
-            return;
+impl<T: FileBackedHandle> MappedMem<T> {
+    /// Raise the segment's committed length, leaving the mapping where it is, and report
+    /// whether `expected_size` bytes are now usable.
+    ///
+    /// Nothing is allocated here: the backing object was `ftruncate`d to the whole reservation
+    /// when it was created, so growth is only a matter of agreeing how much of it is in use.
+    ///
+    /// `false` means the request exceeds what a segment can hold, and nothing may be written
+    /// past what it already has.
+    #[must_use = "a segment that could not be grown is still too short to write to"]
+    pub fn ensure_space(&self, expected_size: usize) -> bool {
+        if expected_size <= self.get_size() {
+            return true;
         }
-        #[allow(clippy::panic)]
-        if expected_size > MAPPING_MAX_SIZE - page_size::get() {
-            panic!(
-                "Tried to allocate {} bytes for shared mapping (limit: {} bytes)",
-                expected_size,
-                MAPPING_MAX_SIZE - page_size::get()
-            );
+        let expected_size = page_aligned_size(expected_size);
+        if expected_size > usable_max() {
+            return false;
         }
-
-        // SAFETY: we'll overwrite the original memory later
-        let mut handle: T = unsafe { std::ptr::read(self) }.into();
-
-        #[allow(clippy::unwrap_used)]
-        let page_size = NonZeroUsize::try_from(page_size::get()).unwrap();
-        unsafe {
-            _ = handle.set_mapping_size(expected_size);
-
-            #[allow(clippy::unwrap_used)]
-            let ptr = mmap(
-                None,
-                page_size,
-                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                MapFlags::MAP_SHARED,
-                handle.get_shm().handle.as_owned_fd().unwrap(),
-                (MAPPING_MAX_SIZE - usize::from(page_size)) as off_t,
-            )
-            .unwrap();
-            let size = AtomicUsize::from_ptr(ptr.cast::<usize>().as_ptr());
-            size.fetch_max(handle.get_size(), Ordering::SeqCst);
-            _ = munmap(ptr, usize::from(page_size));
-        }
-
-        #[allow(clippy::unwrap_used)]
-        unsafe {
-            std::ptr::write(self, handle.map().unwrap())
-        };
+        // SAFETY: this mapping is MAPPING_MAX_SIZE long; see `mmap_handle`.
+        unsafe { committed_len(self.ptr) }.fetch_max(expected_size, Ordering::AcqRel);
+        self.usable.fetch_max(expected_size, Ordering::AcqRel);
+        true
     }
 }
 

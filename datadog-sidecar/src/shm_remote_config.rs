@@ -138,7 +138,9 @@ impl RemoteConfigWriter {
         })
     }
 
-    pub fn write(&self, contents: &[u8]) {
+    /// Returns `false` if the segment could not be grown to hold `contents`, in which case
+    /// nothing was published and the previous payload stays current.
+    pub fn write(&self, contents: &[u8]) -> bool {
         self.writer.write(contents)
     }
 

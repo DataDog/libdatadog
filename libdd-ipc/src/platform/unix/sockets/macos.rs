@@ -374,10 +374,15 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
 
 #[cfg(test)]
 mod tests {
+    // Every test here drives real sockets: a bound AF_UNIX path, a socketpair, or a wait for
+    // hangup through `poll` or mio's `kqueue`. Miri implements none of those - it supports
+    // only AF_INET/AF_INET6, refuses those foreign calls, and its isolation blocks the `mkdir`
+    // a bound path needs - so none of them can run under it.
     use super::*;
 
     /// Verify that connect/accept round-trip works for both directions.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_connect_accept_send_recv() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let path = tmpdir.path().join("test.sock");
@@ -406,6 +411,7 @@ mod tests {
     /// socketpair in the same process disconnects the other end.  This documents why
     /// `SeqpacketConn::connect` keeps `fd_server` alive in `_peer`.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_socketpair_peer_drop_disconnects() {
         let (conn0, conn1) = SeqpacketConn::socketpair().expect("socketpair");
 
@@ -432,6 +438,7 @@ mod tests {
     /// was gone and just blocked for the full timeout, then returned a generic `TimedOut`
     /// (which `with_retry` treats as non-reconnectable) instead of `BrokenPipe`.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_recv_blocking_detects_peer_disconnect_promptly() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let path = tmpdir.path().join("test.sock");
@@ -464,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_recv_blocking_drains_queued_message_before_peer_disconnect() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let path = tmpdir.path().join("test.sock");
@@ -505,6 +513,7 @@ mod tests {
     /// learned the client was gone and awaited forever instead of the listener's shutdown
     /// completing (`shutdown_complete_rx` never resolved).
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_recv_async_detects_peer_disconnect_promptly() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let path = tmpdir.path().join("test.sock");
@@ -531,6 +540,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_recv_async_drains_queued_message_before_peer_disconnect() {
         let tmpdir = tempfile::tempdir().expect("tempdir");
         let path = tmpdir.path().join("test.sock");

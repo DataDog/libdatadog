@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::private_dir;
 use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
@@ -25,7 +26,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 /// Directory for the filesystem fallback below.
@@ -150,29 +151,43 @@ pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
     })
 }
 
+/// Address space reserved for every mapping, so that growing a segment never has to move it.
+///
+/// We assume any shared data to be below that hard limit. Just mapping it.
+/// Use `[MappedMem::ensure_space()]` on fresh mappings to ensure they're accessible.
+const MAPPING_RESERVED_SIZE: usize = 1 << 27;
+
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
-    if let Some(size) = NonZeroUsize::new(handle.get_shm().size) {
-        Ok(MappedMem {
-            ptr: unsafe {
-                mmap(
-                    None,
-                    size,
-                    ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-                    MapFlags::MAP_SHARED,
-                    fd,
-                    0,
-                )?
-            },
-            mem: handle,
-        })
-    } else {
-        Err(io::Error::other("Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file."))
-    }
+    let Some(size) = NonZeroUsize::new(handle.get_shm().size) else {
+        return Err(io::Error::other("Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file."));
+    };
+    // A segment that already exceeds the standard reservation keeps its own size as one: it
+    // cannot grow in place beyond that, but it must at least be wholly mappable.
+    let reserved = MAPPING_RESERVED_SIZE.max(page_aligned_size(size.get()));
+    #[allow(clippy::unwrap_used)] // a max() with a non-zero constant is non-zero
+    let reserve = NonZeroUsize::new(reserved).unwrap();
+    Ok(MappedMem {
+        ptr: unsafe {
+            mmap(
+                None,
+                reserve,
+                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                MapFlags::MAP_SHARED,
+                fd,
+                0,
+            )?
+        },
+        mapped_len: reserved,
+        // Only what the backing file holds is touchable; the rest of the reservation faults
+        // until something commits it.
+        usable: AtomicUsize::new(size.get().min(reserved)),
+        mem: handle,
+    })
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
-    _ = unsafe { munmap(mapped.ptr, mapped.mem.get_size()) };
+    _ = unsafe { munmap(mapped.ptr, mapped.mapped_len) };
 }
 
 static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
@@ -296,19 +311,61 @@ impl NamedShmHandle {
     }
 }
 
-impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
-        if expected_size <= self.mem.get_shm().size {
-            return;
+impl<T: FileBackedHandle> MappedMem<T> {
+    /// Back `expected_size` bytes of the reservation, leaving the mapping where it is, and
+    /// report whether that many bytes are now usable.
+    ///
+    /// `false` means the segment is still too short - the request exceeds the reservation, or
+    /// there was no space to allocate - and nothing may be written past what it already has.
+    #[must_use = "a segment that could not be grown is still too short to write to"]
+    pub fn ensure_space(&self, expected_size: usize) -> bool {
+        if expected_size <= self.get_size() {
+            return true;
+        }
+        let expected_size = page_aligned_size(expected_size);
+        if expected_size > self.mapped_len {
+            return false;
+        }
+        let Ok(fd) = self.mem.get_shm().handle.as_owned_fd() else {
+            return false;
+        };
+
+        // From zero rather than from the current end: it costs nothing when the range is
+        // already there, and it leaves no hole if somebody else grew the file meanwhile.
+        #[cfg(target_os = "linux")]
+        match fallocate(
+            fd.as_raw_fd(),
+            FallocateFlags::empty(),
+            0,
+            expected_size as off_t,
+        ) {
+            Ok(_) => {}
+            // Filesystems without fallocate: `ftruncate` grows the file too, but it also
+            // shrinks, so it must never be handed a size below what the file already has -
+            // pages another process is holding would start faulting.
+            Err(Errno::EPERM | Errno::ENOSYS | Errno::ENOTSUP) => {
+                if !grow_with_ftruncate(fd, expected_size) {
+                    return false;
+                }
+            }
+            Err(_) => return false,
+        }
+        #[cfg(not(target_os = "linux"))]
+        if !grow_with_ftruncate(fd, expected_size) {
+            return false;
         }
 
-        // SAFETY: we'll overwrite the original memory later
-        let mut handle: T = unsafe { std::ptr::read(self) }.into();
-        _ = handle.resize(expected_size);
-        #[allow(clippy::unwrap_used)]
-        unsafe {
-            std::ptr::write(self, handle.map().unwrap())
-        };
+        self.usable.fetch_max(expected_size, Ordering::AcqRel);
+        true
+    }
+}
+
+/// Extend a backing file to `size` without ever shortening it.
+fn grow_with_ftruncate(fd: &OwnedFd, size: usize) -> bool {
+    match nix::sys::stat::fstat(fd.as_raw_fd()) {
+        Ok(stat) if (stat.st_size as usize) >= size => true,
+        Ok(_) => ftruncate(fd, size as off_t).is_ok(),
+        Err(_) => false,
     }
 }
 

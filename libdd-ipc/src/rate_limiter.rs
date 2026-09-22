@@ -9,7 +9,7 @@ use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Default)]
@@ -22,7 +22,7 @@ struct ShmLimiterData<'a, Inner> {
 }
 
 pub struct ShmLimiterMemory<Inner> {
-    mem: Arc<RwLock<MappedMem<NamedShmHandle>>>,
+    mem: Arc<MappedMem<NamedShmHandle>>,
     _phantom: PhantomData<Inner>,
 }
 
@@ -38,7 +38,6 @@ impl<Inner> Clone for ShmLimiterMemory<Inner> {
 impl<Inner> ShmLimiterMemory<Inner> {
     const START_OFFSET: u32 = align_of::<ShmLimiterData<Inner>>() as u32;
     const STRIDE: u32 = size_of::<ShmLimiterData<Inner>>() as u32;
-    const MAX_ARENA: usize = 16 * 1024 * 1024;
 
     pub fn create(path: CString) -> io::Result<Self> {
         // Clean leftover shm
@@ -57,7 +56,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
     fn new(handle: MappedMem<NamedShmHandle>) -> Self {
         Self {
-            mem: Arc::new(RwLock::new(handle)),
+            mem: Arc::new(handle),
             _phantom: Default::default(),
         }
     }
@@ -67,8 +66,8 @@ impl<Inner> ShmLimiterMemory<Inner> {
         if slice.len() < size_of::<AtomicU32>() {
             return None;
         }
-        // SAFETY: the mapping is at least one `AtomicU32` long, and page-aligned mappings are
-        // aligned for it. The borrow is tied to `slice`, so it cannot outlive the guard.
+        // SAFETY: the mapping is at least one `AtomicU32` long, as just checked, and
+        // page-aligned mappings are aligned for it.
         Some(unsafe { &*slice.as_ptr().cast() })
     }
 
@@ -87,17 +86,13 @@ impl<Inner> ShmLimiterMemory<Inner> {
             return None;
         }
         // SAFETY: the slot lies wholly within the mapping and is correctly aligned, both
-        // checked just above; the borrow is tied to `slice` and so to its guard.
+        // checked just above.
         Some(unsafe { &*slice.as_ptr().add(idx as usize).cast() })
     }
 
-    /// Everything reached through the mapping - the header, a slot, and any compare-exchange
-    /// between them - must happen inside one call: re-acquiring the lock per access gives a
-    /// concurrent resize room to unmap the region between two steps.
+    /// The bytes currently backed by the segment.
     fn with_mapping<R>(&self, f: impl FnOnce(&[u8]) -> Option<R>) -> Option<R> {
-        #[allow(clippy::unwrap_used)]
-        let mem = self.mem.read().unwrap();
-        f(mem.as_slice())
+        f(self.mem.as_slice())
     }
 
     /// Never extends the mapping. Scans rely on this refusing the first slot past the end in
@@ -125,29 +120,24 @@ impl<Inner> ShmLimiterMemory<Inner> {
         self.with_slot(idx, f)
     }
 
+    /// The free-list head, in the mapping's first word.
+    ///
+    /// Safe to hand out as a reference: the mapping outlives this handle and never moves, so
+    /// growing the arena cannot invalidate it.
     fn first_free_ref(&self) -> &AtomicU32 {
-        #[allow(clippy::unwrap_used)]
-        unsafe {
-            &*self.mem.read().unwrap().as_slice().as_ptr().cast()
-        }
+        // SAFETY: a segment is created a page long, so its first word is always mapped, and
+        // page-aligned mappings are aligned for an AtomicU32.
+        unsafe { &*self.mem.as_slice().as_ptr().cast() }
     }
 
-    /// Make sure the mapping covers `needed` bytes, within the arena cap.
+    /// Make sure the segment covers `needed` bytes.
     ///
-    /// An offset past the end of our mapping is the ordinary consequence of another process
-    /// having grown the segment, so following it must be possible; the cap is what stops a
-    /// forged one from turning into an arbitrary allocation.
+    /// An offset past the end of our view is the ordinary consequence of another process
+    /// having grown the segment, so following one must be possible. What stops a forged offset
+    /// from turning into an arbitrary allocation is the mapping's own reservation: it is fixed
+    /// when the segment is mapped, and this refuses anything beyond it.
     fn ensure_mapped(&self, needed: usize) -> Option<()> {
-        if needed > Self::MAX_ARENA {
-            return None;
-        }
-        #[allow(clippy::unwrap_used)]
-        let mut mem = self.mem.write().unwrap();
-        if mem.as_slice().len() >= needed {
-            return Some(());
-        }
-        mem.ensure_space(needed);
-        (mem.as_slice().len() >= needed).then_some(())
+        self.mem.ensure_space(needed).then_some(())
     }
 
     fn next_free(&mut self) -> Option<u32> {
@@ -273,7 +263,7 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 }
 
 impl<Inner> ShmLimiter<Inner> {
-    /// Run `f` on this slot, with the mapping's read guard held for the whole call.
+    /// Run `f` on this slot.
     ///
     /// `None` means the offset does not describe a slot wholly inside the mapping. Contents
     /// are not trusted and do not need to be: a worker owning this segment may put anything in
@@ -309,9 +299,9 @@ impl<Inner> ShmLimiter<Inner> {
     }
 
     fn actual_free(&self) {
-        // Header, slot link and compare-exchange all happen under one guard: a concurrent
-        // resize unmaps the region, so a reference obtained under an earlier guard can point
-        // at an address that has since been reused.
+        // Header, slot link and compare-exchange all against one view of the segment, so a
+        // growth between the steps cannot leave the link and the head describing different
+        // extents.
         self.memory.with_mapping(|slice| {
             let header = ShmLimiterMemory::<Inner>::header(slice)?;
             let limiter = ShmLimiterMemory::<Inner>::slot(slice, self.idx)?;
@@ -420,8 +410,7 @@ mod tests {
         // an access landing outside.
         let stride = size_of::<ShmLimiterData<()>>();
         if let Some(limiter) = limiters.alloc() {
-            #[allow(clippy::unwrap_used)]
-            let mapped = limiters.mem.read().unwrap().as_slice().len();
+            let mapped = limiters.mem.as_slice().len();
             assert!(
                 limiter.idx as usize + stride <= mapped,
                 "slot at {} escapes the {mapped}-byte mapping",
@@ -430,13 +419,13 @@ mod tests {
             assert!(limiter.inc(2), "and it must be a working limiter");
         }
 
-        // Far past the arena ceiling: nothing to honour, and nothing allocated either.
+        // Far past the reservation: nothing to honour, and nothing allocated either.
         limiters
             .first_free_ref()
             .store(u32::MAX - 64, Ordering::Relaxed);
         assert!(
             limiters.alloc().is_none(),
-            "an offset beyond the arena ceiling must be refused, not allocated"
+            "an offset beyond the reservation must be refused, not allocated"
         );
     }
 
