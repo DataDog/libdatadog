@@ -75,7 +75,7 @@ pub struct AgentlessStatsTarget {
 pub const COLLAPSED_SPANS_HEALTH_METRIC: &str = "datadog.tracer.stats.collapsed_spans";
 
 /// Telemetry metric name for the number of spans collapsed.
-pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "tracers.stats_collapsed_spans";
+pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "stats_collapsed_spans";
 
 /// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
 #[derive(Clone, Default, Debug)]
@@ -518,7 +518,7 @@ impl<
                 let _ = handle.add_point(
                     flush.collapsed_spans as f64,
                     key,
-                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                    vec![libdd_common::tag!("collapsed", "whole_key")],
                 );
             }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
@@ -530,7 +530,7 @@ impl<
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                    [libdd_common::tag!("collapsed", "whole_key")].iter(),
                 )]);
             }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
@@ -1432,7 +1432,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
             "DogStatsD datagram must match the expected format"
         );
     }
@@ -1485,7 +1485,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
             "DogStatsD datagram must match the expected format"
         );
 
@@ -1495,7 +1495,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed_spans:resource",
+            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed:resource",
             "DogStatsD datagram must match the expected format"
         );
         let n = socket
@@ -1503,7 +1503,8 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:resource,collapsed_spans:http_endpoint",
+            datagram,
+            "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:resource,collapsed:http_endpoint",
             "DogStatsD datagram must match the expected format"
         );
     }

@@ -24,8 +24,38 @@ pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_common_ffi::VoidR
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextHandle};
+    use libdd_otel_thread_ctx::linux::{OwnedThreadContext, ThreadContext};
     use std::ptr::NonNull;
+
+    /// Opaque handle to a thread context record. Used to pass an owned thread context to and from C
+    /// without exposing `ThreadContext`, as the underlying record needs extra care to be
+    /// manipulated (async-signal-safety, seq-lock-like modification protocol, etc.)
+    // Note: `ThreadContext` is `repr(transparent)` over the record and cbindgen sees through it
+    // irrespective of Rust privacy level. We need an additional type wrapper to properly hide the
+    // internal record structure from the FFI.
+    #[repr(C)]
+    pub struct ThreadContextHandle {}
+
+    impl ThreadContextHandle {
+        /// Type-erase an owned context into an opaque handle pointer for C. Ownership is
+        /// transferred to the caller, which must eventually hand the pointer back to
+        /// [`Self::into_context`].
+        #[inline]
+        fn from_context(ctx: OwnedThreadContext) -> NonNull<Self> {
+            ctx.into_opaque_ptr().cast()
+        }
+
+        /// Reclaim the owned context behind an opaque handle pointer.
+        ///
+        /// # Safety
+        ///
+        /// `handle` must come from a prior [`Self::from_context`] call and must not have been
+        /// reclaimed yet.
+        #[inline]
+        unsafe fn into_context(handle: NonNull<Self>) -> OwnedThreadContext {
+            OwnedThreadContext::from_opaque_ptr(handle.cast())
+        }
+    }
 
     /// Maximum size in bytes of the `attrs_data` field of a thread context record.
     // This is ugly, but I couldn't get cbindgen to generate the corresponding #define in any other
@@ -51,8 +81,13 @@ mod linux {
         trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) -> NonNull<ThreadContextHandle> {
-        ThreadContext::new(*trace_id, *span_id, trace_flags, *local_root_span_id, &[])
-            .into_opaque_ptr()
+        ThreadContextHandle::from_context(OwnedThreadContext::new(
+            *trace_id,
+            *span_id,
+            trace_flags,
+            *local_root_span_id,
+            &[],
+        ))
     }
 
     /// Free an owned thread context.
@@ -65,7 +100,7 @@ mod linux {
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
         if let Some(ctx) = NonNull::new(ctx) {
-            let _ = ThreadContext::from_opaque_ptr(ctx);
+            let _ = ThreadContextHandle::into_context(ctx);
         }
     }
 
@@ -81,9 +116,9 @@ mod linux {
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
         ctx: *mut ThreadContextHandle,
     ) -> Option<NonNull<ThreadContextHandle>> {
-        ThreadContext::from_opaque_ptr(NonNull::new(ctx)?)
+        ThreadContextHandle::into_context(NonNull::new(ctx)?)
             .attach()
-            .map(ThreadContext::into_opaque_ptr)
+            .map(ThreadContextHandle::from_context)
     }
 
     /// Remove the currently attached context from the TLS slot.
@@ -92,7 +127,7 @@ mod linux {
     /// `ddog_otel_thread_ctx_free`), or null if the slot was empty.
     #[no_mangle]
     pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextHandle>> {
-        ThreadContext::detach().map(ThreadContext::into_opaque_ptr)
+        OwnedThreadContext::detach().map(ThreadContextHandle::from_context)
     }
 
     /// Update the currently attached context in-place, including its W3C trace-flags byte.
@@ -106,7 +141,7 @@ mod linux {
         trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) {
-        ThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
+        OwnedThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
     }
 
     /// Update `ctx` and attach it to the current thread. Returns the previously attached different
@@ -128,8 +163,8 @@ mod linux {
         let target = NonNull::new(ctx)?;
 
         let previous = unsafe {
-            ThreadContext::update_and_attach(
-                target,
+            OwnedThreadContext::update_and_attach(
+                target.cast::<ThreadContext>(),
                 *trace_id,
                 *span_id,
                 trace_flags,
@@ -138,6 +173,6 @@ mod linux {
             )
         };
 
-        previous.map(ThreadContext::into_opaque_ptr)
+        previous.map(ThreadContextHandle::from_context)
     }
 }
