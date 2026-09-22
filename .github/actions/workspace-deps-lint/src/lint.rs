@@ -19,7 +19,14 @@ pub const ALLOW_FEATURES_MARKER: &str = "allow(workspace-deps-features)";
 
 /// The dependency tables a manifest can declare, both at the top level and
 /// under `[target.<cfg>]`.
-const DEP_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+const DEP_TABLES: [&str; 3] = [
+    "dependencies",
+    "dev-dependencies",
+    "build-dependencies",
+    // valid aliases for the 2021 edition
+    "dev_dependencies",
+    "build_dependencies",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
