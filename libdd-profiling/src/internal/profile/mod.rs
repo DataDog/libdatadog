@@ -160,7 +160,7 @@ impl Profile {
             lbls.try_reserve_exact(sample.labels.len())?;
             for label in &sample.labels {
                 let key = self.try_intern(label.key)?;
-                let internal_label = if !label.str.is_empty() {
+                let mut internal_label = if !label.str.is_empty() {
                     let str = self.try_intern(label.str)?;
                     Label::str(key, str)
                 } else {
@@ -168,6 +168,7 @@ impl Profile {
                     let num_unit = self.try_intern(label.num_unit)?;
                     Label::num(key, num, num_unit)
                 };
+                internal_label.hidden = label.hidden;
 
                 let id = self.labels.try_dedup(internal_label)?;
                 lbls.push(id);
@@ -335,30 +336,11 @@ impl Profile {
         let labels = self.label_sets.try_dedup(LabelSet::new(labels))?;
 
         let stacktrace = self.try_add_stacktrace(locations)?;
-        let sample = Sample::new(labels, stacktrace);
-        if timestamp.is_none() && !self.upscaling_rules.is_empty() {
-            let label_set = self
-                .label_sets
-                .get_index(labels.to_offset())
-                .ok_or_else(oob_label_set)?;
-            let labels = label_set.iter().map(|id| {
-                self.labels
-                    .get_index(id.to_offset())
-                    .copied()
-                    .context("LabelId to have a valid interned index")
-            });
-            self.upscaling_rules
-                .add_sample(sample, values, labels, &mut self.observations)?;
-        } else {
-            self.observations.add(sample, timestamp, values)?;
-        }
+        self.observations
+            .add(Sample::new(labels, stacktrace), timestamp, values)?;
         Ok(())
     }
 
-    /// Poisson rules must be registered before adding samples. Each input sample
-    /// must represent events of the same size; different sizes may be added separately.
-    /// Proportional rules can also be registered later, unless they overlap an
-    /// eagerly accumulated Poisson rule on a different label name.
     pub fn add_upscaling_rule(
         &mut self,
         offset_values: &[usize],
@@ -366,11 +348,6 @@ impl Profile {
         label_value: &str,
         upscaling_info: UpscalingInfo,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            matches!(upscaling_info, UpscalingInfo::Proportional { .. })
-                || self.observations.is_empty(),
-            "Poisson upscaling rules must be registered before adding samples"
-        );
         let label_name_id = self.try_intern(label_name)?;
         let label_value_id = self.try_intern(label_value)?;
         self.upscaling_rules.add(
@@ -641,11 +618,7 @@ impl Profile {
             location_ids.try_reserve_exact(locations.len())?;
             location_ids.extend(locations.iter().map(LocationId::to_raw_id));
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
-            self.upscaling_rules.upscale_values(
-                &mut values,
-                labels,
-                timestamp.is_none().then_some(sample),
-            );
+            self.upscaling_rules.upscale_values(&mut values, labels);
 
             let mut pprof_labels: Vec<_> = Vec::new();
             // + 1 for the timestamp (which hasn't ben pushed yet)
@@ -657,16 +630,16 @@ impl Profile {
                 // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            if omit_local_root_span_id {
-                pprof_labels.extend(
-                    labels
-                        .iter()
-                        .filter(|label| label.get_key() != local_root_span_id_label)
-                        .map(protobuf::Label::from),
-                );
-            } else {
-                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
-            }
+            pprof_labels.extend(
+                labels
+                    .iter()
+                    .filter(|label| {
+                        !label.hidden
+                            && (!omit_local_root_span_id
+                                || label.get_key() != local_root_span_id_label)
+                    })
+                    .map(protobuf::Label::from),
+            );
             if timestamp.is_some() {
                 labels.pop();
             }
@@ -1397,12 +1370,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "pid",
             str: "",
             num: 101,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
 
@@ -1414,12 +1389,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "pid",
             str: "",
             num: 101,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
 
@@ -1429,12 +1406,14 @@ mod api_tests {
             str: string_table_fetch(&profile, label.str),
             num: label.num,
             num_unit: string_table_fetch(&profile, label.num_unit),
+            hidden: false,
         };
         let expected = api::Label {
             key: "end_timestamp_ns",
             str: "",
             num: 42,
             num_unit: "",
+            hidden: false,
         };
         assert_eq!(expected, actual);
         let key = string_table_fetch(&profile, label.key);
@@ -1516,6 +1495,7 @@ mod api_tests {
             str: "10", // bad value, should use .num instead for local root span id
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample = api::Sample {
@@ -1538,6 +1518,7 @@ mod api_tests {
             str: "",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let id2_label = api::Label {
@@ -1545,6 +1526,7 @@ mod api_tests {
             str: "",
             num: 11,
             num_unit: "",
+            hidden: false,
         };
 
         let other_label = api::Label {
@@ -1552,6 +1534,7 @@ mod api_tests {
             str: "test",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {
@@ -1628,12 +1611,21 @@ mod api_tests {
         let sample = api::Sample {
             locations: vec![],
             values: &[1, 10000],
-            labels: vec![api::Label {
-                key: "local root span id",
-                str: "",
-                num: 10,
-                num_unit: "",
-            }],
+            labels: vec![
+                api::Label {
+                    key: "local root span id",
+                    str: "",
+                    num: 10,
+                    num_unit: "",
+                    hidden: false,
+                },
+                api::Label {
+                    key: "allocation_size",
+                    num: 125,
+                    hidden: true,
+                    ..Default::default()
+                },
+            ],
         };
 
         for profile in [&mut regular_profile, &mut omit_profile] {
@@ -1729,12 +1721,14 @@ mod api_tests {
                 str: "",
                 num: 5738080760940355267_i64,
                 num_unit: "",
+                hidden: false,
             },
             api::Label {
                 key: "local root span id",
                 str: "",
                 num: 8182855815056056749_i64,
                 num_unit: "",
+                hidden: false,
             },
         ];
 
@@ -1748,6 +1742,98 @@ mod api_tests {
     }
 
     #[test]
+    fn hidden_labels_partition_poisson_samples() {
+        for timestamp in [None, Timestamp::new(42)] {
+            let mut profile = Profile::new(
+                &[api::SampleType::AllocSamples, api::SampleType::AllocSize],
+                None,
+            );
+            profile
+                .add_upscaling_rule(
+                    &[0, 1],
+                    "kind",
+                    "allocation",
+                    UpscalingInfo::Poisson {
+                        sum_value_offset: 1,
+                        count_value_offset: 0,
+                        sampling_distance: 100,
+                    },
+                )
+                .unwrap();
+            let visible = create_label("thread", "main");
+            for size in [10, 10, 200, 200] {
+                profile
+                    .try_add_sample(
+                        api::Sample {
+                            locations: vec![],
+                            values: &[1, size],
+                            labels: vec![
+                                visible,
+                                api::Label {
+                                    hidden: true,
+                                    ..create_label("kind", "allocation")
+                                },
+                                api::Label {
+                                    key: "allocation_size",
+                                    num: size,
+                                    num_unit: "bytes",
+                                    hidden: true,
+                                    ..Default::default()
+                                },
+                            ],
+                        },
+                        timestamp,
+                    )
+                    .unwrap();
+            }
+            let pprof = roundtrip_to_pprof(profile).unwrap();
+            let mut values: Vec<_> = pprof.samples.iter().map(|s| s.values.clone()).collect();
+            values.sort();
+            let mut expected_labels = vec![visible];
+            if let Some(ts) = timestamp {
+                assert_eq!(
+                    values,
+                    vec![vec![1, 231], vec![1, 231], vec![11, 105], vec![11, 105]]
+                );
+                expected_labels.push(api::Label {
+                    key: "end_timestamp_ns",
+                    num: ts.get(),
+                    ..Default::default()
+                });
+            } else {
+                assert_eq!(values, vec![vec![2, 463], vec![21, 210]]);
+            }
+            for sample in api::Profile::try_from(&pprof).unwrap().samples {
+                assert_eq!(sample.labels, expected_labels);
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_label_visibility_is_part_of_identity() {
+        let mut profile = Profile::new(&[api::SampleType::CpuSamples], None);
+        let visible = create_label("kind", "allocation");
+        assert!(!api::Label::default().hidden);
+        for hidden in [false, true] {
+            profile
+                .try_add_sample(
+                    api::Sample {
+                        locations: vec![],
+                        values: &[1],
+                        labels: vec![api::Label { hidden, ..visible }],
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        let pprof = roundtrip_to_pprof(profile).unwrap();
+        let mut label_counts: Vec<_> = pprof.samples.iter().map(|s| s.labels.len()).collect();
+        label_counts.sort();
+        assert_eq!(label_counts, vec![0, 1]);
+        assert!(pprof.samples.iter().all(|s| s.values == [1]));
+    }
+
+    #[test]
     fn test_no_upscaling_if_no_rules() {
         let sample_types = vec![api::SampleType::CpuSamples, api::SampleType::WallTime];
 
@@ -1758,6 +1844,7 @@ mod api_tests {
             str: "coco",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {
@@ -1793,6 +1880,7 @@ mod api_tests {
             str,
             num: 0,
             num_unit: "",
+            hidden: false,
         }
     }
 
@@ -1857,295 +1945,10 @@ mod api_tests {
     }
 
     #[test]
-    fn poisson_upscaling_preserves_mixed_sizes_and_fractions() {
-        for rule in [
-            UpscalingInfo::Poisson {
-                sum_value_offset: 1,
-                count_value_offset: 0,
-                sampling_distance: 100,
-            },
-            UpscalingInfo::PoissonNonSampleTypeCount {
-                sum_value_offset: 1,
-                count_value: 1,
-                sampling_distance: 100,
-            },
-        ] {
-            let mut profile = Profile::new(
-                &[
-                    api::SampleType::AllocSamples,
-                    api::SampleType::AllocSize,
-                    api::SampleType::WallTime,
-                ],
-                None,
-            );
-            profile.add_upscaling_rule(&[0, 1], "", "", rule).unwrap();
-            for _ in 0..100 {
-                for size in [10, 200] {
-                    profile
-                        .try_add_sample(
-                            api::Sample {
-                                locations: vec![],
-                                values: &[1, size, 0],
-                                labels: vec![],
-                            },
-                            None,
-                        )
-                        .unwrap();
-                }
-            }
-            // Unscaled integers must retain precision above f64's exact range.
-            let wall_time = (1_i64 << 53) + 1;
-            profile
-                .try_add_sample(
-                    api::Sample {
-                        locations: vec![],
-                        values: &[0, 0, wall_time],
-                        labels: vec![],
-                    },
-                    None,
-                )
-                .unwrap();
-            let pprof = roundtrip_to_pprof(profile).unwrap();
-            assert_eq!(pprof.samples.len(), 1);
-            // Round only after summing 100/p(10) + 100/p(200), and the byte weights.
-            assert_eq!(pprof.samples[0].values, vec![1166, 33639, wall_time]);
-        }
-    }
-
-    #[test]
-    fn poisson_upscaling_matches_endpoint_labels_and_keeps_timestamps() {
-        let mut profile = Profile::new(
-            &[api::SampleType::AllocSamples, api::SampleType::AllocSize],
-            None,
-        );
-        profile
-            .add_upscaling_rule(
-                &[0, 1],
-                "trace endpoint",
-                "/sampled",
-                UpscalingInfo::Poisson {
-                    sum_value_offset: 1,
-                    count_value_offset: 0,
-                    sampling_distance: 100,
-                },
-            )
-            .unwrap();
-        let root_span = api::Label {
-            key: "local root span id",
-            str: "",
-            num: 1,
-            num_unit: "",
-        };
-        for timestamp in [None, Timestamp::new(42)] {
-            for size in [10, 200] {
-                profile
-                    .try_add_sample(
-                        api::Sample {
-                            locations: vec![],
-                            values: &[1, size],
-                            labels: vec![root_span],
-                        },
-                        timestamp,
-                    )
-                    .unwrap();
-            }
-        }
-        profile
-            .try_add_sample(
-                api::Sample {
-                    locations: vec![],
-                    values: &[1, 10],
-                    labels: vec![api::Label {
-                        num: 2,
-                        ..root_span
-                    }],
-                },
-                None,
-            )
-            .unwrap();
-        profile.add_endpoint(1, Cow::Borrowed("/sampled")).unwrap();
-        let pprof = roundtrip_to_pprof(profile).unwrap();
-        let mut values: Vec<_> = pprof.samples.iter().map(|s| s.values.clone()).collect();
-        values.sort();
-        assert_eq!(
-            values,
-            vec![vec![1, 10], vec![1, 231], vec![11, 105], vec![12, 336]]
-        );
-    }
-
-    #[test]
-    fn poisson_upscaling_preserves_overlapping_rule_order() {
-        for proportional_first in [false, true] {
-            for late_proportional in [false, true] {
-                let mut profile = Profile::new(
-                    &[api::SampleType::AllocSamples, api::SampleType::AllocSize],
-                    None,
-                );
-                profile
-                    .add_upscaling_rule(
-                        &[0],
-                        "kind",
-                        "allocation",
-                        UpscalingInfo::Poisson {
-                            sum_value_offset: 1,
-                            count_value_offset: 0,
-                            sampling_distance: 100,
-                        },
-                    )
-                    .unwrap();
-                if !late_proportional {
-                    profile
-                        .add_upscaling_rule(
-                            &[0],
-                            "class",
-                            "sampled",
-                            UpscalingInfo::Proportional { scale: 3.0 },
-                        )
-                        .unwrap();
-                }
-                let mut labels = vec![
-                    api::Label {
-                        key: "kind",
-                        str: "allocation",
-                        ..Default::default()
-                    },
-                    api::Label {
-                        key: "class",
-                        str: "sampled",
-                        ..Default::default()
-                    },
-                ];
-                if proportional_first {
-                    labels.reverse();
-                }
-                for size in [10, 200] {
-                    profile
-                        .try_add_sample(
-                            api::Sample {
-                                locations: vec![],
-                                values: &[1, size],
-                                labels: labels.clone(),
-                            },
-                            None,
-                        )
-                        .unwrap();
-                }
-                if late_proportional {
-                    let err = profile
-                        .add_upscaling_rule(
-                            &[0],
-                            "class",
-                            "sampled",
-                            UpscalingInfo::Proportional { scale: 3.0 },
-                        )
-                        .unwrap_err();
-                    assert!(err.to_string().contains("before adding samples"));
-                }
-                let expected_count = if late_proportional {
-                    12
-                } else if proportional_first {
-                    16
-                } else {
-                    36
-                };
-                assert_eq!(
-                    roundtrip_to_pprof(profile).unwrap().samples[0].values,
-                    vec![expected_count, 210]
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn poisson_upscaling_saturates_and_preserves_signed_integers() {
-        let mut profile = Profile::new(
-            &[
-                api::SampleType::AllocSamples,
-                api::SampleType::AllocSize,
-                api::SampleType::WallTime,
-            ],
-            None,
-        );
-        profile
-            .add_upscaling_rule(
-                &[0, 1],
-                "",
-                "",
-                UpscalingInfo::Poisson {
-                    sum_value_offset: 1,
-                    count_value_offset: 0,
-                    sampling_distance: 100,
-                },
-            )
-            .unwrap();
-        for _ in 0..2 {
-            profile
-                .try_add_sample(
-                    api::Sample {
-                        locations: vec![],
-                        values: &[i64::MAX, i64::MAX, i64::MIN],
-                        labels: vec![],
-                    },
-                    None,
-                )
-                .unwrap();
-        }
-        assert_eq!(
-            roundtrip_to_pprof(profile).unwrap().samples[0].values,
-            vec![i64::MAX, i64::MAX, i64::MIN]
-        );
-    }
-
-    #[test]
-    fn poisson_upscaling_rejects_late_rules() {
-        let mut profile = Profile::new(&[api::SampleType::AllocSize], None);
-        profile
-            .try_add_sample(
-                api::Sample {
-                    locations: vec![],
-                    values: &[10],
-                    labels: vec![],
-                },
-                None,
-            )
-            .unwrap();
-        let error = profile
-            .add_upscaling_rule(
-                &[0],
-                "",
-                "",
-                UpscalingInfo::PoissonNonSampleTypeCount {
-                    sum_value_offset: 0,
-                    count_value: 1,
-                    sampling_distance: 100,
-                },
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("before adding samples"));
-        profile
-            .add_upscaling_rule(&[0], "", "", UpscalingInfo::Proportional { scale: 2.0 })
-            .unwrap();
-        assert_eq!(
-            roundtrip_to_pprof(profile).unwrap().samples[0].values,
-            vec![20]
-        );
-    }
-
-    #[test]
     fn test_upscaling_by_value_on_one_value_with_poisson() {
         let sample_types = create_samples_types();
 
         let mut profile = Profile::new(&sample_types, None);
-
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 1,
-            count_value_offset: 2,
-            sampling_distance: 10,
-        };
-        let values_offset: Vec<usize> = vec![1];
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
 
         let sample1 = api::Sample {
             locations: vec![],
@@ -2156,6 +1959,16 @@ mod api_tests {
         profile
             .try_add_sample(sample1, None)
             .expect("add to success");
+
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 2,
+            sampling_distance: 10,
+        };
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
@@ -2171,16 +1984,6 @@ mod api_tests {
 
         let mut profile = Profile::new(&sample_types, None);
 
-        let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
-            sum_value_offset: 1,
-            count_value: 29,
-            sampling_distance: 10,
-        };
-        let values_offset: Vec<usize> = vec![1];
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
-
         let sample1 = api::Sample {
             locations: vec![],
             values: &[1, 16, 29],
@@ -2190,6 +1993,16 @@ mod api_tests {
         profile
             .try_add_sample(sample1, None)
             .expect("add to success");
+
+        let upscaling_info = UpscalingInfo::PoissonNonSampleTypeCount {
+            sum_value_offset: 1,
+            count_value: 29,
+            sampling_distance: 10,
+        };
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
@@ -2205,16 +2018,6 @@ mod api_tests {
 
         let mut profile = Profile::new(&sample_types, None);
 
-        let upscaling_info = UpscalingInfo::Poisson {
-            sum_value_offset: 1,
-            count_value_offset: 2,
-            sampling_distance: 10,
-        };
-        let values_offset: Vec<usize> = vec![1];
-        profile
-            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
-            .expect("Rule added");
-
         let sample1 = api::Sample {
             locations: vec![],
             values: &[1, 16, 0],
@@ -2224,6 +2027,16 @@ mod api_tests {
         profile
             .try_add_sample(sample1, None)
             .expect("add to success");
+
+        let upscaling_info = UpscalingInfo::Poisson {
+            sum_value_offset: 1,
+            count_value_offset: 2,
+            sampling_distance: 10,
+        };
+        let values_offset: Vec<usize> = vec![1];
+        profile
+            .add_upscaling_rule(values_offset.as_slice(), "", "", upscaling_info)
+            .expect("Rule added");
 
         let serialized_profile = roundtrip_to_pprof(profile).unwrap();
 
@@ -2238,6 +2051,16 @@ mod api_tests {
         let sample_types = create_samples_types();
 
         let mut profile: Profile = Profile::new(&sample_types, None);
+
+        let sample1 = api::Sample {
+            locations: vec![],
+            values: &[1, 16, 0],
+            labels: vec![],
+        };
+
+        profile
+            .try_add_sample(sample1, None)
+            .expect("add to success");
 
         // invalid sampling_distance value
         let upscaling_info = UpscalingInfo::Poisson {
@@ -2596,6 +2419,7 @@ mod api_tests {
             str: "foobar",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let sample2 = api::Sample {
@@ -3009,6 +2833,7 @@ mod api_tests {
             str: "",
             num: 10,
             num_unit: "",
+            hidden: false,
         };
 
         let large_span_id = u64::MAX;
@@ -3025,6 +2850,7 @@ mod api_tests {
             str: "",
             num: large_num,
             num_unit: "",
+            hidden: false,
         };
 
         let sample1 = api::Sample {

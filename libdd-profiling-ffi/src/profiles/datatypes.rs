@@ -334,6 +334,7 @@ impl<'a> TryFrom<&'a Label<'a>> for api::Label<'a> {
             str,
             num: label.num,
             num_unit,
+            hidden: false,
         })
     }
 }
@@ -745,9 +746,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_seri
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
 ///
-/// Must be called before adding samples. Each input sample must represent events
-/// of the same size; different sizes may be added as separate samples.
-///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.
 /// * `offset_values` - offset of the values
@@ -798,9 +796,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 
 /// Add a proportional-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
-///
-/// May be registered after samples, unless it overlaps an eagerly accumulated
-/// Poisson rule on a different label name. Register overlapping rules first.
 ///
 /// # Arguments
 /// * `profile` - a reference to the profile that will contain the samples.

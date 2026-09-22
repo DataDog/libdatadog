@@ -146,6 +146,11 @@ pub struct Label<'a> {
     /// units and units like "seconds" and "nanoseconds" as time units,
     /// and apply appropriate unit conversions to these.
     pub num_unit: &'a str,
+
+    /// Keep this label for aggregation and upscaling, but omit it from pprof samples.
+    /// Defaults to false. Interned strings may remain in the pprof string table;
+    /// this is not a privacy boundary.
+    pub hidden: bool,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -408,6 +413,7 @@ impl<'a> TryFrom<&'a prost_impls::Profile> for Profile<'a> {
                     str: string_table_fetch(pprof, label.str)?,
                     num: label.num,
                     num_unit: string_table_fetch(pprof, label.num_unit)?,
+                    hidden: false,
                 })
             }
             let sample = Sample {
@@ -439,6 +445,7 @@ mod tests {
             str: "levi",
             num: 0,
             num_unit: "name", // can't use num_unit with str
+            hidden: false,
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
@@ -447,6 +454,7 @@ mod tests {
             str: "levi",
             num: 10, // can't use num with str
             num_unit: "",
+            hidden: false,
         };
         assert!(!label.uses_at_most_one_of_str_and_num());
 
@@ -455,6 +463,7 @@ mod tests {
             str: "levi",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
@@ -463,6 +472,7 @@ mod tests {
             str: "",
             num: 0,
             num_unit: "",
+            hidden: false,
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
@@ -471,6 +481,7 @@ mod tests {
             str: "",
             num: 10901,
             num_unit: "",
+            hidden: false,
         };
         assert!(label.uses_at_most_one_of_str_and_num());
 
@@ -479,6 +490,7 @@ mod tests {
             str: "",
             num: 12345,
             num_unit: "nanoseconds",
+            hidden: false,
         };
         assert!(label.uses_at_most_one_of_str_and_num());
     }

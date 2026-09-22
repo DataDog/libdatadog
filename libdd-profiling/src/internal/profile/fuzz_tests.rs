@@ -97,6 +97,7 @@ impl<'a> From<&'a Label> for api::Label<'a> {
             str,
             num,
             num_unit,
+            hidden: false,
         }
     }
 }
