@@ -196,16 +196,13 @@ impl<Inner> ShmLimiterMemory<Inner> {
     }
 
     pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
-        let reference = ShmLimiter {
-            idx,
-            memory: self.clone(),
-        };
-        self.with_slot_extending(idx, |limiter| {
+        let acquired = self.with_slot_extending(idx, |limiter| {
             let mut rc = limiter.rc.load(Ordering::Acquire);
             loop {
-                // A peer can write this count. Zero means retired; a value that cannot be
-                // incremented is not a count we are willing to join.
-                let Some(next) = rc.checked_add(1).filter(|_| rc != 0) else {
+                // A peer can write this count, so only a positive one describes a slot with
+                // owners to join: zero is retired, and negative is accounting we cannot
+                // trust. A count that cannot be incremented is not one we join either.
+                let Some(next) = rc.checked_add(1).filter(|_| rc > 0) else {
                     return false;
                 };
                 match limiter
@@ -216,8 +213,13 @@ impl<Inner> ShmLimiterMemory<Inner> {
                     Err(found) => rc = found,
                 }
             }
-        })?
-        .then_some(reference)
+        })?;
+        // Only now: `ShmLimiter`'s `Drop` unconditionally subtracts one, so a handle built
+        // before the compare-exchange landed would release a reference on every refusal.
+        acquired.then(|| ShmLimiter {
+            idx,
+            memory: self.clone(),
+        })
     }
 
     pub fn find<F>(&self, cond: F) -> Option<ShmLimiter<Inner>>
@@ -234,9 +236,11 @@ impl<Inner> ShmLimiterMemory<Inner> {
             .is_some_and(|end| end <= limit)
         {
             let hit = self.with_slot(cur, |data| {
-                data.next_free.load(Ordering::Relaxed) != 0
-                    && data.rc.load(Ordering::Relaxed) > 0
-                    && cond(unsafe { &*data.inner.get() })
+                // `rc` alone decides liveness. `next_free` is the free-list link, and a slot
+                // allocated from untouched tail space still has the zero it was mapped with,
+                // so gating on it would hide every slot that has not been recycled yet. It
+                // is not needed as a terminator either: `limit` bounds the scan.
+                data.rc.load(Ordering::Relaxed) > 0 && cond(unsafe { &*data.inner.get() })
             })?;
             if hit {
                 if let Some(limiter) = self.get(cur) {
@@ -382,10 +386,10 @@ impl Limiter for AnyLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{ShmLimiterData, ShmLimiterMemory};
+    use crate::rate_limiter::{ShmLimiter, ShmLimiterData, ShmLimiterMemory};
     use libdd_common::rate_limiter::Limiter;
     use std::ffi::CString;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread::sleep;
     use std::time::Duration;
 
@@ -465,6 +469,16 @@ mod tests {
             limiters.get(limiter.index()).is_none(),
             "a refcount that cannot be incremented must be refused, not wrapped"
         );
+        // Checking only the returned Option would miss a refusal that still moved the count.
+        assert_eq!(
+            limiter.with_limiter(|l| l.rc.load(Ordering::SeqCst)),
+            Some(i32::MAX),
+            "refusing the acquisition must have left the count untouched"
+        );
+
+        // Put the count back where `Drop` can retire the slot, so the test leaves the arena
+        // as it found it.
+        limiter.with_limiter(|l| l.rc.store(1, Ordering::Relaxed));
     }
 
     /// An index that never came from the allocator is refused rather than dereferenced - and
@@ -516,6 +530,179 @@ mod tests {
         assert_eq!(
             limiter3.idx,
             limiter2.idx + size_of::<ShmLimiterData<()>>() as u32
+        );
+    }
+
+    /// Concurrent allocators must never be handed the same slot.
+    ///
+    /// The free list is a CAS loop over a head word in shared memory, and nothing serializes
+    /// the clones that drive it - the fixed mapping removed the lock that used to stand
+    /// between them, so the head CAS is now the only thing keeping two allocators apart.
+    /// Contend for far more slots than the initial page holds, so growth happens repeatedly
+    /// underneath the contention, and require every index to come back distinct and usable.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_allocation_across_arena_growth() {
+        const THREADS: usize = 4;
+        const PER_THREAD: usize = 64;
+
+        let path = CString::new("/ddlimiters-grow".to_string()).unwrap();
+        let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
+        assert!(
+            THREADS * PER_THREAD * size_of::<ShmLimiterData<()>>() > 0x1000,
+            "the test must outgrow the initial mapping to exercise growth at all"
+        );
+
+        let threads: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let mut mine = limiters.clone();
+                std::thread::spawn(move || {
+                    // Held until every thread is done, so no slot is recycled and the indices
+                    // below have to be distinct.
+                    (0..PER_THREAD)
+                        .map(|_| {
+                            let limiter = mine.alloc().expect("the arena has room");
+                            assert!(limiter.inc(1000), "a fresh limiter must admit a hit");
+                            limiter
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+
+        let allocated: Vec<ShmLimiter<()>> = threads
+            .into_iter()
+            .flat_map(|t| t.join().expect("no allocator thread may panic"))
+            .collect();
+
+        let mut indices: Vec<u32> = allocated.iter().map(|l| l.idx).collect();
+        let total = indices.len();
+        assert_eq!(total, THREADS * PER_THREAD);
+        indices.sort_unstable();
+        indices.dedup();
+        assert_eq!(indices.len(), total, "two allocations returned the same slot");
+    }
+
+    /// A lookup that refuses the slot must leave its count exactly as it found it.
+    ///
+    /// `get` cannot know whether it will succeed until its compare-exchange lands, so the
+    /// owning handle has to be built afterwards: `ShmLimiter`'s `Drop` always subtracts one,
+    /// and a handle built for an acquisition that never happened releases a reference nobody
+    /// took.
+    ///
+    /// Both consumers reach this with an ordinary index rather than a forged one. A
+    /// live-debugging config can be retired between the worker publishing its slot index and
+    /// a client opening it, and `find`'s own `get` races the idle-slot cleanup that retires
+    /// what it just matched.
+    ///
+    /// Nothing recovers a count that has gone negative: `drop_if_rc_1`'s CAS(1, 0) can never
+    /// match again, so the slot is pinned for the arena's lifetime - and a `get` that tests
+    /// only for non-zero would increment -1 to 0 and hand out an owning handle to a slot
+    /// sitting on the free list.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_refused_acquisition_leaves_the_refcount_alone() {
+        fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
+            #[allow(clippy::unwrap_used)]
+            mem.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
+                .unwrap()
+        }
+
+        let path = CString::new("/ddlimiters-refused".to_string()).unwrap();
+        let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
+
+        // Allocated and dropped in one statement: the count goes 1 -> 0 and the slot returns
+        // to the free list, which is exactly the state a stale index names.
+        let idx = limiters.alloc().unwrap().index();
+        assert_eq!(rc(&limiters, idx), 0, "the only handle went away");
+
+        assert!(
+            limiters.get(idx).is_none(),
+            "a retired slot must not be acquirable"
+        );
+        assert_eq!(
+            rc(&limiters, idx),
+            0,
+            "a refused acquisition must not decrement a count it never acquired"
+        );
+
+        // A refusal that moved the count would let the next one through; it must stay refused
+        // however many times it is asked for.
+        for attempt in 0..3 {
+            assert!(
+                limiters.get(idx).is_none(),
+                "attempt {attempt} must still be refused"
+            );
+            assert_eq!(rc(&limiters, idx), 0, "and still not have moved the count");
+        }
+
+        // The slot is still the allocator's to hand out, with one owner and no leftovers.
+        let reused = limiters.alloc().unwrap();
+        assert_eq!(
+            reused.index(),
+            idx,
+            "a refused lookup must not have consumed the slot"
+        );
+        assert_eq!(
+            rc(&limiters, idx),
+            1,
+            "the fresh allocation owns exactly one reference"
+        );
+    }
+
+    /// A slot is findable as soon as it is allocated, not once it has been recycled.
+    ///
+    /// `next_free` is the free-list link and fresh mapped bytes are zero, so a slot taken
+    /// from untouched tail space is live with a zero link. Requiring a non-zero link before
+    /// evaluating the predicate conflates "on the free list" with "has ever been used", and
+    /// hides precisely the slot a caller allocated a moment ago. `rc > 0` is the liveness
+    /// test; the scan is bounded by the mapped extent, so the link is not a terminator
+    /// either.
+    ///
+    /// The exception-hash consumer is the one that feels it: its acquire RPC does not dedupe,
+    /// so a hash whose slot cannot be found allocates another slot on every occurrence and is
+    /// never rate limited.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_freshly_allocated_slot_is_findable() {
+        let path = CString::new("/ddlimiters-fresh".to_string()).unwrap();
+        let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+
+        let limiter = limiters.alloc().unwrap();
+        limiter
+            .with_data(|hash| hash.store(42, Ordering::Relaxed))
+            .expect("the slot we just allocated is mapped");
+
+        assert_eq!(
+            limiters
+                .find(|hash| hash.load(Ordering::Relaxed) == 42)
+                .map(|found| found.index()),
+            Some(limiter.index()),
+            "a slot allocated from untouched tail space must still be findable"
+        );
+
+        // Recycling is the case that always worked, because `actual_free` leaves a non-zero
+        // link behind. It has to keep working.
+        let idx = limiter.index();
+        drop(limiter);
+        let reused = limiters.alloc().unwrap();
+        assert_eq!(reused.index(), idx, "the free list hands the slot back");
+        reused
+            .with_data(|hash| hash.store(7, Ordering::Relaxed))
+            .expect("the reused slot is mapped");
+
+        assert_eq!(
+            limiters
+                .find(|hash| hash.load(Ordering::Relaxed) == 7)
+                .map(|found| found.index()),
+            Some(idx),
+            "and a recycled slot is findable under its new payload"
+        );
+        assert!(
+            limiters
+                .find(|hash| hash.load(Ordering::Relaxed) == 42)
+                .is_none(),
+            "while the payload it was retired with no longer matches"
         );
     }
 }
