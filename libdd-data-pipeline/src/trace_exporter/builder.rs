@@ -779,16 +779,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 handle
             }
             None => {
-                let runtime_id = self.runtime_id;
-                #[cfg(feature = "telemetry")]
-                let runtime_id = runtime_id.or_else(|| {
-                    self.telemetry
-                        .as_ref()
-                        .and_then(|config| config.runtime_id.clone())
-                });
                 let mut metadata = MutableMetadata::default();
-                metadata.runtime_id =
-                    runtime_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                metadata.runtime_id = self
+                    .runtime_id
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 metadata.process_tags = self.process_tags;
                 metadata.into()
             }
