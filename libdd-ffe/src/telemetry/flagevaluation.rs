@@ -33,8 +33,7 @@ use std::sync::{Arc, Mutex};
 mod sender;
 pub use sender::{
     flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch, FlagEvaluationEvpSendConfig,
-    FlagEvaluationEvpSendConfigError, EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT,
-    EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
+    EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT, EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
 };
 
 // ── Aggregation caps ────────────────────────────────────────────────────────

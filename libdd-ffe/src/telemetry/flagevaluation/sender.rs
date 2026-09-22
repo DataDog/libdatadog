@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{encode_flag_evaluation_payloads, FfeFlagEvaluationBatch};
-use http::header::{HeaderValue, InvalidHeaderValue};
+use http::header::HeaderValue;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use std::time::Duration;
-use thiserror::Error;
 
 /// EVP proxy path for FFE flag evaluation intake.
 pub const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
@@ -27,64 +26,51 @@ const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
 /// `apiutil.NewLimitedReader`.
 pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-#[derive(Debug, Error)]
-pub enum FlagEvaluationEvpSendConfigError {
-    #[error("EVP origin must not be empty")]
-    EmptyOrigin,
-    #[error("EVP origin version must not be empty")]
-    EmptyOriginVersion,
-    #[error("EVP origin is not a valid HTTP header value")]
-    InvalidOrigin(#[source] InvalidHeaderValue),
-    #[error("EVP origin version is not a valid HTTP header value")]
-    InvalidOriginVersion(#[source] InvalidHeaderValue),
-}
-
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FlagEvaluationEvpSendConfig {
     user_agent: String,
-    origin: HeaderValue,
-    origin_version: HeaderValue,
+    origin: Option<HeaderValue>,
+    origin_version: Option<HeaderValue>,
     payload_size_limit: usize,
 }
 
 impl FlagEvaluationEvpSendConfig {
-    /// Creates a send configuration with required producer identity metadata.
-    ///
-    /// Origin and origin version must both contain a non-whitespace character
-    /// and be valid HTTP header values. Validating them here ensures every
-    /// request built from this configuration carries usable producer identity
-    /// metadata. Accepted values are stored without normalization.
-    pub fn new(
-        user_agent: impl Into<String>,
-        origin: impl Into<String>,
-        origin_version: impl Into<String>,
-    ) -> Result<Self, FlagEvaluationEvpSendConfigError> {
-        let origin = origin.into();
-        if origin.trim().is_empty() {
-            return Err(FlagEvaluationEvpSendConfigError::EmptyOrigin);
-        }
-        let origin = HeaderValue::try_from(origin.as_str())
-            .map_err(FlagEvaluationEvpSendConfigError::InvalidOrigin)?;
-
-        let origin_version = origin_version.into();
-        if origin_version.trim().is_empty() {
-            return Err(FlagEvaluationEvpSendConfigError::EmptyOriginVersion);
-        }
-        let origin_version = HeaderValue::try_from(origin_version.as_str())
-            .map_err(FlagEvaluationEvpSendConfigError::InvalidOriginVersion)?;
-
-        Ok(Self {
+    /// Creates a send configuration without producer identity metadata.
+    pub fn new(user_agent: impl Into<String>) -> Self {
+        Self {
             user_agent: user_agent.into(),
-            origin,
-            origin_version,
+            origin: None,
+            origin_version: None,
             payload_size_limit: EVP_PAYLOAD_SIZE_LIMIT,
-        })
+        }
+    }
+
+    /// Adds producer identity when it is non-empty and valid as an HTTP header value.
+    /// Invalid metadata is omitted so it cannot prevent payload delivery.
+    pub fn with_origin(mut self, origin: impl AsRef<str>) -> Self {
+        self.origin = optional_header_value(origin);
+        self
+    }
+
+    /// Adds producer version when it is non-empty and valid as an HTTP header value.
+    /// Invalid metadata is omitted so it cannot prevent payload delivery.
+    pub fn with_origin_version(mut self, origin_version: impl AsRef<str>) -> Self {
+        self.origin_version = optional_header_value(origin_version);
+        self
     }
 
     pub fn with_payload_size_limit(mut self, payload_size_limit: usize) -> Self {
         self.payload_size_limit = payload_size_limit;
         self
     }
+}
+
+fn optional_header_value(value: impl AsRef<str>) -> Option<HeaderValue> {
+    let value = value.as_ref();
+    if value.trim().is_empty() {
+        return None;
+    }
+    HeaderValue::try_from(value).ok()
 }
 
 /// Build the Agent EVP proxy endpoint for FFE flag evaluation intake.
@@ -155,14 +141,18 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    let req = match builder
+    let mut builder = builder
         .method(Method::POST)
         .header("Content-Type", "application/json")
-        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-        .header(EVP_ORIGIN_HEADER, config.origin.clone())
-        .header(EVP_ORIGIN_VERSION_HEADER, config.origin_version.clone())
-        .body(Bytes::from(payload))
-    {
+        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE);
+    if let Some(origin) = &config.origin {
+        builder = builder.header(EVP_ORIGIN_HEADER, origin);
+    }
+    if let Some(origin_version) = &config.origin_version {
+        builder = builder.header(EVP_ORIGIN_VERSION_HEADER, origin_version);
+    }
+
+    let req = match builder.body(Bytes::from(payload)) {
         Ok(r) => r,
         Err(e) => {
             log::debug!("ffe flagevaluation sender failed to construct request body: {e:?}");
@@ -319,8 +309,9 @@ mod tests {
     }
 
     fn send_config() -> FlagEvaluationEvpSendConfig {
-        FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0", "libdd-ffe-test-origin", "1.2.3")
-            .unwrap()
+        FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0")
+            .with_origin("libdd-ffe-test-origin")
+            .with_origin_version("1.2.3")
     }
 
     fn batch() -> FfeFlagEvaluationBatch {
@@ -356,28 +347,105 @@ mod tests {
         assert_eq!(mock.calls_async().await, 1);
     }
 
-    #[test]
-    fn send_config_rejects_empty_whitespace_or_invalid_producer_identity() {
-        for empty_origin in ["", " ", "\t", " \t "] {
-            assert!(matches!(
-                FlagEvaluationEvpSendConfig::new("user-agent", empty_origin, "1.2.3"),
-                Err(FlagEvaluationEvpSendConfigError::EmptyOrigin)
-            ));
-        }
-        for empty_origin_version in ["", " ", "\t", " \t "] {
-            assert!(matches!(
-                FlagEvaluationEvpSendConfig::new("user-agent", "origin", empty_origin_version),
-                Err(FlagEvaluationEvpSendConfigError::EmptyOriginVersion)
-            ));
-        }
-        assert!(matches!(
-            FlagEvaluationEvpSendConfig::new("user-agent", "invalid\norigin", "1.2.3"),
-            Err(FlagEvaluationEvpSendConfigError::InvalidOrigin(_))
-        ));
-        assert!(matches!(
-            FlagEvaluationEvpSendConfig::new("user-agent", "origin", "invalid\nversion"),
-            Err(FlagEvaluationEvpSendConfigError::InvalidOriginVersion(_))
-        ));
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn posts_without_optional_producer_identity() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin(" \t ")
+            .with_origin_version("");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &config).await;
+
+        mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn posts_valid_producer_identity_headers_independently() {
+        let server = MockServer::start_async().await;
+        let origin_only = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header(EVP_ORIGIN_HEADER, "producer-a")
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+        let version_only = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let origin_config =
+            FlagEvaluationEvpSendConfig::new("user-agent").with_origin("producer-a");
+        let version_config =
+            FlagEvaluationEvpSendConfig::new("user-agent").with_origin_version("1.2.3");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &origin_config).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &version_config).await;
+
+        origin_only.assert_calls_async(1).await;
+        version_only.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn omits_invalid_producer_identity_without_dropping_payload() {
+        let server = MockServer::start_async().await;
+        let invalid_origin = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
+                then.status(202);
+            })
+            .await;
+        let invalid_version = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header(EVP_ORIGIN_HEADER, "producer-a")
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let invalid_origin_config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin("invalid\norigin")
+            .with_origin_version("1.2.3");
+        let invalid_version_config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin("producer-a")
+            .with_origin_version("invalid\nversion");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &invalid_origin_config).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &invalid_version_config).await;
+
+        invalid_origin.assert_calls_async(1).await;
+        invalid_version.assert_calls_async(1).await;
     }
 
     #[tokio::test]

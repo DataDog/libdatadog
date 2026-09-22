@@ -70,14 +70,9 @@ impl FlagEvaluationCoalescer {
         origin: impl Into<String>,
         origin_version: impl Into<String>,
     ) {
-        let send_config = match FlagEvaluationEvpSendConfig::new(USER_AGENT, origin, origin_version)
-        {
-            Ok(config) => config,
-            Err(error) => {
-                tracing::error!("invalid sidecar flagevaluation EVP send configuration: {error}");
-                return;
-            }
-        };
+        let send_config = FlagEvaluationEvpSendConfig::new(USER_AGENT)
+            .with_origin(origin.into())
+            .with_origin_version(origin_version.into());
         self.enqueue_with_config(client, endpoint, batch, send_config);
     }
 
@@ -319,12 +314,15 @@ mod tests {
         let ep = flagevaluation_endpoint(&base).unwrap();
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
-        let baseline_config =
-            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-a", "1.0.0").unwrap();
-        let different_origin_config =
-            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-b", "1.0.0").unwrap();
-        let different_origin_version_config =
-            FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT, "producer-a", "2.0.0").unwrap();
+        let baseline_config = FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT)
+            .with_origin("producer-a")
+            .with_origin_version("1.0.0");
+        let different_origin_config = FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT)
+            .with_origin("producer-b")
+            .with_origin_version("1.0.0");
+        let different_origin_version_config = FlagEvaluationEvpSendConfig::new(TEST_USER_AGENT)
+            .with_origin("producer-a")
+            .with_origin_version("2.0.0");
 
         coalescer.enqueue_with_config(client.clone(), ep.clone(), batch(), baseline_config);
         coalescer.enqueue_with_config(client.clone(), ep.clone(), batch(), different_origin_config);
