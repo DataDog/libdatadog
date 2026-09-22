@@ -29,8 +29,8 @@ pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FlagEvaluationEvpSendConfig {
     user_agent: String,
-    origin: Option<HeaderValue>,
-    origin_version: Option<HeaderValue>,
+    origin: Option<String>,
+    origin_version: Option<String>,
     payload_size_limit: usize,
 }
 
@@ -48,14 +48,14 @@ impl FlagEvaluationEvpSendConfig {
     /// Adds producer identity when it is non-empty and valid as an HTTP header value.
     /// Invalid metadata is omitted so it cannot prevent payload delivery.
     pub fn with_origin(mut self, origin: impl AsRef<str>) -> Self {
-        self.origin = optional_header_value(origin);
+        self.origin = optional_valid_header_value(origin);
         self
     }
 
     /// Adds producer version when it is non-empty and valid as an HTTP header value.
     /// Invalid metadata is omitted so it cannot prevent payload delivery.
     pub fn with_origin_version(mut self, origin_version: impl AsRef<str>) -> Self {
-        self.origin_version = optional_header_value(origin_version);
+        self.origin_version = optional_valid_header_value(origin_version);
         self
     }
 
@@ -65,12 +65,12 @@ impl FlagEvaluationEvpSendConfig {
     }
 }
 
-fn optional_header_value(value: impl AsRef<str>) -> Option<HeaderValue> {
+fn optional_valid_header_value(value: impl AsRef<str>) -> Option<String> {
     let value = value.as_ref();
     if value.trim().is_empty() {
         return None;
     }
-    HeaderValue::try_from(value).ok()
+    HeaderValue::try_from(value).ok().map(|_| value.to_owned())
 }
 
 /// Build the Agent EVP proxy endpoint for FFE flag evaluation intake.
@@ -146,10 +146,10 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         .header("Content-Type", "application/json")
         .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE);
     if let Some(origin) = &config.origin {
-        builder = builder.header(EVP_ORIGIN_HEADER, origin);
+        builder = builder.header(EVP_ORIGIN_HEADER, origin.as_str());
     }
     if let Some(origin_version) = &config.origin_version {
-        builder = builder.header(EVP_ORIGIN_VERSION_HEADER, origin_version);
+        builder = builder.header(EVP_ORIGIN_VERSION_HEADER, origin_version.as_str());
     }
 
     let req = match builder.body(Bytes::from(payload)) {
