@@ -43,12 +43,6 @@ fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
 pub struct TelemetryClientConfig<'a> {
     /// How often telemetry should be sent, in milliseconds.
     pub interval: u64,
-    /// A V4 UUID that represents a tracer session. This ID should:
-    /// - Be generated when the tracer starts
-    /// - Be identical within the context of a host (i.e. multiple threads/processes that belong to
-    ///   a single instrumented app should share the same runtime_id)
-    /// - Be associated with traces to allow correlation between traces and telemetry data
-    pub runtime_id: CharSlice<'a>,
 
     /// Whether to enable debug mode for telemetry.
     /// When enabled, sets the DD-Telemetry-Debug-Enabled header to true.
@@ -85,6 +79,7 @@ pub struct TraceExporterConfig {
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
     process_tags: Option<String>,
+    runtime_id: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
@@ -333,10 +328,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_enable_telemetry(
             if let Option::Some(telemetry_cfg) = telemetry_cfg {
                 let cfg = TelemetryConfig {
                     heartbeat: telemetry_cfg.interval,
-                    runtime_id: match sanitize_string(telemetry_cfg.runtime_id) {
-                        Ok(s) => Some(s),
-                        Err(e) => return Some(e),
-                    },
                     debug_enabled: telemetry_cfg.debug_enabled,
                 };
                 let sessions = TelemetryInstrumentationSessions {
@@ -439,6 +430,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
     catch_panic!(
         if let Option::Some(handle) = config {
             handle.process_tags = match sanitize_string(process_tags) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the process tags to be included in the stats payload.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_runtime_id(
+    config: Option<&mut TraceExporterConfig>,
+    runtime_id: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.runtime_id = match sanitize_string(runtime_id) {
                 Ok(s) => Some(s),
                 Err(e) => return Some(e),
             };
@@ -817,6 +828,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
                 .set_process_tags(config.process_tags.as_deref().unwrap_or(""))
+                .set_runtime_id(config.runtime_id.as_deref().unwrap_or(""))
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
@@ -1290,7 +1302,6 @@ mod tests {
                 None,
                 Some(&TelemetryClientConfig {
                     interval: 1000,
-                    runtime_id: CharSlice::from("id"),
                     debug_enabled: false,
                     session_id: CharSlice::empty(),
                     root_session_id: CharSlice::empty(),
@@ -1310,7 +1321,6 @@ mod tests {
                 Some(&mut cfg),
                 Some(&TelemetryClientConfig {
                     interval: 1000,
-                    runtime_id: CharSlice::from("foo"),
                     debug_enabled: true,
                     session_id: CharSlice::empty(),
                     root_session_id: CharSlice::empty(),
@@ -1319,16 +1329,6 @@ mod tests {
             );
             assert!(error.is_none());
             assert_eq!(cfg.telemetry_cfg.as_ref().unwrap().heartbeat, 1000);
-            assert!(cfg.telemetry_cfg.as_ref().unwrap().runtime_id.is_some());
-            assert_eq!(
-                cfg.telemetry_cfg
-                    .as_ref()
-                    .unwrap()
-                    .runtime_id
-                    .as_ref()
-                    .unwrap(),
-                "foo"
-            );
             assert!(cfg.telemetry_cfg.as_ref().unwrap().debug_enabled);
             assert_eq!(
                 cfg.telemetry_instrumentation_sessions.session_id.as_deref(),
@@ -1352,7 +1352,6 @@ mod tests {
                 Some(&mut cfg),
                 Some(&TelemetryClientConfig {
                     interval: 500,
-                    runtime_id: CharSlice::from("rid"),
                     debug_enabled: false,
                     session_id: CharSlice::from("sess-z"),
                     root_session_id: CharSlice::from("root-z"),
@@ -1668,7 +1667,6 @@ mod tests {
                 output_format: TraceExporterOutputFormat::V04,
                 telemetry_cfg: Some(TelemetryConfig {
                     heartbeat: 10000,
-                    runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
                 }),
                 ..Default::default()
