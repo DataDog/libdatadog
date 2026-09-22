@@ -35,14 +35,18 @@ pub(crate) const FLAG_EVALUATION_REASON_DEGRADED_CAP: &str = "degraded_cap";
 pub(crate) const FLAG_EVALUATION_REASON_CARDINALITY_CAP: &str = "cardinality_cap";
 pub(crate) const FLAG_EVALUATION_REASON_PAYLOAD_LIMIT: &str = "payload_limit";
 
-pub(crate) fn evp_origin_from_language(language: &str) -> Cow<'_, str> {
-    match language {
+pub(crate) fn evp_origin_from_language(language: &str) -> Option<Cow<'_, str>> {
+    if language.trim().is_empty() {
+        return None;
+    }
+
+    Some(match language {
         "ruby" => Cow::Borrowed("dd-trace-rb"),
         "python" => Cow::Borrowed("dd-trace-py"),
         "javascript" | "nodejs" => Cow::Borrowed("dd-trace-js"),
         "rust" => Cow::Borrowed("dd-trace-rs"),
         language => Cow::Owned(format!("dd-trace-{language}")),
-    }
+    })
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -78,12 +82,14 @@ impl FlagEvaluationCoalescer {
         client: NativeCapabilities,
         endpoint: Endpoint,
         batch: FfeFlagEvaluationBatch,
-        origin: impl Into<String>,
+        origin: Option<impl Into<String>>,
         origin_version: impl Into<String>,
     ) {
-        let send_config = FlagEvaluationEvpSendConfig::new(USER_AGENT)
-            .with_origin(origin.into())
-            .with_origin_version(origin_version.into());
+        let mut send_config =
+            FlagEvaluationEvpSendConfig::new(USER_AGENT).with_origin_version(origin_version.into());
+        if let Some(origin) = origin {
+            send_config = send_config.with_origin(origin.into());
+        }
         let destination_key = DestinationKey::new(endpoint, &batch.context, send_config);
         if self.inner.enqueue(destination_key, batch) {
             let coalescer = self.clone();
@@ -249,7 +255,10 @@ mod tests {
             ("rust", "dd-trace-rs"),
             ("java", "dd-trace-java"),
         ] {
-            assert_eq!(evp_origin_from_language(language), expected);
+            assert_eq!(
+                evp_origin_from_language(language).as_deref(),
+                Some(expected)
+            );
         }
     }
 
@@ -274,8 +283,14 @@ mod tests {
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
 
-        coalescer.enqueue(client.clone(), ep.clone(), batch(), "dd-trace-php", "9.9.9");
-        coalescer.enqueue(client.clone(), ep, batch(), "dd-trace-php", "9.9.9");
+        coalescer.enqueue(
+            client.clone(),
+            ep.clone(),
+            batch(),
+            Some("dd-trace-php"),
+            "9.9.9",
+        );
+        coalescer.enqueue(client.clone(), ep, batch(), Some("dd-trace-php"), "9.9.9");
 
         for _ in 0..100 {
             if mock.calls_async().await == 1 {
@@ -330,9 +345,21 @@ mod tests {
         let client = NativeCapabilities::new_client();
         let coalescer = FlagEvaluationCoalescer::default();
 
-        coalescer.enqueue(client.clone(), ep.clone(), batch(), "producer-a", "1.0.0");
-        coalescer.enqueue(client.clone(), ep.clone(), batch(), "producer-b", "1.0.0");
-        coalescer.enqueue(client.clone(), ep, batch(), "producer-a", "2.0.0");
+        coalescer.enqueue(
+            client.clone(),
+            ep.clone(),
+            batch(),
+            Some("producer-a"),
+            "1.0.0",
+        );
+        coalescer.enqueue(
+            client.clone(),
+            ep.clone(),
+            batch(),
+            Some("producer-b"),
+            "1.0.0",
+        );
+        coalescer.enqueue(client.clone(), ep, batch(), Some("producer-a"), "2.0.0");
         coalescer.flush_now(client).await;
 
         baseline.assert_calls_async(1).await;
@@ -358,7 +385,7 @@ mod tests {
         let coalescer = FlagEvaluationCoalescer::default();
         let guard = coalescer.flush_mutex.lock().await;
 
-        coalescer.enqueue(client.clone(), ep, batch(), "dd-trace-php", "9.9.9");
+        coalescer.enqueue(client.clone(), ep, batch(), Some("dd-trace-php"), "9.9.9");
 
         let mut flush = tokio::spawn({
             let coalescer = coalescer.clone();

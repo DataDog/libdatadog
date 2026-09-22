@@ -1845,6 +1845,56 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn flag_evaluations_omit_origin_when_tracer_language_is_blank() {
+        let http_server = MockServer::start_async().await;
+        let flag_evaluations_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing("DD-EVP-ORIGIN")
+                    .header("DD-EVP-ORIGIN-VERSION", "9.9.9");
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+                cfg.language = " \t".to_owned();
+                cfg.tracer_version = "9.9.9".to_owned();
+            });
+
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::FfeFlagEvaluationBatch(
+                    ffe_flag_evaluation_batch(),
+                )],
+            )
+            .await;
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..SidecarFlushOptions::default()
+            })
+            .await;
+
+        flag_evaluations_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
         let http_server = MockServer::start_async().await;
         let exposures_mock = http_server
