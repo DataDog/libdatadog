@@ -45,7 +45,9 @@ use winapi::um::handleapi::{CloseHandle, DuplicateHandle, INVALID_HANDLE_VALUE};
 use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
 use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentProcessId, OpenProcess};
 use winapi::um::winbase::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
-use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
+use winapi::um::winnt::{
+    DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE,
+};
 
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
@@ -97,20 +99,27 @@ pub struct PeerCredentials {
 
 /// Append `handles` (duplicated into `peer_pid`) followed by the 4-byte count to `data`.
 ///
-/// On error the function returns without having fully appended.  The caller is responsible
-/// for truncating `data` back to the pre-call length if it wishes to restore the original.
+/// The returned guard owns the duplicates until the write succeeds. On error all duplicates
+/// are closed; the caller must also truncate `data` back to its pre-call length.
 fn append_handle_suffix(
     data: &mut Vec<u8>,
     handles: &[RawHandle],
     peer_pid: u32,
-) -> io::Result<()> {
+) -> io::Result<PendingHandleTransfers> {
     let count = handles.len();
+    let count_u32 = u32::try_from(count)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "too many IPC handles"))?;
+    let mut pending = PendingHandleTransfers {
+        peer: None,
+        handles: Vec::with_capacity(count),
+    };
 
     if count > 0 {
         let peer_proc = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, peer_pid) };
         if peer_proc.is_null() {
             return Err(io::Error::last_os_error());
         }
+        pending.peer = Some(unsafe { OwnedHandle::from_raw_handle(peer_proc.cast()) });
         for &h in handles {
             let mut dup: HANDLE = null_mut();
             let ok = unsafe {
@@ -125,17 +134,54 @@ fn append_handle_suffix(
                 )
             };
             if ok == 0 {
-                let err = io::Error::last_os_error();
-                unsafe { CloseHandle(peer_proc) };
-                return Err(err);
+                return Err(io::Error::last_os_error());
             }
+            pending.handles.push(dup);
             data.extend_from_slice(&(dup as u64).to_le_bytes());
         }
-        unsafe { CloseHandle(peer_proc) };
     }
 
-    data.extend_from_slice(&(count as u32).to_le_bytes());
-    Ok(())
+    data.extend_from_slice(&count_u32.to_le_bytes());
+    Ok(pending)
+}
+
+/// Duplicates that the peer has not yet received in a successfully written message.
+struct PendingHandleTransfers {
+    peer: Option<OwnedHandle>,
+    handles: Vec<HANDLE>,
+}
+
+impl PendingHandleTransfers {
+    fn commit(mut self) {
+        self.handles.clear();
+    }
+}
+
+impl Drop for PendingHandleTransfers {
+    fn drop(&mut self) {
+        let Some(peer) = &self.peer else {
+            return;
+        };
+        for handle in self.handles.drain(..) {
+            let mut local = null_mut();
+            // Failed writes never exposed the duplicate to the peer. Close that remote handle
+            // by moving it back here; the peer may already have exited, which is harmless.
+            let ok = unsafe {
+                DuplicateHandle(
+                    peer.as_raw_handle().cast(),
+                    handle,
+                    GetCurrentProcess(),
+                    &mut local,
+                    0,
+                    0,
+                    DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if ok != 0 {
+                unsafe { CloseHandle(local) };
+            }
+        }
+    }
 }
 
 /// Parse the handle-suffix wire format from a received message.
@@ -508,7 +554,11 @@ impl SeqpacketConn {
 
         // Upgrade to message read-mode.
         let mode = PIPE_READMODE_MESSAGE;
-        unsafe { SetNamedPipeHandleState(h as SysHANDLE, &mode, null(), null()) };
+        // Take ownership before any fallible configuration or handshake operation.
+        let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
+        if unsafe { SetNamedPipeHandleState(h as SysHANDLE, &mode, null(), null()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
 
         // PID handshake: read the 4-byte PID written by try_accept() so that we know the real
         // acceptor PID, not the pipe-creator PID returned by GetNamedPipeServerProcessId.
@@ -536,7 +586,6 @@ impl SeqpacketConn {
             spid
         };
 
-        let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
         Ok(Self {
             handle,
             peer_pid: server_pid,
@@ -622,11 +671,11 @@ impl SeqpacketConn {
     /// the caller can retry without re-encoding `data`.
     pub fn try_send_raw(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
         let orig_len = data.len();
-        if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
-            data.truncate(orig_len);
-            return Err(e);
-        }
-        let result = pipe_write(self.raw_handle(), data, false);
+        let result = append_handle_suffix(data, handles, self.peer_pid).and_then(|pending| {
+            pipe_write(self.raw_handle(), data, false)?;
+            pending.commit();
+            Ok(())
+        });
         data.truncate(orig_len);
         result
     }
@@ -634,11 +683,11 @@ impl SeqpacketConn {
     /// Blocking send.
     pub fn send_raw_blocking(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
         let orig_len = data.len();
-        if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
-            data.truncate(orig_len);
-            return Err(e);
-        }
-        let result = pipe_write(self.raw_handle(), data, true);
+        let result = append_handle_suffix(data, handles, self.peer_pid).and_then(|pending| {
+            pipe_write(self.raw_handle(), data, true)?;
+            pending.commit();
+            Ok(())
+        });
         data.truncate(orig_len);
         result
     }
