@@ -21,6 +21,8 @@ elf = { workspace = true, features = ["std"], optional = true }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core"], optional = true }
 
 [features]
+# Autoclean contexts on thread exit. See README.
+thread-exit-autoclean = []
 sanity-check = ["dep:elf", "dep:anyhow"]
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
@@ -35,6 +37,14 @@ gen-tls-shim-bytes = ["test-utils"]
 [[bin]]
 name = "gen_tls_shim_bytes"
 required-features = ["gen-tls-shim-bytes"]
+
+# End-to-end test for the `thread-exit-autoclean` feature. Uses its own binary (and process) with
+# `harness = false` so that the process contains exactly the main thread and a single worker
+# thread, which keeps the allocation-counting assertions deterministic.
+[[test]]
+name = "thread_exit_autoclean"
+required-features = ["thread-exit-autoclean"]
+harness = false
 
 [dev-dependencies]
 libdd-otel-thread-ctx = { path = ".", features = ["test-utils"] }

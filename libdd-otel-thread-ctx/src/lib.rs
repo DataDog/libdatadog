@@ -475,6 +475,42 @@ pub mod linux {
         }
     }
 
+    #[cfg(feature = "thread-exit-autoclean")]
+    /// Dummy TLS variable whose sole purpose is to hook on thread exit, to drop any context still
+    /// attached via [Drop].
+    mod autoclean {
+        use std::thread_local;
+
+        struct TlsCleaner;
+
+        thread_local! {
+            static CLEANER: TlsCleaner = const { TlsCleaner };
+        }
+
+        impl Drop for TlsCleaner {
+            fn drop(&mut self) {
+                drop(super::ThreadContext::detach());
+            }
+        }
+
+        /// To be called at least once to ensure the cleaner is initialized.
+        ///
+        /// Despite the `const` definition of [CLEANER], since Rust TLS initialization is lazy, it's
+        /// not guaranteed that [CLEANER] is properly initialized if we don't fetch it at
+        /// least once. If the TLS slot is not initialized, its `Drop` implementation will
+        /// not be called at exit, which defeats the whole purpose of the cleaner.
+        pub(super) fn init() {
+            let _ = CLEANER.try_with(|_| ());
+        }
+    }
+
+    /// When the feature `thread-exit-autoclean` is enabled, initialize the cleaner on the current
+    /// thread, which will reclaim any attached context on thread exit to avoid leaks.
+    pub fn init_autoclean() {
+        #[cfg(feature = "thread-exit-autoclean")]
+        autoclean::init();
+    }
+
     impl ThreadContext {
         /// Atomically swap the current context with a pointer value. Return the previously
         /// attached context, if any.
@@ -490,9 +526,16 @@ pub mod linux {
         /// Publish a new (or previously detached) thread context record by writing its pointer
         /// into the TLS slot. Returns the previously attached context, if any.
         ///
+        /// If the feature thread-exit-autoclean is enabled, we make sure the auto cleaner is
+        /// installed on this thread (no-op if the feature is disabled). For SDKs using the
+        /// update-in-place approach, `attach` is expected to be called at most once per thread,
+        /// so this stays negligible.
+        ///
         /// `valid` is already `1` since construction, so any reader that observes the new pointer
         /// also observes `valid = 1`.
         pub fn attach(self) -> Option<ThreadContext> {
+            init_autoclean();
+
             // [^tls-slot-ordering]: since we get back the previous context, we should in principle
             // use an `Acquire` (thus combining into an `AcqRel`) compiler fence to make sure we
             // don't get back a not-yet-initialized record.
@@ -538,6 +581,10 @@ pub mod linux {
                     compiler_fence(Ordering::SeqCst);
                     current.valid.store(1, Ordering::Relaxed);
                 } else {
+                    // This branch deliberately bypasses `attach` to avoid resolving the TLS slot
+                    // again, so we make sure the cleaner is initialized.
+                    init_autoclean();
+
                     let ctxt = ThreadContext::new(
                         trace_id,
                         span_id,
