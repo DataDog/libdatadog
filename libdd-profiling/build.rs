@@ -9,6 +9,17 @@ fn main() {
             .flag_if_supported("-std=c++20")
             .compile("libdd-profiling-cxx");
 
+        let out_dir =
+            std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+        let include_dir = out_dir.join("cxxbridge/include/datadog");
+        std::fs::create_dir_all(&include_dir).expect("create CXX convenience include directory");
+        std::fs::copy(
+            "include/datadog/profiling.hpp",
+            include_dir.join("profiling.hpp"),
+        )
+        .expect("copy CXX profiling convenience header");
+
         println!("cargo:rerun-if-changed=src/cxx.rs");
+        println!("cargo:rerun-if-changed=include/datadog/profiling.hpp");
     }
 }

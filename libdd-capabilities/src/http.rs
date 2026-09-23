@@ -75,7 +75,7 @@ pub trait HttpClientCapability: Clone + std::fmt::Debug {
     /// is quite costly (can be on the order of magnitude of 0.5sec per connection). Having pooling
     /// with a short lifetime is a better choice, since we can reuse the same connection for those
     /// multiple consecutive requests, while avoiding the race condition.
-    fn new_without_connection_pooling() -> Self;
+    fn new_periodic() -> Self;
 
     fn request(
         &self,
