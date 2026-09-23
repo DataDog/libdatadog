@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write # Exchanged for the release-publishing token
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -99,9 +100,20 @@ jobs:
           # critical path of every gated workflow.
           strip "target/release/$TOOL"
 
+      # Minted here rather than up front so that it is short lived and a run
+      # that fails to build never holds a write token. Forks have no trust
+      # policy of their own, so testing this workflow there falls back to the
+      # workflow token.
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        if: ${{ github.repository == 'DataDog/libdatadog' }}
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.ci-tools
+
       - name: Publish
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token || github.token }}
           TAG: ${{ github.ref_name }}
           TOOL: ${{ steps.tag.outputs.tool }}
           VERSION: ${{ steps.tag.outputs.version }}
