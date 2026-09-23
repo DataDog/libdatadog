@@ -29,6 +29,11 @@ pub fn get_agent_info() -> Option<Arc<schema::AgentInfo>> {
     AGENT_INFO_CACHE.load_full()
 }
 
+/// Clear the global agent info cache after restoring from an inherited runtime identity.
+pub(crate) fn clear_cache_for_runtime_identity_refresh() {
+    AGENT_INFO_CACHE.store(None);
+}
+
 pub use fetcher::{
     fetch_info, fetch_info_with_state, AgentInfoFetcher, FetchInfoStatus, ResponseObserver,
 };
@@ -36,5 +41,5 @@ pub use fetcher::{
 #[cfg(test)]
 /// Clear the global agent info cache for test isolation in envs where nextest isn't used.
 pub fn clear_cache_for_test() {
-    AGENT_INFO_CACHE.store(None);
+    clear_cache_for_runtime_identity_refresh();
 }
