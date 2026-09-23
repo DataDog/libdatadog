@@ -2,7 +2,7 @@ variables:
   # These are gitlab variables so that it's easier to do a manual deploy
   # If these are set witih value and description, then it gives you UI elements
   DOWNSTREAM_BRANCH:
-    value: "84b87049e89d"
+    value: "main"
     description: "downstream jobs are triggered on this branch"
 
   # To bump: docker buildx imagetools inspect registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
