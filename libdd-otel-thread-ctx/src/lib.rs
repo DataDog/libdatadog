@@ -105,6 +105,37 @@ pub mod linux {
         sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
+    /// Port of the cleanup in `yannham/otel-thread-ctx-autofree` onto the v43 API.
+    /// A dummy Rust TLS value runs [`ThreadContext::detach`] from its `Drop`, which
+    /// frees a record still attached when the OS thread exits. ELF TLS itself has
+    /// no destructor.
+    #[cfg(feature = "thread-exit-autoclean")]
+    mod autoclean {
+        use std::thread_local;
+
+        struct TlsCleaner;
+
+        thread_local! {
+            static CLEANER: TlsCleaner = const { TlsCleaner };
+        }
+
+        impl Drop for TlsCleaner {
+            fn drop(&mut self) {
+                drop(super::ThreadContext::detach());
+            }
+        }
+
+        /// Rust TLS is lazy: `Drop` does not run unless the slot was initialized.
+        pub(super) fn init() {
+            CLEANER.with(|_| ());
+        }
+    }
+
+    fn init_autoclean() {
+        #[cfg(feature = "thread-exit-autoclean")]
+        autoclean::init();
+    }
+
     // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
     // the dynamic symbol table. It must be an exported ELF `STT_TLS` object accessed via the
     // TLSDESC dialect, as mandated by the OTel thread-level context sharing spec.
@@ -408,6 +439,9 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) -> Self {
+            // First allocation on a thread installs the exit cleaner. Later
+            // `update` calls mutate that record in place.
+            init_autoclean();
             Self::from(ThreadContextRecord::new(
                 trace_id,
                 span_id,

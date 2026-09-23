@@ -22,6 +22,9 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 
 [features]
 sanity-check = ["dep:elf", "dep:anyhow"]
+# Drop a context that is still attached when the thread exits. Off by default;
+# dd-trace-py opts in. See the `thread-exit-autoclean` module in src/lib.rs.
+thread-exit-autoclean = []
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
 test-utils = ["dep:elf", "dep:object"]
