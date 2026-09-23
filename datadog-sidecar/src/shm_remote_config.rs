@@ -192,9 +192,16 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
             // No limiter means no rate limiting: the segment could not be created, which is
             // already reported where it happened.
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                SHM_LIMITER
-                    .as_ref()
-                    .and_then(|limiter| limiter.lock_or_panic().alloc())
+                SHM_LIMITER.as_ref().and_then(|limiter| {
+                    let allocated = limiter.lock_or_panic().alloc();
+                    if allocated.is_none() {
+                        warn!(
+                            "No rate limiter slot available for live debugging config {path}; \
+                             not rate limited"
+                        );
+                    }
+                    allocated
+                })
             } else {
                 None
             },

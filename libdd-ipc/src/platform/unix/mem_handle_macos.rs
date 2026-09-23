@@ -206,7 +206,27 @@ impl NamedShmHandle {
     }
 }
 
+pub(crate) fn unlink_shm_name(name: &CStr) {
+    _ = shm_unlink(path_slice(name));
+}
+
 impl<T: FileBackedHandle> MappedMem<T> {
+    /// Pick up backing that somebody else committed, without committing any.
+    ///
+    /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a
+    /// segment a peer grew stays invisible here until something asks. The length word in the
+    /// segment's own last page is the shared record of how far it has been grown, and reading
+    /// it changes nothing - so this can be called on paths that must not allocate.
+    ///
+    /// Returns the usable length afterwards.
+    pub fn refresh_size(&self) -> usize {
+        // SAFETY: this mapping is MAPPING_MAX_SIZE long; see `mmap_handle`.
+        let committed = unsafe { committed_len(self.ptr) }.load(Ordering::Acquire);
+        self.usable
+            .fetch_max(committed.min(usable_max()), Ordering::AcqRel);
+        self.get_size()
+    }
+
     /// Raise the segment's committed length, leaving the mapping where it is, and report
     /// whether `expected_size` bytes are now usable.
     ///

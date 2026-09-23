@@ -180,7 +180,48 @@ impl NamedShmHandle {
     }
 }
 
+/// Remove a shared-memory name.
+///
+/// Nothing to do on Windows: a section has no filesystem entry and lives exactly as long as
+/// the handles to it, so one whose owner died is already gone.
+pub(crate) fn unlink_shm_name(_name: &CStr) {}
+
 impl<T: FileBackedHandle> MappedMem<T> {
+    /// Pick up pages that somebody else committed, without committing any.
+    ///
+    /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a
+    /// segment a peer grew stays invisible here until something asks. On a `SEC_RESERVE`
+    /// section the committed run at the base is what the section's mappers have committed
+    /// between them - the same thing [`mmap_handle`] uses to size a freshly opened view - and
+    /// querying it commits nothing, so this can be called on paths that must not allocate.
+    ///
+    /// Returns the usable length afterwards.
+    pub fn refresh_size(&self) -> usize {
+        let committed = unsafe {
+            let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
+            if VirtualQuery(
+                self.ptr.as_ptr().cast_const(),
+                info.as_mut_ptr(),
+                mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            ) == 0
+            {
+                0
+            } else {
+                let info = info.assume_init();
+                // A reserved-but-uncommitted base reports the whole reservation as one
+                // region; only a committed run says anything about what may be touched.
+                if info.State == MEM_COMMIT {
+                    info.RegionSize
+                } else {
+                    0
+                }
+            }
+        };
+        self.usable
+            .fetch_max(committed.min(self.mapped_len), Ordering::AcqRel);
+        self.get_size()
+    }
+
     /// Commit `expected_size` bytes of the reserved view, leaving the view where it is, and
     /// report whether that many bytes are now usable.
     ///
