@@ -15,7 +15,7 @@ cbindgen = []
 
 [dependencies]
 cbindgen.workspace = true
-serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std"] }
 
 [lib]
 bench = false
