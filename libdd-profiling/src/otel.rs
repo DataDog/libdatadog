@@ -111,7 +111,6 @@ mod tests {
             sample_type: Some(ValueType {
                 type_strindex: 4,
                 unit_strindex: 5,
-                ..Default::default()
             }),
             samples: vec![
                 Sample {
@@ -131,7 +130,6 @@ mod tests {
             sample_type: Some(ValueType {
                 type_strindex: 6,
                 unit_strindex: 7,
-                ..Default::default()
             }),
             samples: vec![
                 Sample {

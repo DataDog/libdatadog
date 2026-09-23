@@ -18,8 +18,8 @@ pub mod collections;
 pub mod cxx;
 pub mod exporter;
 pub mod internal;
+pub mod iter;
 #[cfg(feature = "otel")]
 pub mod otel;
-pub mod iter;
 pub mod pprof;
 pub mod profiles;
