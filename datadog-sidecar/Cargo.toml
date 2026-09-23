@@ -1,3 +1,6 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 edition = "2021"
 license = "Apache 2.0"
@@ -82,7 +85,7 @@ nix = { workspace = true, features = ["socket", "mman"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { workspace = true, features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
+winapi = { workspace = true, features = ["securitybaseapi", "sddl", "winerror", "winbase", "synchapi", "threadpoolapiset"] }
 
 
 [dev-dependencies]

@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(windows)]
+pub mod remote_config_notification;
 pub mod span;
 
 use crate::span::TracesBytes;
@@ -78,7 +80,7 @@ fn otlp_metrics_endpoint_with_agent_test_token(
 }
 
 #[no_mangle]
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub extern "C" fn ddog_setup_crashtracking(
     endpoint: Option<&Endpoint>,
     metadata: Metadata,
@@ -633,6 +635,16 @@ pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) 
     transport.is_closed()
 }
 
+/// Opaque registration for a Windows remote configuration callback.
+///
+/// Create it with `ddog_sidecar_remote_config_notification_new`, pass it to
+/// `ddog_sidecar_session_set_config`, and release it with
+/// `ddog_sidecar_remote_config_notification_drop`.
+pub struct RemoteConfigNotification {
+    #[cfg(windows)]
+    inner: datadog_sidecar::windows::remote_config_notification::RemoteConfigNotification,
+}
+
 /// Sets the configuration for a session.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -654,7 +666,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     force_drop_size: usize,
     log_level: ffi::CharSlice,
     log_path: ffi::CharSlice,
-    _remote_config_notify_function: *mut c_void,
+    win_remote_config_notification: *const RemoteConfigNotification, // null for non-win
     remote_config_products: *const RemoteConfigProduct,
     remote_config_products_count: usize,
     remote_config_capabilities: *const RemoteConfigCapabilities,
@@ -728,6 +740,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
     };
     #[cfg(unix)]
+    let _ = win_remote_config_notification;
+    #[cfg(unix)]
     try_c!(blocking::set_session_config(
         transport,
         session_id_str,
@@ -738,7 +752,9 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     try_c!(blocking::set_session_config(
         transport,
         session_id_str,
-        datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
+        win_remote_config_notification
+            .as_ref()
+            .map(|notification| notification.inner.target()),
         &session_config,
         is_fork,
     ));

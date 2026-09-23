@@ -13,51 +13,51 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use zwohash::HashMap;
 
-#[cfg(windows)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct RemoteConfigNotifyFunction(pub *mut libc::c_void);
-#[cfg(windows)]
-unsafe impl Send for RemoteConfigNotifyFunction {}
-#[cfg(windows)]
-unsafe impl Sync for RemoteConfigNotifyFunction {}
-#[cfg(windows)]
-impl Default for RemoteConfigNotifyFunction {
-    fn default() -> Self {
-        RemoteConfigNotifyFunction(std::ptr::null_mut())
-    }
-}
-
-#[cfg(windows)]
-impl serde::Serialize for RemoteConfigNotifyFunction {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_u64(self.0 as u64)
-    }
-}
-
-#[cfg(windows)]
-impl<'de> serde::Deserialize<'de> for RemoteConfigNotifyFunction {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        <u64 as serde::Deserialize<'de>>::deserialize(deserializer)
-            .map(|p| RemoteConfigNotifyFunction(p as *mut libc::c_void))
-    }
-}
-
-#[derive(Clone, Hash, Eq, PartialEq)]
-#[cfg_attr(windows, derive(Debug))]
+#[derive(Clone)]
+#[cfg_attr(unix, derive(Hash, Eq, PartialEq))]
+#[cfg_attr(windows, derive(Debug, serde::Serialize, serde::Deserialize))]
 pub struct RemoteConfigNotifyTarget {
     #[cfg(unix)]
     pub pid: libc::pid_t,
     #[cfg(windows)]
-    pub process_handle: crate::service::sidecar_server::ProcessHandle,
+    pub(crate) event: libdd_ipc::platform::PlatformHandle<std::os::windows::io::OwnedHandle>,
     #[cfg(windows)]
-    // contains address in that process address space of the notification function
-    pub notify_function: RemoteConfigNotifyFunction,
+    // Stable across handle duplication and reconnects; raw HANDLE values are process-local.
+    pub(crate) id: u128,
+}
+
+#[cfg(windows)]
+impl PartialEq for RemoteConfigNotifyTarget {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+#[cfg(windows)]
+impl Eq for RemoteConfigNotifyTarget {}
+
+#[cfg(windows)]
+impl std::hash::Hash for RemoteConfigNotifyTarget {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&self.id, state);
+    }
+}
+
+#[cfg(windows)]
+impl libdd_ipc::handles::TransferHandles for RemoteConfigNotifyTarget {
+    fn copy_handles<T: libdd_ipc::handles::HandlesTransport>(
+        &self,
+        transport: T,
+    ) -> Result<(), T::Error> {
+        self.event.copy_handles(transport)
+    }
+
+    fn receive_handles<T: libdd_ipc::handles::HandlesTransport>(
+        &mut self,
+        transport: T,
+    ) -> Result<(), T::Error> {
+        self.event.receive_handles(transport)
+    }
 }
 
 #[cfg(unix)]
@@ -74,19 +74,15 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
     }
 
     #[cfg(windows)]
-    #[allow(clippy::missing_transmute_annotations)]
     fn notify(&self) {
+        use std::os::windows::io::AsRawHandle;
         unsafe {
-            let dummy = 0;
-            winapi::um::processthreadsapi::CreateRemoteThread(
-                self.process_handle.0,
-                std::ptr::null_mut(),
-                0,
-                Some(std::mem::transmute(self.notify_function.0)),
-                &dummy as *const i32 as winapi::shared::minwindef::LPVOID,
-                0,
-                std::ptr::null_mut(),
-            );
+            if winapi::um::synchapi::SetEvent(self.event.as_raw_handle().cast()) == 0 {
+                tracing::warn!(
+                    "Failed to signal remote config event: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
         }
     }
 }
