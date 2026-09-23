@@ -11,6 +11,42 @@ use std::{
 
 use super::{with_tls_slot, ThreadContext, ThreadContextRecord};
 
+#[cfg(feature = "thread-exit-autoclean")]
+/// Dummy TLS variable whose sole purpose is to hook on thread exit, to drop any context still
+/// attached via [Drop].
+mod autoclean {
+    use std::thread_local;
+
+    struct TlsCleaner;
+
+    thread_local! {
+        static CLEANER: TlsCleaner = const { TlsCleaner };
+    }
+
+    impl Drop for TlsCleaner {
+        fn drop(&mut self) {
+            drop(super::OwnedThreadContext::detach());
+        }
+    }
+
+    /// To be called at least once to ensure the cleaner is initialized.
+    ///
+    /// Despite the `const` definition of [CLEANER], since Rust TLS initialization is lazy, it's not
+    /// guaranteed that [CLEANER] is properly initialized if we don't fetch it at least once. If the
+    /// TLS slot is not initialized, its `Drop` implementation will not be called at exit, which
+    /// defeats the whole purpose of the cleaner.
+    pub(super) fn init() {
+        CLEANER.with(|_| ());
+    }
+}
+
+/// When the feature `thread-exit-autoclean`, initialize the autocleaner on the current thread,
+/// which will reclaim any attached context on thread exit to avoid leaks.
+pub fn init_autoclean() {
+    #[cfg(feature = "thread-exit-autoclean")]
+    autoclean::init();
+}
+
 impl ThreadContextRecord {
     /// Update the record in-place. Sets `valid=0` before the update and `valid=1` after, so a
     /// reader that fires between the two writes sees an inconsistent record and skips it. Compiler
@@ -60,6 +96,11 @@ impl OwnedThreadContext {
         local_root_span_id: [u8; 8],
         attrs: &[(u8, &str)],
     ) -> Self {
+        // Everytime we create a new record, we make sure the auto cleaner is installed (no-op if
+        // the feature is disabled). For SDKs that rely on the auto cleaner and update-in-place, a
+        // new context is likely to be created only once per thread.
+        init_autoclean();
+
         Self::from(ThreadContextRecord::new(
             trace_id,
             span_id,
@@ -240,6 +281,9 @@ impl From<ThreadContextRecord> for OwnedThreadContext {
 
 impl From<ThreadContext> for OwnedThreadContext {
     fn from(ctx: ThreadContext) -> Self {
+        // Since [ThreadContext] is public, this a second path beside OwnedThreadContext::new() to
+        // initialize an owned thread context, albeit expected to be much rarer.
+        init_autoclean();
         Self::from(ctx.0)
     }
 }
