@@ -197,16 +197,21 @@ fn gen_transfer_handles(
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
             let variant = &m.variant;
-            let handle_names: Vec<_> = m
+            let handle_params: Vec<_> = m
                 .handle_param_indices
                 .iter()
-                .map(|&i| &m.params[i].name)
+                .map(|&i| &m.params[i])
                 .collect();
-            // One copy_handle call per #[SerializedHandle] param.
-            // Uses .into() to convert from the param type to PlatformHandle<OwnedFileHandle>.
-            let stmts: Vec<_> = handle_names
+            let handle_names = handle_params.iter().map(|p| {
+                let (attrs, name) = (&p.attrs, &p.name);
+                quote! { #(#attrs)* #name }
+            });
+            let stmts: Vec<_> = handle_params
                 .iter()
-                .map(|hn| quote! { __transport.copy_handle(#hn.clone().into())?; })
+                .map(|p| {
+                    let (attrs, name) = (&p.attrs, &p.name);
+                    quote! { #(#attrs)* libdd_ipc::handles::TransferHandles::copy_handles(#name, __transport)?; }
+                })
                 .collect();
             quote! {
                 #enum_name::#variant { #(#handle_names,)* .. } => {
@@ -222,14 +227,21 @@ fn gen_transfer_handles(
         .filter(|m| !m.handle_param_indices.is_empty())
         .map(|m| {
             let variant = &m.variant;
-            let handle_names: Vec<_> = m
+            let handle_params: Vec<_> = m
                 .handle_param_indices
                 .iter()
-                .map(|&i| &m.params[i].name)
+                .map(|&i| &m.params[i])
                 .collect();
-            let stmts: Vec<_> = handle_names
+            let handle_names = handle_params.iter().map(|p| {
+                let (attrs, name) = (&p.attrs, &p.name);
+                quote! { #(#attrs)* #name }
+            });
+            let stmts: Vec<_> = handle_params
                 .iter()
-                .map(|hn| quote! { #hn.receive_handles(__transport)?; })
+                .map(|p| {
+                    let (attrs, name) = (&p.attrs, &p.name);
+                    quote! { #(#attrs)* libdd_ipc::handles::TransferHandles::receive_handles(#name, __transport)?; }
+                })
                 .collect();
             quote! {
                 #enum_name::#variant { #(#handle_names,)* .. } => {
@@ -616,7 +628,9 @@ fn gen_channel(
 ///
 /// Method attributes recognized (stripped before emission):
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
-/// - `#[SerializedHandle]` on a parameter — the value carries an fd via SCM_RIGHTS
+/// - `#[SerializedHandle]` on a parameter — transfer the value's OS handles separately from its
+///   serialized bytes. The parameter type must implement `TransferHandles`; wrapper structs
+///   implement it by forwarding to their contained handle-bearing value.
 /// - `#[ClientType(Type)]` on a parameter — use `Type` in the serialize-only client request
 #[proc_macro_attribute]
 pub fn service(_attr: TokenStream, input: TokenStream) -> TokenStream {
