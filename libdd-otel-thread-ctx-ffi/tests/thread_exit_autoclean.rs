@@ -26,131 +26,143 @@
 //! https://nexte.st/docs/design/custom-test-harnesses/): `--list --format terse` support and
 //! per-test selection with `--exact`.
 
-#![cfg(all(
+#[cfg(all(
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
+mod imp {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+    use libdd_otel_thread_ctx_ffi::{
+        ddog_otel_thread_ctx_detach, ddog_otel_thread_ctx_free, ddog_otel_thread_ctx_update,
+    };
 
-use libdd_otel_thread_ctx_ffi::{
-    ddog_otel_thread_ctx_detach, ddog_otel_thread_ctx_free, ddog_otel_thread_ctx_update,
-};
+    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    struct CountingAllocator;
 
-struct CountingAllocator;
-
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
-#[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-/// Returns the `(allocations, deallocations)` counters.
-fn counters() -> (usize, usize) {
-    (
-        ALLOCATIONS.load(Ordering::Relaxed),
-        DEALLOCATIONS.load(Ordering::Relaxed),
-    )
-}
-
-/// Runs a thread that allocates and attaches a context record via `ddog_otel_thread_ctx_update`,
-/// and optionally detaches it explicitly before the end of the body. Snapshots the allocation
-/// counters at various point in the thread lifecycle to make sure the attached context is cleaned
-/// up properly after the thread exited.
-fn run_scenario(explicit_detach: bool, scenario: &str) {
-    let (alloc_before, dealloc_before) = counters();
-
-    let (alloc_in_body, dealloc_in_body) = std::thread::spawn(move || {
-        // First call on this thread: allocates the record, attaches it, and installs the
-        // autocleaner.
-        ddog_otel_thread_ctx_update(&[1u8; 16], &[2u8; 8], 0, &[3u8; 8]);
-
-        if explicit_detach {
-            let detached =
-                ddog_otel_thread_ctx_detach().expect("a context must be attached after update");
-            // Safety: `detached` is a non-null handle obtained from this API and is freed exactly
-            // once here.
-            unsafe { ddog_otel_thread_ctx_free(detached.as_ptr()) };
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.alloc(layout) }
         }
 
-        counters()
-    })
-    .join()
-    .unwrap();
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
 
-    let (alloc_after, dealloc_after) = counters();
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
 
-    assert!(
-        alloc_in_body > alloc_before,
-        "{scenario}: the thread body must have allocated the context record"
-    );
-    if explicit_detach {
+    /// Returns the `(allocations, deallocations)` counters.
+    fn counters() -> (usize, usize) {
+        (
+            ALLOCATIONS.load(Ordering::Relaxed),
+            DEALLOCATIONS.load(Ordering::Relaxed),
+        )
+    }
+
+    /// Runs a thread that allocates and attaches a context record via
+    /// `ddog_otel_thread_ctx_update`, and optionally detaches it explicitly before the end of
+    /// the body. Snapshots the allocation counters at various point in the thread lifecycle to
+    /// make sure the attached context is cleaned up properly after the thread exited.
+    fn run_scenario(explicit_detach: bool, scenario: &str) {
+        let (alloc_before, dealloc_before) = counters();
+
+        let (alloc_in_body, dealloc_in_body) = std::thread::spawn(move || {
+            // First call on this thread: allocates the record, attaches it, and installs the
+            // autocleaner.
+            ddog_otel_thread_ctx_update(&[1u8; 16], &[2u8; 8], 0, &[3u8; 8]);
+
+            if explicit_detach {
+                let detached =
+                    ddog_otel_thread_ctx_detach().expect("a context must be attached after update");
+                // Safety: `detached` is a non-null handle obtained from this API and is freed
+                // exactly once here.
+                unsafe { ddog_otel_thread_ctx_free(detached.as_ptr()) };
+            }
+
+            counters()
+        })
+        .join()
+        .unwrap();
+
+        let (alloc_after, dealloc_after) = counters();
+
         assert!(
-            dealloc_in_body > dealloc_before,
-            "{scenario}: explicitly detaching and freeing the context must release the record \
-             inside the thread body"
+            alloc_in_body > alloc_before,
+            "{scenario}: the thread body must have allocated the context record"
         );
-    } else {
+        if explicit_detach {
+            assert!(
+                dealloc_in_body > dealloc_before,
+                "{scenario}: explicitly detaching and freeing the context must release the record \
+                 inside the thread body"
+            );
+        } else {
+            assert_eq!(
+                dealloc_in_body, dealloc_before,
+                "{scenario}: the body never detaches, so nothing must be freed inside the body"
+            );
+            assert!(
+                dealloc_after > dealloc_in_body,
+                "{scenario}: a context still attached at thread exit must be freed after the \
+                 thread body returned (by the autocleaner), but no deallocation was observed"
+            );
+        }
         assert_eq!(
-            dealloc_in_body, dealloc_before,
-            "{scenario}: the body never detaches, so nothing must be freed inside the body"
-        );
-        assert!(
-            dealloc_after > dealloc_in_body,
-            "{scenario}: a context still attached at thread exit must be freed after the thread \
-             body returned (by the autocleaner), but no deallocation was observed"
+            alloc_after - alloc_before,
+            dealloc_after - dealloc_before,
+            "{scenario}: allocations and deallocations must balance once the thread exited: the \
+             context record must not leak"
         );
     }
-    assert_eq!(
-        alloc_after - alloc_before,
-        dealloc_after - dealloc_before,
-        "{scenario}: allocations and deallocations must balance once the thread exited: the \
-         context record must not leak"
-    );
-}
 
-const AUTOCLEAN_TEST: &str = "autoclean_frees_context_on_thread_exit";
-const EXPLICIT_DETACH_TEST: &str = "explicit_detach_frees_context_inside_thread_body";
+    const AUTOCLEAN_TEST: &str = "autoclean_frees_context_on_thread_exit";
+    const EXPLICIT_DETACH_TEST: &str = "explicit_detach_frees_context_inside_thread_body";
+
+    /// Implements the small protocol expected by `cargo nextest` (and plain `cargo test`): list
+    /// the tests for `--list`, run all scenarios by default, or only the one selected with
+    /// `--exact <name>`.
+    pub(crate) fn run() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+
+        // `cargo nextest` (and `cargo test -- --list`) discovery protocol: list the tests, one
+        // `<name>: test` line per test. This harness has no ignored tests, so `--ignored` prints
+        // nothing.
+        if args.iter().any(|arg| arg == "--list") {
+            if !args.iter().any(|arg| arg == "--ignored") {
+                println!("{AUTOCLEAN_TEST}: test");
+                println!("{EXPLICIT_DETACH_TEST}: test");
+            }
+            return;
+        }
+
+        // The TLS slot is accessed through inline assembly (TLSDESC), which Miri doesn't support;
+        // the crate's other TLS tests are skipped under Miri for the same reason.
+        if cfg!(miri) {
+            println!("skipped under Miri: inline-asm TLSDESC access is not supported");
+            return;
+        }
+
+        // Run all scenarios by default (plain `cargo test` run), or only the one selected with
+        // `--exact <name>` by nextest.
+        for (name, explicit_detach) in [(AUTOCLEAN_TEST, false), (EXPLICIT_DETACH_TEST, true)] {
+            if args.is_empty() || args.iter().any(|arg| arg == name) {
+                run_scenario(explicit_detach, name);
+            }
+        }
+    }
+}
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    // `cargo nextest` (and `cargo test -- --list`) discovery protocol: list the tests, one
-    // `<name>: test` line per test. This harness has no ignored tests, so `--ignored` prints
-    // nothing.
-    if args.iter().any(|arg| arg == "--list") {
-        if !args.iter().any(|arg| arg == "--ignored") {
-            println!("{AUTOCLEAN_TEST}: test");
-            println!("{EXPLICIT_DETACH_TEST}: test");
-        }
-        return;
-    }
-
-    // The TLS slot is accessed through inline assembly (TLSDESC), which Miri doesn't support; the
-    // crate's other TLS tests are skipped under Miri for the same reason.
-    if cfg!(miri) {
-        println!("skipped under Miri: inline-asm TLSDESC access is not supported");
-        return;
-    }
-
-    // Run all scenarios by default (plain `cargo test` run), or only the one selected with
-    // `--exact <name>` by nextest.
-    for (name, explicit_detach) in [(AUTOCLEAN_TEST, false), (EXPLICIT_DETACH_TEST, true)] {
-        if args.is_empty() || args.iter().any(|arg| arg == name) {
-            run_scenario(explicit_detach, name);
-        }
-    }
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    imp::run();
 }
