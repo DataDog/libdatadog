@@ -210,6 +210,7 @@ num-derive = { version = "0.4.2", default-features = false }
 num-traits = { version = "0.2.19", default-features = false }
 object = { version = "0.36", default-features = false }
 once_cell = { version = "1.18", default-features = false }
+opentelemetry-proto = { version = "0.33", default-features = false }
 os_info = { version = "3.14.0", default-features = false }
 page_size = { version = "0.6.0", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
