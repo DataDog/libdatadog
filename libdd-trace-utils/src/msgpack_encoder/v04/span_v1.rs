@@ -607,11 +607,9 @@ fn span_events_to_legacy_json<T: TraceData>(span_events: &[SpanEvent<T>]) -> Str
 /// tracer's C serializer produced for these attributes before native nested attributes existed.
 ///
 /// v0.4 link/event attributes have no nested representation, so the pre-native wire always carried
-/// the `json_encode` string; reproducing it here keeps that wire unchanged for old agents. The C
-/// serializer only builds native nesting when every leaf is byte-parity-safe (finite decimal-range
-/// floats, ints, bools, strings, and nested lists/maps of those) and otherwise keeps the value a
-/// JSON string, so this encoder only ever meets those leaf kinds. `Bytes` cannot originate from a
-/// PHP value and is encoded defensively as a (lossy-UTF-8) JSON string.
+/// the `json_encode` string; reproducing it here keeps that wire unchanged for old agents. Floats
+/// follow PHP's `serialize_precision=-1` format (see [`write_php_json_float`]). `Bytes` cannot
+/// originate from a PHP value and is encoded defensively as a (lossy-UTF-8) JSON string.
 fn attr_to_php_json<T: TraceData>(v: &AttributeValue<T>) -> String {
     let mut out = String::new();
     write_attr_json(&mut out, v);
@@ -625,9 +623,7 @@ fn write_attr_json<T: TraceData>(out: &mut String, v: &AttributeValue<T>) {
         AttributeValue::Int(i) => {
             let _ = write!(out, "{i}");
         }
-        AttributeValue::Float(f) => {
-            let _ = write!(out, "{f}");
-        }
+        AttributeValue::Float(f) => write_php_json_float(out, *f),
         AttributeValue::Bytes(b) => json_escape_str(out, &String::from_utf8_lossy(b.borrow())),
         AttributeValue::List(items) => {
             out.push('[');
@@ -652,6 +648,73 @@ fn write_attr_json<T: TraceData>(out: &mut String, v: &AttributeValue<T>) {
             out.push('}');
         }
     }
+}
+
+/// Appends `f` exactly as PHP's `json_encode` prints it (`zend_gcvt` mode 0): shortest round-trip
+/// digits, in exponent form (`1.0e+20`, `1.0e-5`) when the decimal point position is > 17 or < -3.
+fn write_php_json_float(out: &mut String, f: f64) {
+    if !f.is_finite() {
+        // json_encode rejects Inf/NaN; 0 is what it substitutes with JSON_PARTIAL_OUTPUT_ON_ERROR.
+        out.push('0');
+        return;
+    }
+    if f.is_sign_negative() {
+        out.push('-');
+    }
+    let (digits, exp) = php_shortest_digits(f.abs());
+    let decpt = exp + 1; // zend_dtoa convention: value = 0.DIGITS * 10^decpt
+    if !(-3..=17).contains(&decpt) {
+        out.push_str(&digits[..1]);
+        out.push('.');
+        out.push_str(if digits.len() > 1 { &digits[1..] } else { "0" });
+        let sign = if exp < 0 { '-' } else { '+' };
+        let _ = write!(out, "e{sign}{}", exp.unsigned_abs());
+    } else if decpt <= 0 {
+        out.push_str("0.");
+        out.push_str(&"0".repeat(decpt.unsigned_abs() as usize));
+        out.push_str(&digits);
+    } else {
+        let int_len = decpt as usize;
+        if digits.len() <= int_len {
+            out.push_str(&digits);
+            out.push_str(&"0".repeat(int_len - digits.len()));
+        } else {
+            out.push_str(&digits[..int_len]);
+            out.push('.');
+            out.push_str(&digits[int_len..]);
+        }
+    }
+}
+
+/// Shortest round-trip significant digits and scientific exponent of a finite `f >= 0`. Rust rounds
+/// exact halfway ties up where zend_dtoa rounds them to even (e.g. 110767565253548.125 -> ...12).
+fn php_shortest_digits(f: f64) -> (String, i32) {
+    let split = |s: &str| -> (String, i32) {
+        let (m, e) = s.split_once('e').unwrap_or((s, "0"));
+        (m.replace('.', ""), e.parse().unwrap_or(0))
+    };
+    let (digits, exp) = split(&format!("{f:e}"));
+    let last = digits.as_bytes()[digits.len() - 1] - b'0';
+    if last % 2 == 1 {
+        let head = &digits[..digits.len() - 1];
+        for alt in [last - 1, last + 1].into_iter().filter(|&d| d <= 9) {
+            let cand = format!("{head}{alt}");
+            if format!("{}.{}e{exp}", &cand[..1], &cand[1..]).parse::<f64>() != Ok(f) {
+                continue;
+            }
+            // A tie iff f's exact decimal expansion (<= 767 digits) is "<lower candidate>5000...".
+            let (exact, exact_exp) = split(&format!("{f:.800e}"));
+            let lower = if alt < last { &cand } else { &digits };
+            if exact_exp == exp {
+                if let Some(rest) = exact.strip_prefix(lower.as_str()) {
+                    if rest.starts_with('5') && rest[1..].bytes().all(|b| b == b'0') {
+                        return (cand, exp);
+                    }
+                }
+            }
+        }
+    }
+    (digits, exp)
 }
 
 /// Appends `s` as a JSON string literal (surrounding quotes included), escaped exactly like PHP's
@@ -822,6 +885,39 @@ mod tests {
         // producing a duplicate `"env"` key on the wire.
         assert_eq!(map_get(meta, "env").unwrap().as_str(), Some("prod"));
         assert_eq!(map_get(meta, "http.method").unwrap().as_str(), Some("GET"));
+    }
+
+    #[test]
+    fn tid_attribute_is_never_emitted_from_the_attribute_map() {
+        // A user-set `_dd.p.tid` attribute is dropped on every span: the local root carries the
+        // chunk trace-id high half instead, other spans carry nothing.
+        let tid_attr = || {
+            let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+            attrs.insert(bs("_dd.p.tid"), AttributeValue::String(bs("user-set")));
+            attrs
+        };
+        let root = SpanBytes {
+            attributes: tid_attr(),
+            ..minimal_span()
+        };
+        let child = SpanBytes {
+            span_id: 2,
+            parent_id: 1,
+            attributes: tid_attr(),
+            ..minimal_span()
+        };
+        let mut trace_id = [0u8; 16];
+        trace_id[..8].copy_from_slice(&0xdead_beef_u64.to_be_bytes());
+        let mut payload = minimal_payload(trace_id, root);
+        payload.chunks[0].spans.push(child);
+        let traces = encode_and_decode(&payload);
+
+        let root_meta = map_get(&traces[0][0], "meta").expect("root meta present");
+        assert_eq!(
+            map_get(root_meta, "_dd.p.tid").unwrap().as_str(),
+            Some("00000000deadbeef")
+        );
+        assert!(map_get(&traces[0][1], "meta").is_none_or(|m| map_get(m, "_dd.p.tid").is_none()));
     }
 
     #[test]
@@ -1764,6 +1860,48 @@ mod tests {
             attr_to_php_json(&list(vec![AttributeValue::Bool(true)])),
             "[true]"
         );
+    }
+
+    /// Locks float formatting to PHP `json_encode($f)` (serialize_precision=-1). The right-hand
+    /// strings are the literal output of `php -r 'echo json_encode($f);'` (PHP 8.3).
+    #[test]
+    fn attr_to_php_json_floats_match_php_json_encode() {
+        let cases: &[(f64, &str)] = &[
+            (1e20, "1.0e+20"),
+            (-1e20, "-1.0e+20"),
+            (1e-5, "1.0e-5"),
+            (9.99e-5, "9.99e-5"),
+            (1e-4, "0.0001"),
+            (0.1, "0.1"),
+            (0.05, "0.05"),
+            (1.5, "1.5"),
+            (1e15, "1000000000000000"),
+            (1e16, "10000000000000000"),
+            (1e17, "1.0e+17"),
+            (123456789012345678.0, "1.2345678901234568e+17"),
+            (12345678901234567.0, "12345678901234568"),
+            (1.0 / 3.0, "0.3333333333333333"),
+            (-2.5e-7, "-2.5e-7"),
+            (1e100, "1.0e+100"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (5e-324, "5.0e-324"),
+            (0.0, "0"),
+            (-0.0, "-0"),
+            (1.0, "1"),
+            (3.0, "3"),
+            (100.0, "100"),
+            // 110767565253548.125 exactly, a halfway tie: zend_dtoa rounds to even, Rust up.
+            (f64::from_bits(0x42d9_2f85_584a_eb08), "110767565253548.12"),
+        ];
+        for &(f, want) in cases {
+            assert_eq!(
+                attr_to_php_json(&AttributeValueBytes::Float(f)),
+                want,
+                "{f:e}"
+            );
+        }
+        // Inf/NaN have no JSON form; json_encode's partial-output substitute is 0.
+        assert_eq!(attr_to_php_json(&AttributeValueBytes::Float(f64::NAN)), "0");
     }
 
     #[test]
