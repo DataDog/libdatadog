@@ -111,9 +111,7 @@ where
 
 /// Encodes and sends already-decoded v1 trace chunks.
 ///
-/// V1-native counterpart of [`send_agentless_traces`]. Traces sent via this path are not
-/// obfuscated: `libdd_trace_obfuscation::obfuscate::obfuscate_v04_span` has no v1 counterpart
-/// yet, so this is a known, temporary gap until v1-native obfuscation lands separately.
+/// V1-native counterpart of [`send_agentless_traces`].
 pub async fn send_agentless_traces_v1<C, T>(
     capabilities: &C,
     traces: PooledTraceChunks<'_, T>,
@@ -159,8 +157,12 @@ where
         }
     }
     for chunk in traces.iter_mut() {
-        // TODO: v1-native obfuscation is not implemented yet; traces sent via this path are
-        // not obfuscated. See `obfuscate_v04_span` above for the v0.4-native equivalent.
+        for span in &mut chunk.spans {
+            // Obfuscate every span we are about to send to the intake
+            libdd_trace_obfuscation::obfuscate::obfuscate_v1_span(span, &config.obfuscation_config);
+        }
+
+        // Remove duplicate attributes before serialization
         chunk.dedup();
     }
 

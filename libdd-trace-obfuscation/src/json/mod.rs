@@ -40,7 +40,6 @@ impl JsonObfuscator {
     ///
     /// Any parse error is discarded and a possibly truncated value returned, like
     /// [`JsonObfuscator::obfuscate`].
-    // TODO(APMSP-2764): surface the parse error instead of discarding it.
     #[must_use]
     pub fn obfuscate_opt(&self, input: &str) -> Option<String> {
         if input.is_empty() {

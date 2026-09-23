@@ -82,7 +82,7 @@ const MAX_BATCH_SIZE: usize = 20;
 /// Split a chunk into pieces of at most [`MAX_BATCH_SIZE`] spans, keeping each piece's spans'
 /// buffer capacity for reuse
 fn split_chunk<T: TraceData>(chunk: Vec<Span<T>>) -> impl Iterator<Item = Vec<Span<T>>> {
-    let pieces = (chunk.len() / 20) + 1;
+    let pieces = (chunk.len() / MAX_BATCH_SIZE) + 1;
     let batch_len = chunk.len() / pieces;
     let mut remaining = chunk;
     std::iter::from_fn(move || {
