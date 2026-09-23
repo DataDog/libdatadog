@@ -33,10 +33,13 @@ pub use unix::*;
 pub mod service;
 mod tokio_util;
 #[cfg(windows)]
-mod windows;
+pub mod windows;
 
 #[cfg(windows)]
-pub use self::windows::*;
+pub use self::windows::{
+    ddog_daemon_entry_point, ddog_setup_crashtracking, primary_sidecar_identifier,
+    setup_daemon_process,
+};
 
 macro_rules! sidecar_version {
     () => {

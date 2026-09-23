@@ -66,19 +66,6 @@ use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use serde::{Deserialize, Serialize};
 
-/// A Windows process handle used for remote config notification.
-///
-/// Wraps a raw `HANDLE` value (from `OpenProcess`). The handle is intentionally not
-/// closed on drop — it is valid for the lifetime of the session.
-#[cfg(windows)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct ProcessHandle(pub winapi::um::winnt::HANDLE);
-
-#[cfg(windows)]
-unsafe impl Send for ProcessHandle {}
-#[cfg(windows)]
-unsafe impl Sync for ProcessHandle {}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SidecarStats {
     trace_flusher: TraceFlusherStats,
@@ -456,17 +443,8 @@ impl SidecarServer {
     }
 
     #[cfg(windows)]
-    #[allow(clippy::unwrap_used)]
     fn get_notify_target(&self, session: &SessionInfo) -> Option<RemoteConfigNotifyTarget> {
-        let notify_function = *session.remote_config_notify_function.lock().unwrap();
-        if notify_function.0.is_null() {
-            return None;
-        }
-        let process_handle = (*session.process_handle.lock_or_panic())?;
-        Some(RemoteConfigNotifyTarget {
-            process_handle,
-            notify_function,
-        })
+        session.remote_config_notify_target.lock_or_panic().clone()
     }
 
     #[cfg(unix)]
@@ -859,7 +837,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
     async fn set_session_config(
         &self,
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)] remote_config_notify_target: Option<RemoteConfigNotifyTarget>,
         config: SessionConfig,
         _is_fork: bool,
     ) {
@@ -881,19 +859,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .pid
             .store(self.connection.peer().pid as i32, Ordering::Relaxed);
         #[cfg(windows)]
-        #[allow(clippy::unwrap_used)]
         {
-            *session.remote_config_notify_function.lock().unwrap() = remote_config_notify_function;
-            let handle = unsafe {
-                winapi::um::processthreadsapi::OpenProcess(
-                    winapi::um::winnt::PROCESS_ALL_ACCESS,
-                    0,
-                    self.connection.peer().pid,
-                )
-            };
-            if !handle.is_null() {
-                *session.process_handle.lock_or_panic() = Some(ProcessHandle(handle));
-            }
+            *session.remote_config_notify_target.lock_or_panic() = remote_config_notify_target;
         }
         *session.remote_config_enabled.lock_or_panic() = config.remote_config_enabled;
         *session.process_tags.lock_or_panic() = config.process_tags.clone();

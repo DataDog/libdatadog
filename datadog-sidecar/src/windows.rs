@@ -32,6 +32,8 @@ use winapi::{
     },
 };
 
+pub mod remote_config_notification;
+
 /// cbindgen:ignore
 #[no_mangle]
 pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {

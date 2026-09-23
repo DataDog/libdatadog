@@ -285,15 +285,16 @@ pub fn register_telemetry_metric(
 pub fn set_session_config(
     transport: &mut SidecarTransport,
     session_id: String,
-    #[cfg(windows)]
-    remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+    #[cfg(windows)] remote_config_notify_target: Option<
+        crate::service::remote_configs::RemoteConfigNotifyTarget,
+    >,
     config: &SessionConfig,
     is_fork: bool,
 ) -> io::Result<()> {
     lock_sender(transport)?.set_session_config(
         session_id,
         #[cfg(windows)]
-        remote_config_notify_function,
+        remote_config_notify_target,
         config.clone(),
         is_fork,
     );
