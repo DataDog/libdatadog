@@ -897,3 +897,52 @@ fn span_debug_log_renders_readable_string() {
     // Frees correctly via the same free function as the v0.4 variant.
     unsafe { ddog_free_charslice(slice) };
 }
+
+#[test]
+fn chunk_root_span_idx_picks_local_root_not_index_zero() {
+    // Index 0 has a parent in the same chunk, so the later parent-less span is the root.
+    let mut b = TracerPayloadV1Builder::default();
+    let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
+
+    let child = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, child, 1);
+    ddog_v1_set_span_parent_id(&mut b, ci, child, 2);
+
+    let root = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, root, 2);
+
+    assert_eq!(ddog_v1_get_chunk_root_span_idx(&b, ci), 1);
+}
+
+#[test]
+fn chunk_root_span_idx_picks_remote_parent_root() {
+    // A remote-parent root (e.g. amqp deliver, an inferred span) whose parent isn't in the chunk.
+    let mut b = TracerPayloadV1Builder::default();
+    let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
+
+    let web = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, web, 7);
+    ddog_v1_set_span_parent_id(&mut b, ci, web, 9);
+
+    let inferred = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, inferred, 9);
+    ddog_v1_set_span_parent_id(&mut b, ci, inferred, 2); // remote
+
+    assert_eq!(ddog_v1_get_chunk_root_span_idx(&b, ci), 1);
+}
+
+#[test]
+fn chunk_root_span_idx_falls_back_to_zero_without_a_recognizable_root() {
+    // Every parent is in the chunk (malformed cycle): fall back to index 0, as the wire does.
+    let mut b = TracerPayloadV1Builder::default();
+    let ci = ddog_v1_builder_new_chunk(&mut b, 0, 1);
+
+    let s0 = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, s0, 1);
+    ddog_v1_set_span_parent_id(&mut b, ci, s0, 2);
+    let s1 = ddog_v1_chunk_new_span(&mut b, ci);
+    ddog_v1_set_span_id(&mut b, ci, s1, 2);
+    ddog_v1_set_span_parent_id(&mut b, ci, s1, 1);
+
+    assert_eq!(ddog_v1_get_chunk_root_span_idx(&b, ci), 0);
+}

@@ -10,7 +10,7 @@
 //! | v1::Span field / attribute            | v0.4 field                                  |
 //! |---------------------------------------|---------------------------------------------|
 //! | `env` / `version` / `component`       | `meta["env"]` / `meta["version"]` / ...  (`env`/`version` fall back to the payload-level `env`/`app_version` when unset on the span) |
-//! | `span_kind`                           | `meta["span.kind"]` (lowercase string)      |
+//! | `span_kind`                           | `meta["span.kind"]` (lowercase; `Internal` falls back to a `span.kind` string attribute) |
 //! | `AttributeValue::String` / `Bool`     | `meta[k]` (`"true"` / `"false"` for bool)   |
 //! | `AttributeValue::Float` / `Int`       | `metrics[k]` (Int cast to `f64`)            |
 //! | `AttributeValue::Bytes`               | `meta_struct[k]` (raw bytes)                |
@@ -131,22 +131,15 @@ fn split_trace_id(trace_id: &[u8; 16]) -> (u64, u64) {
     )
 }
 
-/// Whether `span` is the local-root of its chunk. Mirrors the v0.4 → v1 upgrade's root
-/// detection (`extract_chunk_attrs`): a span is the local root when it has no parent within the
-/// chunk (`parent_id == 0`) or is explicitly marked top-level (`_dd.top_level == 1`, set on the
-/// local root of a distributed trace whose real parent is remote). Trace-level context
-/// (`_dd.p.tid`, `_dd.origin`, `_dd.p.dm`, `_sampling_priority_v1`) belongs on this span only.
-pub(super) fn is_local_root<T: TraceData>(span: &Span<T>) -> bool {
-    if span.parent_id == 0 {
-        return true;
-    }
-    matches!(
-        span.attributes.get("_dd.top_level"),
-        Some(AttributeValue::Float(f)) if *f == 1.0
-    ) || matches!(
-        span.attributes.get("_dd.top_level"),
-        Some(AttributeValue::Int(1))
-    )
+/// Index of the chunk's local root: the first span whose parent isn't in the chunk (none, or
+/// remote), else `0`. Trace-level context (`_dd.p.tid`, `_dd.origin`, ...) belongs on it only.
+pub fn local_root_idx<'a, T: TraceData + 'a>(
+    mut spans: impl Iterator<Item = &'a Span<T>> + Clone,
+) -> usize {
+    let ids: HashSet<u64> = spans.clone().map(|s| s.span_id).collect();
+    spans
+        .position(|s| s.parent_id == 0 || !ids.contains(&s.parent_id))
+        .unwrap_or(0)
 }
 
 /// Per-bucket counts for the v0.4 `meta`, `metrics`, and `meta_struct` maps.
@@ -283,7 +276,19 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }));
 
     let (trace_id_low, trace_id_high) = split_trace_id(chunk.trace_id);
-    let kind_meta = span_kind_to_meta(span.span_kind);
+    // `Internal` is also where a non-standard kind string (e.g. "process") ends up after
+    // ingestion collapses it; prefer the companion `span.kind` attribute it left behind.
+    let kind_meta = span_kind_to_meta(span.span_kind).or_else(|| {
+        span_attrs_dd.iter().find_map(|(k, v)| {
+            if k.borrow() != "span.kind" {
+                return None;
+            }
+            match v {
+                AttributeValue::String(s) => Some(s.borrow()),
+                _ => None,
+            }
+        })
+    });
 
     // `env`/`version` fall back to the payload-level value when the span doesn't set its own —
     // mirrors how a v1 tracer can set these once at the payload level instead of duplicating
@@ -861,6 +866,55 @@ mod tests {
     }
 
     #[test]
+    fn span_kind_internal_with_preserved_string_attribute_round_trips() {
+        // A non-standard kind (e.g. "process") collapses to Internal at ingestion but survives
+        // as a companion `span.kind` attribute; the downgrade must prefer it over omitting the key.
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("span.kind"), AttributeValue::String(bs("process")));
+        let span = SpanBytes {
+            span_kind: SpanKind::Internal,
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta must be present");
+
+        assert_eq!(
+            map_get(meta, "span.kind").unwrap().as_str(),
+            Some("process")
+        );
+        // Must be written exactly once (promoted, not duplicated as a generic attribute too).
+        let meta_entries = meta.as_map().expect("meta must be a map");
+        let kind_count = meta_entries
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("span.kind"))
+            .count();
+        assert_eq!(
+            kind_count, 1,
+            "duplicate \"span.kind\" key written to the wire"
+        );
+    }
+
+    #[test]
+    fn span_kind_known_value_ignores_stray_span_kind_attribute() {
+        // A recognized kind always wins over any (unexpected) `span.kind` attribute — the
+        // attribute fallback only kicks in for `Internal`.
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("span.kind"), AttributeValue::String(bs("stale")));
+        let span = SpanBytes {
+            span_kind: SpanKind::Server,
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta must be present");
+
+        assert_eq!(map_get(meta, "span.kind").unwrap().as_str(), Some("server"));
+    }
+
+    #[test]
     fn trace_id_128_bit_splits_into_low_field_and_high_meta() {
         // trace_id = 0x_DEADBEEF__CAFEBABE_DEADBEEF__CAFEBABE  (high | low)
         let mut tid = [0u8; 16];
@@ -1254,6 +1308,45 @@ mod tests {
             Some("rum")
         );
         assert_eq!(map_get(root_meta, "_dd.p.dm").unwrap().as_str(), Some("-3"));
+    }
+
+    #[test]
+    fn trace_level_tags_land_on_remote_parent_root_not_first_span() {
+        // Inferred proxy: the web span is listed first but its parent (the inferred span, whose
+        // own parent is remote) is in the chunk, so the inferred span is the local root.
+        let web = SpanBytes {
+            span_id: 7,
+            parent_id: 9,
+            ..minimal_span()
+        };
+        let inferred = SpanBytes {
+            span_id: 9,
+            parent_id: 2,
+            ..minimal_span()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0u8; 16],
+                origin: bs("rum"),
+                spans: vec![web, inferred],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let traces = encode_and_decode(&payload);
+        let trace = traces[0].as_array().expect("trace is array");
+
+        if let Some(web_meta) = map_get(&trace[0], "meta") {
+            assert!(
+                map_get(web_meta, "_dd.origin").is_none(),
+                "_dd.origin leaked onto non-root"
+            );
+        }
+        let root_meta = map_get(&trace[1], "meta").expect("local root has meta");
+        assert_eq!(
+            map_get(root_meta, "_dd.origin").unwrap().as_str(),
+            Some("rum")
+        );
     }
 
     #[test]

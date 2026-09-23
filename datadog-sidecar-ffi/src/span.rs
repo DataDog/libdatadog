@@ -15,6 +15,7 @@
 
 use libdd_common_ffi::slice::CharSlice;
 use libdd_tinybytes::BytesString;
+use libdd_trace_utils::msgpack_encoder::v04::local_root_idx;
 use libdd_trace_utils::span::v1::{
     AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes, TraceChunkBytes,
     TracerPayloadBytes,
@@ -194,6 +195,11 @@ impl TracerPayloadV1Builder {
 
     pub fn event_count(&self, chunk: usize, span: usize) -> usize {
         self.span_node(chunk, span).map_or(0, |s| s.events.len())
+    }
+
+    /// Index of the chunk's local-root span, as the v0.4 wire picks it (`local_root_idx`).
+    pub fn chunk_root_idx(&self, chunk: usize) -> usize {
+        local_root_idx((0..self.span_count(chunk)).filter_map(|i| self.span(chunk, i)))
     }
 
     // Index → node-pointer resolvers, used by the integration tests to reach a node the way C does
@@ -405,6 +411,16 @@ pub extern "C" fn ddog_v1_get_chunk_count(builder: &TracerPayloadV1Builder) -> u
 #[no_mangle]
 pub extern "C" fn ddog_v1_get_span_count(builder: &TracerPayloadV1Builder, chunk: usize) -> usize {
     builder.span_count(chunk)
+}
+
+/// Index of `chunk`'s local-root span (see [`TracerPayloadV1Builder::chunk_root_idx`]). Chunk-level
+/// trace tags (trace_id_high, sampling priority/mechanism, origin) belong on this span only.
+#[no_mangle]
+pub extern "C" fn ddog_v1_get_chunk_root_span_idx(
+    builder: &TracerPayloadV1Builder,
+    chunk: usize,
+) -> usize {
+    builder.chunk_root_idx(chunk)
 }
 
 /// Number of links on a span.
