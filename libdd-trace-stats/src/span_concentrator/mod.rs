@@ -84,7 +84,7 @@ impl<T> FlushResult<T> {
 ///
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
-pub trait FlushableConcentrator {
+pub trait FlushableConcentrator: Send + Sync {
     /// Flush time buckets and return them together with flush metadata. If `force` is true, flush
     /// all buckets. See [`FlushResult`] for the returned data.
     fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket>;

@@ -46,6 +46,19 @@ pub trait MaybeSend {}
 #[cfg(target_arch = "wasm32")]
 impl<T> MaybeSend for T {}
 
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSync: Send {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSync for T {}
+
+/// On wasm, `MaybeSync` is implemented for all types (no `Sync` requirement).
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSync {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSync for T {}
+
 /// A `Future` that is additionally `MaybeSend`, avoiding the need for a `cfg` split.
 pub trait MaybeSendFuture<T>: Future<Output = T> + MaybeSend {}
 impl<T, F: Future<Output = T> + MaybeSend> MaybeSendFuture<T> for F {}
