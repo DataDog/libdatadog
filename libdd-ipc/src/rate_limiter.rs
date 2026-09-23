@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use crate::platform::{unlink_shm_name, FileBackedHandle, MappedMem, NamedShmHandle};
 use libdd_common::rate_limiter::{Limiter, LocalLimiter};
 use std::cell::UnsafeCell;
 use std::ffi::CString;
@@ -19,6 +19,22 @@ struct ShmLimiterData<'a, Inner> {
     limiter: LocalLimiter,
     inner: UnsafeCell<Inner>,
     _phantom: PhantomData<&'a ShmLimiterMemory<Inner>>,
+}
+
+impl<Inner> ShmLimiterData<'_, Inner> {
+    /// Bring this slot into service: reset its limiter, let `init` write the payload, then
+    /// publish it.
+    ///
+    /// Everything a searcher may observe has to be in place before the count goes positive,
+    /// which is what makes that store a release and the matching load in `find` an acquire.
+    /// Until then the slot is reserved but invisible - off the free list, and skipped by
+    /// every scan.
+    fn initialise_and_publish(&self, seconds: u32, init: impl FnOnce(&Inner)) {
+        // The seconds come from an RPC argument, and zero is a divisor.
+        self.limiter.reset(seconds.max(1));
+        init(unsafe { &*self.inner.get() });
+        self.rc.store(1, Ordering::Release);
+    }
 }
 
 pub struct ShmLimiterMemory<Inner> {
@@ -41,7 +57,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
     pub fn create(path: CString) -> io::Result<Self> {
         // Clean leftover shm
-        unsafe { libc::unlink(path.as_ptr()) };
+        unlink_shm_name(path.as_c_str());
         let mem = Self::new(NamedShmHandle::create(path, 0x1000)?.map()?);
         mem.first_free_ref()
             .store(Self::START_OFFSET, Ordering::Relaxed);
@@ -171,27 +187,26 @@ impl<Inner> ShmLimiterMemory<Inner> {
         }
     }
 
+    /// Allocate a slot whose payload needs no initialisation.
     pub fn alloc(&mut self) -> Option<ShmLimiter<Inner>> {
-        self.alloc_with_granularity(1)
+        self.alloc_with_granularity(1, |_| ())
     }
 
+    /// Allocate a slot, initialise it, and publish it, in that order.
+    ///
+    /// `init` writes the payload while the slot is reserved but not yet visible: it is off
+    /// the free list, so no other allocation can take it, and its reference count is still
+    /// zero, so no scan will match it. Publishing is the single release-store that raises
+    /// the count, after everything a searcher may observe is already in place.
+    ///
     /// Returns `None` when no memory left.
-    pub fn alloc_with_granularity(&mut self, seconds: u32) -> Option<ShmLimiter<Inner>> {
-        let reference = ShmLimiter {
-            idx: self.next_free()?,
-            memory: self.clone(),
-        };
-        reference.with_limiter(|limiter| {
-            // Initialize the limiter before publishing it through the reference count.
-            // SAFETY: this entry is not visible while its reference count is zero.
-            unsafe {
-                (*(limiter as *const _ as *mut ShmLimiterData<Inner>))
-                    .limiter
-                    // The seconds come from an RPC argument, and zero is a divisor.
-                    .reset(seconds.max(1))
-            };
-            limiter.rc.store(1, Ordering::Release);
-        })?;
+    pub fn alloc_with_granularity(
+        &mut self,
+        seconds: u32,
+        init: impl FnOnce(&Inner),
+    ) -> Option<ShmLimiter<Inner>> {
+        let reference = ShmLimiter::owning(self.next_free()?, self.clone());
+        reference.with_limiter(|slot| slot.initialise_and_publish(seconds, init))?;
         Some(reference)
     }
 
@@ -214,12 +229,9 @@ impl<Inner> ShmLimiterMemory<Inner> {
                 }
             }
         })?;
-        // Only now: `ShmLimiter`'s `Drop` unconditionally subtracts one, so a handle built
-        // before the compare-exchange landed would release a reference on every refusal.
-        acquired.then(|| ShmLimiter {
-            idx,
-            memory: self.clone(),
-        })
+        // Only now: `ShmLimiter`'s `Drop` subtracts one, so a handle built before the
+        // compare-exchange landed would release a reference on every refusal.
+        acquired.then(|| ShmLimiter::owning(idx, self.clone()))
     }
 
     pub fn find<F>(&self, cond: F) -> Option<ShmLimiter<Inner>>
@@ -229,7 +241,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         // Snapshot the extent once and stop there. Terminating on the slot accessor's
         // refusal instead would let a miss extend the mapping slot by slot, and a `next_free`
         // sentinel read out of the segment is a peer-writable stop condition.
-        let limit = u32::try_from(self.with_mapping(|slice| Some(slice.len()))?).ok()?;
+        let limit = u32::try_from(self.mem.refresh_size()).ok()?;
         let mut cur = Self::START_OFFSET;
         while cur
             .checked_add(Self::STRIDE)
@@ -240,7 +252,11 @@ impl<Inner> ShmLimiterMemory<Inner> {
                 // allocated from untouched tail space still has the zero it was mapped with,
                 // so gating on it would hide every slot that has not been recycled yet. It
                 // is not needed as a terminator either: `limit` bounds the scan.
-                data.rc.load(Ordering::Relaxed) > 0 && cond(unsafe { &*data.inner.get() })
+                //
+                // Acquire, to pair with the release-store that publishes an allocation: it
+                // is what makes "the count is positive" mean "the payload below is this
+                // allocation's, and not the one before it".
+                data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
             })?;
             if hit {
                 if let Some(limiter) = self.get(cur) {
@@ -257,6 +273,12 @@ impl<Inner> ShmLimiterMemory<Inner> {
 
 pub struct ShmLimiter<Inner> {
     idx: u32,
+    /// The process that acquired the reference this handle stands for.
+    ///
+    /// `fork` copies the handle without copying the reference: one acquisition ends up with
+    /// two destructors. Recording who took it is what lets the other one decline to give it
+    /// back. See [`Drop`].
+    owner_pid: u32,
     memory: ShmLimiterMemory<Inner>,
 }
 
@@ -267,6 +289,15 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 }
 
 impl<Inner> ShmLimiter<Inner> {
+    /// A handle owning one reference to `idx`, stamped with the process taking it.
+    fn owning(idx: u32, memory: ShmLimiterMemory<Inner>) -> Self {
+        ShmLimiter {
+            idx,
+            owner_pid: std::process::id(),
+            memory,
+        }
+    }
+
     /// Run `f` on this slot.
     ///
     /// `None` means the offset does not describe a slot wholly inside the mapping. Contents
@@ -344,6 +375,10 @@ impl<Inner> Limiter for ShmLimiter<Inner> {
 impl<Inner> Drop for ShmLimiter<Inner> {
     fn drop(&mut self) {
         if self.idx == 0 {
+            return;
+        }
+
+        if self.owner_pid != std::process::id() {
             return;
         }
 
@@ -460,7 +495,7 @@ mod tests {
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
 
         // Zero arrives straight from an RPC argument, and `inc` divides by it.
-        let limiter = limiters.alloc_with_granularity(0).unwrap();
+        let limiter = limiters.alloc_with_granularity(0, |_| ()).unwrap();
         let _ = limiter.inc(1);
 
         // A count a peer pushed to the edge cannot be joined - but must not overflow saying so.
@@ -580,7 +615,290 @@ mod tests {
         assert_eq!(total, THREADS * PER_THREAD);
         indices.sort_unstable();
         indices.dedup();
-        assert_eq!(indices.len(), total, "two allocations returned the same slot");
+        assert_eq!(
+            indices.len(),
+            total,
+            "two allocations returned the same slot"
+        );
+    }
+
+    /// Bringing a slot into service must not mutate anything through a shared reference.
+    ///
+    /// The allocator only ever holds a `&ShmLimiterData`: slots live in a mapping shared
+    /// with other processes, so no exclusive borrow exists to be taken. Rust's rule is that
+    /// bytes reachable through a live shared reference do not change unless they sit in an
+    /// `UnsafeCell`, and the limiter's own state is not payload, so it is not in one - every
+    /// field of it therefore has to be individually interior-mutable.
+    ///
+    /// This drives the real publication path against a slot in ordinary memory, with no
+    /// mapping involved, so Miri can see it:
+    /// `cargo +nightly miri test -p libdd-ipc publishing_a_slot`.
+    #[test]
+    fn publishing_a_slot_does_not_mutate_through_a_shared_reference() {
+        let slot = ShmLimiterData::<()>::default();
+
+        // Exactly what the allocator gets, and it stays live across the call.
+        let shared: &ShmLimiterData<()> = &slot;
+        shared.initialise_and_publish(7, |_| ());
+
+        assert_eq!(
+            shared.rc.load(Ordering::SeqCst),
+            1,
+            "the slot must come back published"
+        );
+        assert!(shared.limiter.inc(1), "with a working limiter");
+    }
+
+    /// A recycled slot must not be searchable until the allocation that took it has finished
+    /// writing it.
+    ///
+    /// Entries are found by their payload, and freeing a slot does not scrub it, so a slot
+    /// published before its new payload is written matches under its *previous* tenant's
+    /// contents - and whoever matches it there is handed a budget meant for something else.
+    ///
+    /// The assertions run from inside the initialisation callback, because that is the only
+    /// moment the window exists: reserved, being written, not yet published. Publishing
+    /// before returning to the caller, and letting the caller fill the payload afterwards,
+    /// is what turns that window into one an unrelated process can observe.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_slot_is_not_searchable_until_its_payload_is_written() {
+        const OLD: u64 = 0xbad;
+        const NEW: u64 = 0x900d;
+
+        fn payload(mem: &ShmLimiterMemory<AtomicU64>, idx: u32) -> Option<u64> {
+            mem.with_slot(idx, |slot| {
+                unsafe { &*slot.inner.get() }.load(Ordering::Relaxed)
+            })
+        }
+
+        let path = CString::new("/ddlimiters-publish".to_string()).unwrap();
+        let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+
+        let first = limiters
+            .alloc_with_granularity(1, |hash| hash.store(OLD, Ordering::Relaxed))
+            .unwrap();
+        let idx = first.index();
+        drop(first);
+
+        assert_eq!(
+            payload(&limiters, idx),
+            Some(OLD),
+            "freeing leaves the payload where it was - which is what makes the window matter"
+        );
+
+        // A second handle on the same arena scans while the first allocates: the same thing
+        // a client process does, minus the process boundary, and with nothing between them.
+        let searcher = limiters.clone();
+        let second = limiters
+            .alloc_with_granularity(1, |hash| {
+                assert!(
+                    searcher
+                        .find(|h| h.load(Ordering::Relaxed) == OLD)
+                        .is_none(),
+                    "a slot being initialised must not still match its previous tenant"
+                );
+                hash.store(NEW, Ordering::Relaxed);
+                assert!(
+                    searcher
+                        .find(|h| h.load(Ordering::Relaxed) == NEW)
+                        .is_none(),
+                    "nor match its new payload before that payload is published"
+                );
+            })
+            .unwrap();
+
+        assert_eq!(
+            second.index(),
+            idx,
+            "the free list hands the same slot back"
+        );
+        assert_eq!(
+            limiters
+                .find(|h| h.load(Ordering::Relaxed) == NEW)
+                .map(|found| found.index()),
+            Some(idx),
+            "and once published it is findable under the payload it was given"
+        );
+        assert!(
+            limiters
+                .find(|h| h.load(Ordering::Relaxed) == OLD)
+                .is_none(),
+            "and never again under the one it replaced"
+        );
+    }
+
+    /// A handle inherited through `fork` must not release a reference it never took.
+    ///
+    /// The handle is ordinary process memory: `fork` copies its bytes into the child, while
+    /// the count it stands for is one increment in shared memory and stays one. Both copies
+    /// still run the same destructor, so an orderly parent and child between them give a
+    /// single acquisition back twice - retiring a slot its real owner still holds, and
+    /// handing it to the next allocation while that owner goes on using it.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_handle_inherited_through_fork_is_not_released_twice() {
+        fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
+            #[allow(clippy::unwrap_used)]
+            mem.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
+                .unwrap()
+        }
+
+        let path = CString::new("/ddlimiters-fork".to_string()).unwrap();
+        let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
+
+        // Stands in for the worker that allocated the slot: its reference is what keeps the
+        // slot alive while anybody else holds one.
+        let owner = limiters.alloc().unwrap();
+        let idx = owner.index();
+
+        let client = limiters.get(idx).expect("the slot is live");
+        assert_eq!(rc(&limiters, idx), 2, "owner plus client");
+
+        // SAFETY: the child only drops a handle - an atomic load and at most an atomic
+        // subtract, no allocation, no locks, no I/O - and leaves through `_exit`, so it runs
+        // no destructors of its own and never touches state the harness's other threads may
+        // have been holding when it forked.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed: {}", std::io::Error::last_os_error()),
+            0 => {
+                drop(client);
+                unsafe { libc::_exit(0) }
+            }
+            child => {
+                let mut status = 0;
+                assert_eq!(
+                    unsafe { libc::waitpid(child, &mut status, 0) },
+                    child,
+                    "waiting for the child must succeed"
+                );
+                assert_eq!(status, 0, "the child must have exited cleanly");
+                assert_eq!(
+                    rc(&limiters, idx),
+                    2,
+                    "the inherited copy must not have released the parent's reference"
+                );
+
+                drop(client);
+                assert_eq!(
+                    rc(&limiters, idx),
+                    1,
+                    "while the acquirer's own release still counts, exactly once"
+                );
+
+                // The owner still holds the slot it allocated, not one reissued to somebody
+                // else in the meantime.
+                assert_eq!(owner.index(), idx);
+                assert!(owner.inc(2), "the owner's limiter must still be its own");
+            }
+        }
+    }
+
+    /// A worker that creates the arena must get a pristine one, even when an earlier worker
+    /// left its segment behind by dying without running a destructor.
+    ///
+    /// Creation resets the free-list head and nothing else, so an adopted segment keeps its
+    /// old slots: counts, links, limiter state and payloads all survive into an arena that
+    /// believes it is empty, and the first allocation stores `rc = 1` over a slot an older
+    /// process may still hold a handle to. Adoption is deliberate for segments in general -
+    /// see `test_named_shm_recreate_adopts_our_own` - which is exactly why the arena that
+    /// cannot survive it has to remove the name itself.
+    ///
+    /// Windows has no name to remove and no adoption to prevent: a section lives exactly as
+    /// long as the handles to it, so one whose owner died is already gone.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_restarted_owner_does_not_adopt_a_stale_arena() {
+        fn payload(mem: &ShmLimiterMemory<AtomicU64>, idx: u32) -> Option<u64> {
+            mem.with_slot(idx, |slot| {
+                unsafe { &*slot.inner.get() }.load(Ordering::Relaxed)
+            })
+        }
+
+        let path = CString::new("/ddlimiters-restart".to_string()).unwrap();
+
+        let mut first = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let stale = first
+            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .unwrap();
+        let idx = stale.index();
+
+        // The replacement worker starts while the old segment is still there and still
+        // mapped, which is what an abrupt exit leaves behind.
+        let replacement = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+
+        assert_eq!(
+            replacement.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst)),
+            Some(0),
+            "a fresh arena must not inherit an owner count"
+        );
+        assert_eq!(
+            payload(&replacement, idx),
+            Some(0),
+            "nor a payload from the arena it replaced"
+        );
+        assert!(
+            replacement
+                .find(|hash| hash.load(Ordering::Relaxed) == 42)
+                .is_none(),
+            "and the stale entry must not be findable in it"
+        );
+
+        // Unlinking removes the name, not the object: whoever still holds the old arena
+        // keeps a working one, rather than sharing slots with the new owner.
+        assert_eq!(
+            stale.with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(42),
+            "the old arena must be undisturbed"
+        );
+        assert!(stale.inc(1), "and its limiter must still work");
+    }
+
+    /// A scan must cover the arena as it is now, not as it was when this process mapped it.
+    ///
+    /// The backed length is tracked per process and only this handle's own `ensure_space`
+    /// raises it, so an opener that mapped the arena at one page goes on scanning one page
+    /// however far a peer grows it. An index lookup catches up on its way to the slot it was
+    /// given; a predicate search has no index to aim at, so it has to ask first.
+    ///
+    /// Asking must stay free of side effects - see
+    /// `an_unsuccessful_scan_does_not_grow_the_arena`, which requires a miss to leave the
+    /// arena the size it was.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn find_sees_slots_another_opener_added() {
+        let path = CString::new("/ddlimiters-grown".to_string()).unwrap();
+        let mut owner = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+
+        // A second opener maps the arena while it is still one page long, and keeps that
+        // view - it never allocates, so nothing on its side ever extends it.
+        let observer = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        let mapped_at_open = observer.with_mapping(|slice| Some(slice.len())).unwrap();
+
+        // The owner grows it past that. Every handle is held, so nothing is recycled and the
+        // slot below is reached from untouched tail space.
+        let mut held = Vec::new();
+        let far = loop {
+            let limiter = owner.alloc().expect("the arena has room");
+            if limiter.index() as usize >= mapped_at_open {
+                break limiter;
+            }
+            held.push(limiter);
+        };
+        far.with_data(|hash| hash.store(1234, Ordering::Relaxed))
+            .expect("the slot the owner just allocated is mapped");
+        // (written after publication on purpose: this test is about scan extent, and the
+        // owner is the only writer, so nothing else can observe the gap.)
+
+        assert_eq!(
+            observer
+                .find(|hash| hash.load(Ordering::Relaxed) == 1234)
+                .map(|found| found.index()),
+            Some(far.index()),
+            "a scan must see a slot added beyond the extent this process mapped"
+        );
     }
 
     /// A lookup that refuses the slot must leave its count exactly as it found it.
@@ -668,10 +986,9 @@ mod tests {
         let path = CString::new("/ddlimiters-fresh".to_string()).unwrap();
         let mut limiters = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
 
-        let limiter = limiters.alloc().unwrap();
-        limiter
-            .with_data(|hash| hash.store(42, Ordering::Relaxed))
-            .expect("the slot we just allocated is mapped");
+        let limiter = limiters
+            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .unwrap();
 
         assert_eq!(
             limiters
@@ -685,11 +1002,10 @@ mod tests {
         // link behind. It has to keep working.
         let idx = limiter.index();
         drop(limiter);
-        let reused = limiters.alloc().unwrap();
+        let reused = limiters
+            .alloc_with_granularity(1, |hash| hash.store(7, Ordering::Relaxed))
+            .unwrap();
         assert_eq!(reused.index(), idx, "the free list hands the slot back");
-        reused
-            .with_data(|hash| hash.store(7, Ordering::Relaxed))
-            .expect("the reused slot is mapped");
 
         assert_eq!(
             limiters

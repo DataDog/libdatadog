@@ -140,6 +140,10 @@ fn shm_open_exclusive(name: &CStr, mode: Mode) -> nix::Result<std::os::unix::io:
     }
 }
 
+pub(crate) fn unlink_shm_name(name: &CStr) {
+    _ = shm_unlink(name);
+}
+
 pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
     mman::shm_unlink(name).or_else(|e| {
         if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT {
@@ -317,6 +321,24 @@ impl<T: FileBackedHandle> MappedMem<T> {
     ///
     /// `false` means the segment is still too short - the request exceeds the reservation, or
     /// there was no space to allocate - and nothing may be written past what it already has.
+    /// Pick up backing that somebody else committed, without committing any.
+    ///
+    /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a
+    /// segment a peer grew stays invisible here until something asks. The backing file's
+    /// length is the shared record of how far it has been grown, and `fstat` reads that
+    /// without changing it - so this can be called on paths that must not allocate.
+    ///
+    /// Returns the usable length afterwards.
+    pub fn refresh_size(&self) -> usize {
+        if let Ok(fd) = self.mem.get_shm().handle.as_owned_fd() {
+            if let Ok(stat) = nix::sys::stat::fstat(fd.as_raw_fd()) {
+                let backed = (stat.st_size as usize).min(self.mapped_len);
+                self.usable.fetch_max(backed, Ordering::AcqRel);
+            }
+        }
+        self.get_size()
+    }
+
     #[must_use = "a segment that could not be grown is still too short to write to"]
     pub fn ensure_space(&self, expected_size: usize) -> bool {
         if expected_size <= self.get_size() {

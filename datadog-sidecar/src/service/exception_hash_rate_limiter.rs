@@ -114,8 +114,9 @@ impl ExceptionHashRateLimiter {
     fn add(&mut self, hash: u64, granularity: Duration) -> Option<HashLimiter> {
         let allocated = self
             .mem
-            .alloc_with_granularity(granularity.as_secs() as u32)?;
-        allocated.with_data(|data| data.hash.store(hash, Ordering::Relaxed));
+            .alloc_with_granularity(granularity.as_secs() as u32, |data| {
+                data.hash.store(hash, Ordering::Relaxed)
+            })?;
         allocated.inc(1);
         Some(HashLimiter { shm: allocated })
     }
