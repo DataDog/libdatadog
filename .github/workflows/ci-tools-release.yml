@@ -113,8 +113,13 @@ jobs:
           # generates those from the conventional commits at release time, and
           # rejects manual edits to them. Same model here, scoped to the paths
           # the binary is built from.
-          previous=$(git tag --list "ci-tool-$TOOL-v*" --sort=-v:refname \
-                       | grep -Fxv "$TAG" | head -1 || true)
+          # The greatest tag strictly below this one, so that a release cut
+          # while a higher version exists still compares against its own
+          # predecessor rather than against that higher version.
+          previous=$({ git tag --list "ci-tool-$TOOL-v*"; echo "$TAG"; } \
+                       | sort -V -u \
+                       | awk -v cur="$TAG" '$0 == cur { print prev; exit }
+                                            { prev = $0 }')
           repo_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
           if [[ -n "$previous" ]]; then
             range="$previous..HEAD"
