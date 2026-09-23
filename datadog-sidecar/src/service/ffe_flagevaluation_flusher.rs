@@ -82,13 +82,13 @@ impl FlagEvaluationCoalescer {
         client: NativeCapabilities,
         endpoint: Endpoint,
         batch: FfeFlagEvaluationBatch,
-        origin: Option<impl Into<String>>,
-        origin_version: impl Into<String>,
+        origin: Option<impl AsRef<str>>,
+        origin_version: impl AsRef<str>,
     ) {
         let mut send_config =
-            FlagEvaluationEvpSendConfig::new(USER_AGENT).with_origin_version(origin_version.into());
+            FlagEvaluationEvpSendConfig::new(USER_AGENT).with_origin_version(origin_version);
         if let Some(origin) = origin {
-            send_config = send_config.with_origin(origin.into());
+            send_config = send_config.with_origin(origin);
         }
         let destination_key = DestinationKey::new(endpoint, &batch.context, send_config);
         if self.inner.enqueue(destination_key, batch) {
@@ -174,6 +174,14 @@ mod tests {
     };
     use std::collections::BTreeMap;
 
+    struct BorrowOnly(&'static str);
+
+    impl AsRef<str> for BorrowOnly {
+        fn as_ref(&self) -> &str {
+            self.0
+        }
+    }
+
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
             url: server.url("/").parse().unwrap(),
@@ -225,6 +233,24 @@ mod tests {
             context: context(),
             flag_evaluations: vec![eval_event()],
         }
+    }
+
+    #[test]
+    fn enqueue_accepts_borrowed_producer_identity() {
+        let coalescer = FlagEvaluationCoalescer::default();
+        let client = NativeCapabilities::new_client();
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: Vec::new(),
+        };
+
+        coalescer.enqueue(
+            client,
+            Endpoint::default(),
+            batch,
+            Some(BorrowOnly("dd-trace-php")),
+            BorrowOnly("9.9.9"),
+        );
     }
 
     #[test]

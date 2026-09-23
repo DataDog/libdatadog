@@ -632,7 +632,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                                 ffe_flagevaluation_flusher::evp_origin_from_language(
                                     &trace_config.language,
                                 ),
-                                trace_config.tracer_version.clone(),
+                                trace_config.tracer_version.as_str(),
                             );
                         } else {
                             debug!(
