@@ -164,7 +164,8 @@ jobs:
               echo
               echo '```bash'
               for tag in "${tags[@]}"; do
-                echo "git tag $tag && git push origin $tag"
+                # Signed, because the tag ruleset requires a signature.
+                echo "git tag -s $tag -m $tag && git push origin $tag"
               done
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"

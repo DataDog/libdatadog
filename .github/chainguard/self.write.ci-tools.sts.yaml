@@ -4,6 +4,7 @@ subject_pattern: "repo:DataDog/libdatadog.*"
 
 claim_pattern:
   ref: 'refs/tags/ci-tool-.+-v[0-9]+\.[0-9]+\.[0-9]+'
+  ref_protected: "true"
   job_workflow_ref: DataDog/libdatadog/\.github/workflows/ci-tools-release\.yml@.+
 
 permissions:

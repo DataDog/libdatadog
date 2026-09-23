@@ -40,12 +40,20 @@ tool, so a change there requires bumping all of them.
    ```
 3. Open the pull request. `ci-tools-version-guard` checks the bump and prints
    the tag command in its step summary. CI builds the tool from source here.
-4. After merging, tag the merge commit:
+4. After merging, tag the merge commit. The tag ruleset covers every tag in
+   this repository and requires a signature, so the tag has to be annotated
+   and signed:
    ```bash
-   git tag ci-tool-<tool>-v<version> && git push origin ci-tool-<tool>-v<version>
+   tag=ci-tool-<tool>-v<version>
+   git tag -s "$tag" -m "$tag" && git push origin "$tag"
    ```
    `ci-tools-release` then builds the binary and attaches it to a release of
    that tag. Later pull requests download it.
+
+   That ruleset also restricts who may create a tag, and the `v*` release tags
+   are created by `dd-octo-sts[bot]` rather than by a person, so this step may
+   have to move into a dispatched workflow that mints a token and creates the
+   tag itself.
 
 Skipping step 4 is safe: every workflow keeps building from source until the
 tag exists.
