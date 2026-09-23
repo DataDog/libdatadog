@@ -3,7 +3,7 @@
 
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::{v04, SpanText, TraceData};
+use libdd_trace_utils::span::{v04, v1, v1::AttributeValue, SpanText, TraceData};
 use serde::{Deserialize, Deserializer, Serialize};
 
 // Agent-facing representation. `re` and `no_expansion` are derived runtime state.
@@ -118,6 +118,45 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
             _ => {
                 if let Some(tag_value) = span.meta.get_mut(rule.name.as_str()) {
                     apply_rule(rule, tag_value);
+                }
+            }
+        }
+    }
+}
+
+/// Replaces the tag values of a [`v1::Span`] using the given rules.
+///
+/// V1 counterpart of [`replace_span_tags_v04`]: rules apply to `String`-valued entries of the
+/// span's `attributes` map instead of a dedicated `meta` map.
+pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[ReplaceRule]) {
+    fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
+        if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
+        {
+            *field = S::from_owned(new);
+        }
+    }
+
+    for rule in rules {
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, value) in &mut span.attributes {
+                    if let AttributeValue::String(s) = value {
+                        apply_rule(rule, s);
+                    }
+                }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                apply_rule(rule, &mut span.resource);
+            }
+            "resource.name" => {
+                apply_rule(rule, &mut span.resource);
+            }
+            _ => {
+                if let Some(AttributeValue::String(s)) = span.attributes.get_mut(rule.name.as_str())
+                {
+                    apply_rule(rule, s);
                 }
             }
         }
