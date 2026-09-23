@@ -73,6 +73,7 @@ impl Export<SpanBytes> for NoopExport {
     fn export_trace_chunks(
         &mut self,
         _trace_chunks: Vec<TraceChunk<SpanBytes>>,
+        _force_flush: bool,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
