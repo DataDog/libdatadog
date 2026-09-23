@@ -42,7 +42,8 @@ object (managed here means *managed by a garbage collector*), let's call it
 1. Make a thin managed wrapper of `OwnedThreadContext` (or
    `ThreadContextHandle` for the FFI) to make it visible to the GC, if
    supported. Let's call it `threadContextWrapper`. This wrapper must have a
-   finalizer that calls `ddog_otel_ctx_free` when the wrapper is reclaimed.
+   finalizer that calls `ddog_otel_thread_ctx_free` when the wrapper is
+   reclaimed.
 2. For each `managedContext`, at creation time, attach a fresh
    `threadContextWrapper` that you initialize and fill with the data coming
    from the context.
