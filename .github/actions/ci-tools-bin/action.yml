@@ -58,21 +58,33 @@ runs:
         echo "version=$version" >> "$GITHUB_OUTPUT"
 
         tag="ci-tool-$TOOL-v$version"
-        bin="$RUNNER_TEMP/ci-tools/$TOOL"
-        mkdir -p "$(dirname "$bin")"
+        bin=""
 
-        if err=$(gh release download "$tag" --repo "$GH_REPO" \
-                   --pattern "$TOOL" --output "$bin" 2>&1); then
-          chmod +x "$bin"
-          echo "::notice::$TOOL $version resolved from release $tag"
-          echo "source=release" >> "$GITHUB_OUTPUT"
+        # Only x86_64 Linux assets are published, since every consumer is a
+        # gate job on ubuntu-latest. Downloading one anywhere else would yield
+        # a binary that cannot run, so other runners build instead.
+        if [[ "$RUNNER_OS" != "Linux" || "$RUNNER_ARCH" != "X64" ]]; then
+          echo "::notice::no asset is published for $RUNNER_OS/$RUNNER_ARCH"
         else
-          # Expected on the pull request that bumps the tool: the tag is only
-          # pushed once that lands. Building from source here is also what
-          # keeps such a pull request gated by its own code rather than by the
-          # previously published binary.
-          echo "::notice::no usable release $tag, building $TOOL from source"
-          echo "$err" | sed 's/^/  gh: /'
+          candidate="$RUNNER_TEMP/ci-tools/$TOOL"
+          mkdir -p "$(dirname "$candidate")"
+          if err=$(gh release download "$tag" --repo "$GH_REPO" \
+                     --pattern "$TOOL" --output "$candidate" 2>&1); then
+            chmod +x "$candidate"
+            bin="$candidate"
+            echo "::notice::$TOOL $version resolved from release $tag"
+            echo "source=release" >> "$GITHUB_OUTPUT"
+          else
+            # Expected on the pull request that bumps the tool: the tag is
+            # only pushed once that lands, which is also what keeps such a
+            # pull request gated by its own code.
+            echo "::notice::no usable release $tag"
+            echo "$err" | sed 's/^/  gh: /'
+          fi
+        fi
+
+        if [[ -z "$bin" ]]; then
+          echo "::notice::building $TOOL $version from source"
           (cd "$actions_dir" && cargo build --release -p "$TOOL")
           bin="$actions_dir/target/release/$TOOL"
           echo "source=build" >> "$GITHUB_OUTPUT"
