@@ -4,7 +4,8 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -335,11 +336,21 @@ pub trait SidecarInterface {
     ///
     /// The connection must right after that start emitting crashtracker messages.
     async fn enter_crashtracker_receiver();
+
+    /// Sets the explicit EVP transport for this session.
+    ///
+    /// Keep this method last: request variants cross the bincode IPC boundary,
+    /// so appending preserves the ordinals of all existing messages.
+    async fn set_session_evp_transport(config: EvpTransportConfigWithIdentity);
 }
 
 #[cfg(test)]
 mod tests {
     use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+    use crate::service::{
+        EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity, EvpTransportMode,
+    };
+    use libdd_common::Endpoint;
 
     #[test]
     fn appsec_client_request_decodes_as_server_request() {
@@ -358,6 +369,44 @@ mod tests {
                 assert_eq!(data, b"payload");
             }
             _ => panic!("decoded the wrong request variant"),
+        }
+    }
+
+    #[test]
+    fn evp_transport_config_decodes_across_the_ipc_boundary() {
+        let agent_endpoint = Endpoint {
+            url: "http://localhost:8126/".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let direct_endpoint = Endpoint {
+            url: "https://event-platform-intake.datadoghq.com/"
+                .parse()
+                .unwrap(),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        let agentless_config = EvpTransportConfigWithIdentity::new(
+            EvpTransportConfig {
+                mode: EvpTransportMode::PreferLocalThenDirect,
+                agent_endpoint,
+                direct_endpoint: Some(direct_endpoint),
+                intake_subdomain: "event-platform-intake".to_owned(),
+            },
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        let encoded =
+            libdd_ipc::codec::encode(&SidecarInterfaceClientRequest::SetSessionEvpTransport {
+                config: agentless_config.clone(),
+            });
+        let decoded: SidecarInterfaceRequest = libdd_ipc::codec::decode(&encoded)
+            .expect("identity-bearing Agentless config request should decode");
+        match decoded {
+            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
+                assert_eq!(config, agentless_config);
+            }
+            _ => panic!("decoded the wrong Agentless config request variant"),
         }
     }
 }
