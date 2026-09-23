@@ -36,7 +36,7 @@ mod autoclean {
     /// TLS slot is not initialized, its `Drop` implementation will not be called at exit, which
     /// defeats the whole purpose of the cleaner.
     pub(super) fn init() {
-        CLEANER.with(|_| ());
+        let _ = CLEANER.try_with(|_| ());
     }
 }
 
