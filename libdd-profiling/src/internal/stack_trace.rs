@@ -6,7 +6,7 @@ use super::*;
 #[derive(Eq, PartialEq, Hash)]
 pub struct StackTrace {
     /// The ids recorded here correspond to a Profile.location.id.
-    /// The leaf is at location_id[0].
+    /// The leaf is at location_id\[0\].
     pub locations: Vec<LocationId>,
 }
 

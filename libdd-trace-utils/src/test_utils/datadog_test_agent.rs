@@ -478,7 +478,7 @@ impl DatadogTestAgent {
     /// Starts a new session with the Datadog Test Agent using the provided session token and
     /// optional sampling rates. This should be called before sending data to the test-agent to
     /// configure the session parameters. Please refer to
-    /// https://github.com/DataDog/dd-apm-test-agent for more details on sessions.
+    /// <https://github.com/DataDog/dd-apm-test-agent> for more details on sessions.
     ///
     /// # Arguments
     ///

@@ -28,7 +28,7 @@ use crate::{
 /// - Language metadata headers (`Datadog-Meta-Lang`, `Datadog-Meta-Lang-Version`,
 ///   `Datadog-Meta-Lang-Interpreter`, `Datadog-Meta-Tracer-Version`) from the [`LanguageMetadata`]
 ///   supplied when creating the client.
-/// - `User-Agent` derived from [`LanguageMetadata::user_agent`].
+/// - `User-Agent` derived from `LanguageMetadata::user_agent`.
 /// - Container/entity-ID headers (`Datadog-Container-Id`, `Datadog-Entity-ID`) read from
 ///   `/proc/self/cgroup` at startup, and `Datadog-External-Env` from `DD_EXTERNAL_ENV`.
 /// - `x-datadog-test-session-token` when a test token was set.
