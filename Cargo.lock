@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "async-trait",
  "futures",

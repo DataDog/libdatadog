@@ -36,7 +36,7 @@ hashbrown = { workspace = true, default-features = true }
 bytes = { workspace = true, features = ["std"] }
 libdd-capabilities = { version = "4.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "7.0.0", path = "../libdd-common", default-features = false }
-libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-shared-runtime = { version = "5.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-ddsketch = { version = "1.1.2", path = "../libdd-ddsketch" }
 web-time.workspace = true
 

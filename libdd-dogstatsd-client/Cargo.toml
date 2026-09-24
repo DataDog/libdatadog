@@ -18,7 +18,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true
 anyhow.workspace = true
 http = { workspace = true, features = ["std"] }
-libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
+libdd-shared-runtime = { version = "5.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 async-trait = { workspace = true, optional = true }
 
