@@ -46,14 +46,17 @@ pub struct CrashtrackerConfiguration {
     unix_socket_connector: fn(&str) -> std::os::fd::RawFd,
     use_alt_stack: bool,
     /// Seed the crashing thread's remote unwind from the saved ucontext and use
-    /// it as the error stack. Requires `collect_all_threads`.
+    /// it as the error stack. Requires `collect_all_threads` and
+    /// `EnabledWithSymbolsInReceiver`; other modes retain the collector stack.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     unwind_from_ucontext: bool,
-    /// For software-generated signals (`si_code <= 0`), drop the leading libc
-    /// frames (raise/pthread_kill) from the crashing stack.
+    /// For software-generated signals, drop leading libc frames identified as
+    /// signal-delivery functions (raise/pthread_kill) from the crashing stack.
+    /// Requires `EnabledWithSymbolsInReceiver`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     trim_signal_delivery_frames: bool,
     /// Name frames that symbolization could not resolve as `module+offset`.
+    /// Requires `EnabledWithSymbolsInReceiver`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     name_unresolved_frames: bool,
 }

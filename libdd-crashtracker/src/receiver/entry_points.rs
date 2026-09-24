@@ -170,12 +170,9 @@ fn resolve_frames(
 
 #[cfg(target_os = "linux")]
 fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut CrashInfo) {
-    // A software-generated fatal signal is captured while raise/pthread_kill is
-    // still on the stack. Those libc delivery frames describe how the signal
-    // arrived, not what application operation requested it. Remove only the
-    // contiguous leading libc segment and leave the first application frame as
-    // the grouping frame. The crashed thread's copy is trimmed too so both
-    // views of the same stack agree.
+    // A software-generated fatal signal may be captured inside raise/pthread_kill.
+    // Remove only frames whose symbols identify that delivery path, leaving
+    // unrelated libc work intact. Trim the crashed thread's copy as well.
     if config.trim_signal_delivery_frames()
         && crash_info
             .sig_info
@@ -204,16 +201,31 @@ fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace) {
         .frames
         .iter()
         .take_while(|frame| {
-            frame.path.as_deref().is_some_and(|path| {
-                let basename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(path);
-                basename == "libc.so.6"
-                    || basename == "libpthread.so.0"
-                    || basename.starts_with("libc-")
-                    || basename.starts_with("ld-musl-")
-            })
+            let Some(path) = frame.path.as_deref() else {
+                return false;
+            };
+            let Some(function) = frame.function.as_deref() else {
+                return false;
+            };
+            let basename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            let in_libc = basename == "libc.so.6"
+                || basename == "libpthread.so.0"
+                || basename.starts_with("libc-")
+                || basename.starts_with("ld-musl-");
+            let function = function.strip_prefix("__GI_").unwrap_or(function);
+            in_libc
+                && matches!(
+                    function,
+                    "raise"
+                        | "__libc_raise"
+                        | "gsignal"
+                        | "pthread_kill"
+                        | "__pthread_kill"
+                        | "__pthread_kill_implementation"
+                )
         })
         .count();
     // An all-libc stack (e.g. a libc-internal abort) has no application frame
@@ -311,6 +323,29 @@ mod tests {
         assert_eq!(stack.frames.len(), 2);
     }
 
+    #[test]
+    fn keeps_unrelated_libc_frames_for_user_originated_signals() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("/lib/libc.so.6", "0x1", Some("poll")),
+                frame("/opt/app", "0x2", Some("main")),
+            ],
+            false,
+        );
+        let original = stack.clone();
+        trim_signal_delivery_frames(&mut stack);
+        assert_eq!(stack, original);
+
+        stack.frames[0].function = None;
+        trim_signal_delivery_frames(&mut stack);
+        assert_eq!(stack.frames.len(), 2);
+
+        stack.frames[0].function = Some("raise".to_string());
+        stack.frames[0].path = Some("/opt/app".to_string());
+        trim_signal_delivery_frames(&mut stack);
+        assert_eq!(stack.frames.len(), 2);
+    }
+
     #[cfg_attr(miri, ignore)] // CrashInfo::test_instance spawns a process
     #[test]
     fn finish_native_stacks_changes_nothing_unless_opted_in() -> anyhow::Result<()> {
@@ -334,6 +369,7 @@ mod tests {
         assert_eq!(crash_info.error.stack, expected);
 
         let opted_in = CrashtrackerConfiguration::builder()
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
             .trim_signal_delivery_frames(true)
             .name_unresolved_frames(true)
             .build()?;

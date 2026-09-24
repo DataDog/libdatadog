@@ -135,6 +135,11 @@ impl CrashtrackerConfigurationBuilder {
             !self.create_alt_stack || self.use_alt_stack,
             "Cannot create an altstack without using it"
         );
+        anyhow::ensure!(
+            !(self.trim_signal_delivery_frames || self.name_unresolved_frames)
+                || self.resolve_frames == StacktraceCollection::EnabledWithSymbolsInReceiver,
+            "trim_signal_delivery_frames and name_unresolved_frames require EnabledWithSymbolsInReceiver"
+        );
         let timeout = self
             .timeout
             .unwrap_or(constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);
@@ -239,6 +244,7 @@ mod tests {
 
         let config = CrashtrackerConfiguration::builder()
             .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
             .trim_signal_delivery_frames(true)
             .name_unresolved_frames(true)
             .build()?;
@@ -258,6 +264,32 @@ mod tests {
             .use_alt_stack(false)
             .build();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn stack_post_processing_requires_receiver_symbolization() {
+        for mode in [
+            StacktraceCollection::Disabled,
+            StacktraceCollection::WithoutSymbols,
+            StacktraceCollection::EnabledWithInprocessSymbols,
+        ] {
+            assert!(CrashtrackerConfiguration::builder()
+                .resolve_frames(mode)
+                .trim_signal_delivery_frames(true)
+                .build()
+                .is_err());
+            assert!(CrashtrackerConfiguration::builder()
+                .resolve_frames(mode)
+                .name_unresolved_frames(true)
+                .build()
+                .is_err());
+        }
+        assert!(CrashtrackerConfiguration::builder()
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .trim_signal_delivery_frames(true)
+            .name_unresolved_frames(true)
+            .build()
+            .is_ok());
     }
 
     #[test]

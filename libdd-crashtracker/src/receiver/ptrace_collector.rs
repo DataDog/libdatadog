@@ -52,6 +52,8 @@ const MAX_FRAMES: usize = 512;
 /// A captured thread context containing a full remote stack trace
 pub struct CapturedThreadContext {
     pub stack_trace: StackTrace,
+    /// Whether the unwind started from the saved crash registers.
+    pub used_saved_context: bool,
 }
 
 #[derive(Debug)]
@@ -465,17 +467,23 @@ pub fn capture_thread_context(
     // unwinding from where the thread is stopped rather than losing its stack.
     let mut original_registers =
         initial_context.and_then(|context| replace_registers_from_ucontext(tid, context).ok());
+    let used_saved_context = original_registers.is_some();
     let stack_trace = unwind_remote_thread(tid, addr_space);
 
     if let Some(registers) = original_registers.as_mut() {
-        let _ = set_registers(tid, registers);
+        // A detach would resume the tracee at the temporary crash registers.
+        // Keep it stopped until the receiver exits if restoration fails.
+        set_registers(tid, registers)?;
     }
 
     // Best-effort detach: if this fails the thread stays in ptrace-stop, but the
     // receiver exiting will clean it up. Don't discard a good stack trace over it.
     let _ = detach_thread(tid);
 
-    Ok(CapturedThreadContext { stack_trace })
+    Ok(CapturedThreadContext {
+        stack_trace,
+        used_saved_context,
+    })
 }
 
 /// Maximum time to wait for a single thread to enter ptrace-stop.

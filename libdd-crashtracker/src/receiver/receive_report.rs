@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(target_os = "linux")]
+use crate::StacktraceCollection;
 use crate::{
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
@@ -551,9 +553,9 @@ fn collect_and_add_thread_contexts(
             let (name, state) = read_thread_stat(parent_pid, tid);
             let name = name.unwrap_or_else(|| tid.to_string());
 
-            let mut stack = match captured_context {
-                Some(ctx) => ctx.stack_trace.clone(),
-                None => StackTrace::new_incomplete(),
+            let (mut stack, used_saved_context) = match captured_context {
+                Some(ctx) => (ctx.stack_trace.clone(), ctx.used_saved_context),
+                None => (StackTrace::new_incomplete(), false),
             };
 
             let crashed = tid == crashing_tid;
@@ -561,7 +563,9 @@ fn collect_and_add_thread_contexts(
                 if let Some((ip, sp)) = crash_site {
                     drop_frames_above_crash_site(&mut stack, ip, sp);
                 }
-                if config.unwind_from_ucontext() && !stack.frames.is_empty() {
+                if should_promote_crashing_stack(config, used_saved_context)
+                    && !stack.frames.is_empty()
+                {
                     crashing_stack = Some(stack.clone());
                 }
             }
@@ -579,10 +583,8 @@ fn collect_and_add_thread_contexts(
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
     }
 
-    // Only set with `unwind_from_ucontext`, which a collector opts into when it
-    // can't unwind in-process and its frame stream is just a fallback. The
-    // ptrace unwind starts at the saved crash registers, or, if seeding them
-    // failed, at the stopped thread trimmed to the crash site.
+    // Preserve the collector's stack unless the remote unwind actually started
+    // at the crash context and receiver-side symbolization will name its frames.
     if let Some(stack) = crashing_stack {
         builder.with_stack(stack)?;
     }
@@ -590,6 +592,16 @@ fn collect_and_add_thread_contexts(
     let _ = builder.with_threads(collected_threads);
 
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn should_promote_crashing_stack(
+    config: &CrashtrackerConfiguration,
+    used_saved_context: bool,
+) -> bool {
+    config.unwind_from_ucontext()
+        && config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver
+        && used_saved_context
 }
 
 /// The instruction and stack pointer the kernel saved when it delivered the fatal
@@ -1219,5 +1231,26 @@ mod crashing_thread_tests {
             None,
             "a ucontext missing the stack pointer yields no crash site"
         );
+    }
+
+    #[test]
+    fn promotes_only_symbolizable_stacks_from_saved_crash_registers() -> anyhow::Result<()> {
+        let receiver_symbols = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+            .build()?;
+        assert!(should_promote_crashing_stack(&receiver_symbols, true));
+        assert!(!should_promote_crashing_stack(&receiver_symbols, false));
+
+        let inprocess_symbols = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .resolve_frames(StacktraceCollection::EnabledWithInprocessSymbols)
+            .build()?;
+        assert!(!should_promote_crashing_stack(&inprocess_symbols, true));
+        assert!(!should_promote_crashing_stack(
+            &CrashtrackerConfiguration::builder().build()?,
+            true
+        ));
+        Ok(())
     }
 }
