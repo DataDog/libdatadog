@@ -447,8 +447,9 @@ mod tests {
     use libdd_trace_utils::test_utils;
 
     /// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
-    /// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no test
-    /// expects to see again, so a resource forwarded as sent instead of discarded fails loudly.
+    /// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no
+    /// test expects to see again, so a resource forwarded as sent instead of discarded fails
+    /// loudly.
     pub(super) const UNOBFUSCATABLE_SQL: &[&str] = &[
         "   ",
         "\n\t \r\n",
