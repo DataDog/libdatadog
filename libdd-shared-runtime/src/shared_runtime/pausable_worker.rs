@@ -6,6 +6,7 @@
 use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
+use libdd_capabilities::maybe_send::MaybeSync;
 use libdd_capabilities::spawn::SpawnError;
 use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
@@ -43,7 +44,7 @@ pub(super) fn tokio_spawn_fn<T: Send + 'static>(
 /// Used to allow a [`super::Worker`] to be paused while saving its state when
 /// dropping a tokio runtime to be able to restart with the same state on a new runtime. This is
 /// used to stop all threads before a fork to avoid deadlocks in child.
-pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
+pub enum PausableWorker<T: Worker + MaybeSend + MaybeSync + 'static> {
     Running {
         handle: WorkerJoinHandle<T>,
         stop_token: CancellationToken,
@@ -54,7 +55,7 @@ pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     InvalidState,
 }
 
-impl<T: Worker + MaybeSend + Sync + 'static> std::fmt::Debug for PausableWorker<T> {
+impl<T: Worker + MaybeSend + MaybeSync + 'static> std::fmt::Debug for PausableWorker<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Running { .. } => f.debug_struct("PausableWorker::Running").finish(),
@@ -88,7 +89,7 @@ impl Display for PausableWorkerError {
 
 impl core::error::Error for PausableWorkerError {}
 
-impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
+impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
     /// Create a new pausable worker from the given worker.
     pub fn new(worker: T) -> Self {
         Self::Paused { worker }
@@ -241,7 +242,7 @@ mod tests {
         let worker = TestWorker { state: 0, sender };
         let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
         let handle = runtime.handle().clone();
-        let mut pausable_worker: PausableWorker<Box<dyn Worker + Sync>> =
+        let mut pausable_worker: PausableWorker<Box<dyn Worker>> =
             PausableWorker::new(Box::new(worker));
 
         pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();

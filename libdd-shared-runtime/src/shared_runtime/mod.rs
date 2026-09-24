@@ -17,6 +17,7 @@ mod local;
 pub use basic::BasicRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 pub use fork_safe::ForkSafeRuntime;
+use libdd_capabilities::maybe_send::MaybeSync;
 #[cfg(target_arch = "wasm32")]
 pub use local::LocalRuntime;
 
@@ -28,7 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 
 /// A worker registered on a [`SharedRuntime`].
-pub(crate) type BoxedWorker = Box<dyn Worker + Sync>;
+pub(crate) type BoxedWorker = Box<dyn Worker>;
 
 #[derive(Debug)]
 pub(crate) struct WorkerEntry {
@@ -62,7 +63,7 @@ pub trait SharedRuntime {
     /// Spawns a worker. `restart_on_fork = true` causes `ForkSafeRuntime::after_fork_child`
     /// to reset and restart it; `false` drops it without calling shutdown. [`BasicRuntime`]
     /// and [`LocalRuntime`] ignore this flag — they do not implement a fork protocol.
-    fn spawn_worker<T: Worker + Sync + 'static>(
+    fn spawn_worker<T: Worker + MaybeSync + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,

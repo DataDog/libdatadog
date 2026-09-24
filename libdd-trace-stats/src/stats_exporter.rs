@@ -4,7 +4,7 @@
 use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     time,
 };
@@ -125,6 +125,43 @@ impl From<TracerMetadata> for StatsMetadata {
             service: m.service,
             container_id: m.container_id,
         }
+    }
+}
+pub trait StatsCap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static {}
+
+impl<T: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> StatsCap for T {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait FlushableStatsExport: Debug + MaybeSend + Sync + 'static {
+    /// Flush all currently-buffered stats and send them.
+    /// Best-effort: errors are logged by the exporter and swallowed here.
+    async fn force_flush(&self);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'static>
+    FlushableStatsExport for StatsExporter<Cap, Con>
+{
+    async fn force_flush(&self) {
+        let _ = self.send(true).await;
+    }
+}
+
+/// Cloneable handle to a [`StatsExporter`] hosted on a [`SharedRuntime`].
+#[derive(Debug, Clone)]
+pub struct SharedStatsExporter<Cap: StatsCap, Con: FlushableConcentrator = SpanConcentrator>(
+    Arc<StatsExporter<Cap, Con>>,
+);
+
+impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'static>
+    SharedStatsExporter<Cap, Con>
+{
+    pub fn wrap(exporter: StatsExporter<Cap, Con>) -> (Self, Weak<dyn FlushableStatsExport>) {
+        let arc = Arc::new(exporter);
+        let weak = Arc::downgrade(&arc) as Weak<dyn FlushableStatsExport>;
+        (Self(arc), weak)
     }
 }
 
@@ -690,27 +727,29 @@ fn payload_errors(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator + Send + Debug,
-    > Worker for StatsExporter<Cap, Con>
+impl<Cap: StatsCap, Con: FlushableConcentrator + Send + Debug> Worker
+    for SharedStatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
-        self.sender.capabilities.sleep(self.flush_interval).await;
+        self.0
+            .sender
+            .capabilities
+            .sleep(self.0.flush_interval)
+            .await;
     }
 
     /// Flush and send stats on every trigger.
     async fn run(&mut self) {
-        let _ = self.send(false).await; // bool return ignored by Worker
+        let _ = self.0.send(false).await; // bool return ignored by Worker
     }
 
     fn reset(&mut self) {
-        let _ = self.concentrator.lock_or_panic().flush_buckets(true);
-        self.sender.sequence_id.store(0, Ordering::Relaxed);
+        let _ = self.0.concentrator.lock_or_panic().flush_buckets(true);
+        self.0.sender.sequence_id.store(0, Ordering::Relaxed);
     }
 
     async fn shutdown(&mut self) {
-        let _ = self.send(true).await;
+        let _ = self.0.send(true).await;
     }
 }
 
@@ -774,6 +813,17 @@ mod tests {
     fn test_stats_exporter_sync_send() {
         let _ = is_send::<StatsExporter<NativeCapabilities>>;
         let _ = is_sync::<StatsExporter<NativeCapabilities>>;
+        // The shared handle must be Send + Sync so it can be spawned on a multi-threaded
+        // runtime.
+        let _ = is_send::<SharedStatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<SharedStatsExporter<NativeCapabilities>>;
+        // The weak trait-object handle must be Send + Sync so the trace exporter can store
+        // it across await points.
+        let _ = is_send::<Weak<dyn FlushableStatsExport>>;
+        let _ = is_sync::<Weak<dyn FlushableStatsExport>>;
+        // The upgraded strong trait object must also be Send + Sync.
+        let _ = is_send::<Arc<dyn FlushableStatsExport>>;
+        let _ = is_sync::<Arc<dyn FlushableStatsExport>>;
     }
 
     #[cfg(feature = "stats-obfuscation")]
@@ -947,6 +997,66 @@ mod tests {
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    /// `SharedStatsExporter::wrap` returns a strong handle and a weak handle whose
+    /// `force_flush` upgrades and sends stats. The weak handle also works behind the
+    /// `Weak<dyn FlushableStatsExport>` used by the trace exporter.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_shared_stats_exporter_wrap_force_flush() {
+        let server = MockServer::start_async().await;
+
+        let mut mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/v0.6/stats")
+                    .body_includes("libdatadog-test");
+                then.status(200).body("");
+            })
+            .await;
+
+        // Each concentrator holds exactly one flush worth of data, so use a fresh
+        // wrapped exporter per forced flush.
+        let build_wrapped = || {
+            let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+                BUCKETS_DURATION,
+                Arc::new(Mutex::new(get_test_concentrator())),
+                get_test_metadata(),
+                Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+                NativeCapabilities::new_client(),
+                #[cfg(feature = "stats-obfuscation")]
+                "1",
+                #[cfg(feature = "telemetry")]
+                None,
+                #[cfg(feature = "dogstatsd")]
+                None,
+            );
+            SharedStatsExporter::wrap(stats_exporter)
+        };
+
+        // The weak handle flushes through the shared allocation without holding a strong ref.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        };
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 1).await,
+            "weak force_flush should send stats once"
+        );
+
+        // The weak handle is a `Weak<dyn FlushableStatsExport>`: upgrading yields an
+        // `Arc<dyn FlushableStatsExport>` whose `force_flush` is dispatched dynamically,
+        // which is how the trace exporter drives it.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        }
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 2).await,
+            "second weak force_flush should send stats again"
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1130,8 +1240,9 @@ mod tests {
             #[cfg(feature = "dogstatsd")]
             None,
         );
+        let (shared, _weak) = SharedStatsExporter::wrap(stats_exporter);
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(shared, true)
             .expect("Failed to spawn worker");
 
         // Wait for stats to be flushed
@@ -1178,8 +1289,9 @@ mod tests {
             None,
         );
 
+        let (shared, _weak) = SharedStatsExporter::wrap(stats_exporter);
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(shared, true)
             .expect("Failed to spawn worker");
 
         shared_runtime.shutdown(None).unwrap();

@@ -16,6 +16,9 @@ libc.workspace = true
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
+# allow(workspace-deps): this crate is still on the windows 0.51 bindings,
+# while the workspace entry tracks 0.59 for the crashtracker crates. Moving
+# it over is an API migration that needs a Windows build to validate.
 [target.'cfg(windows)'.dependencies.windows]
 features = [
   "Win32_Foundation",
@@ -28,8 +31,11 @@ features = [
 version = "0.51.1"
 
 [target.'cfg(windows)'.dependencies]
+# allow(workspace-deps): the legacy winapi 0.2 API (used together with
+# kernel32-sys) is a different, incompatible surface from the 0.3 line the
+# workspace entry pins.
 winapi = { version = "=0.2.8" }
-kernel32-sys = "0.2.2"
+kernel32-sys.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 memfd.workspace = true
