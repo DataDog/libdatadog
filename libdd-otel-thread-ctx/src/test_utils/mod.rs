@@ -10,7 +10,7 @@
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64"),
 ))]
-pub use crate::linux::read_tls_context_ptr;
+pub use crate::linux::read_tls_pointer_untyped;
 
 pub mod artifacts;
 pub mod tls_shim_window;

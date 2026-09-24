@@ -370,21 +370,23 @@ impl ThreadContext {
     }
 }
 
-/// Read the TLS pointer for the current thread: the value stored in the TLS slot (the record
-/// currently attached, as an opaque [`ThreadContext`] pointer), not the address of the slot
-/// itself.
-///
-/// Shared by the tests of both ownership modes, and exposed under the `test-utils` feature so
-/// that integration tests (this crate's own and `libdd-otel-thread-ctx-ffi`'s) can identify the
-/// record's address — for instance to observe when it is deallocated through a global allocator.
-/// The `test-utils` feature carries no stability guarantee. Do not dereference the returned
-/// pointer: the record is owned by the library, and may be freed by the autocleaner as soon as
-/// the calling thread detaches it or exits.
+/// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address
+/// of the slot itself). Shared by the tests of both ownership modes.
 #[cfg(any(test, feature = "test-utils"))]
-pub fn read_tls_context_ptr() -> *const ThreadContext {
+fn read_tls_context_ptr() -> *const ThreadContextRecord {
     with_tls_slot(|slot| slot.load(Ordering::Relaxed))
-        .cast_const()
-        .cast()
+}
+
+/// Untyped view of [`read_tls_context_ptr`]: same pointer, returned as a raw `u8` pointer so that
+/// integration tests can identify the record's address without naming the crate-private
+/// `ThreadContextRecord`.
+///
+/// Exposed under the `test-utils` feature, which carries no stability guarantee. Do not
+/// dereference the returned pointer: the record is owned by the library, and may be freed by the
+/// autocleaner as soon as the calling thread detaches it or exits.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn read_tls_pointer_untyped() -> *const u8 {
+    read_tls_context_ptr().cast()
 }
 
 #[cfg(test)]
