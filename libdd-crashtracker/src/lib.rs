@@ -92,7 +92,7 @@ pub use runtime_callback::*;
 pub use receiver::{
     async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,
     async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,
-    receiver_entry_point_unix_socket,
+    receiver_entry_point_unix_socket, ReceiverFileAccess,
 };
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]

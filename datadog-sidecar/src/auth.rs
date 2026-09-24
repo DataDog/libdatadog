@@ -1,29 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Authentication of incoming IPC connections.
+//! Authenticate IPC connections. Linux abstract sockets have no filesystem permissions, so the
+//! listener checks peers according to its deployment:
 //!
-//! On Linux the socket lives in the abstract namespace, so we cannot rely on filesystem permission.
-//! Further, the thread mode sidecar by design starts as reachable by everyone, requiring handling.
-//!
-//! Which peers are legitimate depends on where the listener lives, so there is one policy per
-//! deployment ([`AuthPolicy`]):
-//!
-//! * [`AuthPolicy::OwnUid`] - the out-of-process (subprocess-mode) sidecar, keyed by its uid. The
-//!   only thing to check for is the uid.
-//!
-//! * [`AuthPolicy::HostDescendants`] - the in-process listener thread (thread mode). Here the
-//!   listener runs *inside* the PHP master process and the socket is keyed by that process's pid.
-//!   Its workers are commonly forked and then `setuid`-ed to a service account (root Apache/FPM
-//!   master, `www-data` children), so peers that dropped privileges are recognised by descending
-//!   from the hosting process instead of by uid. This is the only policy where the identity being
-//!   served can differ from this process's own - see [`crate::setup::thread_listener`], which takes
-//!   the uid of the first authenticated worker and drops the sidecar threads to it.
-//!
-//! * [`AuthPolicy::OsEnforced`] - Windows. The named pipe is created with a NULL security
-//!   descriptor, whose default DACL grants `Everyone` read-only access while clients open the pipe
-//!   for read *and* write, so another user's `CreateFileA` is refused by the OS before a connection
-//!   exists. There is nothing left to check in user space.
+//! * [`AuthPolicy::OwnUid`]: a subprocess sidecar serves its own UID.
+//! * [`AuthPolicy::HostDescendants`]: a thread listener accepts the host's UID or a descendant that
+//!   dropped privileges. It then drops to the first worker's identity and requires later workers to
+//!   match that UID and GID. See [`crate::setup::thread_listener`].
+//! * [`AuthPolicy::OsEnforced`]: Windows named-pipe permissions restrict access before a connection
+//!   reaches the listener.
 
 use libdd_ipc::PeerCredentials;
 use tracing::warn;
@@ -37,7 +23,7 @@ const ROOT_UID: u32 = 0;
 pub enum AuthPolicy {
     /// Out-of-process sidecar: peers must hold this process's own uid.
     OwnUid,
-    /// In-process listener: peers must share the host's uid or descend from `host_pid`.
+    /// Thread listener: accept the host's UID or a descendant, then pin the served identity.
     HostDescendants { host_pid: u32 },
     /// The operating system already restricts who can connect.
     OsEnforced,
@@ -57,6 +43,9 @@ pub struct ConnectionAuthorizer {
     policy: AuthPolicy,
     /// euid of the process hosting the listener.
     own_uid: u32,
+    /// Identity chosen by the first worker. Later workers must match because the listener runs
+    /// every request with these credentials.
+    served: std::sync::OnceLock<(u32, u32)>,
 }
 
 impl ConnectionAuthorizer {
@@ -90,7 +79,13 @@ impl ConnectionAuthorizer {
         Self {
             policy,
             own_uid: current_uid(),
+            served: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Set the served identity from the first accepted worker. Later calls leave it unchanged.
+    pub fn set_served_identity(&self, uid: u32, gid: u32) {
+        let _ = self.served.set((uid, gid));
     }
 
     /// Authenticate one accepted connection.
@@ -114,11 +109,21 @@ impl ConnectionAuthorizer {
     }
 
     fn authorize_descendant(&self, peer: &PeerCredentials, host_pid: u32) -> Decision {
-        if peer.uid == self.own_uid || peer.uid == ROOT_UID {
+        if peer.uid == ROOT_UID {
             return Decision::Allow;
         }
-        // A worker forked from the host and then setuid-ed to a service account is still the
-        // same trust domain; only such peers pay for the parent-chain walk.
+        // Do not serve another pool with the first pool's credentials.
+        if let Some((served_uid, served_gid)) = self.served.get() {
+            return if peer.uid == *served_uid && peer.gid == *served_gid {
+                Decision::Allow
+            } else {
+                Decision::Deny
+            };
+        }
+        // Before the first worker, accept our own UID or a child that dropped privileges.
+        if peer.uid == self.own_uid {
+            return Decision::Allow;
+        }
         if self.own_uid == ROOT_UID && peer_descends_from(peer.pid, host_pid) {
             return Decision::Allow;
         }
@@ -215,5 +220,27 @@ mod tests {
             Decision::Deny
         };
         assert_eq!(auth.authorize(&worker), expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn served_identity_pins_the_accepted_uid_and_gid() {
+        let own_pid = std::process::id();
+        let auth = ConnectionAuthorizer::new(AuthPolicy::HostDescendants { host_pid: own_pid });
+        auth.set_served_identity(33, 33);
+
+        assert_eq!(auth.authorize(&peer(own_pid, 33)), Decision::Allow);
+        // A different UID is refused even for a descendant of the host.
+        assert_eq!(auth.authorize(&peer(own_pid, 34)), Decision::Deny);
+        // The GID must match too.
+        assert_eq!(
+            auth.authorize(&PeerCredentials {
+                pid: own_pid,
+                uid: 33,
+                gid: 34
+            }),
+            Decision::Deny
+        );
+        assert_eq!(auth.authorize(&peer(own_pid, ROOT_UID)), Decision::Allow);
     }
 }

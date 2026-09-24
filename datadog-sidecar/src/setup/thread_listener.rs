@@ -30,23 +30,12 @@ static FIRST_CONNECTION_INIT: OnceLock<()> = OnceLock::new();
 /// threads started afterwards can drop themselves. See [`drop_listener_thread_privileges`].
 static SERVED_IDS: OnceLock<(u32, u32)> = OnceLock::new();
 
-/// Drop *this thread's* credentials to the uid it serves.
+/// Run this thread as the worker it serves, including when creating shared memory.
 ///
-/// In thread mode the "sidecar" is a thread inside the PHP master, which is commonly root while
-/// its workers run as a service account. Everything the thread creates is then created as root,
-/// and anything it is pointed at it touches with root's authority (e.g. logfiles).
-/// Running as the uid it actually serves removes that, and has the side benefit that the shared
-/// memory it creates is owned by the right user outright instead of needing an `fchown`.
+/// Use raw Linux syscalls: glibc's wrappers would change every thread, stripping the PHP master's
+/// privileges too. macOS provides per-thread identity switching.
 ///
-/// # Only this thread
-///
-/// This deliberately uses the raw syscall rather than `libc::setresuid`. glibc's wrapper
-/// broadcasts the change to every thread in the process - which here would strip privileges from
-/// the master process, which must not happen. The underlying Linux syscall is per-thread instead.
-///
-/// Tokio's blocking-pool threads are created from this one and so inherit the dropped
-/// credentials. The watchdog thread is started earlier and keeps what it had; it only samples
-/// memory usage and aborts, and creates nothing.
+/// New Tokio threads apply the chosen identity at startup; the watchdog checks for it each tick.
 fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     #[cfg(target_os = "linux")]
     {
@@ -349,30 +338,24 @@ async fn accept_socket_loop_thread(
                     Ok(mut guard) => {
                         match guard.try_io(|inner| inner.get_ref().try_accept()) {
                             Ok(Ok(conn)) => {
-                                // On the first connection, get the worker's UID and
-                                // fchown the SHM to that UID so cross-user access works when
-                                // the master runs as root and workers run as a different user.
+                                // Initialize SHM under the first authenticated worker's UID.
                                 if let Ok(cred) = conn.peer_credentials() {
                                     if authorizer.authorize(&cred) == Decision::Allow {
                                         FIRST_CONNECTION_INIT.get_or_init(|| {
+                                            #[cfg(unix)]
+                                            let host_uid = unsafe { libc::geteuid() };
                                             libdd_ipc::platform::set_shm_owner_uid(cred.uid);
                                             // Before the limiter is created, so it is created
                                             // owned by the uid that has to map it.
                                             drop_listener_thread_privileges(cred.uid, cred.gid);
+                                            #[cfg(unix)]
+                                            if host_uid != cred.uid {
+                                                libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+                                            }
                                             let _ = SERVED_IDS.set((cred.uid, cred.gid));
+                                            authorizer.set_served_identity(cred.uid, cred.gid);
                                             crate::tracer::init_shm_limiter();
                                         });
-                                        // Everything created by name belongs to the first uid
-                                        // seen; say so rather than let a second pool wonder why
-                                        // its remote config never arrives.
-                                        if let Some((served, _)) = SERVED_IDS.get() {
-                                            if *served != cred.uid {
-                                                warn!(
-                                                    "Peer pid {} runs as uid {}, but this listener serves uid {served}. Shared memory will not be readable by uid {}.",
-                                                    cred.pid, cred.uid, cred.uid
-                                                );
-                                            }
-                                        }
                                     }
                                 }
                                 handler(conn);
@@ -395,12 +378,8 @@ async fn accept_socket_loop_thread(
     Ok(())
 }
 
-/// Entry point for thread listener.
-///
-/// Uses a single-threaded Tokio runtime (current_thread) to avoid spawning extra OS
-/// threads. A multi-thread runtime would leave worker threads visible to LSan/ASAN at
-/// process exit, causing "Running thread was not suspended" warnings. With
-/// current_thread all async work runs on this OS thread; no other threads are created.
+/// Run async work on the listener thread. Separate Tokio runtime workers can remain visible to
+/// LSan/ASAN at process exit. Any blocking-pool threads use the privilege-drop callback below.
 fn run_listener(
     listener: SeqpacketListener,
     _config: Config,
@@ -445,8 +424,6 @@ fn run_listener(
 }
 
 /// Connect to the master listener as a worker.
-///
-/// Establishes a connection to the master listener thread for the given PID.
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
 
