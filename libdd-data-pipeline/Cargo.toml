@@ -51,7 +51,7 @@ web-time.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["time", "test-util", "net"] }
-libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "6.0.0", path = "../libdd-capabilities-impl", default-features = false }
 tonic.workspace = true
 h2.workspace = true
 prost = { workspace = true, features = ["std"] }
@@ -74,7 +74,7 @@ harness = false
 path = "benches/trace_buffer.rs"
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "5.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "6.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 libdd-shared-runtime = { version = "4.0.0", path = "../libdd-shared-runtime" }
 regex = { workspace = true, features = ["std", "unicode", "perf"] }

@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "bytes",
