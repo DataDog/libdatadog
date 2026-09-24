@@ -213,12 +213,15 @@ pub use adapter::SeqpacketStreamReader;
 /// Wrap `AsyncConn` and dispatch it to crashtracking receiver.
 pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(
     conn: &tokio::io::unix::AsyncFd<C>,
+    peer_pid: u32,
 ) {
+    use libdd_crashtracker::ReceiverFileAccess;
     use std::os::fd::AsRawFd;
     use tokio::io::BufReader;
 
     let reader = BufReader::new(SeqpacketStreamReader::new(conn));
-    if let Err(e) = libdd_crashtracker::async_receiver_entry_point_stream(reader).await {
+    let access = ReceiverFileAccess::Restricted { peer_pid };
+    if let Err(e) = libdd_crashtracker::async_receiver_entry_point_stream(reader, access).await {
         tracing::warn!("Got error while receiving crash report over IPC: {e}");
     }
 
@@ -339,7 +342,7 @@ mod tests {
         send_datagrams(&collector, &[b"DD_CRASHTRACK_DONE\n"]);
 
         let async_fd = AsyncFd::new(receiver).expect("AsyncFd");
-        run_crashtracker_receiver(&async_fd).await;
+        run_crashtracker_receiver(&async_fd, std::process::id()).await;
 
         // Simulates the serve loop's next iteration: without the fix this hangs forever, so
         // bound it with a timeout that would fail the test rather than hang the suite.

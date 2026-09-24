@@ -4,7 +4,7 @@
 use anyhow::anyhow;
 use cadence::UdpMetricSink;
 #[cfg(unix)]
-use cadence::UnixMetricSink;
+use cadence::{MetricSink, SinkStats, UnixMetricSink};
 #[cfg(unix)]
 use libdd_common::connector::uds::socket_path_from_uri;
 use libdd_common::Endpoint;
@@ -12,18 +12,49 @@ use std::net::{ToSocketAddrs, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
 
+/// Keeps the destination pinned for as long as the sink can send through its `/proc/self/fd` path.
+/// A queued worker can outlive the client, so the descriptor must belong to the sink itself.
 #[cfg(unix)]
-pub(super) fn create_unix_sink(endpoint: &Endpoint) -> anyhow::Result<UnixMetricSink> {
+#[derive(Debug)]
+pub(super) struct PinnedUnixSink {
+    inner: UnixMetricSink,
+    _pin: Option<std::os::fd::OwnedFd>,
+}
+
+#[cfg(unix)]
+impl MetricSink for PinnedUnixSink {
+    fn emit(&self, metric: &str) -> std::io::Result<usize> {
+        self.inner.emit(metric)
+    }
+
+    fn stats(&self) -> SinkStats {
+        self.inner.stats()
+    }
+}
+
+/// Build a Unix datagram sink, pinning the destination when path restrictions are enabled.
+#[cfg(unix)]
+pub(super) fn create_unix_sink(endpoint: &Endpoint) -> anyhow::Result<PinnedUnixSink> {
     let socket =
         UnixDatagram::unbound().map_err(|e| anyhow!("failed to make unbound unix port: {}", e))?;
     socket
         .set_nonblocking(true)
         .map_err(|e| anyhow!("failed to set socket to nonblocking: {}", e))?;
-    Ok(UnixMetricSink::from(
-        socket_path_from_uri(&endpoint.url)
-            .map_err(|e| anyhow!("failed to build socket path from uri: {}", e))?,
-        socket,
-    ))
+    let path = socket_path_from_uri(&endpoint.url)
+        .map_err(|e| anyhow!("failed to build socket path from uri: {}", e))?;
+
+    if libdd_common::unix_utils::worker_file_outputs_restricted() {
+        let (pinned, connect_path) = libdd_common::unix_utils::constrained_unix_socket_fd(&path)
+            .map_err(|e| anyhow!("failed to resolve dogstatsd socket path: {}", e))?;
+        return Ok(PinnedUnixSink {
+            inner: UnixMetricSink::from(connect_path, socket),
+            _pin: Some(pinned),
+        });
+    }
+    Ok(PinnedUnixSink {
+        inner: UnixMetricSink::from(path, socket),
+        _pin: None,
+    })
 }
 
 pub(super) fn create_udp_sink(endpoint: &Endpoint) -> anyhow::Result<UdpMetricSink> {

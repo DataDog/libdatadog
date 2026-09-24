@@ -53,6 +53,23 @@ impl From<RuntimeStackFrame> for StackFrame {
     }
 }
 
+/// Controls file access and process inspection for a crash report. IPC workers may have fewer
+/// privileges than the receiver's host, so select this policy from the connection, not the report.
+#[derive(Debug, Clone, Copy)]
+pub enum ReceiverFileAccess {
+    /// Use the configured paths and process ID for a trusted collector.
+    Trusted,
+    /// Constrain attachment paths, use the authenticated peer's PID and skip receiver-side
+    /// symbolization and remote unwinding.
+    Restricted { peer_pid: u32 },
+}
+
+impl ReceiverFileAccess {
+    pub(crate) fn is_restricted(&self) -> bool {
+        matches!(self, ReceiverFileAccess::Restricted { .. })
+    }
+}
+
 /// The crashtracker collector sends data in blocks.
 /// This enum tracks which block we're currently in, and, for multi-line blocks,
 /// collects the partial data until the block is closed and it can be appended
@@ -332,6 +349,7 @@ fn process_line(
 pub(crate) async fn receive_report_from_stream(
     timeout: Duration,
     stream: &mut (impl AsyncBufReadExt + std::marker::Unpin),
+    access: ReceiverFileAccess,
 ) -> anyhow::Result<Option<(CrashtrackerConfiguration, CrashInfo)>> {
     let mut builder = CrashInfoBuilder::new();
     let mut stdin_state = StdinState::Waiting;
@@ -457,31 +475,40 @@ pub(crate) async fn receive_report_from_stream(
         return Ok(None);
     }
 
+    // Use the authenticated PID before any process inspection. The reported PID could name the
+    // privileged host instead of the worker.
+    if let ReceiverFileAccess::Restricted { peer_pid } = access {
+        let claimed = builder.proc_info.as_ref().map(|p| p.pid);
+        if let Some(claimed) = claimed {
+            if claimed != peer_pid {
+                builder.with_log_message(
+                    format!(
+                        "Restricting crash process inspection to the authenticated peer pid \
+                         {peer_pid} (report claimed {claimed})"
+                    ),
+                    false,
+                )?;
+                if let Some(proc_info) = builder.proc_info.as_mut() {
+                    proc_info.pid = peer_pid;
+                }
+            }
+        }
+    }
+
     enrich_thread_name(&mut builder)?;
     builder.with_os_info_this_machine()?;
 
     // Without a config, we don't even know the endpoint to transmit to.  Not much to do to recover.
     let config = config.context("Missing crashtracker configuration")?;
 
-    for filename in config.additional_files() {
-        if let Err(e) = builder.with_file(filename.clone()) {
-            builder.with_log_message(e.to_string(), true)?;
-            debug_logger.emit(
-                ReceiverIssue::AttachAdditionalFile,
-                &builder.uuid.to_string(),
-                format!("Unable to attach additional file {filename:?}: {e}"),
-                LogLevel::Warn,
-            );
-        }
-    }
+    attach_additional_files(&mut builder, &config, access, &debug_logger)?;
 
-    // Thread collection is budgeted against the *remaining* receiver timeout;
-    // whatever time is left after reading the crash data from stdin.
-    // This makes sure the total receiver lifetime is bounded by the configured
-    // timeout, and we always emit whatever threads were collected before
-    // the deadline rather than silently discarding them.
+    // Collect threads within the remaining timeout and keep any results gathered before it ends.
+    // Skip this for restricted reports: libunwind opens mapped ELF/debug files without our path
+    // checks, and a worker can replace those paths with aliases to host-held descriptors. The
+    // crashing thread's stack supplied by the worker is retained.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    if config.collect_all_threads() && !access.is_restricted() {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
@@ -515,6 +542,52 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+/// Attach files using the report's access policy. Rejections must not reveal the target's contents
+/// or resolved path; only trusted receivers also print them to stderr.
+fn attach_additional_files(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    access: ReceiverFileAccess,
+    debug_logger: &DebugLogger,
+) -> anyhow::Result<()> {
+    use std::io::BufRead;
+    let restricted = access.is_restricted();
+    for filename in config.additional_files() {
+        let opened: std::io::Result<std::fs::File> = if restricted {
+            #[cfg(unix)]
+            {
+                libdd_common::unix_utils::open_regular_for_read(std::path::Path::new(filename))
+                    .map_err(std::io::Error::from)
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::File::open(filename)
+            }
+        } else {
+            std::fs::File::open(filename)
+        };
+        let result = opened.and_then(|file| {
+            std::io::BufReader::new(file)
+                .lines()
+                .collect::<std::io::Result<Vec<String>>>()
+        });
+        match result {
+            Ok(lines) => builder.with_file_and_contents(filename.clone(), lines)?,
+            Err(e) => {
+                let message = format!("Unable to attach additional file {filename:?}: {e}");
+                builder.with_log_message(message.clone(), !restricted)?;
+                debug_logger.emit(
+                    ReceiverIssue::AttachAdditionalFile,
+                    &builder.uuid.to_string(),
+                    message,
+                    LogLevel::Warn,
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -736,9 +809,13 @@ mod tests {
         drop(sender);
 
         let mut stream = tokio::io::BufReader::new(receiver);
-        let report = receive_report_from_stream(Duration::from_secs(1), &mut stream)
-            .await
-            .unwrap();
+        let report = receive_report_from_stream(
+            Duration::from_secs(1),
+            &mut stream,
+            ReceiverFileAccess::Trusted,
+        )
+        .await
+        .unwrap();
         assert!(report.is_none());
 
         let request = server.await.unwrap();

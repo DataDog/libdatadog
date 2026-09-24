@@ -73,8 +73,20 @@ mod native {
         let path = libdd_common::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
 
+        // Worker endpoints need constrained file opens. Directory mode also creates and renames
+        // paths without validation, so disable it when restrictions are enabled.
+        #[cfg(unix)]
+        let restricted = libdd_common::unix_utils::worker_file_outputs_restricted();
+        #[cfg(not(unix))]
+        let restricted = false;
+
         let is_dir = path.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR) || path.is_dir();
         if is_dir {
+            if restricted {
+                return Err(HttpError::Other(anyhow::anyhow!(
+                    "directory-mode file:// telemetry output is disabled under output restriction"
+                )));
+            }
             std::fs::create_dir_all(&path)
                 .map_err(|e| HttpError::Other(anyhow::anyhow!("creating {path:?}: {e}")))?;
             // Process-wide sequence so successive requests get distinct, ordered filenames.
@@ -98,6 +110,18 @@ mod native {
             static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
             let _guard = WRITE_LOCK.lock_or_panic();
 
+            #[cfg(unix)]
+            let mut file = if restricted {
+                libdd_common::unix_utils::open_regular_for_append(&path)
+                    .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
+            } else {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
+            };
+            #[cfg(not(unix))]
             let mut file = OpenOptions::new()
                 .create(true)
                 .append(true)
