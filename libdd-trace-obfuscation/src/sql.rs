@@ -2321,21 +2321,11 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    // The public entry points return `Result`; these wrappers keep the table-driven tests below
-    // focused on the obfuscated text. An empty result is the documented failure, so it maps back
-    // to the empty string here, which is what these tests assert.
-
-    fn obfuscate_sql(s: &str, config: &super::SqlConfig, dbms: super::DbmsKind) -> String {
-        super::obfuscate_sql(s, config, dbms).unwrap_or_default()
-    }
-
-    fn obfuscate_sql_string(s: &str) -> String {
-        super::obfuscate_sql_string(s).unwrap_or_default()
-    }
-
-    fn obfuscate_sql_string_normalized(s: &str) -> String {
-        super::obfuscate_sql_string_normalized(s).unwrap_or_default()
-    }
+    use super::{
+        obfuscate_sql, obfuscate_sql_string, obfuscate_sql_string_normalized, DbmsKind, SqlConfig,
+        SqlObfuscationError, SqlObfuscationMode,
+    };
+    use core::fmt::Write;
 
     /// The Agent classifies identifier characters with `unicode.IsLetter`, so a non-ASCII
     /// identifier is an ordinary identifier there. This crate matches that - `is_ident_start` and
@@ -2369,8 +2359,12 @@ mod tests {
         for input in [
             "",
             " ",
+            "   ",
+            "         ",
             "\t",
             "\n  \r\n",
+            "-- comment",
+            "---",
             "-- password=hunter2",
             "/* password=hunter2 */",
         ] {
@@ -2382,6 +2376,11 @@ mod tests {
             assert_eq!(
                 super::obfuscate_sql_string(input),
                 Err(super::SqlObfuscationError::EmptyResult),
+                "input: {input:?}"
+            );
+            assert_eq!(
+                obfuscate_sql_string_normalized(input),
+                Err(SqlObfuscationError::EmptyResult),
                 "input: {input:?}"
             );
         }
@@ -2424,9 +2423,6 @@ mod tests {
             "Non-parsable SQL query"
         );
     }
-
-    use super::{DbmsKind, SqlConfig, SqlObfuscationMode};
-    use core::fmt::Write;
 
     #[cfg_attr(miri, ignore)] // huge nested input, prohibitively slow under Miri
     #[test]
@@ -2471,7 +2467,7 @@ mod tests {
             dollar_quoted_func: true,
             ..Default::default()
         };
-        let got = obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+        let got = obfuscate_sql(&sql, &config, DbmsKind::Postgresql).unwrap();
         assert!(
             !got.contains(secret),
             "obfuscated SQL must not contain the nested literal: {got:?}"
@@ -2511,7 +2507,7 @@ mod tests {
     }
 
     fn test_sql_obfuscation_case(input: &str, output: &str) -> anyhow::Result<()> {
-        let got = obfuscate_sql_string(input);
+        let got = obfuscate_sql_string(input)?;
         if output != got {
             anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
@@ -2552,7 +2548,7 @@ mod tests {
     }
 
     fn test_sql_obfuscation_normalized_case(input: &str, output: &str) -> anyhow::Result<()> {
-        let got = obfuscate_sql_string_normalized(input);
+        let got = obfuscate_sql_string_normalized(input)?;
         if output != got {
             anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
@@ -2572,7 +2568,11 @@ mod tests {
         );
         // In old tokenizer mode, keep_identifier_quotation is ignored (Go does too).
         let expected = "SELECT * FROM users WHERE id = ? AND name = ?";
-        assert_eq!(got, expected, "keep_identifier_quotation: got {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "keep_identifier_quotation: got {got:?}"
+        );
     }
 
     #[test]
@@ -2589,7 +2589,8 @@ mod tests {
         // In old-tokenizer mode, Go ignores remove_space_between_parentheses and always adds spaces
         let expected = "SELECT * FROM users WHERE id = ? AND ( name = ? OR name = ? )";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "remove_space_between_parentheses: got {got:?}"
         );
     }
@@ -2610,7 +2611,8 @@ mod tests {
         // regardless of keep_positional_parameter (matches Go's old tokenizer behavior).
         let expected = "SELECT * FROM users WHERE id = ? AND name = ? and id = ?";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "keep_positional_parameter: got {got:?}, expected {expected:?}"
         );
     }
@@ -2643,15 +2645,10 @@ mod tests {
     ];
 
     const CASES: &[(&str, &str)] = &[
-        ("", ""),
-        ("   ", ""),
-        ("         ", ""),
         ("罿", "罿"),
         ("罿潯", "罿潯"),
         ("罿潯罿潯罿潯罿潯罿潯", "罿潯罿潯罿潯罿潯罿潯"),
         ("'abc1287681964'", "?"),
-        ("-- comment", ""),
-        ("---", ""),
         ("1 - 2", "? - ?"),
         (
             "SELECT * FROM TABLE WHERE userId = 'abc1287681964'",
@@ -2976,7 +2973,11 @@ mod tests {
         ];
         for (input, expected) in cases {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "normalize_only input={input:?}");
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "normalize_only input={input:?}"
+            );
         }
     }
 
@@ -2994,7 +2995,8 @@ mod tests {
         );
         let expected = "SELECT * FROM users WHERE id = 1 AND name = 'test';";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "normalize_only+keep_trailing_semicolon: {got:?}"
         );
     }
@@ -3013,7 +3015,8 @@ mod tests {
         );
         let expected = r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#;
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "normalize_only+keep_identifier_quotation: {got:?}"
         );
     }
@@ -3036,7 +3039,11 @@ mod tests {
         ];
         for (input, expected) in cases {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "with_cte_stripping input={input:?}");
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "with_cte_stripping input={input:?}"
+            );
         }
     }
 
@@ -3063,7 +3070,11 @@ mod tests {
         ];
         for (input, expected) in cases {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "double_quoted_value input={input:?}");
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "double_quoted_value input={input:?}"
+            );
         }
     }
 
@@ -3080,7 +3091,11 @@ mod tests {
             DbmsKind::Generic,
         );
         let expected = "SELECT $func$INSERT INTO table VALUES ( 'a', 1, 2 )$func$ FROM users";
-        assert_eq!(got, expected, "normalize_only dollar_func: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "normalize_only dollar_func: {got:?}"
+        );
     }
 
     #[test]
@@ -3098,7 +3113,8 @@ mod tests {
         );
         let expected = "SELECT * FROM users? WHERE id = ?";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "dollar_quoted_func trivial collapse: {got:?}"
         );
     }
@@ -3116,7 +3132,11 @@ mod tests {
             DbmsKind::Generic,
         );
         let expected = r#"SELECT "table"."field" FROM "table" WHERE "table"."otherfield" = $? AND "table"."thirdfield" = $?;"#;
-        assert_eq!(got, expected, "obfuscate_only keeps quotes/$/semi: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "obfuscate_only keeps quotes/$/semi: {got:?}"
+        );
     }
 
     #[test]
@@ -3134,7 +3154,8 @@ mod tests {
         );
         let expected = "SELECT $func$INSERT INTO table VALUES (?, ?, ?)$func$ FROM users";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "obfuscate_only dollar_quoted_func no collapse: {got:?}"
         );
     }
@@ -3152,7 +3173,11 @@ mod tests {
         );
         let expected =
             "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END";
-        assert_eq!(got, expected, "normalize_only+procedure: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "normalize_only+procedure: {got:?}"
+        );
     }
 
     #[test]
@@ -3166,7 +3191,7 @@ mod tests {
         eprintln!("RAW: {raw:?}");
         let got = obfuscate_sql(input, &config, DbmsKind::Generic);
         let expected = "SELECT * FROM public.table ( array [ ROW ( array [ ?";
-        assert_eq!(got, expected, "q41: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "q41: {got:?}");
     }
 
     // --- Integration test cases added for faster iteration ---
@@ -3180,7 +3205,7 @@ mod tests {
             DbmsKind::Postgresql,
         );
         let expected = "select * from users where user.custom ? ?";
-        assert_eq!(got, expected, "pg_json_7: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "pg_json_7: {got:?}");
     }
 
     #[test]
@@ -3193,7 +3218,7 @@ mod tests {
             DbmsKind::Generic,
         );
         let expected = "SELECT * FROM dbo.Items WHERE id = ? or ? = ?";
-        assert_eq!(got, expected, "q90: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "q90: {got:?}");
     }
 
     #[test]
@@ -3206,7 +3231,11 @@ mod tests {
             DbmsKind::Generic,
         );
         let expected = "SELECT TO_DATE ( TO_CHAR ( TO_DATE ( bar.h, ? ) ) ) FROM t";
-        assert_eq!(got, expected, "cassandra_nested_dates: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "cassandra_nested_dates: {got:?}"
+        );
     }
 
     #[test]
@@ -3215,7 +3244,7 @@ mod tests {
         let config = SqlConfig::default();
         let got = obfuscate_sql("SELECT a ||?|| b FROM t", &config, DbmsKind::Generic);
         let expected = "SELECT a | | ? | | b FROM t";
-        assert_eq!(got, expected, "cassandra_pipe: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "cassandra_pipe: {got:?}");
     }
 
     // Test cases from the agent repo
@@ -3508,7 +3537,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in SUITE_CASES.iter().enumerate() {
             let got = obfuscate_sql_string(input);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3536,7 +3565,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3564,7 +3593,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3590,7 +3619,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3683,7 +3712,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3737,7 +3766,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3765,7 +3794,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Mssql);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3835,7 +3864,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Postgresql);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3869,7 +3898,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3894,7 +3923,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3922,7 +3951,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3950,7 +3979,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -3978,7 +4007,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4020,7 +4049,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4048,7 +4077,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4073,7 +4102,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4101,7 +4130,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4130,7 +4159,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4158,7 +4187,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4186,7 +4215,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4214,7 +4243,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4242,7 +4271,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4270,7 +4299,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4298,7 +4327,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4326,7 +4355,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4359,7 +4388,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4389,7 +4418,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4417,7 +4446,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4445,7 +4474,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4474,7 +4503,7 @@ mod tests {
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
+            if got.as_deref() != Ok(*expected) {
                 let _ = write!(
                     errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
@@ -4496,13 +4525,15 @@ mod tests {
         };
         let got_upper = obfuscate_sql("SELECT * FROM t LIMIT 5, 10", &config, DbmsKind::Generic);
         assert_eq!(
-            got_upper, "SELECT * FROM t LIMIT ?",
+            got_upper.as_deref(),
+            Ok("SELECT * FROM t LIMIT ?"),
             "uppercase LIMIT should be collapsed: {got_upper:?}"
         );
         // eq_ignore_ascii_case fix: lowercase limit must also be collapsed.
         let got_lower = obfuscate_sql("SELECT * FROM t limit 5, 10", &config, DbmsKind::Generic);
         assert_eq!(
-            got_lower, "SELECT * FROM t limit ?",
+            got_lower.as_deref(),
+            Ok("SELECT * FROM t limit ?"),
             "lowercase limit should also be collapsed: {got_lower:?}"
         );
     }
