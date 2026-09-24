@@ -191,15 +191,6 @@ mod otlp_export_tests {
                 then.status(200).body("");
             })
             .await;
-        #[cfg(feature = "telemetry")]
-        let telemetry_legacy = server
-            .mock_async(|when, then| {
-                when.method("POST")
-                    .path("/telemetry/proxy/api/v2/apmtelemetry")
-                    .body_includes("ignored-telemetry-id");
-                then.status(200).body("");
-            })
-            .await;
 
         let handle = MutableMetadataHandle::default();
         handle.set_runtime_id("rt-initial".into());
@@ -213,12 +204,11 @@ mod otlp_export_tests {
                 .set_otlp_endpoint(&otlp_endpoint)
                 .set_language("test-lang")
                 // Ignored: the shared handle supersedes the legacy setter.
-                .set_runtime_id("ignored-legacy-id")
+                .set_runtime_id("ignored-telemetry-id")
                 .set_mutable_metadata(handle.clone());
             #[cfg(feature = "telemetry")]
             builder.enable_telemetry(libdd_data_pipeline::trace_exporter::TelemetryConfig {
                 heartbeat: 60_000,
-                runtime_id: Some("ignored-telemetry-id".into()),
                 debug_enabled: false,
             });
             let trace_exporter = builder
@@ -247,7 +237,6 @@ mod otlp_export_tests {
         #[cfg(feature = "telemetry")]
         {
             assert!(telemetry_new.calls_async().await > 0);
-            assert_eq!(telemetry_legacy.calls_async().await, 0);
         }
     }
 

@@ -1319,7 +1319,6 @@ mod tests {
         #[cfg(feature = "telemetry")]
         builder.enable_telemetry(TelemetryConfig {
             heartbeat: 1000,
-            runtime_id: None,
             debug_enabled: false,
         });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -1356,29 +1355,41 @@ mod tests {
     #[cfg(feature = "telemetry")]
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn telemetry_runtime_id_is_a_fallback_for_exporter_metadata() {
-        let server = httpmock::MockServer::start();
-        server.mock(|when, then| {
-            when.any_request();
-            then.status(200).body("{}");
-        });
-        for (runtime_id, expected) in [(None, "telemetry-id"), (Some("tracer-id"), "tracer-id")] {
-            let mut builder = TraceExporterBuilder::default();
-            builder
-                .set_url(&server.url("/"))
-                .enable_telemetry(TelemetryConfig {
-                    runtime_id: Some("telemetry-id".into()),
-                    ..Default::default()
-                });
-            if let Some(runtime_id) = runtime_id {
-                builder.set_runtime_id(runtime_id);
-            }
-            let exporter = builder.build::<NativeCapabilities>().unwrap();
-            assert_eq!(
-                exporter.metadata.mutable_metadata.load().runtime_id,
-                expected
-            );
-        }
+    fn mutable_metadata_fallback() {
+        // Without a shared handle, `set_runtime_id` and `set_process_tags` seed
+        // the exporter's own metadata handle.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_runtime_id("tracer-id")
+            .set_process_tags("key1:val1,key2:val2")
+            .enable_telemetry(TelemetryConfig::default());
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "tracer-id");
+        assert_eq!(snapshot.process_tags, "key1:val1,key2:val2");
+
+        // With a shared handle, the builder-level setters are ignored: the
+        // exporter uses the handle's current values.
+        let mut shared = MutableMetadata::default();
+        shared.runtime_id = "shared-id".into();
+        shared.process_tags = "shared:tag".into();
+        let shared: MutableMetadataHandle = shared.into();
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_runtime_id("ignored-id")
+            .set_process_tags("ignored:tag")
+            .set_mutable_metadata(shared.clone())
+            .enable_telemetry(TelemetryConfig::default());
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "shared-id");
+        assert_eq!(snapshot.process_tags, "shared:tag");
+
+        // The exporter shares the handle and receives updates
+        shared.set_runtime_id("updated-id".into());
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "updated-id");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1538,7 +1549,6 @@ mod tests {
             )
             .enable_telemetry(TelemetryConfig {
                 heartbeat: 1000,
-                runtime_id: None,
                 debug_enabled: false,
             });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
