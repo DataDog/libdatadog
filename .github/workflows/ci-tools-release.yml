@@ -26,12 +26,11 @@ env:
   MAIN_BRANCH: main
 
 jobs:
-  publish:
-    environment: publish-ci-tools
+  validate:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write # Exchanged for the release-publishing token
+    outputs:
+      tool: ${{ steps.tag.outputs.tool }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -90,9 +89,22 @@ jobs:
             exit 1
           fi
 
+  publish:
+    needs: validate
+    environment: publish-ci-tools
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # Exchanged for the release-publishing token
+    env:
+      TOOL: ${{ needs.validate.outputs.tool }}
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0 # Full history and tags, for the release notes
+
       - name: Build
-        env:
-          TOOL: ${{ steps.tag.outputs.tool }}
         run: |
           set -euo pipefail
           cd .github/actions
@@ -116,8 +128,6 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token || github.token }}
           TAG: ${{ github.ref_name }}
-          TOOL: ${{ steps.tag.outputs.tool }}
-          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
           asset=".github/actions/target/release/$TOOL"
@@ -174,8 +184,6 @@ jobs:
       - name: Summary
         env:
           TAG: ${{ github.ref_name }}
-          TOOL: ${{ steps.tag.outputs.tool }}
-          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           {
             echo "### Published \`$TOOL\` v$VERSION"

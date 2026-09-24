@@ -42,10 +42,13 @@ tool, so a change there requires bumping all of them.
    ```
    The ruleset also restricts who may create a tag, so this needs an account
    permitted to.
-5. `ci-tools-release` then waits on the `publish-ci-tools` environment, which
-   takes an approval from `libdatadog-owners` and does not let whoever pushed
-   the tag approve their own release. Once approved it builds the binary and
-   attaches it to a release of that tag, and later pull requests download it.
+5. `ci-tools-release` checks the tag first: that it is well formed, that it
+   names a binary package, that its version matches that package's manifest,
+   and that its commit is on `main`. Only then does it wait on the
+   `publish-ci-tools` environment, so an approval is given on a checked tag
+   rather than on a name. The approval comes from `libdatadog-owners`, and
+   whoever pushed the tag cannot give it. Once approved the binary is built
+   and attached to a release of that tag, and later pull requests download it.
 
 Skipping steps 4 and 5 is safe: every workflow keeps building from source
 until the tag is released.
