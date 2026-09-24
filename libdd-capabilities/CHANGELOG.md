@@ -2,6 +2,19 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v3.0.1..libdd-capabilities-v4.0.0) - 2026-09-24
+
+### Added
+
+- Add API to force flush stats on the trace exporter ([#2538](https://github.com/datadog/libdatadog/issues/2538)) - ([579abee](https://github.com/datadog/libdatadog/commit/579abeed865469ce015a80e58937dc15f8dffc6f))
+
+### Changed
+
+- Apply small timeout pooling strategy to libdd-http-client as well ([#2449](https://github.com/datadog/libdatadog/issues/2449)) - ([16e10db](https://github.com/datadog/libdatadog/commit/16e10db927db4adcdf386cd09535e100bdf4f587))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v3.0.0..libdd-capabilities-v3.0.1) - 2026-09-08
 
 ### Added

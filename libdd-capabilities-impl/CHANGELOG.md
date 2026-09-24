@@ -2,6 +2,19 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v5.0.0..libdd-capabilities-impl-v6.0.0) - 2026-09-24
+
+### Changed
+
+- Apply small timeout pooling strategy to libdd-http-client as well ([#2449](https://github.com/datadog/libdatadog/issues/2449)) - ([16e10db](https://github.com/datadog/libdatadog/commit/16e10db927db4adcdf386cd09535e100bdf4f587))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Stabilize the sidecar for macos usage ([#2475](https://github.com/datadog/libdatadog/issues/2475)) - ([902002a](https://github.com/datadog/libdatadog/commit/902002a1adb24bc11b10b093a3053a106663f1dd))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v4.0.0..libdd-capabilities-impl-v5.0.0) - 2026-09-08
 
 ### Added
