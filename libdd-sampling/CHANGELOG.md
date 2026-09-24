@@ -2,6 +2,24 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v6.0.0..libdd-sampling-v7.0.0) - 2026-09-24
+
+### Added
+
+- Add from owned to SpanText ([#2403](https://github.com/datadog/libdatadog/issues/2403)) - ([39590c6](https://github.com/datadog/libdatadog/commit/39590c6fb599919eb56eaf829af78c10c7346474))
+
+### Changed
+
+- Remove batched-loop sampling noise ([#2498](https://github.com/datadog/libdatadog/issues/2498)) - ([e0a0134](https://github.com/datadog/libdatadog/commit/e0a0134bbf0896603db615344e9b2950e7a2b2b9))
+- Make rate_limiter thread-safety test deterministic ([#2354](https://github.com/datadog/libdatadog/issues/2354)) - ([4678752](https://github.com/datadog/libdatadog/commit/4678752b4be5bec7e55112598eb1b9491ddd9cc6))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Benchmark was doing many samples for deterministic heap usage ([#2465](https://github.com/datadog/libdatadog/issues/2465)) - ([441cdcf](https://github.com/datadog/libdatadog/commit/441cdcf2fa14ac2b0a75df3f901a219eda2cc705))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v5.0.0..libdd-sampling-v6.0.0) - 2026-08-17
 
 ### Added
