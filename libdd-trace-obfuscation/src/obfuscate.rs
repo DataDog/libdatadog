@@ -436,17 +436,6 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     true
 }
 
-/// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
-/// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no test
-/// expects to see again, so a resource forwarded as sent instead of discarded fails loudly.
-#[cfg(test)]
-const UNOBFUSCATABLE_SQL: &[&str] = &[
-    "   ",
-    "\n\t \r\n",
-    "-- SELECT secret-hunter2-must-not-leak",
-    "/* SELECT secret-hunter2-must-not-leak */",
-];
-
 #[cfg(test)]
 mod tests {
     use super::{obfuscate_pb_span, obfuscate_resource_for_stats, pb};
@@ -456,6 +445,16 @@ mod tests {
         sql::SQL_NON_PARSABLE_REPLACEMENT,
     };
     use libdd_trace_utils::test_utils;
+
+    /// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
+    /// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no test
+    /// expects to see again, so a resource forwarded as sent instead of discarded fails loudly.
+    pub(super) const UNOBFUSCATABLE_SQL: &[&str] = &[
+        "   ",
+        "\n\t \r\n",
+        "-- SELECT secret-hunter2-must-not-leak",
+        "/* SELECT secret-hunter2-must-not-leak */",
+    ];
 
     // test helper with default params
     fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
@@ -505,7 +504,7 @@ mod tests {
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
     #[test]
     fn test_obfuscate_resource_for_stats_unobfuscatable_sql() {
-        for resource in super::UNOBFUSCATABLE_SQL {
+        for resource in UNOBFUSCATABLE_SQL {
             for span_type in ["sql", "cassandra"] {
                 assert_eq!(
                     obfuscate_stats(span_type, resource).as_deref(),
@@ -663,7 +662,7 @@ mod tests {
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
     #[test]
     fn obfuscate_unobfuscatable_sql_resource_is_replaced() {
-        for resource in super::UNOBFUSCATABLE_SQL {
+        for resource in UNOBFUSCATABLE_SQL {
             for span_type in ["sql", "cassandra"] {
                 let span = sql_pb_span(span_type, resource);
                 assert_eq!(
@@ -690,7 +689,7 @@ mod tests {
 
 #[cfg(test)]
 mod v04_tests {
-    use super::obfuscate_v04_span;
+    use super::{obfuscate_v04_span, tests::UNOBFUSCATABLE_SQL};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
     };
@@ -826,7 +825,7 @@ mod v04_tests {
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
     #[test]
     fn obfuscate_unobfuscatable_sql_resource_is_replaced() {
-        for resource in super::UNOBFUSCATABLE_SQL {
+        for resource in UNOBFUSCATABLE_SQL {
             for span_type in ["sql", "cassandra"] {
                 let span = sql_v04_span(span_type, resource);
                 assert_eq!(

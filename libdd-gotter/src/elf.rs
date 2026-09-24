@@ -61,8 +61,8 @@ unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 }
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
+    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
 };
 
 // ELF dynamic-section tags. The `libc` crate doesn't export these
