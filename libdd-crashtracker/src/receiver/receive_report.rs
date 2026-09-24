@@ -579,9 +579,10 @@ fn collect_and_add_thread_contexts(
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
     }
 
-    // The frame stream sent by the signal-safe collector is deliberately only
-    // a fallback. Replace it with the CFI unwind rooted at the saved kernel
-    // context so Error Tracking groups and displays the causal crash stack.
+    // Only set with `unwind_from_ucontext`, which a collector opts into when it
+    // can't unwind in-process and its frame stream is just a fallback. The
+    // ptrace unwind starts at the saved crash registers, or, if seeding them
+    // failed, at the stopped thread trimmed to the crash site.
     if let Some(stack) = crashing_stack {
         builder.with_stack(stack)?;
     }
