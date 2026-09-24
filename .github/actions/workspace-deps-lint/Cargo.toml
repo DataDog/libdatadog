@@ -1,0 +1,18 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "workspace-deps-lint"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87.0"
+description = "Lints how workspace members declare their dependencies"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/workspace-deps-lint"
+repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/workspace-deps-lint"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+cargo_metadata = "0.23.1"
+clap = { version = "4", features = ["derive", "env"] }
+toml_edit = "0.22"
