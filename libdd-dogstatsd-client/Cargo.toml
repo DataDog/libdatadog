@@ -12,7 +12,7 @@ license.workspace = true
 bench = false
 
 [dependencies]
-libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "7.0.0", path = "../libdd-common", default-features = false }
 cadence.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 tracing.workspace = true
