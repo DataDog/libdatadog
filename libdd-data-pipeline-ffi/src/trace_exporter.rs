@@ -1653,7 +1653,7 @@ mod tests {
                     .body("");
             });
 
-            let cfg = TraceExporterConfig {
+            let mut cfg = TraceExporterConfig {
                 url: Some(server.url("/")),
                 tracer_version: Some("0.1".to_string()),
                 language: Some("lang".to_string()),
@@ -1671,6 +1671,10 @@ mod tests {
                 }),
                 ..Default::default()
             };
+
+            let error =
+                ddog_trace_exporter_config_set_runtime_id(Some(&mut cfg), CharSlice::from("foo"));
+            assert!(error.is_none());
 
             let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut ret =
