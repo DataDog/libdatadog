@@ -633,7 +633,7 @@ where
 
         // A literal arrives here as it was written. A string is unescaped before it is
         // transformed; anything else - a number, `true`, a string `serde_json` will not accept -
-        // is passed on verbatim, which is what the Agent does when it cannot unquote.
+        // is passed on verbatim.
         //
         // `literal` is built from `char_indices` offsets of `input`, so it is in bounds and on
         // character boundaries; `unwrap_or_default` only keeps that assumption from panicking.
@@ -701,8 +701,7 @@ enum Unescaped<'a> {
 ///
 /// A literal with no escape sequence is the common case and is returned as a slice of itself,
 /// leaving `buffer` untouched. Anything else goes through `serde_json`, into `buffer`. A literal
-/// that is not a string, or that `serde_json` rejects, is returned verbatim - quotes and all -
-/// which is what the Agent's `strconv.Unquote` fallback does.
+/// that is not a string, or that `serde_json` rejects, is returned verbatim, quotes and all.
 fn unescape<'a>(literal: &'a str, buffer: &mut String) -> Unescaped<'a> {
     let unquoted = literal.strip_prefix('"').and_then(|s| s.strip_suffix('"'));
     match unquoted {
@@ -1032,9 +1031,7 @@ mod tests {
         assert_eq!(out, r#"{"query":"kept"}"#);
     }
 
-    /// A literal a transform key points at that cannot be unquoted reaches the callback as
-    /// written, quotes and all, which is what the Agent's `strconv.Unquote` fallback does. The
-    /// previous implementation stripped the quotes.
+    /// A transform value that cannot be unquoted reaches the callback verbatim, quotes included.
     #[test]
     fn test_unquotable_transform_value_is_passed_through_verbatim() {
         // A number: not a quoted string, so there is nothing to unquote.

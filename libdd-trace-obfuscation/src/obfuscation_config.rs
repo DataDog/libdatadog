@@ -59,9 +59,7 @@ pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
     /// not be obfuscated.
-    // The Agent's `/info` sends this as `keep_keys`, but its own obfuscation config calls it
-    // `keep_values` (`JSONConfig.KeepValues`, `apm_config.obfuscation.*.keep_values`), and the
-    // two are the same set. The alias accepts either spelling.
+    // Accept both `/info`'s `keep_keys` and the Agent config's `keep_values`.
     #[serde(alias = "keep_values")]
     pub keep_keys: HashSet<String>,
     /// `transform_keys` will specify a set of keys whose string values are passed to the
@@ -285,10 +283,7 @@ pub struct SqlConfig {
 mod tests {
     use super::JsonObfuscatorConfig;
 
-    /// The Agent's `/info` reports the kept-key set as `keep_keys`, mapped there from the
-    /// `KeepValues` its own obfuscation config uses (`pkg/trace/api/info.go`,
-    /// `reducedJSONObfuscationConfig`). Either spelling has to parse, and nothing may reject the
-    /// fields `/info` sends that this config has no field for.
+    /// Accept `/info` and obfuscation-config field names, ignoring unknown fields.
     #[test]
     fn test_agent_json_obfuscation_field_names() {
         let from_info: JsonObfuscatorConfig =

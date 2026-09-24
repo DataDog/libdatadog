@@ -2327,10 +2327,8 @@ mod tests {
     };
     use core::fmt::Write;
 
-    /// The Agent classifies identifier characters with `unicode.IsLetter`, so a non-ASCII
-    /// identifier is an ordinary identifier there. This crate matches that - `is_ident_start` and
-    /// `is_ident_char` accept bytes above 127 - and this pins it, because a port that reaches for
-    /// `is_ascii_alphabetic` instead turns these queries into obfuscation failures.
+    /// Non-ASCII identifiers must survive obfuscation; restricting identifier characters to ASCII
+    /// would turn these queries into failures.
     /// See <https://github.com/DataDog/libdatadog/issues/2541>.
     #[test]
     fn test_non_ascii_identifiers_are_not_a_failure() {
