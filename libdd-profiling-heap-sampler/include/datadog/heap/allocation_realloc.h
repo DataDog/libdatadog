@@ -18,7 +18,7 @@
  *
  * For a sampled old allocation, a successful realloc is reported as:
  *
- *   ddheap:free(old sampled) + new unsampled allocation
+ *   otel_memory:free(old sampled) + new unsampled allocation
  *
  * New blocks from realloc(NULL, size) use the normal allocation sampling
  * path. Existing unsampled blocks pass through unchanged. Existing
@@ -87,7 +87,7 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
  * returns the possibly tagged user pointer.
  *
  * On the sampled-old path: shifts old user contents from [old_offset, ...)
- * down to [0, ...), fires ddheap:free(old_user), and returns new_raw as
+ * down to [0, ...), fires otel_memory:free(old_user), and returns new_raw as
  * an unsampled pointer.
  *
  * On the unsampled/passthrough and realloc(ptr, 0) paths: returns new_raw

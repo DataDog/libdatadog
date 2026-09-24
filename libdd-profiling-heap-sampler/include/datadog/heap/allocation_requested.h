@@ -1,7 +1,7 @@
 /**
  * @file allocation_requested.h
  *
- * Pre-allocation hook for the ddheap sampler.
+ * Pre-allocation hook for the otel_memory sampler.
  *
  * Call dd_allocation_requested() immediately before invoking the underlying
  * allocator. It runs the Poisson sampling decision for this allocation:
@@ -16,7 +16,7 @@
  *                store the sample flag in a 16-byte header before the user
  *                pointer).
  *   - user_size: the original application-requested size, reported to
- *                the profiler via the ddheap:alloc USDT.
+ *                the profiler via the otel_memory:alloc USDT.
  *   - alignment: passed through so dd_allocation_created can place the
  *                user pointer correctly relative to the raw pointer.
  *   - weight:    0 if not sampled; otherwise the unbiased size
@@ -46,7 +46,7 @@
  *               alignment slack.
  *   user_size - the size the application originally asked for. This is
  *               the value that gets reported to the profiler via the
- *               ddheap:alloc USDT, so that heap-size distributions are
+ *               otel_memory:alloc USDT, so that heap-size distributions are
  *               not skewed by the sampler's per-allocation overhead.
  *   alignment - alignment the wrapper MUST pass to its underlying
  *               allocator. Equals the alignment the caller passed to
@@ -108,8 +108,8 @@ static inline __attribute__((always_inline, warn_unused_result))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     dd_alloc_req_t out = { size, size, alignment, 0 };
 
-    // If no tracer is attached to ddheap, skip all sampling logic.
-    if (__builtin_expect(!USDT_SEMA_IS_ACTIVE(ddheap_alloc), 1)) return out;
+    // If no tracer is attached to otel_memory, skip all sampling logic.
+    if (__builtin_expect(!USDT_SEMA_IS_ACTIVE(otel_memory_alloc), 1)) return out;
 
     // If we don't have TLS yet (this is defensive and should never happen), or
     // the reentry guard is set (meaning a sampled allocation is already in

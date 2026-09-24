@@ -24,8 +24,8 @@
 //! Attach a tracer in another shell, e.g.:
 //! ```
 //! sudo bpftrace -p <pid> -e '
-//!   usdt:*:ddheap:alloc { @allocs = count(); }
-//!   usdt:*:ddheap:free  { @frees  = count(); }
+//!   usdt:*:otel_memory:alloc { @allocs = count(); }
+//!   usdt:*:otel_memory:free  { @frees  = count(); }
 //!   interval:s:1 { print(@allocs); print(@frees); }'
 //! ```
 //!
@@ -356,7 +356,7 @@ mod linux {
             .unwrap_or(4);
 
         println!(
-            "pid={}; pre-install. Attach a tracer on 'usdt:*:ddheap:*'. \
+            "pid={}; pre-install. Attach a tracer on 'usdt:*:otel_memory:*'. \
              threads={threads} stress={stress} secs={:?}",
             std::process::id(),
             secs,

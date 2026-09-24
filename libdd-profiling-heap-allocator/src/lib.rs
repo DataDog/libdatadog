@@ -44,7 +44,7 @@ mod allocator;
 pub use allocator::SampledAllocator;
 
 /// Returns true when an external profiler is currently attached to the
-/// allocator's `ddheap:alloc` USDT.
+/// allocator's `otel_memory:alloc` USDT.
 ///
 /// This is a point-in-time read of the USDT semaphore. A profiler can attach
 /// or detach immediately after this returns. Use it as a diagnostic/readiness
