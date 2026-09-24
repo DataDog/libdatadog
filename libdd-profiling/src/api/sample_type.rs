@@ -97,6 +97,10 @@ pub enum SampleType {
     /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
     /// serialization.
     Custom5,
+    /// Time spent in garbage collection.
+    GcTime,
+    /// Number of garbage-collection samples / pause events.
+    GcSamples,
 }
 
 impl SampleType {
@@ -197,6 +201,8 @@ impl From<SampleType> for ValueType<'static> {
             SampleType::Custom3 => ValueType::new("custom-3", "count"),
             SampleType::Custom4 => ValueType::new("custom-4", "count"),
             SampleType::Custom5 => ValueType::new("custom-5", "count"),
+            SampleType::GcTime => ValueType::new("gc-time", "nanoseconds"),
+            SampleType::GcSamples => ValueType::new("gc-samples", "count"),
         }
     }
 }
@@ -263,6 +269,8 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
             ("custom-3", "count") => SampleType::Custom3,
             ("custom-4", "count") => SampleType::Custom4,
             ("custom-5", "count") => SampleType::Custom5,
+            ("gc-time", "nanoseconds") => SampleType::GcTime,
+            ("gc-samples", "count") => SampleType::GcSamples,
             _ => anyhow::bail!("Unknown sample type: ({}, {})", vt.r#type, vt.unit),
         })
     }

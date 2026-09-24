@@ -13,10 +13,7 @@ use crate::setup::Liaison;
 use libdd_ipc::platform::locks::FLock;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
-#[cfg(feature = "logging")]
-use log::{debug, warn};
-#[cfg(not(feature = "logging"))]
-use tracing::{debug, warn};
+use tracing::trace;
 
 pub type IpcClient = SeqpacketConn;
 pub type IpcServer = SeqpacketListener;
@@ -51,10 +48,11 @@ impl Liaison for SharedDirLiaison {
 
         let _g = match FLock::try_rw_lock(&self.lock_path) {
             Ok(lock) => lock,
-            // failing to acquire lock
-            // means that another process is creating the socket
+            // Failing to acquire the lock means another process is currently creating
+            // the socket; the caller then connects to it via connect_to_server(). This
+            // is normal under concurrent process startup.
             Err(err) => {
-                warn!("failed_locking");
+                trace!("another process is creating the sidecar socket");
                 return Err(err);
             }
         };
@@ -62,7 +60,7 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if libdd_ipc::platform::sockets::is_listening(&self.socket_path)? {
-                debug!(
+                trace!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
                 );

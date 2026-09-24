@@ -4,9 +4,9 @@
 use std::alloc::System;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use libdd_common::bench_utils::{
-    memory_allocated_measurement, AllocatedBytesMeasurement, ReportingAllocator,
+    memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
 use libdd_sampling::{v04_span::V04SamplingData, DatadogSampler, SamplingRule};
 use libdd_trace_utils::span::{v04::Span, SliceData};
@@ -399,17 +399,13 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         c.bench_function(
             &format!("datadog_sample_span/{}/wall_time", config.name),
             |b| {
-                b.iter_batched(
-                    || (),
-                    |_| {
-                        let data = V04SamplingData {
-                            is_parent_sampled: config.is_parent_sampled,
-                            span: &config.span,
-                        };
-                        black_box(config.sampler.sample(black_box(&data)));
-                    },
-                    BatchSize::SmallInput,
-                )
+                b.iter(|| {
+                    let data = V04SamplingData {
+                        is_parent_sampled: config.is_parent_sampled,
+                        span: &config.span,
+                    };
+                    black_box(config.sampler.sample(black_box(&data)));
+                })
             },
         );
     }
@@ -422,26 +418,23 @@ fn criterion_benchmark_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System
         c.bench_function(
             &format!("datadog_sample_span/{}/allocated_bytes", config.name),
             |b| {
-                b.iter_batched(
-                    || (),
-                    |_| {
-                        let data = V04SamplingData {
-                            is_parent_sampled: config.is_parent_sampled,
-                            span: &config.span,
-                        };
-                        black_box(config.sampler.sample(black_box(&data)));
-                    },
-                    BatchSize::SmallInput,
-                )
+                b.iter(|| {
+                    let data = V04SamplingData {
+                        is_parent_sampled: config.is_parent_sampled,
+                        span: &config.span,
+                    };
+                    black_box(config.sampler.sample(black_box(&data)));
+                })
             },
         );
     }
 }
 
 criterion_group!(benches, criterion_benchmark);
-criterion_group!(
-    name = alloc_benches;
-    config = memory_allocated_measurement(&GLOBAL);
-    targets = criterion_benchmark_allocs
-);
+
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+fn alloc_benches() {
+    criterion_benchmark_allocs(&mut memory_allocated_criterion(&GLOBAL));
+}
+
 criterion_main!(alloc_benches, benches);

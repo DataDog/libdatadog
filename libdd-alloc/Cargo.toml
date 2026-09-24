@@ -14,11 +14,11 @@ license.workspace = true
 [dependencies]
 allocator-api2.workspace = true
 
-[target.'cfg(unix)'.dependencies.libc]
-version = "0.2.153"
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies.windows-sys]
-version = "0.52"
+workspace = true
 features = [
     "Win32_Foundation",
     "Win32_System_Memory",

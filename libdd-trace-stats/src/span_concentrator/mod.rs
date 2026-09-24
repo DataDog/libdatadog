@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
+use libdd_trace_utils::span::v1::SpanKind;
 
 use aggregation::StatsBucket;
 
@@ -22,6 +23,21 @@ use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 pub use stat_span::{ChunkSpanView, StatSpan};
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+
+const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [SpanKind; 4] = [
+    SpanKind::Client,
+    SpanKind::Server,
+    SpanKind::Producer,
+    SpanKind::Consumer,
+];
+
+/// Span kinds that are eligible for stats computation without Agent configuration.
+pub fn default_stats_eligible_span_kinds() -> Vec<String> {
+    DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+        .into_iter()
+        .map(|span_kind| span_kind.as_meta_str().to_owned())
+        .collect()
+}
 
 /// Deduplicate, sort alphabetically, and cap `keys` using [`ADDITIONAL_METRIC_TAGS_MAX_KEYS`].
 /// Excess keys are dropped and logged as a one time warning.
@@ -68,7 +84,7 @@ impl<T> FlushResult<T> {
 ///
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
-pub trait FlushableConcentrator {
+pub trait FlushableConcentrator: Send + Sync {
     /// Flush time buckets and return them together with flush metadata. If `force` is true, flush
     /// all buckets. See [`FlushResult`] for the returned data.
     fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket>;
@@ -109,7 +125,7 @@ where
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct StatsComputationObfuscationConfig {
     pub enabled: bool,
-    pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+    pub sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
 }
 
 #[cfg(feature = "stats-obfuscation")]
@@ -363,7 +379,7 @@ impl SpanConcentrator {
 
     #[cfg(feature = "stats-obfuscation")]
     fn compute_obfuscated_span<'a>(
-        sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+        sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
         span: &'a impl StatSpan<'a>,
     ) -> Option<String> {
         let dbms_hint: Option<&str> = span.get_meta("db.type");

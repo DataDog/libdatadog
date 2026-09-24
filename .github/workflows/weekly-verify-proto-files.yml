@@ -12,7 +12,9 @@ jobs:
   weekly-verify-proto-files:
     name: "Verify trace-protobuf .proto files are in sync with datadog-agent"
     runs-on: ubuntu-latest
-    environment: nightlies
+
+    permissions:
+      id-token: write
 
     steps:
       - name: Checkout sources
@@ -59,11 +61,18 @@ jobs:
         if: always()
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
       - name: Exclude from Green CI
         if: always()
+        continue-on-error: true
         env:
           DATADOG_SITE: datadoghq.com
-          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
         run: ./scripts/exclude-from-green-ci.sh
       - name: report failure
         id: slack

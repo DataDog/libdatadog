@@ -7,8 +7,9 @@
 //! and calls `mock.register_on_current_thread()` before `build()` so the builder-internal
 //! capabilities share the mock queues. `shutdown()` force-flushes the stats worker.
 //!
-//! `STATS_BUCKET` is large so the periodic flush never fires during a test; shutdown is the
-//! only flush that occurs, keeping tests deterministic.
+//! `STATS_BUCKET` is large so the periodic flush never fires during a test. Only explicit
+//! flushes occur (shutdown, or `flush_client_side_stats` in the force-flush test), keeping
+//! tests deterministic.
 
 mod common;
 use common::mock_http::MockHttpCapabilities;
@@ -17,7 +18,10 @@ use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::v04::{SpanBytes, VecMap};
+use libdd_trace_utils::span::{
+    span_pool::PooledChunks,
+    v04::{SpanBytes, VecMap},
+};
 use std::time::Duration;
 use tokio::task;
 
@@ -81,7 +85,7 @@ async fn run_agentless_with_stats(
 
         for chunks in chunks_per_call {
             exporter
-                .send_trace_chunks(chunks, None)
+                .send_trace_chunks(PooledChunks::unpooled(chunks), None)
                 .expect("send_trace_chunks failed");
         }
         exporter.shutdown(None).expect("shutdown failed");
@@ -160,7 +164,10 @@ async fn test_agentless_stats_sent_to_correct_endpoint() {
             .expect("TraceExporter::build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -233,7 +240,10 @@ async fn test_agentless_stats_payload_structure() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -581,7 +591,10 @@ async fn test_agentless_stats_preserves_container_id() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![make_root_span(1, Some(1.0), 0)]], None)
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -639,7 +652,7 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
             .expect("build failed");
 
         exporter
-            .send_trace_chunks(vec![vec![span]], None)
+            .send_trace_chunks(PooledChunks::unpooled(vec![vec![span]]), None)
             .expect("send_trace_chunks failed");
         exporter.shutdown(None).expect("shutdown failed");
     })
@@ -661,4 +674,80 @@ async fn test_agentless_stats_honors_additional_metric_tag_keys() {
         "agentless stats must fold the configured additional metric tag key onto the \
          aggregation key; got groups: {groups:#?}"
     );
+}
+
+/// Find the `/api/v0.2/stats` request in `reqs` and decode it as a valid agentless
+/// StatsPayload (msgpack), proving a real export path ran rather than a no-op.
+fn expect_stats_request(reqs: &[common::mock_http::CapturedRequest]) -> pb::StatsPayload {
+    let req = reqs
+        .iter()
+        .find(|r| r.uri.path() == "/api/v0.2/stats")
+        .expect("a request to /api/v0.2/stats should have been sent");
+    rmp_serde::from_slice(&req.body).expect("stats body must be valid msgpack")
+}
+
+/// `TraceExporter::flush_client_side_stats` must trigger an immediate forced flush of the
+/// agentless stats exporter through the `Weak<dyn FlushableStatsExport>` handle stored in
+/// `StatsComputationStatus::Enabled`, without waiting for the periodic worker or shutdown.
+#[cfg_attr(miri, ignore)]
+#[tokio::test]
+async fn test_flush_client_side_stats_sends_agentless_stats() {
+    let mock = MockHttpCapabilities::new();
+    mock.queue_response_for_path("/v1/input", 200, "{}");
+    // One response for the explicit flush; an extra one in case the shutdown flush also fires.
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+    mock.queue_response_for_path("/api/v0.2/stats", 202, "");
+
+    let mock_clone = mock.clone();
+    let (flushed, before_shutdown) = task::spawn_blocking(move || {
+        mock_clone.register_on_current_thread();
+
+        let mut builder = TraceExporterBuilder::<ForkSafeRuntime>::new();
+        builder
+            .set_agentless_endpoint("https://traces.fake.example.com/v1/input", "key")
+            .set_agentless_stats_endpoint("https://stats.fake.example.com/api/v0.2/stats")
+            .enable_stats(STATS_BUCKET)
+            .set_language("rust")
+            .set_tracer_version("0.0.0-test")
+            .set_env("integration-test")
+            .set_service("test-svc")
+            .set_hostname("test-host");
+
+        let exporter = builder
+            .build::<MockHttpCapabilities>()
+            .expect("build failed");
+
+        exporter
+            .send_trace_chunks(
+                PooledChunks::unpooled(vec![vec![make_root_span(1, Some(1.0), 0)]]),
+                None,
+            )
+            .expect("send_trace_chunks failed");
+
+        // Force an immediate flush through the dyn handle, ahead of the periodic worker.
+        let flushed = exporter.flush_client_side_stats();
+        // Snapshot requests before shutdown: `Worker::shutdown` also force-flushes the stats
+        // exporter, so a stats POST captured at this point is the only proof the explicit
+        // flush drove the export path. The `flushed` return value alone cannot prove this:
+        // it stays true even when the weak handle fails to upgrade.
+        let before_shutdown = mock_clone.captured_requests();
+        exporter.shutdown(None).expect("shutdown failed");
+        (flushed, before_shutdown)
+    })
+    .await
+    .expect("spawn_blocking panicked");
+
+    assert!(
+        flushed,
+        "flush_client_side_stats must report true when stats are enabled"
+    );
+
+    // The stats request must already exist before shutdown: proves the explicit flush (not
+    // the shutdown flush) sent it, and that the flush was not a no-op.
+    let payload = expect_stats_request(&before_shutdown);
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
+
+    // After shutdown: the stats request must still be present and valid.
+    let payload = expect_stats_request(&mock.captured_requests());
+    assert_eq!(payload.stats.len(), 1, "expected one ClientStatsPayload");
 }

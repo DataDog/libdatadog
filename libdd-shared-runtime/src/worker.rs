@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use libdd_capabilities::MaybeSend;
+use libdd_capabilities::{maybe_send::MaybeSync, MaybeSend};
 
 /// A background worker meant to be spawned on a [`SharedRuntime`](crate::SharedRuntime).
 ///
@@ -18,7 +18,7 @@ use libdd_capabilities::MaybeSend;
 /// See [`tokio::select#cancellation-safety`] for more details.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait Worker: std::fmt::Debug + MaybeSend {
+pub trait Worker: std::fmt::Debug + MaybeSend + MaybeSync {
     /// Main worker function
     ///
     /// Code in this function must always use timeout on long-running await calls to avoid
@@ -45,7 +45,7 @@ pub trait Worker: std::fmt::Debug + MaybeSend {
 // Blanket implementation for boxed trait objects
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl Worker for Box<dyn Worker + Sync> {
+impl Worker for Box<dyn Worker> {
     async fn run(&mut self) {
         (**self).run().await
     }

@@ -6,9 +6,9 @@
 {"name":"elasticsearch_disabled","input":{"type":"elasticsearch","meta":{"elasticsearch.body":"{\"role\": \"database\"}"}},"expected":{"type":"elasticsearch","meta":{"elasticsearch.body":"{\"role\": \"database\"}"}},"config":{"elasticsearch":{"enabled":false}}}
 {"name":"elasticsearch_enabled_empty_body","input":{"type":"elasticsearch"},"expected":{"type":"elasticsearch"},"config":{"elasticsearch":{"enabled":true}}}
 {"name":"elasticsearch_enabled","input":{"type":"elasticsearch","meta":{"elasticsearch.body":"{\"role\": \"database\"}"}},"expected":{"type":"elasticsearch","meta":{"elasticsearch.body":"{\"role\":\"?\"}"}},"config":{"elasticsearch":{"enabled":true}}}
-{"name":"http_empty","input":{"type":"http"},"expected":{"type":"http"},"config":{"http":{"remove_paths_with_digits":true,"remove_query_string":true}}}
-{"name":"http_no_url_tag","input":{"type":"http","meta":{"other.tag":"value"}},"expected":{"type":"http","meta":{"other.tag":"value"}},"config":{"http":{"remove_paths_with_digits":true,"remove_query_string":true}}}
-{"name":"http_url_obfuscate","input":{"type":"http","meta":{"http.url":"http://mysite.mydomain/1/2?q=asd"}},"expected":{"type":"http","meta":{"http.url":"http://mysite.mydomain/?/??"}},"config":{"http":{"remove_paths_with_digits":true,"remove_query_string":true}}}
+{"name":"http_empty","input":{"type":"http"},"expected":{"type":"http"},"config":{"http":{"remove_path_digits":true,"remove_query_string":true}}}
+{"name":"http_no_url_tag","input":{"type":"http","meta":{"other.tag":"value"}},"expected":{"type":"http","meta":{"other.tag":"value"}},"config":{"http":{"remove_path_digits":true,"remove_query_string":true}}}
+{"name":"http_url_obfuscate","input":{"type":"http","meta":{"http.url":"http://mysite.mydomain/1/2?q=asd"}},"expected":{"type":"http","meta":{"http.url":"http://mysite.mydomain/?/??"}},"config":{"http":{"remove_path_digits":true,"remove_query_string":true}}}
 {"name":"memcached_disabled","input":{"type":"memcached","meta":{"memcached.command":"set key 0 0 0\r\nvalue"}},"expected":{"type":"memcached","meta":{"memcached.command":"set key 0 0 0\r\nvalue"}},"config":{"memcached":{"enabled":false}}}
 {"name":"memcached_enabled_empty_command","input":{"type":"memcached"},"expected":{"type":"memcached"},"config":{"memcached":{"enabled":true}}}
 {"name":"memcached_enabled","input":{"type":"memcached","meta":{"memcached.command":"set key 0 0 0\r\nvalue"}},"expected":{"type":"memcached","meta":{"memcached.command":""}},"config":{"memcached":{"enabled":true}}}
@@ -42,4 +42,4 @@
 {"name":"valkey_obfuscate_no_command","input":{"type":"valkey","resource":"SET k v"},"expected":{"type":"valkey","resource":"SET"},"config":{"valkey":{"enabled":true}}}
 {"name":"valkey_quantize","input":{"type":"valkey","resource":"SET k v\nGET k"},"expected":{"type":"valkey","resource":"SET GET"},"config":{}}
 {"name":"valkey_remove_all_args","input":{"type":"valkey","resource":"SET k v","meta":{"valkey.raw_command":"SET key val"}},"expected":{"type":"valkey","resource":"SET","meta":{"valkey.raw_command":"SET ?"}},"config":{"valkey":{"enabled":true,"remove_all_args":true}}}
-{"name":"web_url_obfuscate","input":{"type":"web","meta":{"http.url":"http://mysite.mydomain/1/2?q=asd"}},"expected":{"type":"web","meta":{"http.url":"http://mysite.mydomain/?/??"}},"config":{"http":{"remove_paths_with_digits":true,"remove_query_string":true}}}
+{"name":"web_url_obfuscate","input":{"type":"web","meta":{"http.url":"http://mysite.mydomain/1/2?q=asd"}},"expected":{"type":"web","meta":{"http.url":"http://mysite.mydomain/?/??"}},"config":{"http":{"remove_path_digits":true,"remove_query_string":true}}}

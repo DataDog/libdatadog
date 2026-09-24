@@ -59,11 +59,27 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
   # Hyper backend
   cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https
   ```
+- **otel-thread-ctx**: ships two mutually exclusive ownership modes (`owned-context` is the
+  default, `shared-context` is the alternative). Only one of them is compiled at a time, so the
+  `shared-context` tests need their own run:
+  ```bash
+  cargo nextest run -p libdd-otel-thread-ctx --no-default-features --features shared-context
+  ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
 ### Code exploration
 
-When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts
+When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts.
+
+### Output hygiene
+
+Keep tool output concise to preserve conversation context:
+- For noisy builds/tests, redirect output to a log file and print only a short pass/fail summary.
+- On failure, show the relevant error excerpt or a short tail, not full logs or long skipped-test lists.
+- Prefer quiet flags such as `-q`, `--success-output never`, or equivalent when available.
+- Avoid dumping full diffs unless explicitly requested; use `git diff --stat`, `git diff --name-only`, or targeted snippets instead.
+- Avoid inspecting generated artifacts under `target/` unless validating generated output specifically.
+- During iteration, prefer narrow checks such as `cargo check -p <crate>`; batch slower tests, examples, and linting once the intended API/code shape has settled.
 
 ## Key Conventions
 
@@ -77,6 +93,21 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - A panic that reaches an `extern "C"` boundary aborts the host process. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime. Whether a release artifact gets panic containment is decided by `builder` alone, through its `catch_panic` feature (a default), which propagates to the `catch_panic` feature in `libdd-profiling-ffi/Cargo.toml`. Projects building their own flavor with `builder`'s default features off ask for `catch_panic` explicitly; leaving it out yields abort-on-panic semantics. The FFI examples are what verify containment is on for our own release process.
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
+### Dependency declarations
+Every external dependency of a workspace member is declared once in the root `Cargo.toml` `[workspace.dependencies]` and inherited by members with `workspace = true`. Workspace entries should have no features enabled (`default-features = false`, no `features`), so that each leaf crate opts into exactly the features it needs.
+
+Exceptions are per dependency and must be justified in a comment:
+- a member that cannot inherit (e.g. it is pinned to a different major version) needs
+  `# allow(workspace-deps): <justification>` on the line(s) directly above the dependency
+- a workspace entry that enables a feature for every member needs
+  `# allow(workspace-deps-features): <justification>` on the line(s) directly above it.
+
+This is enforced in CI by the "Workspace dependency declarations" job of `lint.yml`. You can run it locally from inside the CI helper workspace:
+
+```bash
+(cd .github/actions && cargo run -p workspace-deps-lint)
+```
+
 ### Cryptography
 - Default build: ring as TLS crypto provider
 - FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
@@ -88,7 +119,7 @@ Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, 
 Breaking changes: append `!` — e.g. `feat!: remove deprecated API`
 
 ### Licenses
-All source files must have Apache 2.0 license headers (except `symbolizer-ffi`). Use `./scripts/reformat_copyright.sh` to add or fix headers automatically. The third-party license CSV (`LICENSE-3rdparty.csv`) is validated in CI. To regenerate:
+All code source files (e.g. `.rs`, `.sh`) and TOML files (e.g. `Cargo.toml`) must have Apache 2.0 license headers (except `symbolizer-ffi`). Use `./scripts/reformat_copyright.sh` to add or fix headers automatically. JSON files do **not** get license headers (JSON has no comment syntax); do not add them. The third-party license CSV (`LICENSE-3rdparty.csv`) is validated in CI. To regenerate:
 ```bash
 ./scripts/update_license_3rdparty.sh
 ```

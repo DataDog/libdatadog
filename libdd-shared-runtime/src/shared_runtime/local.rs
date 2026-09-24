@@ -3,6 +3,7 @@
 
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
+use libdd_capabilities::maybe_send::MaybeSync;
 use libdd_common::MutexExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -54,7 +55,7 @@ impl SharedRuntime for LocalRuntime {
         })
     }
 
-    fn spawn_worker<T: Worker + Sync + 'static>(
+    fn spawn_worker<T: Worker + MaybeSync + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,

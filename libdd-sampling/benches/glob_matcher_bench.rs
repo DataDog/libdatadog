@@ -7,9 +7,9 @@
 use std::alloc::System;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
 use libdd_common::bench_utils::{
-    memory_allocated_measurement, AllocatedBytesMeasurement, ReportingAllocator,
+    memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
 };
 use libdd_sampling::glob_matcher::GlobMatcher;
 
@@ -92,13 +92,7 @@ fn bench_wall_time(c: &mut Criterion) {
     for case in cases() {
         let matcher = GlobMatcher::new(case.pattern);
         c.bench_function(&format!("glob_matcher/{}/wall_time", case.name), |b| {
-            b.iter_batched(
-                || (),
-                |_| {
-                    black_box(matcher.matches(black_box(case.subject)));
-                },
-                BatchSize::SmallInput,
-            )
+            b.iter(|| black_box(matcher.matches(black_box(case.subject))))
         });
     }
 }
@@ -108,23 +102,16 @@ fn bench_allocs(c: &mut Criterion<AllocatedBytesMeasurement<System>>) {
         let matcher = GlobMatcher::new(case.pattern);
         c.bench_function(
             &format!("glob_matcher/{}/allocated_bytes", case.name),
-            |b| {
-                b.iter_batched(
-                    || (),
-                    |_| {
-                        black_box(matcher.matches(black_box(case.subject)));
-                    },
-                    BatchSize::SmallInput,
-                )
-            },
+            |b| b.iter(|| black_box(matcher.matches(black_box(case.subject)))),
         );
     }
 }
 
 criterion_group!(benches, bench_wall_time);
-criterion_group!(
-    name = alloc_benches;
-    config = memory_allocated_measurement(&GLOBAL);
-    targets = bench_allocs
-);
+
+// Not `criterion_group!`: its `config =` would be overridden by the command-line flags.
+fn alloc_benches() {
+    bench_allocs(&mut memory_allocated_criterion(&GLOBAL));
+}
+
 criterion_main!(alloc_benches, benches);

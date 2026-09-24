@@ -4,9 +4,10 @@
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::{v04, SpanText, TraceData};
-use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Deserialize)]
+// Agent-facing representation. `re` and `no_expansion` are derived runtime state.
+#[derive(Serialize, Deserialize)]
 struct RawReplaceRule {
     name: String,
     pattern: String,
@@ -56,12 +57,12 @@ impl Serialize for ReplaceRule {
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_struct("ReplaceRule", 4)?;
-        s.serialize_field("name", &self.name)?;
-        s.serialize_field("re", &self.re.to_string())?;
-        s.serialize_field("repl", &self.repl)?;
-        s.serialize_field("no_expansion", &self.no_expansion)?;
-        s.end()
+        RawReplaceRule {
+            name: self.name.clone(),
+            pattern: self.re.as_str().to_owned(),
+            repl: self.repl.clone(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -318,44 +319,36 @@ mod tests {
     }
 
     #[duplicate_item(
-        [
-        test_name   [test_replace_tags]
-        rules       [r#"[
+    test_name rules input expected;
+    [test_replace_tags] [r#"[
                         {"name": "http.url", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("http.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
-        [
-        test_name   [test_replace_tags_with_exceptions]
-        rules       [r#"[
+    [test_replace_tags_with_exceptions] [r#"[
                         {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "*", "pattern": "this", "repl": "that"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
                         {"name": "resource.name", "pattern": "prod", "repl": "stage"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("resource.name", "this is prod"),
                             ("http.url", "some/[REDACTED]/token/abcdef/abc"),
                             ("other.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("resource.name", "that is stage"),
                             ("http.url", "some/[REDACTED]/token/?/abc"),
@@ -363,7 +356,6 @@ mod tests {
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
     )]
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -391,6 +383,26 @@ mod tests {
     fn test_parse_rules_invalid_regex() {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_replace_rule_serde_uses_agent_fields() {
+        let agent_rules = serde_json::json!([{
+            "name": "http.url",
+            "pattern": "(token/)([^/]*)",
+            "repl": "${1}?"
+        }]);
+
+        let rules: Vec<replacer::ReplaceRule> =
+            serde_json::from_value(agent_rules.clone()).unwrap();
+        let serialized = serde_json::to_value(&rules).unwrap();
+
+        assert_eq!(serialized, agent_rules);
+        assert_eq!(
+            serde_json::from_value::<Vec<replacer::ReplaceRule>>(serialized).unwrap(),
+            rules
+        );
     }
 
     #[test]

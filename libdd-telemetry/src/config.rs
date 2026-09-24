@@ -349,8 +349,18 @@ impl Config {
     }
 
     pub fn from_settings(settings: &Settings) -> Self {
-        let trace_agent_url = Self::trace_agent_url_from_setting(settings);
         let api_key = Self::api_key_from_settings(settings);
+
+        let url = if settings.direct_submission_enabled && settings.api_key.is_some() {
+            if let Some(ref telemetry_dd_url) = settings.telemetry_dd_url {
+                telemetry_dd_url.clone()
+            } else {
+                let site = settings.site.as_deref().unwrap_or(DEFAULT_DD_SITE);
+                format!("https://{}.{}", PROD_INTAKE_SUBDOMAIN, site)
+            }
+        } else {
+            Self::trace_agent_url_from_setting(settings)
+        };
 
         let mut this = Self {
             endpoint: None,
@@ -368,7 +378,7 @@ impl Config {
         };
 
         _ = this.set_endpoint(TelemetryEndpoint {
-            url: Some(trace_agent_url),
+            url: Some(url),
             api_key: api_key.map(Cow::into_owned),
             ..Default::default()
         });
