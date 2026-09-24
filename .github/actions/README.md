@@ -1,19 +1,12 @@
 # CI tools
 
-Rust helpers that back this repository's GitHub Actions. `crates-reporter` is
-used by six workflows to decide which crates a pull request affects, and
-`clippy-annotation-reporter` comments on changes in clippy allow annotations.
-`ci-shared` is a library both link against.
-
-Compiling them on every use was wasteful: building both once costs a little
-over five CPU-minutes, and a pull request built `crates-reporter` six times
-over, on the critical path, plus `clippy-annotation-reporter` once. Each tool is
-published as a release asset and downloaded instead.
+Rust helpers backing this repository's GitHub Actions. Each is published as a
+release asset and downloaded, rather than compiled on every use.
 
 ## How a binary is resolved
 
-`ci-tools-bin` is a composite action that both tool actions delegate to. Given
-a package name it:
+`ci-tools-bin` is a composite action that each tool's action delegates to.
+Given a package name it:
 
 1. Reads the `[package]` version from `<tool>/Cargo.toml`.
 2. Downloads the `<tool>` asset of the `ci-tool-<tool>-v<version>` release.
@@ -27,7 +20,7 @@ pinning in the workflows, and re-running an old workflow resolves the version
 that commit recorded.
 
 Tools are versioned and tagged independently, so changing one does not
-republish the other. `ci-shared` is the exception: it is linked into every
+republish the others. `ci-shared` is the exception: it is linked into every
 tool, so a change there requires bumping all of them.
 
 ## Releasing a new version of a tool
@@ -47,13 +40,9 @@ tool, so a change there requires bumping all of them.
    tag=ci-tool-<tool>-v<version>
    git tag -s "$tag" -m "$tag" && git push origin "$tag"
    ```
-   `ci-tools-release` then builds the binary and attaches it to a release of
-   that tag. Later pull requests download it.
-
-   That ruleset also restricts who may create a tag, and the `v*` release tags
-   are created by `dd-octo-sts[bot]` rather than by a person, so this step may
-   have to move into a dispatched workflow that mints a token and creates the
-   tag itself.
+   The ruleset also restricts who may create a tag, so this needs an account
+   permitted to. `ci-tools-release` then builds the binary and attaches it to a
+   release of that tag. Later pull requests download it.
 
 Skipping step 4 is safe: every workflow keeps building from source until the
 tag exists.
