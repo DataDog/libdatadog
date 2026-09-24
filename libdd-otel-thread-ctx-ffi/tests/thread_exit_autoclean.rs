@@ -27,7 +27,7 @@ mod imp {
     use std::ptr;
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-    use libdd_otel_thread_ctx::test_utils::read_tls_context_ptr;
+    use libdd_otel_thread_ctx::test_utils::read_tls_pointer_untyped;
     use libdd_otel_thread_ctx_ffi::{
         ddog_otel_thread_ctx_detach, ddog_otel_thread_ctx_free, ddog_otel_thread_ctx_update,
     };
@@ -77,7 +77,7 @@ mod imp {
             // autocleaner.
             ddog_otel_thread_ctx_update(&[1u8; 16], &[2u8; 8], 0, &[3u8; 8]);
 
-            let record = read_tls_context_ptr().cast_mut().cast::<u8>();
+            let record = read_tls_pointer_untyped().cast_mut();
             assert!(
                 !record.is_null(),
                 "{scenario}: `ddog_otel_thread_ctx_update` must have attached a record to the TLS \

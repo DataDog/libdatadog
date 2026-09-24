@@ -23,7 +23,7 @@ mod imp {
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
     use libdd_otel_thread_ctx::linux::OwnedThreadContext;
-    use libdd_otel_thread_ctx::test_utils::read_tls_context_ptr;
+    use libdd_otel_thread_ctx::test_utils::read_tls_pointer_untyped;
 
     /// The address of the attached context record. The allocator watches for a
     /// deallocation of this exact address.
@@ -70,7 +70,7 @@ mod imp {
             // autocleaner.
             OwnedThreadContext::update([1u8; 16], [2u8; 8], 0, [3u8; 8], &[]);
 
-            let record = read_tls_context_ptr().cast_mut().cast::<u8>();
+            let record = read_tls_pointer_untyped().cast_mut();
             assert!(
                 !record.is_null(),
                 "{scenario}: `update` must have attached a record to the TLS slot"
