@@ -953,6 +953,77 @@ mod tests {
     }
 
     #[test]
+    fn v04_downgrade_preserves_insertion_order_for_meta_and_link_and_event_attributes() {
+        // Regression test for a `VecMap::dedup` bug: with no actual duplicate keys, `dedup()`
+        // must be a no-op on ordering. Exercises the same `TracerPayload::dedup()` path the
+        // sidecar/exporter call before encoding (which also dedups link/event attribute maps).
+        let mut span_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        span_attrs.insert(bs("k1"), AttributeValue::String(bs("v1")));
+        span_attrs.insert(bs("k2"), AttributeValue::String(bs("v2")));
+        span_attrs.insert(bs("k3"), AttributeValue::String(bs("v3")));
+
+        let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        link_attrs.insert(bs("l1"), AttributeValue::String(bs("lv1")));
+        link_attrs.insert(bs("l2"), AttributeValue::String(bs("lv2")));
+        link_attrs.insert(bs("l3"), AttributeValue::String(bs("lv3")));
+
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(bs("e1"), AttributeValue::String(bs("ev1")));
+        event_attrs.insert(bs("e2"), AttributeValue::String(bs("ev2")));
+        event_attrs.insert(bs("e3"), AttributeValue::String(bs("ev3")));
+
+        let span = SpanBytes {
+            attributes: span_attrs,
+            span_links: thin_vec::thin_vec![SpanLinkBytes {
+                attributes: link_attrs,
+                ..Default::default()
+            }],
+            span_events: thin_vec::thin_vec![SpanEventBytes {
+                attributes: event_attrs,
+                ..Default::default()
+            }],
+            ..minimal_span()
+        };
+        let mut payload = minimal_payload([0u8; 16], span);
+        payload.dedup();
+
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        let meta_keys: Vec<&str> = meta
+            .as_map()
+            .expect("meta must be a map")
+            .iter()
+            .map(|(k, _)| k.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            meta_keys,
+            vec!["_dd.span_links", "events", "k1", "k2", "k3"]
+        );
+
+        let links_json = map_get(meta, "_dd.span_links").unwrap().as_str().unwrap();
+        let (l1, l2, l3) = (
+            links_json.find("\"l1\"").unwrap(),
+            links_json.find("\"l2\"").unwrap(),
+            links_json.find("\"l3\"").unwrap(),
+        );
+        assert!(
+            l1 < l2 && l2 < l3,
+            "link attributes reordered: {links_json}"
+        );
+
+        let events_json = map_get(meta, "events").unwrap().as_str().unwrap();
+        let (e1, e2, e3) = (
+            events_json.find("\"e1\"").unwrap(),
+            events_json.find("\"e2\"").unwrap(),
+            events_json.find("\"e3\"").unwrap(),
+        );
+        assert!(
+            e1 < e2 && e2 < e3,
+            "event attributes reordered: {events_json}"
+        );
+    }
+
+    #[test]
     fn span_kind_internal_is_not_emitted() {
         // Internal is the default and is implied by the absence of `meta["span.kind"]`.
         let payload = minimal_payload([0u8; 16], minimal_span());

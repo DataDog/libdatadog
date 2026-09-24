@@ -40,7 +40,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// # Ordering
 ///
 /// As this is a map, iteration order is not defined nor guaranteed. In practice, iteration follows
-/// insertion order, but [Self::dedup] will reverse the underlying vector.
+/// insertion order, and [Self::dedup] preserves it: a duplicate key's surviving (last-written)
+/// entry keeps the position of that last write, earlier duplicates are simply dropped.
 #[derive(Clone, Debug)]
 pub struct VecMap<K, V> {
     data: Vec<(K, V)>,
@@ -294,6 +295,11 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         let mut keep = keep.into_iter();
         self.data.retain(|_| keep.next().unwrap_or(false));
 
+        // `retain` above operated on the reversed vec; reverse back so surviving entries keep
+        // their relative (insertion) order instead of leaking the reversal as an observable
+        // side effect.
+        self.data.reverse();
+
         self.deduped = true;
     }
 }
@@ -534,6 +540,33 @@ mod tests {
         assert_eq!(m.get("a"), Some(&1));
         assert_eq!(m.get("b"), Some(&2));
         assert_eq!(m.get("c"), Some(&3));
+    }
+
+    #[test]
+    fn dedup_preserves_insertion_order_without_duplicates() {
+        let mut m = VecMap::new();
+        m.insert("c", 3);
+        m.insert("a", 1);
+        m.insert("b", 2);
+        m.dedup();
+        let keys: Vec<_> = m.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn dedup_keeps_last_write_at_its_own_position() {
+        // "a" is overwritten between "b" and "c"'s insertions: the surviving ("a", 2) entry
+        // must stay at the position of that last write, not jump to "a"'s first occurrence
+        // nor get reversed to the end.
+        let mut m = VecMap::new();
+        m.insert("a", 1);
+        m.insert("b", 10);
+        m.insert("a", 2);
+        m.insert("c", 30);
+        m.insert("b", 20);
+        m.dedup();
+        let entries: Vec<_> = m.iter().map(|(k, v)| (*k, *v)).collect();
+        assert_eq!(entries, vec![("a", 2), ("c", 30), ("b", 20)]);
     }
 
     #[test]

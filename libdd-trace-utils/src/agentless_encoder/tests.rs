@@ -96,7 +96,7 @@ fn span_preserves_escaped_dynamic_values_ids_and_metrics_bytes() {
 
     let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), true).unwrap();
     let expected = expected_payload_with_span(
-        r#"{"trace_id":"aabbccddeeff0011","span_id":"0000000000000001","parent_id":"0000000000000000","name":"op\"\n","resource":"op\"\n","service":"svc\\","error":1,"start":0,"duration":2,"type":"web\t","meta":{"tag\"":"line\n\\","_dd.p.tid":"1122334455667788"},"metrics":{"_top_level":2,"fraction":1.5,"_trace_root":1}}"#,
+        r#"{"trace_id":"aabbccddeeff0011","span_id":"0000000000000001","parent_id":"0000000000000000","name":"op\"\n","resource":"op\"\n","service":"svc\\","error":1,"start":0,"duration":2,"type":"web\t","meta":{"tag\"":"line\n\\","_dd.p.tid":"1122334455667788"},"metrics":{"fraction":1.5,"_top_level":2,"_trace_root":1}}"#,
     );
     assert_eq!(encoded, expected.as_bytes());
 }
@@ -151,7 +151,7 @@ fn existing_synthetic_meta_and_root_metric_values_win() {
 
     let encoded = encode_payload(&[vec![span]], &TracerMetadata::default(), false).unwrap();
     let expected = expected_payload_with_span(
-        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000000","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.span_links":"kept-links","events":"kept-events","_dd.compute_stats":"kept-stats","_dd.p.tid":"kept-tid"},"metrics":{"_trace_root":7.5}}"#,
+        r#"{"trace_id":"0000000000000001","span_id":"0000000000000002","parent_id":"0000000000000000","name":"op","resource":"op","service":"","error":0,"start":3,"duration":4,"meta":{"_dd.p.tid":"kept-tid","_dd.compute_stats":"kept-stats","events":"kept-events","_dd.span_links":"kept-links"},"metrics":{"_trace_root":7.5}}"#,
     );
     assert_eq!(encoded, expected.as_bytes());
 }
