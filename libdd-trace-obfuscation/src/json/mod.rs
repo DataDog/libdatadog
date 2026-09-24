@@ -1149,10 +1149,9 @@ mod tests {
         assert!(!report.is_clean());
     }
 
-    /// The Agent writes its own message for a SQL value it could not obfuscate. A caller that
-    /// wants that behavior maps the error inside the callback, which also lets it log.
+    /// A caller can replace failed SQL values and record errors without failing the JSON pass.
     #[test]
-    fn test_agent_compatible_sql_failure_replacement() {
+    fn test_caller_supplied_sql_failure_replacement() {
         let input = r#"{"query":"","tab":"\t"}"#;
         let obfuscator = obf_keys(&[], &["query", "tab"]);
         let config = SqlConfig::default();
