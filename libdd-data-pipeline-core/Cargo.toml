@@ -15,7 +15,7 @@ serde_json.workspace = true
 thiserror = { workspace = true, default-features = true }
 libdd-capabilities = { version = "4.0.0", path = "../libdd-capabilities" }
 libdd-common = { version = "7.0.0", path = "../libdd-common", default-features = false }
-libdd-trace-stats = { version = "9.0.0", path = "../libdd-trace-stats", default-features = false, optional = true }
+libdd-trace-stats = { version = "10.0.0", path = "../libdd-trace-stats", default-features = false, optional = true }
 libdd-trace-utils = { version = "13.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "9.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 
