@@ -20,7 +20,7 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h", "stdio.h"]
 includes = ["common.h"]
 
 [defines]
-"target_os = windows" = "_WIN32"
+"windows" = "_WIN32"
 
 [export]
 prefix = "ddog_"
