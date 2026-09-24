@@ -26,6 +26,9 @@ pub struct CrashtrackerConfigurationBuilder {
     #[cfg(unix)]
     unix_socket_connector: Option<fn(&str) -> std::os::fd::RawFd>,
     use_alt_stack: bool,
+    unwind_from_ucontext: bool,
+    trim_signal_delivery_frames: bool,
+    name_unresolved_frames: bool,
 }
 
 impl CrashtrackerConfigurationBuilder {
@@ -51,6 +54,21 @@ impl CrashtrackerConfigurationBuilder {
 
     pub fn demangle_names(mut self, demangle: bool) -> Self {
         self.demangle_names = demangle;
+        self
+    }
+
+    pub fn unwind_from_ucontext(mut self, enable: bool) -> Self {
+        self.unwind_from_ucontext = enable;
+        self
+    }
+
+    pub fn trim_signal_delivery_frames(mut self, enable: bool) -> Self {
+        self.trim_signal_delivery_frames = enable;
+        self
+    }
+
+    pub fn name_unresolved_frames(mut self, enable: bool) -> Self {
+        self.name_unresolved_frames = enable;
         self
     }
 
@@ -170,6 +188,9 @@ impl CrashtrackerConfigurationBuilder {
                 .unix_socket_connector
                 .unwrap_or(super::default_unix_socket_connector),
             demangle_names: self.demangle_names,
+            unwind_from_ucontext: self.unwind_from_ucontext,
+            trim_signal_delivery_frames: self.trim_signal_delivery_frames,
+            name_unresolved_frames: self.name_unresolved_frames,
         })
     }
 }
@@ -192,6 +213,41 @@ mod tests {
         assert_eq!(config.signals(), &default_signals());
         assert_eq!(config.timeout(), constants::DD_CRASHTRACK_DEFAULT_TIMEOUT);
         assert!(config.unix_socket_path().is_none());
+        assert!(!config.unwind_from_ucontext());
+        assert!(!config.trim_signal_delivery_frames());
+        assert!(!config.name_unresolved_frames());
+        Ok(())
+    }
+
+    #[test]
+    fn test_opt_in_stack_options_are_off_unless_set() -> anyhow::Result<()> {
+        // Defaults serialize exactly as before, so older configs and receivers
+        // see no difference.
+        let default_json = serde_json::to_value(CrashtrackerConfiguration::builder().build()?)?;
+        for key in [
+            "unwind_from_ucontext",
+            "trim_signal_delivery_frames",
+            "name_unresolved_frames",
+        ] {
+            assert!(
+                default_json.get(key).is_none(),
+                "{key} serialized by default"
+            );
+        }
+        let parsed: CrashtrackerConfiguration = serde_json::from_value(default_json)?;
+        assert!(!parsed.unwind_from_ucontext());
+
+        let config = CrashtrackerConfiguration::builder()
+            .unwind_from_ucontext(true)
+            .trim_signal_delivery_frames(true)
+            .name_unresolved_frames(true)
+            .build()?;
+        let round_trip: CrashtrackerConfiguration =
+            serde_json::from_str(&serde_json::to_string(&config)?)?;
+        assert_eq!(round_trip, config);
+        assert!(round_trip.unwind_from_ucontext());
+        assert!(round_trip.trim_signal_delivery_frames());
+        assert!(round_trip.name_unresolved_frames());
         Ok(())
     }
 

@@ -534,7 +534,11 @@ fn collect_and_add_thread_contexts(
     let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
 
     let mut collected_threads = Vec::new();
-    let crashing_context = builder.ucontext.clone();
+    let crashing_context = if config.unwind_from_ucontext() {
+        builder.ucontext.clone()
+    } else {
+        None
+    };
     let mut crashing_stack = None;
 
     let incomplete = stream_thread_contexts(
@@ -557,7 +561,7 @@ fn collect_and_add_thread_contexts(
                 if let Some((ip, sp)) = crash_site {
                     drop_frames_above_crash_site(&mut stack, ip, sp);
                 }
-                if !stack.frames.is_empty() {
+                if config.unwind_from_ucontext() && !stack.frames.is_empty() {
                     crashing_stack = Some(stack.clone());
                 }
             }

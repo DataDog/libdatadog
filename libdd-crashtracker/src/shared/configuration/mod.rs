@@ -45,6 +45,17 @@ pub struct CrashtrackerConfiguration {
     #[serde(skip, default = "default_unix_socket_connector_value")]
     unix_socket_connector: fn(&str) -> std::os::fd::RawFd,
     use_alt_stack: bool,
+    /// Seed the crashing thread's remote unwind from the saved ucontext and use
+    /// it as the error stack. Requires `collect_all_threads`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    unwind_from_ucontext: bool,
+    /// For software-generated signals (`si_code <= 0`), drop the leading libc
+    /// frames (raise/pthread_kill) from the crashing stack.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    trim_signal_delivery_frames: bool,
+    /// Name frames that symbolization could not resolve as `module+offset`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    name_unresolved_frames: bool,
 }
 
 impl PartialEq for CrashtrackerConfiguration {
@@ -60,6 +71,9 @@ impl PartialEq for CrashtrackerConfiguration {
             && self.timeout == other.timeout
             && self.unix_socket_path == other.unix_socket_path
             && self.use_alt_stack == other.use_alt_stack
+            && self.unwind_from_ucontext == other.unwind_from_ucontext
+            && self.trim_signal_delivery_frames == other.trim_signal_delivery_frames
+            && self.name_unresolved_frames == other.name_unresolved_frames
     }
 }
 
@@ -177,6 +191,18 @@ impl CrashtrackerConfiguration {
 
     pub fn demangle_names(&self) -> bool {
         self.demangle_names
+    }
+
+    pub fn unwind_from_ucontext(&self) -> bool {
+        self.unwind_from_ucontext
+    }
+
+    pub fn trim_signal_delivery_frames(&self) -> bool {
+        self.trim_signal_delivery_frames
+    }
+
+    pub fn name_unresolved_frames(&self) -> bool {
+        self.name_unresolved_frames
     }
 
     pub fn set_collect_all_threads(&mut self, collect: bool) {

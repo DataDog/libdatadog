@@ -160,7 +160,7 @@ fn resolve_frames(
             .context("Unable to resolve frames: No PID specified")?
             .pid;
         let enrichment = crash_info.enrich_callstacks(pid);
-        finish_native_stacks(crash_info);
+        finish_native_stacks(config, crash_info);
         enrichment?;
     }
     #[cfg(not(target_os = "linux"))]
@@ -169,23 +169,30 @@ fn resolve_frames(
 }
 
 #[cfg(target_os = "linux")]
-fn finish_native_stacks(crash_info: &mut CrashInfo) {
+fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut CrashInfo) {
     // A software-generated fatal signal is captured while raise/pthread_kill is
     // still on the stack. Those libc delivery frames describe how the signal
     // arrived, not what application operation requested it. Remove only the
     // contiguous leading libc segment and leave the first application frame as
-    // the grouping frame.
-    if crash_info
-        .sig_info
-        .as_ref()
-        .is_some_and(|sig_info| sig_info.si_code <= 0)
+    // the grouping frame. The crashed thread's copy is trimmed too so both
+    // views of the same stack agree.
+    if config.trim_signal_delivery_frames()
+        && crash_info
+            .sig_info
+            .as_ref()
+            .is_some_and(|sig_info| sig_info.si_code <= 0)
     {
         trim_signal_delivery_frames(&mut crash_info.error.stack);
+        for thread in crash_info.error.threads.iter_mut().flatten() {
+            if thread.crashed {
+                trim_signal_delivery_frames(&mut thread.stack);
+            }
+        }
     }
 
-    synthesize_module_offsets(&mut crash_info.error.stack);
-    if let Some(threads) = crash_info.error.threads.as_mut() {
-        for thread in threads {
+    if config.name_unresolved_frames() {
+        synthesize_module_offsets(&mut crash_info.error.stack);
+        for thread in crash_info.error.threads.iter_mut().flatten() {
             synthesize_module_offsets(&mut thread.stack);
         }
     }
@@ -203,12 +210,17 @@ fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace) {
                     .and_then(|name| name.to_str())
                     .unwrap_or(path);
                 basename == "libc.so.6"
+                    || basename == "libpthread.so.0"
                     || basename.starts_with("libc-")
                     || basename.starts_with("ld-musl-")
             })
         })
         .count();
-    stack.frames.drain(..delivery_frames);
+    // An all-libc stack (e.g. a libc-internal abort) has no application frame
+    // to promote; keep it rather than report nothing.
+    if delivery_frames < stack.frames.len() {
+        stack.frames.drain(..delivery_frames);
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -282,5 +294,54 @@ mod tests {
             Some("libcupti.so.12+0x0000000000001234")
         );
         assert_eq!(stack.frames[1].function.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn keeps_all_libc_stack() {
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("/lib/libc.so.6", "0x1", Some("abort")),
+                frame("/lib/libc.so.6", "0x2", Some("__libc_message")),
+            ],
+            false,
+        );
+
+        trim_signal_delivery_frames(&mut stack);
+
+        assert_eq!(stack.frames.len(), 2);
+    }
+
+    #[test]
+    fn finish_native_stacks_changes_nothing_unless_opted_in() -> anyhow::Result<()> {
+        use crate::crash_info::test_utils::TestInstance;
+
+        let mut crash_info = CrashInfo::test_instance(1);
+        crash_info.sig_info.as_mut().expect("sig_info").si_code = libc::SI_TKILL;
+        crash_info.error.stack = StackTrace::from_frames(
+            vec![
+                frame("/lib/libc.so.6", "0x1", Some("raise")),
+                frame("/usr/lib/libcupti.so.12", "0x2", None),
+            ],
+            false,
+        );
+        let expected = crash_info.error.stack.clone();
+
+        finish_native_stacks(
+            &CrashtrackerConfiguration::builder().build()?,
+            &mut crash_info,
+        );
+        assert_eq!(crash_info.error.stack, expected);
+
+        let opted_in = CrashtrackerConfiguration::builder()
+            .trim_signal_delivery_frames(true)
+            .name_unresolved_frames(true)
+            .build()?;
+        finish_native_stacks(&opted_in, &mut crash_info);
+        assert_eq!(crash_info.error.stack.frames.len(), 1);
+        assert_eq!(
+            crash_info.error.stack.frames[0].function.as_deref(),
+            Some("libcupti.so.12+0x2")
+        );
+        Ok(())
     }
 }

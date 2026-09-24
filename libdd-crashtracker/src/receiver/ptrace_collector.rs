@@ -461,16 +461,10 @@ pub fn capture_thread_context(
 ) -> Result<CapturedThreadContext, PtraceError> {
     attach_thread(tid, stop_deadline)?;
 
-    let mut original_registers = match initial_context {
-        Some(context) => match replace_registers_from_ucontext(tid, context) {
-            Ok(registers) => Some(registers),
-            Err(error) => {
-                let _ = detach_thread(tid);
-                return Err(error);
-            }
-        },
-        None => None,
-    };
+    // A failed seed leaves the thread's registers untouched, so fall back to
+    // unwinding from where the thread is stopped rather than losing its stack.
+    let mut original_registers =
+        initial_context.and_then(|context| replace_registers_from_ucontext(tid, context).ok());
     let stack_trace = unwind_remote_thread(tid, addr_space);
 
     if let Some(registers) = original_registers.as_mut() {
