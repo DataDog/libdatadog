@@ -1413,7 +1413,7 @@ mod tests {
 
         let hdr = c.header();
         hdr.slot_count.store(1 << 20, Relaxed);
-        hdr.bucket_region_size.store(u32::MAX & !7, Relaxed);
+        hdr.bucket_region_size.store(!7, Relaxed);
         hdr.string_pool_size.store(u32::MAX, Relaxed);
         hdr.bucket_size_nanos.store(0, Relaxed);
         hdr.active_idx.store(200, Relaxed);

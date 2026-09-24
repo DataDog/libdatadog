@@ -617,10 +617,8 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[serial_test::serial(log_counter)]
     fn test_reconnect() {
-        // The reconnect path warns, and that record would otherwise race the global log-counter
-        // assertions in `crate::log::tests`.
-        let _serialized = crate::log::log_counter_test_lock();
         let tmpdir = tempdir().unwrap();
         let socket_path = tmpdir.path().join("test.sock");
 

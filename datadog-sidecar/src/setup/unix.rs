@@ -206,8 +206,8 @@ impl Liaison for SharedDirLiaison {
         Ok(Some(listener))
     }
 
-    fn bound_files(&self) -> Vec<PathBuf> {
-        vec![self.socket_path.clone(), self.lock_path.clone()]
+    fn into_bound_files(self) -> Vec<PathBuf> {
+        vec![self.socket_path, self.lock_path]
     }
 
     fn ipc_shared() -> Self {
@@ -560,10 +560,7 @@ mod tests {
 
     use super::Liaison;
 
-    /// A socket we created ourselves is exactly what the listener-owned check must accept.
-    /// The socket file outlives the process that bound it, so a listener pid that no longer
-    /// resolves leaves nothing to check the owner against - and the answer to "cannot verify"
-    /// is refuse, not proceed.
+    /// Refuse stale sockets when the listener's identity can no longer be verified.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn connect_is_refused_when_the_listener_pid_is_gone() {

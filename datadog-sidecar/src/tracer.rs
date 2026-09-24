@@ -27,7 +27,7 @@ pub static SHM_LIMITER: LazyLock<Option<Mutex<ManuallyDrop<ShmLimiterMemory<()>>
         }
         Err(e) => {
             error!(
-                "Could not create the shared rate limiter at {}: {e}. Continuing without                  rate limiting.",
+                "Could not create the shared rate limiter at {}: {e}. Continuing without rate limiting.",
                 shm_limiter_path().to_string_lossy()
             );
             None

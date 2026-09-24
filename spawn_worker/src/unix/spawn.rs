@@ -67,8 +67,12 @@ mod helper {
         /// `execve` that follows, so a buffer in the calling stack frame is fine. The previous
         /// `CString` stays in `items`, keeping that slot's own allocation alive.
         /// Only the Linux `FdExec` fallback needs this.
+        ///
+        /// # Safety
+        /// `ptr` must point to a NUL-terminated string that stays valid until the last use of
+        /// this vector's pointers, or until this entry is replaced.
         #[cfg(target_os = "linux")]
-        pub fn set_ptr(&mut self, index: usize, ptr: *const libc::c_char) {
+        pub unsafe fn set_ptr(&mut self, index: usize, ptr: *const libc::c_char) {
             self.ptrs[index] = ptr;
         }
     }
@@ -537,15 +541,13 @@ impl SpawnWorker {
                     // only where fexecve on a memfd is unavailable, which is why all of it stays
                     // here in the child and allocates nothing.
                     let mut temp_path = [0u8; 256];
-                    // `c"TMPDIR"` is NUL-terminated; a plain "TMPDIR" literal is not, so the
-                    // previous `getenv("TMPDIR".as_ptr())` read past the end of it.
                     let tmpdir = libc::getenv(c"TMPDIR".as_ptr());
                     let tmpdir = if tmpdir.is_null() {
                         b"/tmp".as_slice()
                     } else {
                         CStr::from_ptr(tmpdir).to_bytes()
                     };
-                    // getrandom(2) - async signal safe and unguessable.
+                    // The raw syscall is safe after fork and works before glibc 2.25.
                     let mut random = [0u8; 8];
                     let got = libc::syscall(
                         libc::SYS_getrandom,
@@ -554,22 +556,14 @@ impl SpawnWorker {
                         0 as libc::c_uint,
                     );
 
-                    if tmpdir.len() < 200 && got == random.len() as libc::c_long {
-                        const HEX: &[u8; 16] = b"0123456789abcdef";
-                        temp_path[..tmpdir.len()].copy_from_slice(tmpdir);
-                        let mut off = tmpdir.len();
-                        let spawn_prefix = b"/dd-ipc-spawn_";
-                        temp_path[off..off + spawn_prefix.len()].copy_from_slice(spawn_prefix);
-                        off += spawn_prefix.len();
-                        for byte in random {
-                            temp_path[off] = HEX[(byte >> 4) as usize];
-                            temp_path[off + 1] = HEX[(byte & 0xf) as usize];
-                            off += 2;
-                        }
-                        temp_path[off] = 0;
-
-                        let path = CStr::from_bytes_with_nul_unchecked(&temp_path[..=off]);
-                        let path_ptr = path.as_ptr();
+                    let suffix = u64::from_be_bytes(random);
+                    let mut path_buf = temp_path.as_mut_slice();
+                    if tmpdir.len() < 200
+                        && got == random.len() as libc::c_long
+                        && path_buf.write_all(tmpdir).is_ok()
+                        && write!(path_buf, "/dd-ipc-spawn_{suffix:016x}\0").is_ok()
+                    {
+                        let path_ptr = temp_path.as_ptr().cast();
 
                         // O_EXCL: if anything is already at this path then somebody else put it
                         // there - write nothing and execute nothing, rather than filling in
@@ -593,6 +587,7 @@ impl SpawnWorker {
                             // Only exec what was written in full: a short or failed copy would
                             // otherwise mean exec'ing a truncated binary.
                             if written == expected as isize {
+                                // SAFETY: temp_path stays live through execve.
                                 argv.set_ptr(1, path_ptr);
                                 libc::execve(path_ptr, argv.as_ptr(), envp.as_ptr());
                             }
