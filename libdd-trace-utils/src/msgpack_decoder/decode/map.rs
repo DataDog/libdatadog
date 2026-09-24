@@ -90,7 +90,9 @@ where
 /// - The buffer does not contain a map.
 /// - There is an error reading from the buffer.
 #[inline]
-pub fn read_map_len<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<usize, DecodeError> {
+pub fn read_map_len<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
+) -> Result<usize, DecodeError> {
     let buf = buf.as_mut_slice();
     match decode::read_marker(buf)
         .map_err(|_| DecodeError::InvalidFormat("Unable to read marker for map".to_owned()))?
