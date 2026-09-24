@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "arbitrary",
