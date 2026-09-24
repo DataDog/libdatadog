@@ -2145,37 +2145,20 @@ fn collapse_limit_two_args(s: &str) -> String {
     result
 }
 
-/// What the Datadog Agent substitutes for a SQL value it failed to obfuscate *inside a JSON
-/// document*, such as a database query plan.
-///
-/// This is the Agent's JSON SQL-transform marker only: `sqlObfuscationTransformer` in
-/// `pkg/obfuscate/json.go` returns this string, deliberately verbose, so the failure is visible to
-/// the user in the JSON value it replaces. It is not what the Agent writes for a failed SQL span
-/// resource or stats group; that is [`SQL_NON_PARSABLE_REPLACEMENT`].
-///
-/// The message is the Agent's, byte for byte, so the same input yields the same value from either
-/// implementation.
-pub const SQL_OBFUSCATION_FAILURE_REPLACEMENT: &str =
-    "Datadog-agent failed to obfuscate SQL string. Enable agent debug logs for more info.";
+/// What we substitute for a SQL value when we fail to obfuscate it *inside a JSON document*, such
+/// as a database query plan.
+pub const SQL_OBFUSCATION_FAILURE_REPLACEMENT: &str = "Failed to obfuscate SQL string.";
 
-/// What the Datadog Agent writes in place of a SQL span resource, `sql.query` tag, or stats group
-/// resource it failed to obfuscate.
-///
-/// The message is the Agent's `transform.TextNonParsable`
-/// (`pkg/trace/transform/obfuscate.go`), byte for byte, because the value reaches the backend as
-/// the resource that stats are aggregated on: a different message would split the aggregation. The
-/// Agent applies it in `obfuscateSQLSpan` and `obfuscateStatsGroup`
-/// (`pkg/trace/agent/obfuscate.go`), discarding the unobfuscated SQL rather than forwarding it.
+/// What we write in place of a SQL span resource, `sql.query` tag, or stats group resource we
+/// failed to obfuscate.
 pub const SQL_NON_PARSABLE_REPLACEMENT: &str = "Non-parsable SQL query";
 
 /// Why a SQL string could not be obfuscated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum SqlObfuscationError {
-    /// Obfuscation produced nothing, so there is no query to report. The Agent fails the same way
-    /// (`errors.New("result is empty")` in `pkg/obfuscate/sql.go`); input that is empty or only
-    /// whitespace lands here.
-    #[error("result is empty")]
+    /// Obfuscation produced nothing, so there is no query to report.
+    #[error("obfuscation result is empty")]
     EmptyResult,
 }
 
@@ -2183,12 +2166,11 @@ pub enum SqlObfuscationError {
 ///
 /// # Errors
 ///
-/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind, which is
-/// what the Agent treats as a failure. A failed query must never be forwarded as sent: callers
-/// replace it with the Agent's marker for their context, either
-/// [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
-/// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a
-/// JSON document.
+/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind. A failed
+/// query must never be forwarded as sent: callers replace it with a marker for their context,
+/// either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
+/// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a JSON
+/// document.
 pub fn obfuscate_sql(
     s: &str,
     config: &SqlConfig,
@@ -2235,14 +2217,14 @@ fn obfuscate_sql_at_depth(
     }
 }
 
-/// Obfuscates a non-empty SQL span or stats-group resource, applying the Agent's failure policy.
+/// Obfuscates a non-empty SQL span or stats-group resource, applying our failure policy.
 ///
 /// Always returns something safe to publish: the obfuscated query on success, and
 /// [`SQL_NON_PARSABLE_REPLACEMENT`] when obfuscation fails, so input that tokenizes to nothing
 /// (whitespace, a lone comment) is discarded instead of reaching the backend as sent. Callers that
 /// want to report the failure instead call [`obfuscate_sql`] directly.
 ///
-/// Callers are expected to skip an exactly empty resource, which the Agent leaves untouched.
+/// Callers are expected to skip an exactly empty resource, which we leave untouched.
 #[must_use]
 pub fn obfuscate_sql_resource(s: &str, config: &SqlConfig, dbms: DbmsKind) -> String {
     obfuscate_sql(s, config, dbms).unwrap_or_else(|_| SQL_NON_PARSABLE_REPLACEMENT.to_owned())
@@ -2384,7 +2366,7 @@ mod tests {
         }
         assert_eq!(
             super::SqlObfuscationError::EmptyResult.to_string(),
-            "result is empty"
+            "obfuscation result is empty"
         );
     }
 

@@ -1,11 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! JSON obfuscation, a port of the Datadog Agent's `pkg/obfuscate/json.go`.
+//! JSON obfuscation with caller-provided value transforms.
 //!
 //! Obfuscation is a single scanning pass that copies the characters it keeps, so keys come out in
 //! the order they were sent and malformed input is still obfuscated up to the point where it
-//! breaks. Whitespace between tokens is dropped, which is what the Agent does.
+//! breaks. Whitespace between tokens is dropped.
 //!
 //! [`JsonObfuscator::obfuscate`] covers the ordinary case. Callers that want the values of
 //! [`JsonObfuscatorConfig::transform_keys`] rewritten - SQL obfuscation, typically - pass a
@@ -193,8 +193,7 @@ impl JsonObfuscationScratch {
 ///
 /// String values under a key listed in [`JsonObfuscatorConfig::transform_keys`] are passed to the
 /// callback given to [`Self::obfuscate_with`] or [`Self::obfuscate_into`]. Entry points that take
-/// no callback obfuscate those values like any other, which is what the Agent does when no
-/// transformer is configured.
+/// no callback obfuscate those values like any other.
 ///
 /// Multiple concatenated JSON objects in the input are each obfuscated independently. On a syntax
 /// error the output so far is returned with `...` appended.
