@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::DeserializableTraceData;
+use crate::span::{DeserializableTraceData, DeserializableTraceDataLt};
 use rmp::decode;
 use rmp::decode::DecodeStringError;
 
@@ -69,6 +69,17 @@ impl<T: DeserializableTraceData> Buffer<T> {
     /// forcing a huge pre-allocation before any element is read.
     pub fn capped_capacity(&self, count: usize) -> usize {
         count.min(self.len())
+    }
+}
+
+/// Prototype: additive counterpart to `as_mut_slice`, using [`DeserializableTraceDataLt`]'s
+/// honest lifetime `'x` instead of an erased `'static`. Kept in a separate `impl` block so the
+/// original struct definition and `impl<T: DeserializableTraceData> Buffer<T>` above — and every
+/// existing caller of `as_mut_slice` — are untouched.
+impl<'x, T: DeserializableTraceDataLt<'x>> Buffer<T> {
+    /// Returns a mutable reference to the underlying slice, with its genuine lifetime `'x`.
+    pub fn as_mut_slice_lt(&mut self) -> &mut &'x [u8] {
+        T::get_mut_slice_lt(&mut self.0)
     }
 }
 
