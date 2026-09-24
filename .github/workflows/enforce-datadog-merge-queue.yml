@@ -1,0 +1,54 @@
+name: Enforce Datadog Merge Queue
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+  pull_request_target:
+    types: [enqueued]
+    branches:
+      - main
+  merge_group:
+
+jobs:
+  merge_queue_check:
+    name: Merge queue check
+    if: github.event_name != 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Allow pull request to enter GitHub merge queue
+        if: github.event_name == 'pull_request'
+        run: echo "Pull request is eligible for the GitHub merge queue."
+      - name: Block GitHub merge queue
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "Merge is handled by the Datadog merge queue."
+          echo "Use /merge to enqueue the pull request directly."
+          exit 1
+
+  enqueue_datadog_merge_queue:
+    name: Add pull request to Datadog merge queue
+    if: github.event_name == 'pull_request_target' && github.event.action == 'enqueued'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC token federation.
+    steps:
+      - name: Get GitHub App token
+        uses: DataDog/dd-octo-sts-action@96a25462dbcb10ebf0bfd6e2ccc917d2ab235b9a # v1.0.4
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.enforce-datadog-merge-queue.comment-pr
+      - name: Add pull request to the Datadog merge queue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ steps.octo-sts.outputs.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '/merge'
+            });
