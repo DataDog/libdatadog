@@ -107,6 +107,7 @@ impl SharedThreadContext {
 mod tests {
     use super::{SharedThreadContext, ThreadContext};
     use crate::linux::read_tls_context_ptr;
+    use crate::linux::ThreadContextRecord;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
@@ -139,7 +140,7 @@ mod tests {
             "attach must keep a strong reference alive in the slot"
         );
 
-        let ptr = read_tls_context_ptr();
+        let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert!(!ptr.is_null(), "TLS must be set after attach");
         let record = unsafe { &*ptr };
         assert_eq!(record.trace_id, trace_id);
@@ -191,7 +192,7 @@ mod tests {
         let prev = SharedThreadContext::from(Arc::clone(&second))
             .attach()
             .expect("must return the previously attached context");
-        let record = unsafe { &*read_tls_context_ptr() };
+        let record = unsafe { &*read_tls_context_ptr().cast::<ThreadContextRecord>() };
         assert_eq!(record.trace_id, [0xAu8; 16]);
         assert_eq!(Arc::strong_count(&second), 2, "second is now in the slot");
 
@@ -249,7 +250,7 @@ mod tests {
             b.wait();
 
             // The main thread's attach must not have touched this slot.
-            let ptr = read_tls_context_ptr();
+            let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
             assert!(!ptr.is_null(), "spawned thread TLS must still be set");
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, spawned_trace_id);
@@ -277,7 +278,7 @@ mod tests {
         )))
         .attach();
 
-        let ptr = read_tls_context_ptr();
+        let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert!(!ptr.is_null(), "main thread TLS must be set");
         let record = unsafe { &*ptr };
         assert_eq!(record.trace_id, main_trace_id);
@@ -326,7 +327,7 @@ mod tests {
                 std::thread::spawn(move || {
                     assert!(shared.attach().is_none(), "nothing was attached before");
 
-                    let ptr = read_tls_context_ptr();
+                    let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
                     assert!(!ptr.is_null(), "thread {i}: TLS must be set after attach");
                     // All threads attached clones of the same `Arc`: they must all observe the
                     // very same record.

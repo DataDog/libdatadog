@@ -45,16 +45,22 @@ name = "gen_tls_shim_bytes"
 required-features = ["gen-tls-shim-bytes"]
 
 # End-to-end test for the `thread-exit-autoclean` feature. Uses its own binary (and process) with
-# `harness = false` so that the process contains exactly the main thread and a single worker
-# thread, which keeps the allocation-counting assertions deterministic.
+# `harness = false` so that it runs in a dedicated process with a minimal thread population (the
+# main thread and a single worker thread), which keeps the record lifecycle observation
+# deterministic. `test-utils` is needed for the raw TLS slot accessor that identifies the record.
 [[test]]
 name = "thread_exit_autoclean"
-required-features = ["owned-context", "thread-exit-autoclean"]
+required-features = [
+    "owned-context",
+    "thread-exit-autoclean",
+    "test-utils",
+]
 harness = false
 
 [dev-dependencies]
 # `default-features = false` keeps this edge from force-enabling `owned-context`, so that
-# `--no-default-features --features shared-context` also applies to the test build.
+# `--no-default-features --features shared-context` also applies to the test build. Enables
+# `test-utils` for this crate's own integration tests (in particular `thread_exit_autoclean`).
 libdd-otel-thread-ctx = { path = ".", default-features = false, features = [
     "test-utils",
 ] }
