@@ -27,17 +27,17 @@ pub const ANONYMOUS_IMPERSONATION_QOS: u32 = 0; // SECURITY_ANONYMOUS
 ///
 /// Build a URI from a Path representing a named pipe
 /// `path` - named pipe path. ex: \\.\pipe\pipename
-pub fn named_pipe_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error> {
+pub fn named_pipe_path_to_uri(path: &Path) -> Result<http::Uri, http::Error> {
     #[allow(clippy::unwrap_used)]
     let path = hex::encode(path.as_os_str().to_str().unwrap());
-    hyper::Uri::builder()
+    http::Uri::builder()
         .scheme("windows")
         .authority(path)
         .path_and_query("/")
         .build()
 }
 
-pub fn named_pipe_path_from_uri(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
+pub fn named_pipe_path_from_uri(uri: &http::Uri) -> anyhow::Result<PathBuf> {
     if uri.scheme_str() != Some("windows") {
         return Err(super::errors::Error::InvalidUrl.into());
     }

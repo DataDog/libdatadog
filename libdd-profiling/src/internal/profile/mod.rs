@@ -124,7 +124,7 @@ impl Profile {
         local_root_span_id: u64,
         endpoint: Cow<str>,
     ) -> anyhow::Result<()> {
-        let interned_endpoint = self.try_intern(endpoint.as_ref())?;
+        let interned_endpoint = self.try_intern(endpoint)?;
 
         let mappings = &mut self.endpoints.mappings;
         mappings.try_reserve(1)?;
@@ -192,16 +192,17 @@ impl Profile {
     ///
     /// All MappingId2, FunctionId2, and StringId2 values should be coming
     /// from the same profiles dictionary used by this profile internally.
-    pub unsafe fn try_add_sample2<
-        'a,
-        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
-    >(
+    pub unsafe fn try_add_sample2<'a, Locations, Labels>(
         &mut self,
-        locations: &[api2::Location2],
+        locations: Locations,
         values: &[i64],
-        labels: L,
+        labels: Labels,
         timestamp: Option<Timestamp>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<()>
+    where
+        Locations: ExactSizeIterator<Item = api2::Location2>,
+        Labels: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    {
         let Some(translator) = &mut self.profiles_dictionary_translator else {
             anyhow::bail!("profiles dictionary not set");
         };
@@ -1017,8 +1018,8 @@ impl Profile {
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
     #[inline]
-    fn try_intern(&mut self, item: &str) -> Result<StringId, string_table::Error> {
-        self.strings.try_intern(item)
+    fn try_intern(&mut self, item: impl AsRef<str>) -> Result<StringId, string_table::Error> {
+        self.strings.try_intern(item.as_ref())
     }
 
     /// Creates a profile from the period, sample types, and start time using
@@ -2901,7 +2902,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add to succeed");
         }
 
@@ -2912,7 +2913,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add to succeed");
         }
 
@@ -2927,7 +2928,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add with label to succeed");
         }
 
@@ -2940,7 +2941,7 @@ mod api_tests {
         // SAFETY: adding ids from the correct ProfilesDictionary.
         unsafe {
             profile
-                .try_add_sample2(&locations, &values, labels_iter, None)
+                .try_add_sample2(locations.iter().copied(), &values, labels_iter, None)
                 .expect("add with numeric label to succeed");
         }
 

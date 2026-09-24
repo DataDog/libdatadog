@@ -738,6 +738,7 @@ where
 mod segment_isolation_tests {
     use super::*;
     use crate::span::SliceData;
+    use std::borrow::Cow;
 
     // -----------------------------------------------------------------------
     // Minimal builder for the raw change-buffer byte format.
@@ -793,7 +794,12 @@ mod segment_isolation_tests {
                 buf_data.len(),
             )
         };
-        ChangeBufferState::new(cb, "test-service", "javascript", 1)
+        ChangeBufferState::new(
+            cb,
+            Cow::Borrowed("test-service"),
+            Cow::Borrowed("javascript"),
+            1,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -833,8 +839,8 @@ mod segment_isolation_tests {
 
         let mut buf_data = w.finish();
         let mut state = make_state(&mut buf_data);
-        state.string_table_insert_one(0, "origin-A");
-        state.string_table_insert_one(1, "origin-B");
+        state.string_table_insert_one(0, Cow::Borrowed("origin-A"));
+        state.string_table_insert_one(1, Cow::Borrowed("origin-B"));
 
         state.flush_change_buffer().unwrap();
 
@@ -845,7 +851,7 @@ mod segment_isolation_tests {
         // Segment 1 must carry its own origin, not segment 2's.
         assert_eq!(
             spans[0].meta.get("_dd.origin"),
-            Some(&"origin-A"),
+            Some(&Cow::Borrowed("origin-A")),
             "segment 1 origin was overwritten by segment 2's SetTraceOrigin"
         );
     }
@@ -874,9 +880,9 @@ mod segment_isolation_tests {
 
         let mut buf_data = w.finish();
         let mut state = make_state(&mut buf_data);
-        state.string_table_insert_one(0, "env");
-        state.string_table_insert_one(1, "production");
-        state.string_table_insert_one(2, "staging");
+        state.string_table_insert_one(0, Cow::Borrowed("env"));
+        state.string_table_insert_one(1, Cow::Borrowed("production"));
+        state.string_table_insert_one(2, Cow::Borrowed("staging"));
 
         state.flush_change_buffer().unwrap();
 
@@ -886,7 +892,7 @@ mod segment_isolation_tests {
         // Segment 1's chunk root must not carry segment 2's value.
         assert_eq!(
             spans[0].meta.get("env"),
-            Some(&"production"),
+            Some(&Cow::Borrowed("production")),
             "segment 1 trace meta was polluted by segment 2's SetTraceMetaAttr"
         );
     }
@@ -932,9 +938,9 @@ mod segment_isolation_tests {
         buf_data[..first_buf.len()].copy_from_slice(&first_buf);
 
         let mut state = make_state(&mut buf_data);
-        state.string_table_insert_one(0, "key");
-        state.string_table_insert_one(1, "val");
-        state.string_table_insert_one(2, "service-B");
+        state.string_table_insert_one(0, Cow::Borrowed("key"));
+        state.string_table_insert_one(1, Cow::Borrowed("val"));
+        state.string_table_insert_one(2, Cow::Borrowed("service-B"));
 
         // First flush: creates span A.
         state.flush_change_buffer().unwrap();
@@ -988,8 +994,8 @@ mod segment_isolation_tests {
         buf_data[..first_buf.len()].copy_from_slice(&first_buf);
 
         let mut state = make_state(&mut buf_data);
-        state.string_table_insert_one(0, "key");
-        state.string_table_insert_one(2, "service-B");
+        state.string_table_insert_one(0, Cow::Borrowed("key"));
+        state.string_table_insert_one(2, Cow::Borrowed("service-B"));
 
         state.flush_change_buffer().unwrap();
 
@@ -1030,7 +1036,7 @@ mod segment_isolation_tests {
 
         let mut buf_data = w.finish();
         let mut state = make_state(&mut buf_data);
-        state.string_table_insert_one(0, "priority");
+        state.string_table_insert_one(0, Cow::Borrowed("priority"));
 
         state.flush_change_buffer().unwrap();
 

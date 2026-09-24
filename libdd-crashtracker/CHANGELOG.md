@@ -2,6 +2,33 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-crashtracker-v2.0.1..libdd-crashtracker-v3.0.0) - 2026-09-08
+
+### Added
+
+- Support appsec helper-rust integration with sidecar ([#2310](https://github.com/datadog/libdatadog/issues/2310)) - ([7d13807](https://github.com/datadog/libdatadog/commit/7d138079eda3e6636af55651abec4a3eba7cb4ba))
+
+### Changed
+
+- Use RAII remote ptrace API ([#2416](https://github.com/datadog/libdatadog/issues/2416)) - ([69f0d97](https://github.com/datadog/libdatadog/commit/69f0d9744bbeb2b2726ed562673822a9d9dbddc3))
+- Bump libdd-libunwind-sys to v1.0.3 ([#2414](https://github.com/datadog/libdatadog/issues/2414)) - ([1766e7e](https://github.com/datadog/libdatadog/commit/1766e7e5a58feaa2ff09cf9b56576dff3ba8c59c))
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Filter out frames above faulting frame ([#2428](https://github.com/datadog/libdatadog/issues/2428)) - ([65f8e59](https://github.com/datadog/libdatadog/commit/65f8e5914c4f416bd7600f73def91792fd322258))
+
+
+
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-crashtracker-v2.0.0..libdd-crashtracker-v2.0.1) - 2026-08-25
+
+### Fixed
+
+- Hold the collector connection open through symbolization ([#2384](https://github.com/datadog/libdatadog/issues/2384)) - ([e235e76](https://github.com/datadog/libdatadog/commit/e235e768cae55e37ba5b1de52acb7052cbde5a58))
+- Stop resolving thread symbols with libunwind in the receiver ([#2361](https://github.com/datadog/libdatadog/issues/2361)) - ([24c833f](https://github.com/datadog/libdatadog/commit/24c833fe595ab162bbcf370d93dc19fb11ef46bc))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-crashtracker-v1.0.0..libdd-crashtracker-v2.0.0) - 2026-08-18
 
 ### Added

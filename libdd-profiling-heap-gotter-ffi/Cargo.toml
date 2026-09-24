@@ -25,8 +25,8 @@ live-heap = ["libdd-profiling-heap-gotter/live-heap"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-anyhow = "1.0"
-function_name = "0.3.0"
+anyhow = { workspace = true, default-features = true }
+function_name.workspace = true
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 # libdd-profiling-heap-gotter exposes the same public surface on every target
 # (no-ops on non-Linux), so this dependency is unconditional and the

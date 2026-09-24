@@ -67,7 +67,22 @@ ${arg#--exclude=}"
             echo "  ./commits-since-release.sh --exclude='^chore:' --exclude='^ci:' \"\$JSON\""
             echo ""
             echo "Output JSON format:"
-            echo '  [{"name":"crate-name","version":"1.0.0","tag":"crate-name-v1.0.0","tag_exists":true,"commits":[...]}]'
+            echo '  [{"name":"crate-name","version":"1.0.0","path":"crate-name","tag":"crate-name-v1.0.0",'
+            echo '    "tag_exists":true,"tag_ancestor":"true","tag_commit":"<sha>",'
+            echo '    "tag_in_local_branch":true,"latest_tag":"crate-name-v1.0.0",'
+            echo '    "range":"<start-sha>..<head-sha>","commits":[...]}]'
+            echo ""
+            echo '  "tag_in_local_branch" is false when no local branch contains the tagged commit,'
+            echo '  which is normal for squash-merged releases. Always false when there is no tag.'
+            echo ""
+            echo '  "latest_tag" is the highest release tag that exists for the crate, which is not'
+            echo '  necessarily "tag": the manifest version lags behind when a release was cut'
+            echo '  elsewhere. Empty when the crate was never released.'
+            echo ""
+            echo '  "range" is the commit range the listed commits were taken from, resolved to'
+            echo '  SHAs: the tag commit, or the merge-base when the tag is not an ancestor of'
+            echo '  HEAD, or the parent of the oldest commit found when there is no common'
+            echo '  ancestor at all. Empty when the crate has no previous release tag.'
             exit 0
             ;;
         -*)
@@ -98,6 +113,10 @@ METADATA=$(cargo metadata --format-version=1 --no-deps 2>/dev/null)
 
 # Get workspace root (for determining crate paths)
 WORKSPACE_ROOT=$(echo "$METADATA" | jq -r '.workspace_root' || pwd)
+
+# Resolve HEAD once, so every crate's exported range ends at the same commit and callers
+# can reuse the range later without re-resolving HEAD (which may have moved on by then).
+HEAD_COMMIT=$(git rev-parse HEAD)
 
 log_verbose() {
     if [ "$VERBOSE" = true ]; then
@@ -153,19 +172,35 @@ while read -r crate; do
     
     log_verbose "  Crate path: $CRATE_PATH"
     
+    # Highest release tag that exists for this crate, which is not necessarily $TAG: the
+    # manifest version can lag behind the tags when a release was cut elsewhere (a hotfix
+    # branch, or a release already merged to main). Empty when the crate was never released.
+    # The `-v` in the glob keeps sibling crates out: libdd-common-v* cannot match
+    # libdd-common-ffi-v1.0.0.
+    LATEST_TAG=$(git tag -l "${NAME}-v*" --sort=-v:refname | head -1)
+    log_verbose "  Latest tag: ${LATEST_TAG:-<none>}"
+
     # Check if tag exists
     TAG_EXISTS=false
     TAG_ANCESTOR="unknown"
+    TAG_COMMIT=""
+    TAG_IN_LOCAL_BRANCH=false
+    RANGE=""
+    RANGE_START=""
     COMMITS_JSON="[]"
-    
+
     if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
         TAG_EXISTS=true
         log_verbose "  Tag exists, finding commits since $TAG..."
-        
+
         # Check if tag is an ancestor of HEAD (i.e., release was merged back to main)
         # If not, use merge-base to find the common ancestor.
         # Explicitly dereference annotated tags to their underlying commit: git merge-base does
         # not consistently dereference annotated tag objects across all git versions.
+        #
+        # RANGE_START is the same decision expressed as a commit SHA, and becomes the
+        # exported `range`. Callers need a range they can hand to other git tooling, so
+        # it is resolved to SHAs rather than left as a tag name.
         TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
         if [ -z "$TAG_COMMIT" ]; then
             COMMIT_RANGE="$TAG..HEAD"
@@ -174,20 +209,34 @@ while read -r crate; do
         elif git merge-base --is-ancestor "$TAG_COMMIT" HEAD 2>/dev/null; then
             COMMIT_RANGE="$TAG..HEAD"
             TAG_ANCESTOR="true"
+            RANGE_START="$TAG_COMMIT"
             log_verbose "  Tag is ancestor of HEAD, using $COMMIT_RANGE"
         else
             MERGE_BASE=$(git merge-base "$TAG_COMMIT" HEAD 2>/dev/null || echo "")
             if [ -n "$MERGE_BASE" ]; then
                 COMMIT_RANGE="$MERGE_BASE..HEAD"
                 TAG_ANCESTOR="$MERGE_BASE"
+                RANGE_START="$MERGE_BASE"
                 log_verbose "  Tag is NOT ancestor of HEAD, using merge-base: $COMMIT_RANGE"
             else
+                # Tag is on unrelated history. RANGE_START is derived from the commits
+                # below, once we know which ones there are.
                 COMMIT_RANGE="$TAG..HEAD"
                 TAG_ANCESTOR="no merge-base"
                 log_verbose "  WARNING: Could not find merge-base, using $TAG..HEAD"
             fi
         fi
-        
+
+        # Is the tagged commit reachable from any local branch? Squash-merged releases leave
+        # the tag on history no branch points at, which is normal but worth surfacing: it is
+        # also what a tag pushed from an abandoned branch looks like. Only the yes/no matters,
+        # so the branch names are deliberately not collected.
+        if [ -n "$TAG_COMMIT" ] && git branch --contains "$TAG_COMMIT" 2>/dev/null | grep -q .; then
+            TAG_IN_LOCAL_BRANCH=true
+        else
+            log_verbose "  WARNING: $TAG ($TAG_COMMIT) is not in any local branch"
+        fi
+
         # Get commits since tag that affect this crate's directory
         # Use ASCII unit separator (0x1F) as delimiter - won't appear in commit messages
         COMMITS_JSON="["
@@ -216,9 +265,37 @@ while read -r crate; do
         done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH" 2>/dev/null || true)
         
         COMMITS_JSON+="]"
-        
+
         COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
         log_verbose "  Found $COMMIT_COUNT commits since $TAG"
+
+        # No common ancestor with the tag: `$TAG..HEAD` spans HEAD's entire history, which
+        # is fine for the path-filtered log above but far too wide to hand to git-cliff.
+        # Start the exported range at the parent of the oldest commit we actually found,
+        # so it covers those commits and nothing else.
+        if [ -z "$RANGE_START" ] && [ -n "$TAG_COMMIT" ]; then
+            OLDEST_COMMIT=$(echo "$COMMITS_JSON" | jq -r '.[-1].hash // empty')
+            OLDEST_PARENT=""
+            if [ -n "$OLDEST_COMMIT" ]; then
+                # --verify matters: plain `git rev-parse <root-commit>^` exits non-zero but
+                # still echoes "<sha>^" on stdout, so the `|| echo ""` fallback would never
+                # fire and the range would start at a ref that does not resolve.
+                OLDEST_PARENT=$(git rev-parse --verify "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
+            fi
+            if [ -n "$OLDEST_PARENT" ]; then
+                RANGE_START="$OLDEST_PARENT"
+                log_verbose "  No common ancestor with $TAG: range starts at the parent of the oldest commit"
+            else
+                RANGE_START="$TAG_COMMIT"
+                log_verbose "  WARNING: Could not derive a range start for $TAG, falling back to the tag commit"
+            fi
+        fi
+
+        # Empty only when the tag could not be dereferenced at all.
+        if [ -n "$RANGE_START" ]; then
+            RANGE="${RANGE_START}..${HEAD_COMMIT}"
+            log_verbose "  Range: $RANGE"
+        fi
     else
         log_verbose "  Tag does NOT exist - no previous release found"
     fi
@@ -230,7 +307,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"commits\":$COMMITS_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"tag_commit\":\"$TAG_COMMIT\",\"tag_in_local_branch\":$TAG_IN_LOCAL_BRANCH,\"latest_tag\":\"$LATEST_TAG\",\"range\":\"$RANGE\",\"commits\":$COMMITS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 

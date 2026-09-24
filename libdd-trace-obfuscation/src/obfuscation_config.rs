@@ -1,49 +1,85 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use log::{debug, error};
-use serde::Deserialize;
-use std::{collections::HashSet, env};
-
-use libdd_common::config::parse_env;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use crate::{
+    json::JsonObfuscator,
     replacer::{self, ReplaceRule},
-    sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct MemcachedConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// Mirrors the Datadog Agent defaults
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for MemcachedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_command: false,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
     pub keep_values: HashSet<String>,
 }
 
-pub type JsonStringTransformer = fn(&str) -> String;
+/// Mirrors the Datadog Agent defaults
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for CreditCardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            luhn: false,
+            keep_values: HashSet::new(),
+        }
+    }
+}
 
-#[derive(Debug, Default, Clone, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// Plain data: what a [`JsonObfuscator`] keeps and what it hands to a caller's transform. The
+/// transform itself is not configuration and is passed per call; see
+/// [`JsonObfuscator::obfuscate_with`].
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
     /// not be obfuscated.
+    // Accept both `/info`'s `keep_keys` and the Agent config's `keep_values`.
+    #[serde(alias = "keep_values")]
     pub keep_keys: HashSet<String>,
-    /// `transform_keys` will specify a set of keys for which their values will be transformed
-    /// through `transformer`
-    #[serde(skip)]
+    /// `transform_keys` will specify a set of keys whose string values are passed to the
+    /// transform callback given to [`JsonObfuscator::obfuscate_with`] or
+    /// [`JsonObfuscator::obfuscate_into`]. Entry points that take no callback obfuscate these
+    /// values like any other.
+    // The Agent's only transform is SQL obfuscation, so its config calls this
+    // `obfuscate_sql_values`. Its `/info` does not report the set at all, so a config built from
+    // `/info` leaves this empty.
+    #[serde(alias = "obfuscate_sql_values")]
     pub transform_keys: HashSet<String>,
-    /// `transformer` is an optional String -> String function which will transform values
-    /// specified in `transform_keys`
-    #[serde(skip)]
-    pub transformer: Option<JsonStringTransformer>,
+}
+
+/// Mirrors the Datadog Agent defaults for the elasticsearch,
+/// opensearch and mongodb (`:374`) obfuscators, which are all enabled by default.
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for JsonObfuscatorConfig {
+    fn default() -> Self {
+        Self::enabled()
+    }
 }
 
 impl JsonObfuscatorConfig {
@@ -51,7 +87,8 @@ impl JsonObfuscatorConfig {
     pub fn disabled() -> Self {
         Self {
             enabled: false,
-            ..Default::default()
+            keep_keys: HashSet::new(),
+            transform_keys: HashSet::new(),
         }
     }
 
@@ -59,39 +96,54 @@ impl JsonObfuscatorConfig {
     pub fn enabled() -> Self {
         Self {
             enabled: true,
-            ..Default::default()
+            keep_keys: HashSet::new(),
+            transform_keys: HashSet::new(),
         }
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct RedisConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "RemoveAllArgs")]
     pub remove_all_args: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct HttpConfig {
-    // pub enabled: bool,
-    pub remove_query_string: bool,
-    pub remove_paths_with_digits: bool,
+/// Mirrors the Datadog Agent defaults for both `redis` and `valkey`
+/// which share the same schema and defaults.
+/// see `pkg/config/schema/yaml/apm_config.yaml`
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            remove_all_args: false,
+        }
+    }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct HttpConfig {
+    pub remove_query_string: bool,
+    pub remove_path_digits: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
 pub struct ObfuscationConfig {
-    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
+    pub tag_replace_rules: Vec<ReplaceRule>,
     pub http: HttpConfig,
     pub memcached: MemcachedConfig,
     pub redis: RedisConfig,
     pub valkey: RedisConfig,
     pub credit_cards: CreditCardConfig,
-    pub sql: SqlObfuscateConfig,
-    pub elasticsearch: JsonObfuscatorConfig,
-    pub opensearch: JsonObfuscatorConfig,
-    pub mongodb: JsonObfuscatorConfig,
+    pub sql: SqlConfig,
+    pub elasticsearch: JsonObfuscator,
+    pub opensearch: JsonObfuscator,
+    pub mongodb: JsonObfuscator,
 }
 
 // Small subset of `ObfuscationConfig` for stats obfuscation only
@@ -106,19 +158,24 @@ impl ObfuscationConfig {
     /// # Errors
     ///
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
-    pub fn new() -> Result<Self, Box<dyn core::error::Error>> {
-        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_from_env() -> Result<Self, Box<dyn core::error::Error>> {
+        use libdd_common::config::parse_env;
+        use log::{debug, error};
+        use std::env;
+
+        let tag_replace_rules: Vec<ReplaceRule> = match env::var("DD_APM_REPLACE_TAGS") {
             Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
                 Ok(res) => {
                     debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
-                    Some(res)
+                    res
                 }
                 Err(e) => {
                     error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-                    None
+                    Vec::new()
                 }
             },
-            Err(_) => None,
+            Err(_) => Vec::new(),
         };
         let http_remove_query_string =
             parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
@@ -136,7 +193,7 @@ impl ObfuscationConfig {
             tag_replace_rules,
             http: HttpConfig {
                 remove_query_string: http_remove_query_string,
-                remove_paths_with_digits: http_remove_path_digits,
+                remove_path_digits: http_remove_path_digits,
             },
             memcached: MemcachedConfig {
                 enabled: obfuscate_memcached,
@@ -153,5 +210,97 @@ impl ObfuscationConfig {
             },
             ..Default::default()
         })
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum DbmsKind {
+    #[default]
+    Generic,
+    Mssql,
+    Mysql,
+    Postgresql,
+    Oracle,
+}
+
+/// See `DbmsKind` for the list of supported DBMS.
+pub struct UnknownDBMSError;
+
+impl TryFrom<&str> for DbmsKind {
+    type Error = UnknownDBMSError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let res = match value.to_lowercase().as_str() {
+            "" => Self::Generic,
+            "mssql" => Self::Mssql,
+            "mysql" => Self::Mysql,
+            "postgresql" => Self::Postgresql,
+            "oracle" => Self::Oracle,
+            _ => return Err(UnknownDBMSError),
+        };
+        Ok(res)
+    }
+}
+
+#[allow(deprecated)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SqlObfuscationMode {
+    #[default]
+    #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[serde(alias = "")]
+    Unspecified,
+    NormalizeOnly,
+    ObfuscateOnly,
+    ObfuscateAndNormalize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "public config schema, should not be refactored"
+)]
+#[serde(default)]
+pub struct SqlConfig {
+    pub replace_digits: bool,
+    pub keep_sql_alias: bool,
+    pub dollar_quoted_func: bool,
+    pub keep_null: bool,
+    pub keep_boolean: bool,
+    pub keep_positional_parameter: bool,
+    pub keep_trailing_semicolon: bool,
+    pub keep_identifier_quotation: bool,
+    pub replace_bind_parameter: bool,
+    pub remove_space_between_parentheses: bool,
+    pub keep_json_path: bool,
+    pub obfuscation_mode: SqlObfuscationMode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonObfuscatorConfig;
+
+    /// Accept `/info` and obfuscation-config field names, ignoring unknown fields.
+    #[test]
+    fn test_agent_json_obfuscation_field_names() {
+        let from_info: JsonObfuscatorConfig =
+            serde_json::from_str(r#"{"enabled":true,"keep_keys":["id"]}"#).unwrap();
+        let from_agent_config: JsonObfuscatorConfig = serde_json::from_str(
+            r#"{"enabled":true,"keep_values":["id"],"obfuscate_sql_values":["query"]}"#,
+        )
+        .unwrap();
+
+        assert!(from_info.keep_keys.contains("id"));
+        assert!(from_info.transform_keys.is_empty());
+        assert_eq!(from_info.keep_keys, from_agent_config.keep_keys);
+        assert!(from_agent_config.transform_keys.contains("query"));
+
+        // An `/info` payload from a newer Agent carries fields this config does not have.
+        let forward: JsonObfuscatorConfig =
+            serde_json::from_str(r#"{"enabled":true,"keep_keys":[],"some_new_thing":3}"#).unwrap();
+        assert!(forward.enabled);
     }
 }

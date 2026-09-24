@@ -7,15 +7,16 @@
 use super::config::OtlpMetricsConfig;
 use super::exporter::{send_otlp_http, OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES};
 use async_trait::async_trait;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
+use libdd_trace_stats::stats_exporter::{FlushableStatsExport, StatsCap};
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::error;
 use web_time::SystemTime;
@@ -326,23 +327,44 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     }
 }
 
+/// Cloneable handle to an [`OtlpStatsExporter`] hosted on a [`SharedRuntime`].
+#[derive(Debug, Clone)]
+pub struct SharedOtlpStatsExporter<C: StatsCap>(Arc<OtlpStatsExporter<C>>);
+
+impl<C: StatsCap> SharedOtlpStatsExporter<C> {
+    pub fn wrap(exporter: OtlpStatsExporter<C>) -> (Self, Weak<dyn FlushableStatsExport>) {
+        let arc = Arc::new(exporter);
+        let weak = Arc::downgrade(&arc) as Weak<dyn FlushableStatsExport>;
+        (Self(arc), weak)
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Worker
-    for OtlpStatsExporter<C>
-{
+impl<C: StatsCap> FlushableStatsExport for OtlpStatsExporter<C> {
+    async fn force_flush(&self) {
+        if let Err(e) = self.send(true, OTLP_MAX_RETRIES).await {
+            error!(?e, "Error force flushing OTLP trace metrics");
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<C: StatsCap> Worker for SharedOtlpStatsExporter<C> {
     async fn trigger(&mut self) {
-        self.capabilities.sleep(self.flush_interval).await;
+        self.0.capabilities.sleep(self.0.flush_interval).await;
     }
 
     async fn run(&mut self) {
-        if let Err(e) = self.send(false, OTLP_MAX_RETRIES).await {
+        if let Err(e) = self.0.send(false, OTLP_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics");
         }
     }
 
     fn reset(&mut self) {
         let _ = self
+            .0
             .concentrator
             .lock_or_panic()
             .flush(SystemTime::now(), true);
@@ -350,7 +372,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
     async fn shutdown(&mut self) {
         // Single attempt: a long backoff could miss the bounded shutdown window.
-        if let Err(e) = self.send(true, OTLP_SHUTDOWN_MAX_RETRIES).await {
+        if let Err(e) = self.0.send(true, OTLP_SHUTDOWN_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics on shutdown");
         }
     }
@@ -563,6 +585,7 @@ mod tests {
             Some(vec!["db.hostname:prod-db-1", "db.name:orders"])
         );
         assert_eq!(str_at(a, "status.code"), Some(STATUS_CODE_OK));
+        assert_eq!(a.iter().filter(|kv| kv["key"] == "status.code").count(), 1);
         let custom = pts
             .iter()
             .find(|p| {
@@ -734,5 +757,100 @@ mod tests {
         assert_eq!(grpc_status_code_to_name("17"), None);
         assert_eq!(grpc_status_code_to_name(""), None);
         assert_eq!(grpc_status_code_to_name("OK"), None);
+    }
+
+    /// Build a `SpanConcentrator` pre-seeded with top-level spans so a forced flush has
+    /// something to send.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn seeded_otlp_concentrator() -> Arc<Mutex<SpanConcentrator>> {
+        use libdd_trace_utils::span::v04::SpanBytes;
+        let mut concentrator = SpanConcentrator::new(
+            Duration::from_secs(10),
+            // Age the concentrator so a forced flush has expired buckets to send.
+            SystemTime::now() - Duration::from_secs(30),
+            vec![],
+            vec![],
+            None,
+            vec![],
+            #[cfg(feature = "stats-obfuscation")]
+            None,
+        );
+        for i in 1..10 {
+            let span = SpanBytes {
+                service: "svc".into(),
+                name: "op".into(),
+                resource: "res".into(),
+                duration: i,
+                // Mark the span top-level so it is eligible for stats aggregation.
+                metrics: vec![("_top_level".into(), 1.0)].into(),
+                ..Default::default()
+            };
+            concentrator.add_span(&span);
+        }
+        Arc::new(Mutex::new(concentrator))
+    }
+
+    /// `SharedOtlpStatsExporter::wrap` returns a strong handle and a weak handle whose
+    /// `force_flush` upgrades and exports OTLP metrics. The weak handle also works behind the
+    /// `Weak<dyn FlushableStatsExport>` used by the trace exporter.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_shared_otlp_stats_exporter_wrap_force_flush() {
+        use httpmock::prelude::*;
+        use libdd_capabilities_impl::NativeCapabilities;
+        use libdd_trace_utils::test_utils::poll_for_mock_hits;
+
+        let server = httpmock::MockServer::start_async().await;
+        let mut mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1/metrics")
+                    .header("content-type", "application/json");
+                then.status(200).body("");
+            })
+            .await;
+
+        // Each concentrator holds exactly one flush worth of data, so use a fresh wrapped
+        // exporter per forced flush.
+        let build_wrapped = || {
+            let exporter = OtlpStatsExporter {
+                flush_interval: Duration::from_secs(10),
+                concentrator: seeded_otlp_concentrator(),
+                config: OtlpMetricsConfig {
+                    endpoint_url: server.url("/v1/metrics"),
+                    headers: http::HeaderMap::new(),
+                    timeout: Duration::from_secs(5),
+                    protocol: crate::otlp::OtlpProtocol::HttpJson,
+                    otel_trace_semantics_enabled: false,
+                },
+                resource: OtlpResourceInfo::default(),
+                test_token: None,
+                capabilities: NativeCapabilities::new_client(),
+            };
+            SharedOtlpStatsExporter::wrap(exporter)
+        };
+
+        // The weak handle flushes through the shared allocation without holding a strong ref.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        }
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 1).await,
+            "weak force_flush should export OTLP metrics once"
+        );
+
+        // The weak handle is a `Weak<dyn FlushableStatsExport>`: upgrading yields an
+        // `Arc<dyn FlushableStatsExport>` whose `force_flush` is dispatched dynamically,
+        // which is how the trace exporter drives it.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        }
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 2).await,
+            "second weak force_flush should export OTLP metrics again"
+        );
     }
 }

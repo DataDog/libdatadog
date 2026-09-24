@@ -15,6 +15,10 @@ use std::{
 
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::{SharedRuntime, Worker};
+use libdd_trace_utils::span::{
+    span_pool::{PooledChunks, SpanPool},
+    BytesData,
+};
 
 use crate::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
@@ -256,12 +260,23 @@ impl<T> Batch<T> {
         Ok(())
     }
 
-    /// Export the trace chunk and reset the batch
-    fn export(&mut self) -> Vec<TraceChunk<T>> {
-        let chunks = std::mem::replace(&mut self.chunks, Vec::with_capacity(PRE_ALLOCATE_CHUNKS));
+    /// Export the trace chunk and reset the batch.
+    ///
+    /// `force` is true for a force flush. A force flush advances the batch generation even
+    /// when the batch is empty, so that a caller waiting on [`Sender::flush_and_wait`] can
+    /// observe the empty export's completion through the generation/ack handshake. An
+    /// automatic flush with no chunks has no waiter, so it leaves the generation untouched.
+    fn export(&mut self, force: bool) -> Vec<TraceChunk<T>> {
+        let chunks = if self.chunks.is_empty() {
+            // Empty batch: keep the pre-allocated chunk buffer instead of swapping in a
+            // fresh one, to avoid unnecessary allocations on empty flushes.
+            Vec::new()
+        } else {
+            std::mem::replace(&mut self.chunks, Vec::with_capacity(PRE_ALLOCATE_CHUNKS))
+        };
         self.byte_count = 0;
         self.last_flush = Instant::now();
-        if !chunks.is_empty() {
+        if !chunks.is_empty() || force {
             self.batch_gen.incr();
         }
         chunks
@@ -355,7 +370,8 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
     /// `flush()` to its own users can send more chunks after `flush_and_wait` returns. Use
     /// [`TraceBuffer::flush_and_close`] instead to also close the buffer.
     ///
-    /// An idle buffer has nothing to wait for, so `flush_and_wait` returns immediately.
+    /// This always queues a force flush, even on an idle buffer, so the exporter also drains
+    /// buffered client-side stats.
     ///
     /// A `timeout` of `None` blocks the calling thread until the exporter acks the export or
     /// until the buffer closes. Neither event is guaranteed: a paused worker never acks and
@@ -437,7 +453,7 @@ fn channel<T>(
 ) -> (Sender<T>, Receiver<T>) {
     let waiter = Arc::new(Waiter {
         state: Mutex::new(SharedState {
-            flush_needed: false,
+            flush_needed: None,
             last_flush_generation: BatchGeneration::default(),
             channel_state: ChannelState::Running,
             batch: Batch::new(max_buffered_bytes),
@@ -536,10 +552,10 @@ impl<T> Sender<T> {
         }
         state.metrics.spans_queued += chunk_len;
         let gen = state.batch.batch_gen;
-        if !state.flush_needed
+        if state.flush_needed.is_none()
             && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
         {
-            state.flush_needed = true;
+            state.flush_needed = Some(FlushType::Automatic);
             self.waiter.notify_receiver(state);
         }
         Ok(gen)
@@ -548,24 +564,16 @@ impl<T> Sender<T> {
     fn trigger_flush(&self) -> Result<BatchGeneration, TraceBufferError> {
         let mut state = self.get_running_state()?;
         let gen = state.batch.batch_gen;
-        state.flush_needed = true;
+        state.flush_needed = Some(FlushType::Force);
         self.waiter.notify_receiver(state);
         Ok(gen)
     }
 
-    /// Flush the current batch and wait, up to `timeout`, for the exporter to export the data
-    /// in the buffer at call time.
+    /// Flush the current batch and wait, up to `timeout`, for the exporter to export the
+    /// data in the buffer at call time.
     fn flush_and_wait(&self, timeout: Option<Duration>) -> Result<(), TraceBufferError> {
-        let mut state = self.get_running_state()?;
-        // When no generation is pending, the receiver has nothing to take. A flush request would
-        // only wake the receiver for an empty export and reset the auto-flush timer.
-        let Some(flush_gen) = state.pending_flush_target() else {
-            return Ok(());
-        };
-        state.flush_needed = true;
-        self.waiter.notify_receiver(state);
-
-        self.wait_flush_done(flush_gen, timeout)
+        let target = self.trigger_flush()?;
+        self.wait_flush_done(target, timeout)
     }
 
     /// Flush and wait as [`Sender::flush_and_wait`] does, then mark the channel as closed so
@@ -626,7 +634,7 @@ impl<T> Receiver<T> {
             batch,
             metrics,
         } = state.deref_mut();
-        *flush_needed = false;
+        *flush_needed = None;
         *last_flush_generation = BatchGeneration::default();
         *channel_state = ChannelState::Running;
         batch.reset();
@@ -634,7 +642,10 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
-    async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
+    async fn receive(
+        &self,
+        timeout: Duration,
+    ) -> Result<(Vec<TraceChunk<T>>, FlushType), MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:
             // any notify_waiters() call that fires between enable() and .await is captured.
@@ -646,13 +657,13 @@ impl<T> Receiver<T> {
             let leftover;
             {
                 let mut state = self.lock_state()?;
-                if state.flush_needed {
-                    return Ok(Self::take_batch(&mut state));
+                if let Some(flush_type) = state.flush_needed {
+                    return Ok((Self::take_batch(&mut state, flush_type), flush_type));
                 }
                 let deadline = state.batch.last_flush + timeout;
                 leftover = deadline.saturating_duration_since(Instant::now());
                 if leftover == Duration::ZERO {
-                    return Ok(state.batch.export());
+                    return Ok((state.batch.export(false), FlushType::Automatic));
                 }
             } // MutexGuard dropped before any .await
 
@@ -661,15 +672,18 @@ impl<T> Receiver<T> {
                 _ = notified.as_mut() => {}  // woken by sender; loop to re-check state
                 _ = tokio::time::sleep(leftover) => {
                     let mut state = self.lock_state()?;
-                    return Ok(state.batch.export());
+                    if let Some(flush_type) = state.flush_needed {
+                        return Ok((Self::take_batch(&mut state, flush_type), flush_type));
+                    }
+                    return Ok((state.batch.export(false), FlushType::Automatic));
                 }
             }
         }
     }
 
-    fn take_batch(state: &mut SharedState<T>) -> Vec<TraceChunk<T>> {
-        state.flush_needed = false;
-        state.batch.export()
+    fn take_batch(state: &mut SharedState<T>, flush_type: FlushType) -> Vec<TraceChunk<T>> {
+        state.flush_needed = None;
+        state.batch.export(matches!(flush_type, FlushType::Force))
     }
 
     /// Refuse further chunks and take the chunks currently in the batch, regardless of
@@ -689,7 +703,7 @@ impl<T> Receiver<T> {
         if state.batch.chunks.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(Self::take_batch(&mut state))
+        Ok(Self::take_batch(&mut state, FlushType::Force))
     }
 
     fn ack_export(&self) -> Result<(), MutexPoisonedError> {
@@ -707,10 +721,6 @@ impl BatchGeneration {
     fn incr(&mut self) {
         self.0 = self.0.wrapping_add(1);
     }
-
-    fn decr(&mut self) {
-        self.0 = self.0.wrapping_sub(1);
-    }
 }
 
 /// The lifecycle of a channel: `Running`, `Stopping`, `Stopped`.
@@ -725,32 +735,18 @@ enum ChannelState {
     Stopped,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum FlushType {
+    Automatic,
+    Force,
+}
+
 struct SharedState<T> {
-    flush_needed: bool,
+    flush_needed: Option<FlushType>,
     last_flush_generation: BatchGeneration,
     channel_state: ChannelState,
     batch: Batch<T>,
     metrics: QueueMetrics,
-}
-
-impl<T> SharedState<T> {
-    /// Return the generation that a caller waits for to confirm that the exporter exported the
-    /// data in the buffer now. Return `None` when nothing is left to export.
-    ///
-    /// The batch increments its generation only for a non-empty export, and the receiver acks
-    /// only a non-empty export. A caller that waits on the generation of an empty batch
-    /// therefore waits for an ack that never arrives.
-    ///
-    /// An empty batch means that the receiver already took the chunks, so the export that the
-    /// receiver has not acked yet carries the previous generation. The single receiver runs
-    /// take, export, and ack in order, so at most one export is ever unacked.
-    fn pending_flush_target(&self) -> Option<BatchGeneration> {
-        let mut target = self.batch.batch_gen;
-        if self.batch.chunks.is_empty() {
-            target.decr();
-        }
-        (self.last_flush_generation < target).then_some(target)
-    }
 }
 
 struct Waiter<T> {
@@ -781,9 +777,15 @@ impl<T> Waiter<T> {
 /// This allows mapping from the buffered spans to another type, and
 /// calling any export method to send traces.
 pub trait Export<T>: Send + Debug {
+    /// Export the trace chunks.
+    /// If `force_flush` is true, the exporter should also export any buffered data (like
+    /// metrics) before returning.
+    /// When `force_flush` is true, `trace_chunks` may be empty. In that case,
+    /// the exporter should still flush buffered data and return `Ok`.
     fn export_trace_chunks(
         &mut self,
         trace_chunks: Vec<TraceChunk<T>>,
+        force_flush: bool,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
@@ -807,6 +809,7 @@ where
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     trace_exporter: TraceExporter<C, R>,
+    span_pool: Option<SpanPool<BytesData>>,
 }
 
 impl<C, R> DefaultExport<C, R>
@@ -814,8 +817,14 @@ where
     C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
-    pub fn new(trace_exporter: TraceExporter<C, R>) -> Self {
-        Self { trace_exporter }
+    pub fn new(
+        trace_exporter: TraceExporter<C, R>,
+        span_pool: Option<SpanPool<BytesData>>,
+    ) -> Self {
+        Self {
+            trace_exporter,
+            span_pool,
+        }
     }
 }
 
@@ -827,15 +836,32 @@ where
     fn export_trace_chunks(
         &mut self,
         trace_chunks: Vec<TraceChunk<libdd_trace_utils::span::v04::SpanBytes>>,
+        force_flush: bool,
     ) -> Pin<
         Box<
             dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>> + Send + '_,
         >,
     > {
-        Box::pin(async {
-            self.trace_exporter
-                .send_trace_chunks_async(trace_chunks)
-                .await
+        Box::pin(async move {
+            // A force flush can arrive with no trace chunks when the buffer was empty.
+            // There are no traces to send in that case, so skip the network round-trip;
+            // the only work left is flushing the buffered client-side stats that the
+            // force flush is meant to drain. The agent send path does not short-circuit
+            // on empty traces, so sending them would emit an empty trace payload.
+            let res = if trace_chunks.is_empty() {
+                Ok(AgentResponse::Unchanged)
+            } else {
+                self.trace_exporter
+                    .send_trace_chunks_async(match &self.span_pool {
+                        Some(p) => p.wrap_chunks(trace_chunks),
+                        None => PooledChunks::unpooled(trace_chunks),
+                    })
+                    .await
+            };
+            if force_flush {
+                self.trace_exporter.flush_client_side_stats_async().await;
+            }
+            res
         })
     }
 
@@ -854,6 +880,7 @@ where
 #[derive(Debug)]
 struct TraceExporterRunInput<T> {
     trace_chunks: Vec<TraceChunk<T>>,
+    flush_type: FlushType,
 }
 
 pub struct TraceExporterWorker<T> {
@@ -890,19 +917,34 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
         }
     }
 
-    async fn export_trace_chunks(&mut self, trace_chunks: Vec<TraceChunk<T>>) {
+    async fn export_trace_chunks(
+        &mut self,
+        TraceExporterRunInput {
+            trace_chunks,
+            flush_type,
+        }: TraceExporterRunInput<T>,
+    ) {
         let res = self
             .export_operation
-            .export_trace_chunks(trace_chunks)
+            .export_trace_chunks(trace_chunks, matches!(flush_type, FlushType::Force))
             .await;
         (self.agent_response_handler)(res);
     }
 
-    async fn export_and_ack(&mut self, trace_chunks: Vec<TraceChunk<T>>) {
-        if trace_chunks.is_empty() {
+    async fn export_and_ack(&mut self, export: TraceExporterRunInput<T>) {
+        // An automatic flush with no chunks has nothing to export, so skip the export and
+        // the ack. A force flush still invokes the export operation even with no trace
+        // chunks because the exporter uses that call to flush buffered client-side stats, which
+        // live outside the trace batch.
+        // `Batch::export` advances the batch generation for a force flush even when the batch is
+        // empty, so the ack keeps the generation/ack handshake consistent and unblocks a
+        // caller waiting on `flush_and_wait`.
+        let should_run_export =
+            matches!(export.flush_type, FlushType::Force) || !export.trace_chunks.is_empty();
+        if !should_run_export {
             return;
         }
-        self.export_trace_chunks(trace_chunks).await;
+        self.export_trace_chunks(export).await;
         let _ = self.rx.ack_export();
     }
 }
@@ -910,12 +952,12 @@ impl<T: Send + 'static> TraceExporterWorker<T> {
 #[async_trait::async_trait]
 impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     async fn run(&mut self) {
-        let Some(TraceExporterRunInput { trace_chunks }) = self.run_input.take() else {
+        let Some(export) = self.run_input.take() else {
             // TODO: this should never happen if the shared runtime works correctly.
             // is it worth putting a debug_assert?
             return;
         };
-        self.export_and_ack(trace_chunks).await;
+        self.export_and_ack(export).await;
     }
 
     async fn initial_trigger(&mut self) {
@@ -929,7 +971,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 
     async fn trigger(&mut self) {
         let message = self.rx.receive(self.config.max_flush_interval).await;
-        let Ok(trace_chunks) = message else {
+        let Ok((trace_chunks, flush_type)) = message else {
             // Mailbox mutex is poisoned and unrecoverable. Park forever to avoid a hot loop
             // where the runtime would immediately call trigger() again; the worker will be
             // torn down via its handle / SharedRuntime shutdown.
@@ -937,12 +979,24 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
             std::future::pending::<()>().await;
             return;
         };
-        self.run_input = Some(TraceExporterRunInput { trace_chunks });
+        self.run_input = Some(TraceExporterRunInput {
+            trace_chunks,
+            flush_type,
+        });
     }
 
     async fn shutdown(&mut self) {
         if let Ok(trace_chunks) = self.rx.close_and_drain() {
-            self.export_and_ack(trace_chunks).await;
+            // Only pending chunks need exporting on shutdown. An empty drain has no
+            // trace chunks to send, and skipping it keeps a buffer that never received
+            // spans from emitting an empty trace payload.
+            if !trace_chunks.is_empty() {
+                self.export_and_ack(TraceExporterRunInput {
+                    trace_chunks,
+                    flush_type: FlushType::Force,
+                })
+                .await;
+            }
         }
         let _ = self.rx.close_done();
     }
@@ -956,7 +1010,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
 
@@ -974,7 +1028,7 @@ mod tests {
     }
 
     struct AssertExporter(
-        Box<dyn FnMut(Vec<Vec<()>>) + Send + Sync>,
+        Box<dyn FnMut(Vec<Vec<()>>, bool) + Send + Sync>,
         Arc<tokio::sync::Semaphore>,
     );
 
@@ -988,6 +1042,7 @@ mod tests {
         fn export_trace_chunks(
             &mut self,
             trace_chunks: Vec<super::TraceChunk<()>>,
+            force_flush: bool,
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>>
@@ -995,7 +1050,7 @@ mod tests {
                     + '_,
             >,
         > {
-            (self.0)(trace_chunks);
+            (self.0)(trace_chunks, force_flush);
             self.1.add_permits(1);
             Box::pin(async { Ok(AgentResponse::Unchanged) })
         }
@@ -1005,6 +1060,8 @@ mod tests {
     /// acts on the buffer while the export waits on the gate.
     struct GateExporter {
         chunks_handed_to_export: Arc<AtomicUsize>,
+        /// Number of exports the exporter was called with `force_flush = true` for.
+        force_flush_count: Arc<AtomicUsize>,
         /// A test thread blocks on the receiving end, so an `mpsc::Sender` is the right signal.
         /// `mpsc::Sender` is not `Sync`, and the `Export` trait requires `Send + Sync`.
         export_started: std::sync::Mutex<std::sync::mpsc::Sender<()>>,
@@ -1021,6 +1078,7 @@ mod tests {
         fn export_trace_chunks(
             &mut self,
             trace_chunks: Vec<super::TraceChunk<()>>,
+            force_flush: bool,
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<Output = Result<AgentResponse, TraceExporterError>>
@@ -1030,6 +1088,9 @@ mod tests {
         > {
             self.chunks_handed_to_export
                 .fetch_add(trace_chunks.len(), Ordering::SeqCst);
+            if force_flush {
+                self.force_flush_count.fetch_add(1, Ordering::SeqCst);
+            }
             if let Ok(tx) = self.export_started.lock() {
                 let _ = tx.send(());
             }
@@ -1042,7 +1103,7 @@ mod tests {
     }
 
     fn make_buffer(
-        assert_export: Box<dyn FnMut(Vec<Vec<()>>) + Send + Sync>,
+        assert_export: Box<dyn FnMut(Vec<Vec<()>>, bool) + Send + Sync>,
         cfg: TraceBufferConfig,
     ) -> (
         Arc<ForkSafeRuntime>,
@@ -1070,7 +1131,13 @@ mod tests {
         TraceBuffer<()>,
     ) {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| assert_eq!(chunks.len(), 1)),
+            Box::new(|chunks, force_flush| {
+                assert_eq!(chunks.len(), 1);
+                assert!(
+                    force_flush,
+                    "a pending chunk is always drained by a force flush"
+                );
+            }),
             TraceBufferConfig::default()
                 .max_buffered_bytes(100)
                 .flush_threshold_bytes(100)
@@ -1084,7 +1151,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_flush() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| {
+            Box::new(|chunks, force_flush| {
+                assert!(!force_flush, "a threshold flush is automatic");
                 assert_eq!(chunks.len(), 2);
                 let mut lengths = chunks.into_iter().map(|c| c.len()).collect::<Vec<_>>();
                 lengths.sort();
@@ -1113,7 +1181,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_batch_drop() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| {
+            Box::new(|chunks, force_flush| {
+                assert!(!force_flush, "a threshold flush is automatic");
                 assert_eq!(chunks.len(), 3);
                 for (i, chunk) in chunks.into_iter().enumerate() {
                     assert_eq!(chunk.len(), i + 1);
@@ -1155,7 +1224,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_receiver_sender_timeout() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| {
+            Box::new(|chunks, force_flush| {
+                assert!(!force_flush, "a timeout flush is automatic");
                 assert_eq!(chunks.len(), 1);
             }),
             TraceBufferConfig::default()
@@ -1173,7 +1243,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_send_after_shutdown() {
         let (rt, _, sender) = make_buffer(
-            Box::new(|_| panic!("shouldn't be called after shutdown")),
+            Box::new(|_, _| panic!("shouldn't be called after shutdown")),
             TraceBufferConfig::default(),
         );
         rt.shutdown(None).unwrap();
@@ -1188,7 +1258,13 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_synchronous_mode() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| assert_eq!(chunks.len(), 1)),
+            Box::new(|chunks, force_flush| {
+                assert_eq!(chunks.len(), 1);
+                assert!(
+                    !force_flush,
+                    "synchronous exports are automatic, not forced"
+                );
+            }),
             TraceBufferConfig::default()
                 .synchronous_export(true)
                 .synchronous_export_timeout(Some(Duration::from_secs(1))),
@@ -1212,8 +1288,9 @@ mod tests {
         // Set thresholds high enough that send_chunk alone never triggers a flush,
         // and the timer long enough that it won't fire during the test.
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| {
+            Box::new(|chunks, force_flush| {
                 assert_eq!(chunks.len(), 2);
+                assert!(force_flush, "force_flush must drive the export");
             }),
             TraceBufferConfig::default()
                 .max_buffered_bytes(100)
@@ -1229,6 +1306,42 @@ mod tests {
 
         sender.force_flush().unwrap();
         let _ = rt.block_on(sem.acquire_many(1)).unwrap().unwrap();
+
+        rt.shutdown(None).unwrap();
+        sender.wait_close_done(Duration::from_secs(10)).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_force_flush_without_spans_triggers_export() {
+        // A force flush with no spans must still invoke the export operation so that
+        // buffered client-side stats get flushed. The batch is empty, so the export carries
+        // no trace chunks, but the exporter is called with `force_flush = true`.
+        let (rt, sem, sender) = make_buffer(
+            Box::new(|chunks, force_flush| {
+                assert!(chunks.is_empty(), "no spans were ever sent");
+                assert!(
+                    force_flush,
+                    "force_flush must be true even when there are no spans"
+                );
+            }),
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+        );
+
+        // No spans were sent, so an automatic flush has nothing to do and the exporter
+        // must not have been called yet.
+        assert_eq!(sem.available_permits(), 0);
+
+        sender.force_flush().unwrap();
+        // Fails (instead of hanging forever) if the empty force flush does not reach the
+        // exporter.
+        let _ = rt
+            .block_on_with_timeout(async { sem.acquire_many(1).await }, Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
 
         rt.shutdown(None).unwrap();
         sender.wait_close_done(Duration::from_secs(10)).unwrap();
@@ -1318,24 +1431,29 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_flush_and_close_on_idle_buffer_returns_ok_promptly() {
-        let (rt, _sem, sender) = make_buffer(
-            Box::new(|_| panic!("an idle buffer has nothing to export")),
+        let (rt, sem, sender) = make_buffer(
+            Box::new(|chunks, force_flush| {
+                assert!(
+                    chunks.is_empty(),
+                    "an idle buffer has no trace chunks to export"
+                );
+                assert!(
+                    force_flush,
+                    "flush_and_close on an idle buffer still drives a force flush for stats"
+                );
+            }),
             TraceBufferConfig::default()
                 .max_buffered_bytes(100)
                 .flush_threshold_bytes(100)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
-        let timeout = Duration::from_millis(200);
-        let start = Instant::now();
+        let timeout = Duration::from_secs(10);
         let res = sender.flush_and_close(Some(timeout));
-        let elapsed = start.elapsed();
 
         assert!(res.is_ok(), "expected Ok on an idle buffer, got {res:?}");
-        assert!(
-            elapsed < timeout / 2,
-            "flush_and_close blocked for {elapsed:?} with nothing to flush"
-        );
+        // The idle buffer still triggered an empty force flush export.
+        assert_eq!(sem.available_permits(), 1);
 
         rt.shutdown(None).unwrap();
     }
@@ -1377,6 +1495,7 @@ mod tests {
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
         let (export_started_tx, export_started) = std::sync::mpsc::channel();
 
+        let force_flush_count = Arc::new(AtomicUsize::new(0));
         let rt = Arc::new(ForkSafeRuntime::new().unwrap());
         let (sender, worker) = TraceBuffer::new(
             TraceBufferConfig::default()
@@ -1386,6 +1505,7 @@ mod tests {
             Box::new(|_r: Result<AgentResponse, TraceExporterError>| {}),
             Box::new(GateExporter {
                 chunks_handed_to_export: chunks_handed_to_export.clone(),
+                force_flush_count: force_flush_count.clone(),
                 export_started: std::sync::Mutex::new(export_started_tx),
                 gate: gate.clone(),
             }),
@@ -1415,6 +1535,11 @@ mod tests {
             1,
             "the drain must export the chunk buffered before the shutdown"
         );
+        assert_eq!(
+            force_flush_count.load(Ordering::SeqCst),
+            1,
+            "shutdown must drain the batch with a force flush"
+        );
     }
 
     #[test]
@@ -1435,6 +1560,58 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn test_flush_and_wait_on_idle_buffer_triggers_and_waits_for_force_flush() {
+        // flush_and_wait on an idle buffer must still queue a force flush (so the exporter
+        // drains buffered client-side stats) and block until that export completes. It must
+        // not return immediately just because the batch is empty.
+        let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
+        let force_flush_count = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (export_started_tx, export_started) = std::sync::mpsc::channel();
+
+        let rt = Arc::new(ForkSafeRuntime::new().unwrap());
+        let (sender, worker) = TraceBuffer::new(
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+            Box::new(|_r: Result<AgentResponse, TraceExporterError>| {}),
+            Box::new(GateExporter {
+                chunks_handed_to_export: chunks_handed_to_export.clone(),
+                force_flush_count: force_flush_count.clone(),
+                export_started: std::sync::Mutex::new(export_started_tx),
+                gate: gate.clone(),
+            }),
+        );
+        let _ = rt.spawn_worker(worker, true).unwrap();
+
+        // No spans were sent, so nothing should have been exported yet.
+        assert_eq!(force_flush_count.load(Ordering::SeqCst), 0);
+
+        std::thread::scope(|s| {
+            let waiter = s.spawn(|| sender.flush_and_wait(Some(Duration::from_secs(10))));
+            // The empty force flush export must have started...
+            export_started.recv().unwrap();
+            // ...and flush_and_wait must still be blocked on it.
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(
+                !waiter.is_finished(),
+                "flush_and_wait returned before the empty force flush export completed"
+            );
+            // Let the export finish; flush_and_wait unblocks on the ack.
+            gate.add_permits(1);
+            waiter.join().unwrap().unwrap();
+        });
+
+        assert_eq!(force_flush_count.load(Ordering::SeqCst), 1);
+        assert_eq!(chunks_handed_to_export.load(Ordering::SeqCst), 0);
+
+        rt.shutdown(None).unwrap();
+        sender.wait_close_done(Duration::from_secs(10)).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_waits_for_an_in_flight_export() {
         let chunks_handed_to_export = Arc::new(AtomicUsize::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(0));
@@ -1449,6 +1626,7 @@ mod tests {
             Box::new(|_r: Result<AgentResponse, TraceExporterError>| {}),
             Box::new(GateExporter {
                 chunks_handed_to_export: chunks_handed_to_export.clone(),
+                force_flush_count: Arc::new(AtomicUsize::new(0)),
                 export_started: std::sync::Mutex::new(export_started_tx),
                 gate: gate.clone(),
             }),
@@ -1481,7 +1659,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_flush_and_wait_leaves_the_buffer_usable_after_a_timeout() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|_| {}),
+            Box::new(|_chunks, force_flush| {
+                assert!(force_flush, "flush_and_wait drives a force flush");
+            }),
             TraceBufferConfig::default()
                 .max_buffered_bytes(100)
                 .flush_threshold_bytes(100)
@@ -1505,8 +1685,12 @@ mod tests {
             .unwrap();
         assert!(sem.available_permits() >= 1);
 
-        // Nothing is left to export, so a repeated call returns without a wait.
-        sender.flush_and_wait(Some(Duration::ZERO)).unwrap();
+        // flush_and_wait always queues a force flush, even on an idle buffer, so that buffered
+        // client-side stats get drained. A repeated call triggers another empty force flush and
+        // blocks until it acks.
+        sender
+            .flush_and_wait(Some(Duration::from_secs(10)))
+            .unwrap();
 
         rt.shutdown(None).unwrap();
     }
@@ -1535,7 +1719,10 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_worker_reset() {
         let (rt, sem, sender) = make_buffer(
-            Box::new(|chunks| assert_eq!(chunks.len(), 1)),
+            Box::new(|chunks, force_flush| {
+                assert_eq!(chunks.len(), 1);
+                assert!(!force_flush, "the timer flush is automatic");
+            }),
             TraceBufferConfig::default().flush_threshold_bytes(2),
         );
         sender.send_chunk(vec![()]).unwrap();

@@ -47,6 +47,9 @@ symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 # Enable zstd compression for the agentless trace intake sender.
 data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
+# Enable client-side stats obfuscation in the linked data-pipeline crate. No FFI
+# surface of its own; only compiles the capability into the linked crate.
+data-pipeline-stats-obfuscation = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/stats-obfuscation"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
@@ -76,15 +79,13 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, opt
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false, optional = true, features = ["expanded_builder_macros"] }
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
-function_name = "0.3.0"
-futures.workspace = true
-http-body-util = "0.1"
+function_name.workspace = true
 hyper = { workspace = true, features = ["http1", "client"] }
 libc.workspace = true
 serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
-thiserror = "2"
-tokio-util = "0.7.1"
+thiserror = { workspace = true, default-features = true }
+tokio-util.workspace = true
 libdd-ffe-ffi = { path = "../libdd-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
 libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }

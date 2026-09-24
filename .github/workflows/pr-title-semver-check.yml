@@ -14,8 +14,41 @@ env:
   RUST_VERSION: 1.92.0
 
 jobs:
+  # Automation that opens a PR and labels it in two steps (`gh pr create
+  # --label` is not atomic) produces an `opened` event whose payload carries no
+  # labels, so a payload-based `if:` guard runs the check anyway. The later
+  # `labeled` runs skip correctly, but the failed check run from the `opened` run
+  # has a higher id and is the one all-checks keeps, so the PR stays red despite
+  # the label.
+  check-skip:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.labels.outputs.skip }}
+    steps:
+      - name: Check for skip-pr-title-semver-check label
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          if ! LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" --jq '.labels[].name'); then
+            echo "ERROR: could not read labels for PR #${PR_NUMBER}." >&2
+            exit 1
+          fi
+
+          if grep -qx 'skip-pr-title-semver-check' <<< "$LABELS"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is set; skipping semver checks."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Label skip-pr-title-semver-check is not set; running semver checks."
+          fi
+
   detect-changes:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: check-skip
+    if: ${{ needs.check-skip.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       changed_crates: ${{ steps.detect.outputs.crates }}
@@ -37,6 +70,9 @@ jobs:
 
           # Find all changed files
           CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF"...HEAD)
+
+          MANIFEST_AFFECTED=$(./scripts/semver-level.sh --list-affected "$BASE_REF")
+          echo "Crates whose manifest facts moved: ${MANIFEST_AFFECTED:-<none>}"
 
           # Get workspace members metadata using cargo-metadata
           # Filter to only workspace members that are publishable (publish != false and publish != [])
@@ -62,6 +98,9 @@ jobs:
             if echo "$CHANGED_FILES" | grep -q "^${CRATE_DIR}/"; then
               echo "Detected change in published crate: $CRATE_NAME ($CRATE_DIR)"
               CHANGED_CRATES+=("$CRATE_NAME")
+            elif grep -qxF "$CRATE_NAME" <<< "$MANIFEST_AFFECTED"; then
+              echo "Detected manifest change reaching published crate: $CRATE_NAME (no file of its own changed)"
+              CHANGED_CRATES+=("$CRATE_NAME")
             fi
           done < <(echo "$WORKSPACE_CRATES")
 
@@ -78,8 +117,8 @@ jobs:
           fi
 
   semver-check:
-    needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     outputs:
       result_json: ${{ steps.semver.outputs.result_json }}
@@ -101,9 +140,13 @@ jobs:
           ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
 
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
 
       - name: Install dependencies
         run: |
@@ -127,7 +170,7 @@ jobs:
           set -euo pipefail
 
           CHANGED_CRATES='${{ needs.detect-changes.outputs.changed_crates }}'
-          BASELINE="main"
+          BASELINE="$GITHUB_BASE_REF"
           HIGHEST_LEVEL=""
 
           # Parse JSON array
@@ -167,8 +210,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   validate:
-    needs: [detect-changes, semver-check]
-    if: ${{ needs.detect-changes.outputs.has_rust_changes == 'true' && !contains(github.event.pull_request.labels.*.name, 'skip-pr-title-semver-check') }}
+    needs: [check-skip, detect-changes, semver-check]
+    if: ${{ needs.check-skip.outputs.skip != 'true' && needs.detect-changes.outputs.has_rust_changes == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title against semver changes
@@ -220,15 +263,19 @@ jobs:
           VALIDATION_FAILED="false"
           FAILURE_REASONS=()
 
-          # Rule: ci/docs/style/test/build cannot change the public API
+          # Rule: ci/docs/style/test cannot change what a consumer sees
+          #
+          # 'build' is deliberately NOT in this list. Conventional Commits defines it as
+          # changes to the build system *or external dependencies*, and semver-level.sh
+          # scores a raised dependency floor as a minor
           case "$TYPE" in
-            ci|docs|style|test|build)
+            ci|docs|style|test)
               if [[ "$SEMVER_LEVEL" == "major" ]] || [[ "$SEMVER_LEVEL" == "minor" ]]; then
                 VALIDATION_FAILED="true"
-                FAILURE_REASONS+=("'$TYPE' cannot have major or minor API changes. Use a different PR type, or avoid public API changes.")
+                FAILURE_REASONS+=("'$TYPE' cannot change the public API, a dependency requirement floor, or the cargo feature surface. Use a different PR type ('build' for a dependency change), or leave those alone.")
               fi
               ;;
-            feat|fix|refactor|chore|perf|revert)
+            feat|fix|refactor|chore|perf|revert|build)
               # These can be any semver level (subject to breaking change rules below)
               ;;
             *)
@@ -269,9 +316,11 @@ jobs:
             echo "--------------------------------------------"
             echo "VALID COMBINATIONS:"
             echo "--------------------------------------------"
-            echo "  ci/docs/style/test/build -> patch or none only (no public API changes)"
-            echo "  all other types          -> any level allowed"
-            echo "  major changes            -> must have '!' or 'BREAKING CHANGE:' footer"
+            echo "  ci/docs/style/test -> patch or none only (no change to the public API,"
+            echo "                        a dependency requirement floor, or the feature surface)"
+            echo "  all other types    -> any level allowed ('build' included: it is the"
+            echo "                        conventional type for a dependency change)"
+            echo "  major changes      -> must have '!' or 'BREAKING CHANGE:' footer"
             echo ""
             exit 1
           else

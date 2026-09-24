@@ -18,8 +18,14 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::agentless::exporter::send_agentless_traces_with_observer;
+use crate::agentless::AgentlessTraceConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
+use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
+use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -53,13 +59,17 @@ use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
+use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+#[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+use prost::Message;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -67,48 +77,52 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+#[cfg(not(target_arch = "wasm32"))]
+const OTLP_GRPC_MAX_JITTER: Duration = Duration::from_millis(100);
 
-/// Build the HTTP headers required by the agentless intake.
-///
-/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
-/// and entity headers (container-id / entity-id / external-env) when available.
-fn build_agentless_headers(
-    metadata: &TracerMetadata,
-    api_key: &str,
-    trace_count: usize,
-) -> Result<HeaderMap, TraceExporterError> {
-    let mut headers: HeaderMap = {
-        let tags: TracerHeaderTags = metadata.into();
-        tags.into()
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_delay(
+    attempt: u32,
+    retry_after: Option<Duration>,
+    jitter: Duration,
+) -> Option<Duration> {
+    let initial_delay = match retry_after {
+        Some(delay) if delay > OTLP_GRPC_MAX_RETRY_DELAY => return None,
+        Some(delay) if !delay.is_zero() => delay,
+        _ => Duration::from_millis(OTLP_RETRY_DELAY_MS),
     };
+    let multiplier = 2u32.saturating_pow(attempt.saturating_sub(1));
+    Some(
+        initial_delay
+            .saturating_mul(multiplier)
+            .saturating_add(jitter)
+            .min(OTLP_GRPC_MAX_RETRY_DELAY),
+    )
+}
 
-    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
-        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
-            "Invalid Datadog API key value for dd-api-key header".to_string(),
-        ))
-    })?;
-    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
+#[cfg(not(target_arch = "wasm32"))]
+fn grpc_retry_jitter() -> Duration {
+    let max_millis = u64::try_from(OTLP_GRPC_MAX_JITTER.as_millis()).unwrap_or(u64::MAX);
+    Duration::from_millis(rand::random::<u64>() % max_millis + 1)
+}
 
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
-    );
+#[derive(Clone, Copy)]
+struct PayloadCounts {
+    chunks: usize,
+    #[cfg(feature = "telemetry")]
+    spans: usize,
+}
 
-    headers.insert(
-        http::HeaderName::from_static("x-datadog-trace-count"),
-        http::HeaderValue::from(trace_count),
-    );
-
-    for (name, value) in libdd_common::entity_id::get_entity_headers() {
-        if let (Ok(name), Ok(value)) = (
-            http::HeaderName::from_bytes(name.as_bytes()),
-            http::HeaderValue::from_str(value),
-        ) {
-            headers.insert(name, value);
+impl PayloadCounts {
+    fn from_traces<T: TraceData>(traces: &[Vec<Span<T>>]) -> Self {
+        Self {
+            chunks: traces.len(),
+            #[cfg(feature = "telemetry")]
+            spans: traces.iter().map(Vec::len).sum(),
         }
     }
-
-    Ok(headers)
 }
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
@@ -186,6 +200,13 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 }
 
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
+
+#[derive(Debug)]
+pub(crate) enum OtlpExportMode {
+    Http(OtlpTraceConfig),
+    #[cfg(not(target_arch = "wasm32"))]
+    Grpc(OtlpGrpcTransport),
+}
 
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
@@ -267,8 +288,10 @@ pub struct TraceExporter<
     capabilities: C,
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
-    otlp_config: Option<OtlpTraceConfig>,
+    /// When set, traces are exported via OTLP instead of the Datadog agent.
+    otlp: Option<OtlpExportMode>,
+    /// OTLP Resource attributes derived from tracer metadata.
+    otlp_resource_info: OtlpResourceInfo,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
@@ -306,6 +329,57 @@ impl<
     pub fn set_telemetry_handle(&self, handle: Option<TelemetryWorkerHandle<C>>) {
         self.telemetry
             .store(handle.map(|h| Arc::new(TelemetryClient::with_handle(h))));
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_serialization_drop(&self, counts: PayloadCounts) {
+        self.emit_retry_result(&Err(SendWithRetryError::Build(0)), 0, counts);
+    }
+
+    #[cfg(feature = "telemetry")]
+    fn emit_retry_result(&self, result: &SendWithRetryResult, bytes: usize, counts: PayloadCounts) {
+        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
+            let payload = SendPayloadTelemetry::from_retry_result_with_spans(
+                result,
+                bytes as u64,
+                counts.chunks as u64,
+                counts.spans as u64,
+            );
+            if let Err(e) = telemetry.send(&payload) {
+                error!(?e, "Error sending telemetry");
+            }
+        }
+    }
+
+    #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+    fn emit_grpc_result(
+        &self,
+        result: &Result<(), TraceExporterError>,
+        attempts: u32,
+        bytes: usize,
+        counts: PayloadCounts,
+    ) {
+        let retry_result = match result {
+            Ok(()) => Ok((http::Response::new(Bytes::new()), attempts)),
+            Err(TraceExporterError::Request(error)) => {
+                let mut response = http::Response::new(Bytes::new());
+                *response.status_mut() = error.status();
+                Err(SendWithRetryError::Http(response, attempts))
+            }
+            Err(TraceExporterError::Io(error)) if error.kind() == std::io::ErrorKind::TimedOut => {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(TraceExporterError::Network(error))
+                if matches!(
+                    error.kind(),
+                    crate::trace_exporter::error::NetworkErrorKind::TimedOut
+                ) =>
+            {
+                Err(SendWithRetryError::Timeout(attempts))
+            }
+            Err(_) => Err(SendWithRetryError::ResponseBody(attempts)),
+        };
+        self.emit_retry_result(&retry_result, bytes, counts);
     }
 
     /// Stop the background workers owned by this exporter.
@@ -397,8 +471,8 @@ impl<
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
 
@@ -425,7 +499,9 @@ impl<
             None,
         );
 
-        let res = self.send_trace_chunks_inner(traces).await?;
+        let res = self
+            .send_trace_chunks_inner(PooledChunks::unpooled(traces))
+            .await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -611,7 +687,7 @@ impl<
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
-        trace_chunks: Vec<Vec<Span<T>>>,
+        trace_chunks: PooledChunks<'_, T>,
         cancellation_token: Option<&CancellationToken>,
     ) -> Result<AgentResponse, TraceExporterError>
     where
@@ -643,68 +719,114 @@ impl<
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
-        trace_chunks: Vec<Vec<Span<T>>>,
+        trace_chunks: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // In log-export mode there is no agent to negotiate with; skip the poll.
-        if self.log_output.is_none() {
+        // There is no agent to negotiate with, skip the poll.
+        if self.log_output.is_none() && self.agentless_config.is_none() {
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
+    /// Force an immediate flush of client-computed stats if stats computation is currently
+    /// enabled.
+    ///
+    /// # Returns
+    ///
+    /// `true` when client-side stats computation is enabled and a flush was requested.
+    /// `false` when stats computation is disabled. A `true` return does not guarantee that
+    /// the flush completed: if the stats worker was concurrently shut down (during forks
+    /// for instance), no flush is performed.
+    pub async fn flush_client_side_stats_async(&self) -> bool {
+        let status = self.client_side_stats.status.load_full();
+        if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
+            if let Some(exporter) = flush_handle.upgrade() {
+                exporter.force_flush().await;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sync call over [`Self::flush_client_side_stats_async`]
+    ///
+    /// # Panics
+    ///
+    /// Panics if called inside an existing tokio context.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn flush_client_side_stats(&self) -> bool
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.flush_client_side_stats_async())
+            .unwrap_or_else(|e| {
+                debug!(
+                    ?e,
+                    "Failed to run client-side stats flush on the shared runtime"
+                );
+                false
+            })
+    }
+
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        traces: PooledChunks<'_, T>,
         config: &AgentlessTraceConfig,
+        client_side_stats: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let trace_count = traces.len();
-        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
-            &traces,
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(&traces);
+        send_agentless_traces_with_observer(
+            &self.capabilities,
+            traces,
             &self.metadata,
+            config,
+            client_side_stats,
+            |_result, _payload_len| {
+                #[cfg(feature = "telemetry")]
+                self.emit_retry_result(_result, _payload_len, counts);
+            },
+            || {
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
+            },
         )
-        .map_err(|e| {
-            error!("Agentless JSON serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })?;
-
-        let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
-
-        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
-        traces: Vec<Vec<Span<T>>>,
+        traces: &[Vec<Span<T>>],
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let resource_info = {
-            let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats =
-                self.metadata.client_computed_stats || self.otlp_stats_enabled;
-            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
-            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
-            r
-        };
-        // Single prost OTLP IR; the configured protocol encodes the same request to its wire
-        // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
-        // the mapper.
-        let request =
-            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
-        let body = config.protocol.encode(&request).map_err(|e| {
-            error!("OTLP serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-                "failed to encode OTLP request: {e}"
-            )))
-        })?;
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(traces);
+        let request = map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            config.otel_trace_semantics_enabled,
+        );
+        let body = config
+            .protocol
+            .encode(&request)
+            .ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be encoded on the HTTP export path".to_string(),
+                ))
+            })?
+            .map_err(|e| {
+                error!("OTLP serialization error: {e}");
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                    "failed to encode OTLP request: {e}"
+                )))
+            })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
         let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
@@ -720,13 +842,75 @@ impl<
         } else {
             config
         };
-        send_otlp_traces_http(
+        #[cfg(feature = "telemetry")]
+        let payload_len = body.len();
+        let result = send_otlp_http_with_observer(
             &self.capabilities,
-            config_to_use,
+            &config_to_use.endpoint_url,
+            &config_to_use.headers,
+            config_to_use.timeout,
             self.endpoint.test_token.as_deref(),
+            config_to_use.protocol.content_type().ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
+                ))
+            })?,
             body,
+            OTLP_MAX_RETRIES,
+            |_result| {
+                #[cfg(feature = "telemetry")]
+                self.emit_retry_result(_result, payload_len, counts);
+            },
         )
-        .await?;
+        .await;
+        result?;
+        Ok(AgentResponse::Unchanged)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn send_otlp_grpc_inner<T: TraceData>(
+        &self,
+        traces: &[Vec<Span<T>>],
+        transport: &OtlpGrpcTransport,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        #[cfg(feature = "telemetry")]
+        let counts = PayloadCounts::from_traces(traces);
+        let request = Arc::new(map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            transport.otel_trace_semantics_enabled,
+        ));
+        #[cfg(feature = "telemetry")]
+        let payload_len = request.encoded_len() + 5;
+        let test_token = self.endpoint.test_token.as_deref();
+        let mut attempt: u32 = 1;
+        let result = loop {
+            match send_otlp_traces_grpc(
+                transport,
+                test_token,
+                self.metadata.client_computed_stats || self.otlp_stats_enabled,
+                request.clone(),
+            )
+            .await
+            {
+                Ok(()) => break Ok(()),
+                Err(GrpcExportError::Retryable { error, retry_after }) => {
+                    if attempt > OTLP_MAX_RETRIES {
+                        break Err(error);
+                    }
+                    let Some(delay) = grpc_retry_delay(attempt, retry_after, grpc_retry_jitter())
+                    else {
+                        break Err(error);
+                    };
+                    self.capabilities.sleep(delay).await;
+                    attempt += 1;
+                }
+                Err(GrpcExportError::NonRetryable(error)) => break Err(error),
+            }
+        };
+        #[cfg(feature = "telemetry")]
+        self.emit_grpc_result(&result, attempt, payload_len, counts);
+        result?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -736,11 +920,10 @@ impl<
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
         headers: HeaderMap,
-        chunks: usize,
+        counts: PayloadCounts,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
-
         // Send traces to the agent
         let result = send_with_retry(
             &self.capabilities,
@@ -753,17 +936,10 @@ impl<
         .await;
 
         #[cfg(feature = "telemetry")]
-        if let Some(telemetry) = self.telemetry.load_full().as_deref() {
-            if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
-                &result,
-                payload_len as u64,
-                chunks as u64,
-            )) {
-                error!(?e, "Error sending telemetry");
-            }
-        }
+        self.emit_retry_result(&result, payload_len, counts);
 
-        self.handle_send_result(result, chunks, payload_len).await
+        self.handle_send_result(result, counts.chunks, payload_len)
+            .await
     }
 
     /// Synchronous log-export path: encode every span to newline-delimited
@@ -793,8 +969,13 @@ impl<
 
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
-        mut traces: Vec<Vec<Span<T>>>,
+        mut traces: PooledChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // `traces` is a `PooledChunks`: keeping it owned (rather than moving its inner `Vec`
+        // into the consuming code paths) is what lets its spans be recycled into the pool when
+        // it is dropped at the end of this function. Paths that must consume the spans use
+        // `into_chunks()` and forgo pooling.
+        //
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
         // The builder should reject conflicting destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
@@ -803,21 +984,9 @@ impl<
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        if let Some(ref config) = self.agentless_config {
-            // For agentless we want to tag top level spans, but not perform
-            // stats aggregation or span drops
-            if !self.client_computed_top_level {
-                for chunk in traces.iter_mut() {
-                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
-                }
-            }
-
-            return self.send_agentless_traces_inner(traces, config).await;
-        }
-
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
-        stats::process_traces_for_stats(
+        let client_side_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
@@ -827,29 +996,47 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
-        for chunk in &mut traces {
+        for chunk in traces.iter_mut() {
             for span in chunk.iter_mut() {
                 span.dedup();
             }
         }
 
-        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
-        // Unlike the agent path, there is no downstream agent to drop unsampled traces,
-        // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(ref config) = self.otlp_config {
-            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+        if let Some(ref config) = self.agentless_config {
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            return self
+                .send_agentless_traces_inner(traces, config, client_side_stats)
+                .await;
+        }
+
+        if let Some(otlp) = &self.otlp {
+            // Unlike the agent path, there is no downstream agent to drop unsampled traces,
+            // if client-side-stats is enabled, we have already dropped chunks after performing stat
+            // computations otherwise drop here
+            if !client_side_stats {
+                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            }
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+            return match otlp {
+                OtlpExportMode::Http(config) => self.send_otlp_traces_inner(&traces, config).await,
+                #[cfg(not(target_arch = "wasm32"))]
+                OtlpExportMode::Grpc(transport) => {
+                    self.send_otlp_grpc_inner(&traces, transport).await
+                }
+            };
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
         // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
         let effective_format = self.effective_output_format();
+        let counts = PayloadCounts::from_traces(&traces);
 
         let prepared = match self.serializer.prepare_traces_payload(
-            traces,
+            &traces,
             header_tags,
             &self.metadata,
             self.agent_payload_response_version.as_ref(),
@@ -862,8 +1049,14 @@ impl<
                     HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
                     None,
                 );
+                #[cfg(feature = "telemetry")]
+                self.emit_serialization_drop(counts);
                 return Err(e);
             }
+        };
+        let counts = PayloadCounts {
+            chunks: prepared.chunk_count,
+            ..counts
         };
 
         let endpoint = Endpoint {
@@ -872,12 +1065,7 @@ impl<
         };
 
         let result = self
-            .send_traces_with_telemetry(
-                &endpoint,
-                prepared.data,
-                prepared.headers,
-                prepared.chunk_count,
-            )
+            .send_traces_with_telemetry(&endpoint, prepared.data, prepared.headers, counts)
             .await;
 
         // State-hash trap mitigation: the agent does not return a `Datadog-Agent-State`
@@ -1137,6 +1325,42 @@ mod tests {
     use std::net;
 
     #[test]
+    fn grpc_retry_delay_applies_backoff_and_cap() {
+        let retry_after = Duration::new(2, 250_000_000);
+
+        assert_eq!(
+            grpc_retry_delay(1, Some(retry_after), Duration::ZERO),
+            Some(retry_after)
+        );
+        assert_eq!(
+            grpc_retry_delay(2, Some(retry_after), Duration::ZERO),
+            Some(Duration::new(4, 500_000_000))
+        );
+        assert_eq!(
+            grpc_retry_delay(3, None, Duration::ZERO),
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS * 4))
+        );
+        assert_eq!(
+            grpc_retry_delay(3, Some(Duration::from_secs(20)), Duration::ZERO),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            grpc_retry_delay(1, Some(Duration::ZERO), Duration::ZERO),
+            Some(Duration::from_millis(OTLP_RETRY_DELAY_MS))
+        );
+        assert_eq!(
+            grpc_retry_delay(1, Some(Duration::from_secs(31)), Duration::ZERO),
+            None
+        );
+    }
+
+    #[test]
+    fn grpc_retry_delay_adds_bounded_jitter() {
+        let delay = grpc_retry_delay(1, None, Duration::from_millis(50));
+        assert_eq!(delay, Some(Duration::from_millis(150)));
+    }
+
+    #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
         let tracer_tags = TracerMetadata {
             tracer_version: "v0.1".to_string(),
@@ -1391,9 +1615,9 @@ mod tests {
             Self(NativeCapabilities::new_client())
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
-            Self(NativeCapabilities::new_without_connection_pooling())
+            Self(NativeCapabilities::new_periodic())
         }
 
         fn request(
@@ -2354,6 +2578,87 @@ mod tests {
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
     }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_obfuscates_every_exported_span() {
+        // Obfuscation runs in the agentless path on every span that is sent to the
+        // intake. With `remove_query_string` enabled, the `secret=bar` query parameter
+        // must be stripped from `http.url` before the payload is POSTed.
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            fn body_is_obfuscated(body: &str) -> bool {
+                !body.contains("secret=bar") && body.contains("http://foo.com/path?")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                let Ok(body) = body else {
+                    return false;
+                };
+                body_is_obfuscated(&String::from_utf8(body).unwrap())
+            });
+            #[cfg(not(feature = "compression"))]
+            let when =
+                when.is_true(|req| body_is_obfuscated(&String::from_utf8(req.body_vec()).unwrap()));
+            let _ = when;
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "test-api-key")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_span_obfuscation_config({
+                let mut cfg =
+                    libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig::default();
+                cfg.http.remove_query_string = true;
+                cfg
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let mut span = SpanBytes {
+            name: BytesString::from_slice(b"http.request").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("GET /path"),
+            r#type: BytesString::from_static("http"),
+            trace_id: 0xdead_beef,
+            span_id: 2,
+            parent_id: 0,
+            start: 2_500_000_000,
+            duration: 1_000_000,
+            error: 0,
+            ..Default::default()
+        };
+        span.meta.insert(
+            BytesString::from_static("http.url"),
+            BytesString::from_static("http://foo.com/path?secret=bar"),
+        );
+        span.dedup();
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![span]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
+        // The mock only matches when the body is obfuscated, so a successful call here
+        // proves the query string was stripped before the request was sent.
+        mock_intake.assert();
+    }
 }
 
 #[cfg(test)]
@@ -2366,7 +2671,8 @@ mod telemetry_metrics_tests {
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::v05;
+    use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::{v04::SpanBytes, v05};
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -2391,6 +2697,7 @@ mod telemetry_metrics_tests {
         let metrics_endpoint = server.mock(|when, then| {
             when.method(POST)
                 .body_includes("\"metric\":\"trace_api.bytes\"")
+                .body_includes("\"metric\":\"spans_enqueued_for_serialization\"")
                 .path("/telemetry/proxy/api/v2/apmtelemetry");
             then.status(200)
                 .header("content-type", "application/json")
@@ -2412,7 +2719,7 @@ mod telemetry_metrics_tests {
             });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let traces = vec![0x90];
+        let traces = msgpack_encoder::v04::to_vec_from_v04(&[vec![SpanBytes::default()]]);
         let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");

@@ -184,7 +184,7 @@ impl SharedRuntime for ForkSafeRuntime {
         Self::with_worker_threads(1)
     }
 
-    fn spawn_worker<T: Worker + Sync + 'static>(
+    fn spawn_worker<T: Worker + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,
@@ -429,6 +429,30 @@ mod tests {
         assert!(
             receiver.recv_timeout(Duration::from_millis(200)).is_err(),
             "worker should not run or shut down after fork in child when restart_on_fork is false"
+        );
+    }
+
+    #[test]
+    fn test_set_fork_restart_drops_worker_without_shutdown() {
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
+
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        shared_runtime.before_fork();
+        while receiver.try_recv().is_ok() {}
+
+        handle.set_fork_restart(false).unwrap();
+        assert!(shared_runtime.after_fork_child().is_ok());
+
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
+        assert!(
+            receiver.recv_timeout(Duration::from_millis(200)).is_err(),
+            "worker should be dropped without running or shutting down in the fork child"
         );
     }
 

@@ -46,10 +46,7 @@ use web_time as time;
 use std::sync::{Condvar, Mutex};
 
 use crate::metrics::MetricBucketStats;
-use futures::{
-    channel::oneshot,
-    future::{self},
-};
+use futures::channel::oneshot;
 use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -640,35 +637,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 self.flush_metric_aggregates();
 
                 let mut app_events = self.build_app_events_batch();
+                app_events.extend(self.build_observability_batch());
                 if self.config.emit_app_lifecycle {
                     app_events.push(data::Payload::AppClosing(()));
                 }
 
-                let observability_events = self.build_observability_batch();
-
-                let mut payloads = vec![data::Payload::MessageBatch(app_events)];
-                if !observability_events.is_empty() {
-                    payloads.push(data::Payload::MessageBatch(observability_events));
+                let payload = data::Payload::MessageBatch(app_events);
+                match self.send_payload(&payload).await {
+                    Ok(()) => self.payload_sent_success(&payload),
+                    Err(err) => self.log_err(&err),
                 }
-
-                let self_arc = Arc::new(tokio::sync::RwLock::new(&mut *self));
-                let futures = payloads.into_iter().map(|payload| {
-                    let self_arc = self_arc.clone();
-                    async move {
-                        // This is different from the non-functional:
-                        // match self_arc.read().await.send_payload(&payload).await { ... }
-                        // presumably because the temp read guard would live till end of match
-                        let res = {
-                            let self_rguard = self_arc.read().await;
-                            self_rguard.send_payload(&payload).await
-                        };
-                        match res {
-                            Ok(()) => self_arc.write().await.payload_sent_success(&payload),
-                            Err(err) => self_arc.read().await.log_err(&err),
-                        }
-                    }
-                });
-                future::join_all(futures).await;
 
                 self.data.started = false;
                 if !self.config.restartable {
@@ -1448,7 +1426,7 @@ impl TelemetryWorkerBuilder {
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
-        let capabilities = C::new_without_connection_pooling();
+        let capabilities = C::new_periodic();
 
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);

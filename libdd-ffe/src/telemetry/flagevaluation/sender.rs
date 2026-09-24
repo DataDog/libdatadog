@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::{encode_flag_evaluation_payloads, FfeFlagEvaluationBatch};
+use http::header::HeaderValue;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
@@ -14,6 +15,8 @@ pub const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
 pub const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
 /// EVP subdomain that routes requests to event-platform intake.
 pub const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
+const EVP_ORIGIN_HEADER: &str = "DD-EVP-ORIGIN";
+const EVP_ORIGIN_VERSION_HEADER: &str = "DD-EVP-ORIGIN-VERSION";
 /// Agent EVP proxy uncompressed request-body limit.
 ///
 /// Revalidated against `DataDog/datadog-agent` on 2026-07-01:
@@ -23,24 +26,51 @@ pub const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
 /// `apiutil.NewLimitedReader`.
 pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FlagEvaluationEvpSendConfig {
     user_agent: String,
+    origin: Option<String>,
+    origin_version: Option<String>,
     payload_size_limit: usize,
 }
 
 impl FlagEvaluationEvpSendConfig {
+    /// Creates a send configuration without producer identity metadata.
     pub fn new(user_agent: impl Into<String>) -> Self {
         Self {
             user_agent: user_agent.into(),
+            origin: None,
+            origin_version: None,
             payload_size_limit: EVP_PAYLOAD_SIZE_LIMIT,
         }
+    }
+
+    /// Adds producer identity when it is non-empty and valid as an HTTP header value.
+    /// Invalid metadata is omitted so it cannot prevent payload delivery.
+    pub fn with_origin(mut self, origin: impl AsRef<str>) -> Self {
+        self.origin = optional_valid_header_value(origin);
+        self
+    }
+
+    /// Adds producer version when it is non-empty and valid as an HTTP header value.
+    /// Invalid metadata is omitted so it cannot prevent payload delivery.
+    pub fn with_origin_version(mut self, origin_version: impl AsRef<str>) -> Self {
+        self.origin_version = optional_valid_header_value(origin_version);
+        self
     }
 
     pub fn with_payload_size_limit(mut self, payload_size_limit: usize) -> Self {
         self.payload_size_limit = payload_size_limit;
         self
     }
+}
+
+fn optional_valid_header_value(value: impl AsRef<str>) -> Option<String> {
+    let value = value.as_ref();
+    if value.trim().is_empty() {
+        return None;
+    }
+    HeaderValue::try_from(value).ok().map(|_| value.to_owned())
 }
 
 /// Build the Agent EVP proxy endpoint for FFE flag evaluation intake.
@@ -111,12 +141,18 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    let req = match builder
+    let mut builder = builder
         .method(Method::POST)
         .header("Content-Type", "application/json")
-        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-        .body(Bytes::from(payload))
-    {
+        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE);
+    if let Some(origin) = &config.origin {
+        builder = builder.header(EVP_ORIGIN_HEADER, origin.as_str());
+    }
+    if let Some(origin_version) = &config.origin_version {
+        builder = builder.header(EVP_ORIGIN_VERSION_HEADER, origin_version.as_str());
+    }
+
+    let req = match builder.body(Bytes::from(payload)) {
         Ok(r) => r,
         Err(e) => {
             log::debug!("ffe flagevaluation sender failed to construct request body: {e:?}");
@@ -272,8 +308,14 @@ mod tests {
         }
     }
 
-    fn send_config() -> FlagEvaluationEvpSendConfig {
+    fn send_config_without_producer_identity() -> FlagEvaluationEvpSendConfig {
         FlagEvaluationEvpSendConfig::new("libdd-ffe-test/0.0.0")
+    }
+
+    fn send_config_with_producer_identity() -> FlagEvaluationEvpSendConfig {
+        send_config_without_producer_identity()
+            .with_origin("libdd-ffe-test-origin")
+            .with_origin_version("1.2.3")
     }
 
     fn batch() -> FfeFlagEvaluationBatch {
@@ -292,7 +334,10 @@ mod tests {
                 when.method(httpmock::Method::POST)
                     .path(EVP_FLAGEVALUATION_PATH)
                     .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-                    .header("content-type", "application/json");
+                    .header("content-type", "application/json")
+                    .header("user-agent", "libdd-ffe-test/0.0.0")
+                    .header(EVP_ORIGIN_HEADER, "libdd-ffe-test-origin")
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
                 then.status(202);
             })
             .await;
@@ -300,10 +345,112 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &send_config_with_producer_identity())
+            .await;
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn posts_without_optional_producer_identity() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin(" \t ")
+            .with_origin_version("");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &config).await;
+
+        mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn posts_valid_producer_identity_headers_independently() {
+        let server = MockServer::start_async().await;
+        let origin_only = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header(EVP_ORIGIN_HEADER, "producer-a")
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+        let version_only = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let origin_config =
+            FlagEvaluationEvpSendConfig::new("user-agent").with_origin("producer-a");
+        let version_config =
+            FlagEvaluationEvpSendConfig::new("user-agent").with_origin_version("1.2.3");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &origin_config).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &version_config).await;
+
+        origin_only.assert_calls_async(1).await;
+        version_only.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn omits_invalid_producer_identity_without_dropping_payload() {
+        let server = MockServer::start_async().await;
+        let invalid_origin = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header_missing(EVP_ORIGIN_HEADER)
+                    .header(EVP_ORIGIN_VERSION_HEADER, "1.2.3");
+                then.status(202);
+            })
+            .await;
+        let invalid_version = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header(EVP_ORIGIN_HEADER, "producer-a")
+                    .header_missing(EVP_ORIGIN_VERSION_HEADER);
+                then.status(202);
+            })
+            .await;
+
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+        let invalid_origin_config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin("invalid\norigin")
+            .with_origin_version("1.2.3");
+        let invalid_version_config = FlagEvaluationEvpSendConfig::new("user-agent")
+            .with_origin("producer-a")
+            .with_origin_version("invalid\nversion");
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &invalid_origin_config).await;
+        send_flag_evaluation_batch(&client, &ep, batch(), &invalid_version_config).await;
+
+        invalid_origin.assert_calls_async(1).await;
+        invalid_version.assert_calls_async(1).await;
     }
 
     #[tokio::test]
@@ -326,7 +473,13 @@ mod tests {
         let event = batch.flag_evaluations[0].clone();
         batch.flag_evaluations = vec![event; MAX_EVENTS_PER_POST * 2 + 1];
 
-        send_flag_evaluation_batch(&client, &ep, batch, &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch,
+            &send_config_without_producer_identity(),
+        )
+        .await;
 
         mock.assert_calls_async(3).await;
     }
@@ -363,7 +516,8 @@ mod tests {
         .next()
         .unwrap()
         .len();
-        let config = send_config().with_payload_size_limit(one_event_limit);
+        let config =
+            send_config_without_producer_identity().with_payload_size_limit(one_event_limit);
 
         send_flag_evaluation_batch(&client, &ep, batch, &config).await;
 
@@ -385,7 +539,13 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -404,7 +564,13 @@ mod tests {
         let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
         let client = NativeCapabilities::new_client();
 
-        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &client,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
 
         let mut oversized = full_event();
         oversized.flag.key = "x".repeat(1024);
@@ -415,7 +581,7 @@ mod tests {
                 context: context(),
                 flag_evaluations: vec![oversized],
             },
-            &send_config().with_payload_size_limit(128),
+            &send_config_without_producer_identity().with_payload_size_limit(128),
         )
         .await
         .expect("payload build should succeed");
@@ -456,7 +622,13 @@ mod tests {
             ..Endpoint::default()
         };
 
-        send_flag_evaluation_batch(&HangingCapabilities, &ep, batch(), &send_config()).await;
+        send_flag_evaluation_batch(
+            &HangingCapabilities,
+            &ep,
+            batch(),
+            &send_config_without_producer_identity(),
+        )
+        .await;
     }
 
     #[test]
@@ -491,7 +663,7 @@ mod tests {
             Self
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self
         }
 

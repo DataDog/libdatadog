@@ -3,9 +3,11 @@
 
 use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
+use libdd_trace_utils::span::{v04, SpanText, TraceData};
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Deserialize)]
+// Agent-facing representation. `re` and `no_expansion` are derived runtime state.
+#[derive(Serialize, Deserialize)]
 struct RawReplaceRule {
     name: String,
     pattern: String,
@@ -55,12 +57,12 @@ impl Serialize for ReplaceRule {
     where
         S: serde::Serializer,
     {
-        let mut s = serializer.serialize_struct("ReplaceRule", 4)?;
-        s.serialize_field("name", &self.name)?;
-        s.serialize_field("re", &self.re.to_string())?;
-        s.serialize_field("repl", &self.repl)?;
-        s.serialize_field("no_expansion", &self.no_expansion)?;
-        s.end()
+        RawReplaceRule {
+            name: self.name.clone(),
+            pattern: self.re.as_str().to_owned(),
+            repl: self.repl.clone(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -85,6 +87,43 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     }
 }
 
+/// Replaces the tag values of a [`v04::Span`] using the given rules.
+///
+/// Fields are the immutable [`SpanText`] type, so matches are written back through
+/// [`SpanText::from_owned`]. [`replace_all_opt`] returns `None` on no match, so untouched fields
+/// don't allocate.
+pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[ReplaceRule]) {
+    fn apply_rule<S: SpanText>(rule: &ReplaceRule, field: &mut S) {
+        if let Some(new) = replace_all_opt(&rule.re, &rule.repl, rule.no_expansion, field.borrow())
+        {
+            *field = S::from_owned(new);
+        }
+    }
+
+    for rule in rules {
+        match rule.name.as_ref() {
+            "*" => {
+                for (_, tag_value) in &mut span.meta {
+                    apply_rule(rule, tag_value);
+                }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                apply_rule(rule, &mut span.resource);
+            }
+            "resource.name" => {
+                apply_rule(rule, &mut span.resource);
+            }
+            _ => {
+                if let Some(tag_value) = span.meta.get_mut(rule.name.as_str()) {
+                    apply_rule(rule, tag_value);
+                }
+            }
+        }
+    }
+}
+
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
@@ -93,6 +132,11 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
                 for tag_value in span.meta.values_mut() {
                     rule.apply(tag_value, scratch_space);
                 }
+                // The "*" wildcard intentionally applies to `span.resource` as well as
+                // meta tags, matching the Datadog Agent reference implementation in
+                // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
+                // functions, which apply "*" rules to both span meta and `s.Resource`).
+                rule.apply(&mut span.resource, scratch_space);
             }
             "resource.name" => {
                 rule.apply(&mut span.resource, scratch_space);
@@ -196,6 +240,44 @@ fn replace_all(
     scratch_space.clear();
 }
 
+/// Variant of [`replace_all`] for callers holding an immutable `&str` (e.g. [`SpanText`]-backed
+/// spans). Returns `None` when the regex doesn't match `haystack`.
+fn replace_all_opt(
+    re: &Regex,
+    mut replace: &str,
+    no_expansion: bool,
+    haystack: &str,
+) -> Option<String> {
+    if no_expansion {
+        let mut it = re.find_iter(haystack).peekable();
+        it.peek()?;
+        let mut out = String::with_capacity(haystack.len());
+        let mut last_match = 0;
+        for m in it {
+            out.push_str(&haystack[last_match..m.start()]);
+            out.push_str(replace);
+            last_match = m.end();
+        }
+        out.push_str(&haystack[last_match..]);
+        Some(out)
+    } else {
+        let mut it = re.captures_iter(haystack).peekable();
+        it.peek()?;
+        let mut out = String::with_capacity(haystack.len());
+        let mut last_match = 0;
+        for cap in it {
+            // unwrap on 0 is OK because captures only reports matches
+            #[allow(clippy::unwrap_used)]
+            let m = cap.get(0).unwrap();
+            out.push_str(&haystack[last_match..m.start()]);
+            Replacer::replace_append(&mut replace, &cap, &mut out);
+            last_match = m.end();
+        }
+        out.push_str(&haystack[last_match..]);
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -237,52 +319,43 @@ mod tests {
     }
 
     #[duplicate_item(
-        [
-        test_name   [test_replace_tags]
-        rules       [r#"[
+    test_name rules input expected;
+    [test_replace_tags] [r#"[
                         {"name": "http.url", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("http.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
-        [
-        test_name   [test_replace_tags_with_exceptions]
-        rules       [r#"[
+    [test_replace_tags_with_exceptions] [r#"[
                         {"name": "*", "pattern": "(token/)([^/]*)", "repl": "${1}?"},
                         {"name": "*", "pattern": "this", "repl": "that"},
                         {"name": "http.url", "pattern": "guid", "repl": "[REDACTED]"},
                         {"name": "custom.tag", "pattern": "(/foo/bar/).*", "repl": "${1}extra"},
                         {"name": "resource.name", "pattern": "prod", "repl": "stage"}
-                    ]"#]
-        input       [
+                    ]"#] [
                         HashMap::from([
                             ("resource.name", "this is prod"),
                             ("http.url", "some/[REDACTED]/token/abcdef/abc"),
                             ("other.url", "some/guid/token/abcdef/abc"),
                             ("custom.tag", "/foo/bar/foo"),
                         ])
-                    ]
-        expected    [
+                    ] [
                         HashMap::from([
-                            ("resource.name", "this is stage"),
+                            ("resource.name", "that is stage"),
                             ("http.url", "some/[REDACTED]/token/?/abc"),
                             ("other.url", "some/guid/token/?/abc"),
                             ("custom.tag", "/foo/bar/extra"),
                         ])
                     ];
-        ]
     )]
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -310,6 +383,26 @@ mod tests {
     fn test_parse_rules_invalid_regex() {
         let result = replacer::parse_rules_from_string(r#"[{"http.url", ")", "${1}?"}]"#);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_replace_rule_serde_uses_agent_fields() {
+        let agent_rules = serde_json::json!([{
+            "name": "http.url",
+            "pattern": "(token/)([^/]*)",
+            "repl": "${1}?"
+        }]);
+
+        let rules: Vec<replacer::ReplaceRule> =
+            serde_json::from_value(agent_rules.clone()).unwrap();
+        let serialized = serde_json::to_value(&rules).unwrap();
+
+        assert_eq!(serialized, agent_rules);
+        assert_eq!(
+            serde_json::from_value::<Vec<replacer::ReplaceRule>>(serialized).unwrap(),
+            rules
+        );
     }
 
     #[test]

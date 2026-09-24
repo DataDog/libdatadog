@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
+    random_uuid_string, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
 };
 use crate::{RemoteConfigPath, Target};
@@ -259,7 +259,7 @@ impl SharedFetcher {
         SharedFetcher {
             target,
             runtime_id: Mutex::new(Arc::new(runtime_id)),
-            client_id: uuid::Uuid::new_v4().to_string(),
+            client_id: random_uuid_string(),
             product_capabilities: Mutex::new(Arc::new(product_capabilities)),
             cancellation: CancellationToken::new(),
             interval: AtomicU64::new(5_000_000_000),
@@ -460,7 +460,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 
@@ -525,7 +525,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeCapabilities::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 
