@@ -29,7 +29,7 @@ anyhow.workspace = true
 rand = { workspace = true, default-features = true }
 rmp-serde.workspace = true
 
-libdd-trace-protobuf = { version = "5.0.0", path = "../libdd-trace-protobuf" }
+libdd-trace-protobuf = { version = "5.0.1", path = "../libdd-trace-protobuf" }
 
 [dev-dependencies]
 tempfile.workspace = true
