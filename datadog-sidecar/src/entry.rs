@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
+use crossbeam_utils::atomic::AtomicCell;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
 use spawn_worker::{entrypoint, Entrypoint, Stdio};
@@ -10,12 +11,13 @@ use std::future::Future;
 use std::{
     io,
     sync::{
-        atomic::{AtomicI32, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Arc,
     },
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant as TokioInstant;
 
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
@@ -58,24 +60,18 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
-    let counter = Arc::new(AtomicI32::new(0));
-    let cloned_counter = Arc::clone(&counter);
+    let connections = Arc::new(ConnectionActivity::default());
     let config = Config::get();
     let max_idle_linger_time = config.idle_linger_time;
 
-    tokio::spawn({
+    let idle_shutdown = tokio::spawn({
         let cancel = cancel.clone();
+        let connections = connections.clone();
         async move {
-            let mut last_seen_connection_time = Instant::now();
-
             loop {
                 tokio::time::sleep(Duration::from_millis(500)).await;
 
-                if cloned_counter.load(Ordering::Acquire) > 0 {
-                    last_seen_connection_time = Instant::now();
-                }
-
-                if last_seen_connection_time.elapsed() > max_idle_linger_time {
+                if connections.is_idle_for(max_idle_linger_time) {
                     cancel();
                     tracing::info!("No active connections - shutting down");
                     break;
@@ -137,19 +133,18 @@ where
     let watchdog_handle = watchdog.spawn_watchdog(server.clone());
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
-    listener(Box::new({
+    let listener_result = listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
         move |socket| {
+            let connection = connections.accept();
             tracing::info!("connection accepted");
-            counter.fetch_add(1, Ordering::AcqRel);
 
-            let cloned_counter = Arc::clone(&counter);
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
             tokio::spawn(async move {
                 server.accept_connection(socket).await;
-                cloned_counter.fetch_add(-1, Ordering::AcqRel);
+                drop(connection);
                 tracing::info!("connection closed");
 
                 // Once all tx/senders are dropped the receiver will complete
@@ -157,7 +152,11 @@ where
             });
         }
     }))
-    .await?;
+    .await;
+    // The listener can also exit on a signal or an error. Its cancellation callback
+    // must not run later against a closed (and potentially reused) listener handle.
+    idle_shutdown.abort();
+    listener_result?;
 
     // Shutdown final sender so the receiver can complete
     drop(shutdown_complete_tx);
@@ -170,6 +169,47 @@ where
     server.shutdown_appsec().await;
 
     Ok(())
+}
+
+struct ConnectionActivity {
+    active: AtomicUsize,
+    last_change: AtomicCell<TokioInstant>,
+}
+
+struct ActiveConnection(Arc<ConnectionActivity>);
+
+impl ConnectionActivity {
+    fn accept(self: &Arc<Self>) -> ActiveConnection {
+        // Publish activity first so a concurrent idle check sees either the new
+        // timestamp or the updated connection count.
+        self.update_last_change();
+        self.active.fetch_add(1, Ordering::Release);
+        ActiveConnection(self.clone())
+    }
+
+    fn is_idle_for(&self, duration: Duration) -> bool {
+        self.active.load(Ordering::Acquire) == 0 && self.last_change.load().elapsed() >= duration
+    }
+
+    fn update_last_change(&self) {
+        self.last_change.store(TokioInstant::now());
+    }
+}
+
+impl Default for ConnectionActivity {
+    fn default() -> Self {
+        Self {
+            active: AtomicUsize::new(0),
+            last_change: AtomicCell::new(TokioInstant::now()),
+        }
+    }
+}
+
+impl Drop for ActiveConnection {
+    fn drop(&mut self) {
+        self.0.update_last_change();
+        self.0.active.fetch_sub(1, Ordering::Release);
+    }
 }
 
 pub fn enter_listener_loop<F, L, Fut, C>(acquire_listener: F) -> anyhow::Result<()>
@@ -332,4 +372,100 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
             .connect_to_server()
             .map_err(|e| err.unwrap_or(e.into()))?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitor(connections: &Arc<ConnectionActivity>) -> tokio::task::JoinHandle<()> {
+        let connections = connections.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                if connections.is_idle_for(Duration::from_secs(3)) {
+                    break;
+                }
+            }
+        })
+    }
+
+    async fn advance(duration: Duration) {
+        tokio::time::advance(duration).await;
+        tokio::task::yield_now().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_without_connections_expires() {
+        let connections = Arc::new(ConnectionActivity::default());
+        let task = monitor(&connections);
+        advance(Duration::from_secs(2)).await;
+        assert!(!task.is_finished());
+        advance(Duration::from_secs(1)).await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn short_connections_reset_idle_deadline() {
+        let connections = Arc::new(ConnectionActivity::default());
+        let task = monitor(&connections);
+        // Each complete session is invisible to a periodic active-count sampler.
+        for _ in 0..20 {
+            advance(Duration::from_millis(400)).await;
+            drop(connections.accept());
+            tokio::task::yield_now().await;
+            assert!(!task.is_finished());
+        }
+        advance(Duration::from_secs(2)).await;
+        assert!(!task.is_finished());
+        advance(Duration::from_secs(1)).await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn linger_starts_after_last_connection_closes() {
+        let connections = Arc::new(ConnectionActivity::default());
+        let task = monitor(&connections);
+        let first = connections.accept();
+        let last = connections.accept();
+        advance(Duration::from_secs(10)).await;
+        assert!(!task.is_finished());
+        drop(first);
+        advance(Duration::from_secs(10)).await;
+        assert!(!task.is_finished());
+        drop(last);
+        advance(Duration::from_secs(2)).await;
+        assert!(!task.is_finished());
+        advance(Duration::from_secs(1)).await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn accept_invalidates_an_armed_idle_timer() {
+        let connections = Arc::new(ConnectionActivity::default());
+        let task = monitor(&connections);
+        advance(Duration::from_secs(2)).await;
+        let connection = connections.accept();
+        advance(Duration::from_secs(2)).await;
+        assert!(!task.is_finished());
+        drop(connection);
+        advance(Duration::from_secs(2)).await;
+        assert!(!task.is_finished());
+        advance(Duration::from_secs(1)).await;
+        task.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn noop_idle_cancel_allows_later_thread_mode_connections() {
+        let connections = Arc::new(ConnectionActivity::default());
+        let task = monitor(&connections);
+        advance(Duration::from_secs(3)).await;
+        task.await.unwrap();
+
+        // Thread listeners keep accepting until their explicit shutdown signal.
+        let connection = connections.accept();
+        assert_eq!(connections.active.load(Ordering::Acquire), 1);
+        drop(connection);
+        assert_eq!(connections.active.load(Ordering::Acquire), 0);
+    }
 }
