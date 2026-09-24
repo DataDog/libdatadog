@@ -369,7 +369,7 @@ mod tests {
 
         OwnedThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
 
-        let ptr = read_tls_context_ptr();
+        let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert!(!ptr.is_null(), "TLS must be non-null after attach");
 
         // Safety: context is still live.
@@ -396,7 +396,7 @@ mod tests {
         // Updating before any context is attached should be equivalent to `attach()`
         OwnedThreadContext::update(trace_id1, span_id1, 0xA5, root_span_id1, &[(0, "v1")]);
 
-        let ptr_before = read_tls_context_ptr();
+        let ptr_before = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert!(!ptr_before.is_null());
         let record = unsafe { &*ptr_before };
         assert_eq!(record.trace_id, trace_id1);
@@ -412,7 +412,7 @@ mod tests {
 
         OwnedThreadContext::update(trace_id2, span_id2, 1, root_span_id2, &[(0, "v2")]);
 
-        let ptr_after = read_tls_context_ptr();
+        let ptr_after = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert_eq!(
             ptr_before, ptr_after,
             "modify must not change the TLS pointer"
@@ -438,7 +438,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn update_and_attach_replaces_current_context() {
         OwnedThreadContext::new([0u8; 16], [0u8; 8], 0x11, [0u8; 8], &[]).attach();
-        let previous_ptr = read_tls_context_ptr();
+        let previous_ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
 
         let target =
             OwnedThreadContext::new([1u8; 16], [1u8; 8], 0x22, [1u8; 8], &[]).into_opaque_ptr();
@@ -449,7 +449,10 @@ mod tests {
         }
         .expect("the previously attached context must be returned");
 
-        assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+        assert_eq!(
+            read_tls_context_ptr().cast::<ThreadContextRecord>(),
+            target_ptr.cast_const()
+        );
         assert_eq!(previous.0.as_ptr().cast_const(), previous_ptr);
 
         let target_record = unsafe { &*target_ptr };
@@ -488,7 +491,10 @@ mod tests {
 
         let owner = unsafe { OwnedThreadContext::from_opaque_ptr(target) };
         assert!(owner.attach().is_none());
-        assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+        assert_eq!(
+            read_tls_context_ptr().cast::<ThreadContextRecord>(),
+            target_ptr.cast_const()
+        );
 
         let previous = unsafe {
             OwnedThreadContext::update_and_attach(target, [2u8; 16], [2u8; 8], 0xA5, [2u8; 8], &[])
@@ -498,7 +504,10 @@ mod tests {
             previous.is_none(),
             "an already-current target must not be returned as a previous owner"
         );
-        assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+        assert_eq!(
+            read_tls_context_ptr().cast::<ThreadContextRecord>(),
+            target_ptr.cast_const()
+        );
 
         let target_record = unsafe { &*target_ptr };
         assert_eq!(target_record.trace_id, [2u8; 16]);
@@ -514,7 +523,10 @@ mod tests {
         };
 
         assert!(previous.is_none());
-        assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+        assert_eq!(
+            read_tls_context_ptr().cast::<ThreadContextRecord>(),
+            target_ptr.cast_const()
+        );
 
         let target_record = unsafe { &*target_ptr };
         assert_eq!(target_record.trace_id, [3u8; 16]);
@@ -558,7 +570,10 @@ mod tests {
         };
 
         assert!(previous.is_none());
-        assert_eq!(read_tls_context_ptr(), target_ptr.cast_const());
+        assert_eq!(
+            read_tls_context_ptr().cast::<ThreadContextRecord>(),
+            target_ptr.cast_const()
+        );
 
         let target_record = unsafe { &*target_ptr };
         assert_eq!(target_record.trace_id, [2u8; 16]);
@@ -628,7 +643,7 @@ mod tests {
             b.wait();
 
             // The main thread's attach must not have touched this slot.
-            let ptr = read_tls_context_ptr();
+            let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
             assert!(!ptr.is_null(), "spawned thread TLS must still be set");
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, spawned_trace_id);
@@ -649,7 +664,7 @@ mod tests {
 
         OwnedThreadContext::new(main_trace_id, main_span_id, 0, main_root_span_id, &[]).attach();
 
-        let ptr = read_tls_context_ptr();
+        let ptr = read_tls_context_ptr().cast::<ThreadContextRecord>();
         assert!(!ptr.is_null(), "main thread TLS must be set");
         let record = unsafe { &*ptr };
         assert_eq!(record.trace_id, main_trace_id);

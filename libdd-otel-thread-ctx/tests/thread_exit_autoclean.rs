@@ -5,17 +5,9 @@
 //! section of the README): a context that is still attached when a thread exits must be freed by
 //! the TLS-based autocleaner instead of leaking.
 //!
-//! This test runs as its own binary (`harness = false` in `Cargo.toml`), which guarantees:
-//!
-//! - a dedicated process, so the counting global allocator below only sees allocations from this
-//!   test and from the standard library — not from unrelated unit or integration tests running in
-//!   the same process;
-//! - a minimal thread population (the main thread plus the single worker thread spawned below),
-//!   which keeps the allocation counting deterministic.
-//!
-//! Since the interesting effect (the record being freed) happens in TLS destructors, i.e. after the
-//! worker's body has returned but before `join()` returns, we snapshot the counters at the very end
-//! of the thread body and compare them with the counters observed after `join()`.
+//! This test runs as its own binary (`harness = false` in `Cargo.toml`), such that the allocator
+//! hook only runs for this process and we have total control over spawned threads, avoiding
+//! flakiness and interaction with other tests.
 //!
 //! Since `harness = false`, `main` implements the small protocol expected by `cargo nextest` (see
 //! https://nexte.st/docs/design/custom-test-harnesses/): `--list --format terse` support and
@@ -27,49 +19,63 @@
 ))]
 mod imp {
     use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::ptr;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
     use libdd_otel_thread_ctx::linux::OwnedThreadContext;
+    use libdd_otel_thread_ctx::test_utils::read_tls_context_ptr;
 
-    static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
-    static DEALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    /// The address of the attached context record. The allocator watches for a
+    /// deallocation of this exact address.
+    ///
+    /// `null` while no scenario is running.
+    static TRACKED_CTX: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
-    struct CountingAllocator;
+    /// Sets to `true` if the allocator freed a pointer that was equal to `TRACKED_CTX` at some
+    /// point.
+    static TRACKED_CTX_FREED: AtomicBool = AtomicBool::new(false);
 
-    unsafe impl GlobalAlloc for CountingAllocator {
+    struct TrackingAllocator;
+
+    unsafe impl GlobalAlloc for TrackingAllocator {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
             unsafe { System.alloc(layout) }
         }
 
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            DEALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-            unsafe { System.dealloc(ptr, layout) }
+        unsafe fn dealloc(&self, ctx_ptr: *mut u8, layout: Layout) {
+            if ctx_ptr == TRACKED_CTX.load(Ordering::Relaxed) {
+                TRACKED_CTX_FREED.store(true, Ordering::Relaxed);
+            }
+            unsafe { System.dealloc(ctx_ptr, layout) }
         }
     }
 
     #[global_allocator]
-    static ALLOCATOR: CountingAllocator = CountingAllocator;
-
-    /// Returns the `(allocations, deallocations)` counters.
-    fn counters() -> (usize, usize) {
-        (
-            ALLOCATIONS.load(Ordering::Relaxed),
-            DEALLOCATIONS.load(Ordering::Relaxed),
-        )
-    }
+    static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
     /// Runs a thread that allocates and attaches a context record via `update`, and optionally
-    /// detaches it explicitly before the end of the body. Snapshots the allocation counters at
-    /// various point in the thread lifecycle to make sure the attached context is cleaned up
-    /// properly after the thread exited.
-    fn run_scenario(explicit_detach: bool, scenario: &str) {
-        let (alloc_before, dealloc_before) = counters();
+    /// detaches it explicitly before the end of the body. Observes whether the attached record has
+    /// been freed at various points in the thread lifecycle to make sure the attached context is
+    /// cleaned up properly once the thread exited.
+    fn run_scenario(explicit_detach: bool, scenario: &'static str) {
+        // The two scenarios may share a process (plain `cargo test` runs them in sequence), so
+        // the tracking state is reset between runs.
+        TRACKED_CTX.store(ptr::null_mut(), Ordering::Relaxed);
+        TRACKED_CTX_FREED.store(false, Ordering::Relaxed);
 
-        let (alloc_in_body, dealloc_in_body) = std::thread::spawn(move || {
+        // We spawn one thread and join it, so atomic accesses are unconditionally totally ordered.
+        // We can use a `Relaxed` ordering.
+        let freed_in_body = std::thread::spawn(move || {
             // First call on this thread: allocates the record, attaches it, and installs the
             // autocleaner.
             OwnedThreadContext::update([1u8; 16], [2u8; 8], 0, [3u8; 8], &[]);
+
+            let record = read_tls_context_ptr().cast_mut().cast::<u8>();
+            assert!(
+                !record.is_null(),
+                "{scenario}: `update` must have attached a record to the TLS slot"
+            );
+            TRACKED_CTX.store(record, Ordering::Relaxed);
 
             if explicit_detach {
                 let detached =
@@ -77,40 +83,31 @@ mod imp {
                 drop(detached);
             }
 
-            counters()
+            TRACKED_CTX_FREED.load(Ordering::Relaxed)
         })
         .join()
         .unwrap();
 
-        let (alloc_after, dealloc_after) = counters();
+        let freed_after_exit = TRACKED_CTX_FREED.load(Ordering::Relaxed);
 
-        assert!(
-            alloc_in_body > alloc_before,
-            "{scenario}: the thread body must have allocated the context record"
-        );
         if explicit_detach {
             assert!(
-                dealloc_in_body > dealloc_before,
+                freed_in_body,
                 "{scenario}: explicitly detaching and dropping the context must free the record \
                  inside the thread body"
             );
         } else {
-            assert_eq!(
-                dealloc_in_body, dealloc_before,
-                "{scenario}: the body never detaches, so nothing must be freed inside the body"
+            assert!(
+                !freed_in_body,
+                "{scenario}: the body never detaches, so the record must not be freed inside the \
+                 body"
             );
             assert!(
-                dealloc_after > dealloc_in_body,
+                freed_after_exit,
                 "{scenario}: a context still attached at thread exit must be freed after the \
-                 thread body returned (by the autocleaner), but no deallocation was observed"
+                 thread body returned (by the autocleaner), but the record was never deallocated"
             );
         }
-        assert_eq!(
-            alloc_after - alloc_before,
-            dealloc_after - dealloc_before,
-            "{scenario}: allocations and deallocations must balance once the thread exited: the \
-             context record must not leak"
-        );
     }
 
     const AUTOCLEAN_TEST: &str = "autoclean_frees_context_on_thread_exit";
