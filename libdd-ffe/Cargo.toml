@@ -22,7 +22,7 @@ derive_more = { workspace = true, features = ["from", "into"] }
 log = { workspace = true, features = ["kv", "kv_serde"] }
 md5.workspace = true
 libdd-common = { version = "6.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1", optional = true }
+libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.0", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
 tokio = { workspace = true, features = ["time"], optional = true }
 # Uses semver::Version::parse in runtime code; parse is available without std (alloc fallback).
