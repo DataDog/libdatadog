@@ -50,23 +50,27 @@ impl Default for CreditCardConfig {
     }
 }
 
-pub type JsonStringTransformer = fn(&str) -> String;
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
+/// Plain data: what a [`JsonObfuscator`] keeps and what it hands to a caller's transform. The
+/// transform itself is not configuration and is passed per call; see
+/// [`JsonObfuscator::obfuscate_with`].
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct JsonObfuscatorConfig {
     pub enabled: bool,
     /// `keep_keys` will specify a set of keys for which their values will
     /// not be obfuscated.
+    // Accept both `/info`'s `keep_keys` and the Agent config's `keep_values`.
+    #[serde(alias = "keep_values")]
     pub keep_keys: HashSet<String>,
-    /// `transform_keys` will specify a set of keys for which their values will be transformed
-    /// through `transformer`
-    #[serde(skip)]
+    /// `transform_keys` will specify a set of keys whose string values are passed to the
+    /// transform callback given to [`JsonObfuscator::obfuscate_with`] or
+    /// [`JsonObfuscator::obfuscate_into`]. Entry points that take no callback obfuscate these
+    /// values like any other.
+    // The Agent's only transform is SQL obfuscation, so its config calls this
+    // `obfuscate_sql_values`. Its `/info` does not report the set at all, so a config built from
+    // `/info` leaves this empty.
+    #[serde(alias = "obfuscate_sql_values")]
     pub transform_keys: HashSet<String>,
-    /// `transformer` is an optional String -> String function which will transform values
-    /// specified in `transform_keys`
-    #[serde(skip)]
-    pub transformer: Option<JsonStringTransformer>,
 }
 
 /// Mirrors the Datadog Agent defaults for the elasticsearch,
@@ -78,16 +82,6 @@ impl Default for JsonObfuscatorConfig {
     }
 }
 
-impl PartialEq for JsonObfuscatorConfig {
-    fn eq(&self, other: &Self) -> bool {
-        self.enabled == other.enabled
-            && self.keep_keys == other.keep_keys
-            && self.transform_keys == other.transform_keys
-            && self.transformer.is_none()
-            && other.transformer.is_none()
-    }
-}
-
 impl JsonObfuscatorConfig {
     #[must_use]
     pub fn disabled() -> Self {
@@ -95,7 +89,6 @@ impl JsonObfuscatorConfig {
             enabled: false,
             keep_keys: HashSet::new(),
             transform_keys: HashSet::new(),
-            transformer: None,
         }
     }
 
@@ -105,7 +98,6 @@ impl JsonObfuscatorConfig {
             enabled: true,
             keep_keys: HashSet::new(),
             transform_keys: HashSet::new(),
-            transformer: None,
         }
     }
 }
@@ -285,4 +277,30 @@ pub struct SqlConfig {
     pub remove_space_between_parentheses: bool,
     pub keep_json_path: bool,
     pub obfuscation_mode: SqlObfuscationMode,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonObfuscatorConfig;
+
+    /// Accept `/info` and obfuscation-config field names, ignoring unknown fields.
+    #[test]
+    fn test_agent_json_obfuscation_field_names() {
+        let from_info: JsonObfuscatorConfig =
+            serde_json::from_str(r#"{"enabled":true,"keep_keys":["id"]}"#).unwrap();
+        let from_agent_config: JsonObfuscatorConfig = serde_json::from_str(
+            r#"{"enabled":true,"keep_values":["id"],"obfuscate_sql_values":["query"]}"#,
+        )
+        .unwrap();
+
+        assert!(from_info.keep_keys.contains("id"));
+        assert!(from_info.transform_keys.is_empty());
+        assert_eq!(from_info.keep_keys, from_agent_config.keep_keys);
+        assert!(from_agent_config.transform_keys.contains("query"));
+
+        // An `/info` payload from a newer Agent carries fields this config does not have.
+        let forward: JsonObfuscatorConfig =
+            serde_json::from_str(r#"{"enabled":true,"keep_keys":[],"some_new_thing":3}"#).unwrap();
+        assert!(forward.enabled);
+    }
 }
