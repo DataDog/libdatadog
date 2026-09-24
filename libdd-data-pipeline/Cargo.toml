@@ -42,7 +42,7 @@ libdd-trace-stats = { version = "10.0.0", path = "../libdd-trace-stats", default
 libdd-trace-utils = { version = "13.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "9.0.0", path = "../libdd-trace-obfuscation", default-features = false }
 libdd-ddsketch = { version = "1.1.2", path = "../libdd-ddsketch" }
-libdd-dogstatsd-client = { version = "6.1.0", path = "../libdd-dogstatsd-client", default-features = false, features = ["shared-runtime"] }
+libdd-dogstatsd-client = { version = "7.0.0", path = "../libdd-dogstatsd-client", default-features = false, features = ["shared-runtime"] }
 libdd-tinybytes = { version = "1.1.4", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
