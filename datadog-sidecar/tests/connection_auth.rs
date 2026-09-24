@@ -79,11 +79,7 @@ impl Sidecar {
 impl Drop for Sidecar {
     fn drop(&mut self) {
         self.stop.notify_one();
-        // Detach instead of joining unconditionally. `main_loop` does not return once it has
-        // served a connection: its serve loop never observes the client's disconnect, which
-        // reproduces with authorization switched off entirely (`AuthPolicy::OsEnforced`), so it
-        // is not this feature's doing. Joining unconditionally would hang the test run rather
-        // than fail it; a detached thread dies with the test process.
+        // Join if shutdown finishes in time; otherwise detach so a stuck loop cannot hang CI.
         if self.wait_for_exit() {
             if let Some(thread) = self.thread.take() {
                 let _ = thread.join();

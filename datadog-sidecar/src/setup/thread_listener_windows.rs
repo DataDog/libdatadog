@@ -89,7 +89,8 @@ impl MasterListener {
         }
     }
 
-    /// Check if the master listener is active for the given PID.
+    /// Whether this process has a running master listener.
+    /// Windows does not inherit this state across process creation.
     pub fn is_active() -> bool {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         if let Ok(listener_guard) = listener_mutex.lock() {

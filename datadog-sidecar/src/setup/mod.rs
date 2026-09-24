@@ -36,7 +36,7 @@ pub trait Liaison: Sized {
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
 
-    fn bound_files(&self) -> Vec<std::path::PathBuf> {
+    fn into_bound_files(self) -> Vec<std::path::PathBuf> {
         Vec::new()
     }
 }

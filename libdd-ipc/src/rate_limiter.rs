@@ -92,10 +92,10 @@ impl<Inner> ShmLimiterMemory<Inner> {
     /// `idx` can come from the free-list head, which any worker holding the segment may
     /// write, so it is checked against the mapping's actual length - never against a size
     /// recorded inside the mapping.
-    fn slot(slice: &[u8], idx: u32) -> Option<&ShmLimiterData<Inner>> {
+    fn slot(slice: &[u8], idx: u32) -> Option<&ShmLimiterData<'_, Inner>> {
         // Slots start at START_OFFSET - the type's alignment - and sit back to back, so
         // anything off that grid would also be misaligned for the atomics inside.
-        if idx < Self::START_OFFSET || (idx - Self::START_OFFSET) % Self::STRIDE != 0 {
+        if idx < Self::START_OFFSET || !(idx - Self::START_OFFSET).is_multiple_of(Self::STRIDE) {
             return None;
         }
         if idx.checked_add(Self::STRIDE)? as usize > slice.len() {

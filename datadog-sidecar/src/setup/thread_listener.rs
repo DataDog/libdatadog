@@ -41,6 +41,7 @@ fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     {
         // SAFETY: none of these take pointers, and none can fail in a way that matters here.
         let (euid, pid) = unsafe { (libc::geteuid(), libc::getpid()) };
+        // The gettid wrapper requires glibc 2.30.
         let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
 
         // Nothing to drop, or nothing to drop *to*.
@@ -111,18 +112,12 @@ fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     }
 }
 
-/// Drop *this* thread if the served uid is already known.
+/// Drop this thread's privileges if the served uid is already known.
 ///
-/// Registered as tokio's `on_thread_start`, because a current-thread runtime is not the only
-/// thread the sidecar ends up with: `spawn_blocking` has its own pool, created lazily. Those
-/// threads inherit the credentials of whichever thread spawned them, which is the dropped
-/// listener thread in the common case - but not if tokio grows the pool from somewhere else, so
-/// each one checks for itself on the way in.
+/// Tokio's blocking threads inherit their creator's credentials, which may still be root.
+/// Register this as `on_thread_start` so each thread checks its own identity.
 ///
-/// Threads that start *before* the first peer is authenticated keep what they had; there is no
-/// way for one thread to change another's credentials, and the uid to drop to is not known yet.
-/// In practice that is the watchdog thread only, which samples memory and aborts and creates
-/// nothing.
+/// The watchdog starts before a worker's identity is known and calls this again each tick.
 pub(crate) fn drop_thread_privileges_if_known() {
     if let Some((uid, gid)) = SERVED_IDS.get() {
         drop_listener_thread_privileges(*uid, *gid);
@@ -178,11 +173,10 @@ impl MasterListener {
         #[cfg(not(target_os = "linux"))]
         let liaison = SharedDirLiaison::ipc_for_pid(pid);
 
-        let bound_files = liaison.bound_files();
-
         let listener = liaison
             .attempt_listen()?
             .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
+        let bound_files = liaison.into_bound_files();
 
         #[cfg(unix)]
         let listener_fd = listener.as_raw_fd();
@@ -338,26 +332,34 @@ async fn accept_socket_loop_thread(
                     Ok(mut guard) => {
                         match guard.try_io(|inner| inner.get_ref().try_accept()) {
                             Ok(Ok(conn)) => {
-                                // Initialize SHM under the first authenticated worker's UID.
-                                if let Ok(cred) = conn.peer_credentials() {
-                                    if authorizer.authorize(&cred) == Decision::Allow {
-                                        FIRST_CONNECTION_INIT.get_or_init(|| {
-                                            #[cfg(unix)]
-                                            let host_uid = unsafe { libc::geteuid() };
-                                            libdd_ipc::platform::set_shm_owner_uid(cred.uid);
-                                            // Before the limiter is created, so it is created
-                                            // owned by the uid that has to map it.
-                                            drop_listener_thread_privileges(cred.uid, cred.gid);
-                                            #[cfg(unix)]
-                                            if host_uid != cred.uid {
-                                                libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
-                                            }
-                                            let _ = SERVED_IDS.set((cred.uid, cred.gid));
-                                            authorizer.set_served_identity(cred.uid, cred.gid);
-                                            crate::tracer::init_shm_limiter();
-                                        });
+                                let cred = match conn.peer_credentials() {
+                                    Ok(cred) => cred,
+                                    Err(e) => {
+                                        warn!("IPC: rejected connection with unreadable peer credentials: {e}");
+                                        continue;
                                     }
+                                };
+                                let decision = authorizer.authorize(&cred);
+                                authorizer.log_denied(&cred, decision);
+                                if decision == Decision::Deny {
+                                    continue;
                                 }
+
+                                // Initialize SHM under the first authenticated worker's UID.
+                                FIRST_CONNECTION_INIT.get_or_init(|| {
+                                    #[cfg(unix)]
+                                    let host_uid = unsafe { libc::geteuid() };
+                                    libdd_ipc::platform::set_shm_owner_uid(cred.uid);
+                                    // Create the limiter with the worker's credentials.
+                                    drop_listener_thread_privileges(cred.uid, cred.gid);
+                                    #[cfg(unix)]
+                                    if host_uid != cred.uid {
+                                        libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+                                    }
+                                    let _ = SERVED_IDS.set((cred.uid, cred.gid));
+                                    authorizer.set_served_identity(cred.uid, cred.gid);
+                                    crate::tracer::init_shm_limiter();
+                                });
                                 handler(conn);
                             }
                             Ok(Err(e)) => {

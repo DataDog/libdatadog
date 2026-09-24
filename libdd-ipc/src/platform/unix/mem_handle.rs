@@ -26,8 +26,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 /// Directory for the filesystem fallback below.
 ///
@@ -70,8 +69,8 @@ fn fallback_path<P: ?Sized + NixPath>(name: &P) -> nix::Result<CString> {
 /// serving from with it. Only the path that is about to create may do that; a reader verifies
 /// and nothing more.
 fn check_fallback_dir(creating: bool) -> nix::Result<()> {
-    static VERIFIED: OnceLock<()> = OnceLock::new();
-    if VERIFIED.get().is_some() {
+    static VERIFIED: AtomicBool = AtomicBool::new(false);
+    if VERIFIED.load(Ordering::Relaxed) {
         return Ok(());
     }
 
@@ -85,7 +84,7 @@ fn check_fallback_dir(creating: bool) -> nix::Result<()> {
 
     match checked {
         Ok(_) => {
-            let _ = VERIFIED.set(());
+            VERIFIED.store(true, Ordering::Relaxed);
             Ok(())
         }
         Err(e) => {

@@ -77,7 +77,7 @@ fn proc_info(pid: u32) -> Option<ProcInfo> {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
 fn proc_info(pid: u32) -> Option<ProcInfo> {
     // structs/constants are as defined in `<sys/proc_info.h>`.
     #[repr(C)]
