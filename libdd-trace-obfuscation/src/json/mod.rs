@@ -17,7 +17,7 @@
 use crate::obfuscation_config::JsonObfuscatorConfig;
 mod scanner;
 use alloc::borrow::Cow;
-use core::convert::Infallible;
+use core::{convert::Infallible, ops::Range};
 use scanner::{Op, Scanner};
 use serde::{Deserialize, Serialize};
 
@@ -364,7 +364,7 @@ impl JsonObfuscator {
 
         scratch.scanner.restart();
         scratch.closures.clear();
-        let mut pass = Pass {
+        let mut parser = ParserState {
             config: &self.config,
             input,
             out,
@@ -372,14 +372,11 @@ impl JsonObfuscator {
             closures: &mut scratch.closures,
             transform,
             report: &mut report,
-            literal: 0..0,
-            keep_depth: 0,
-            key: false,
-            wiped: false,
-            keeping: false,
-            transforming: false,
+            // The input is one value, so it starts where a value is expected. A key follows only
+            // once an object has been opened.
+            phase: ParserPhase::AwaitingValue,
         };
-        pass.run(&mut scratch.scanner);
+        parser.run(&mut scratch.scanner);
         report
     }
 }
@@ -390,8 +387,88 @@ type NoTransform = for<'a> fn(&'a str) -> Result<Cow<'a, str>, Infallible>;
 /// `None`, typed so `run`'s generic parameters can be inferred without a callback.
 const NO_TRANSFORM: Option<NoTransform> = None;
 
+/// A value that is kept as sent, with everything nested under it.
+///
+/// The pass copies characters instead of obfuscating them until it reaches the end of this value.
+/// Since one value is one subtree, the depth the pass is at says whether it is still inside: the
+/// subtree ends at the first value boundary back at the depth the key was read at.
+#[derive(Clone, Copy, Debug)]
+struct KeptSubtree {
+    /// Nesting depth of the object holding the key that opened the subtree.
+    parent_depth: usize,
+}
+
+/// What one pass is reading, and what it is doing with the characters.
+///
+/// Definition: a `key` refers to a JSON key. in `{ "foo": 1 }`, `foo` is a key.
+///
+/// A phase carries only the state it uses: the byte range of the literal in hand, and the kept
+/// subtree the pass sits inside, if any. So a phase that reads no literal cannot see a stale
+/// range, an obfuscated value cannot also be kept or transformed, and keeping survives the phases
+/// that read a key or transform a value inside the kept subtree.
+#[derive(Debug)]
+enum ParserPhase {
+    /// The next literal is a key.
+    AwaitingKey { keep: Option<KeptSubtree> },
+    /// Reading a key, whose text decides how its value is handled.
+    ReadingKey {
+        keep: Option<KeptSubtree>,
+        literal: Range<usize>,
+    },
+    /// The next value is obfuscated.
+    AwaitingValue,
+    /// The obfuscated value is written, so the rest of its characters are dropped.
+    ObfuscatedValue,
+    /// Inside a value that is copied as sent.
+    KeepingValue(KeptSubtree),
+    /// A transform key was read and its value has not started. An object or an array here ends the
+    /// attempt, because only a literal is transformed.
+    AwaitingTransform { keep: Option<KeptSubtree> },
+    /// Reading the literal `transform` rewrites once the value ends.
+    TransformingValue {
+        keep: Option<KeptSubtree>,
+        literal: Range<usize>,
+    },
+}
+
+impl ParserPhase {
+    /// The kept subtree the pass is inside, which outlives the phase that reads one key or value
+    /// within it.
+    const fn kept_subtree(&self) -> Option<KeptSubtree> {
+        match self {
+            Self::AwaitingKey { keep }
+            | Self::ReadingKey { keep, .. }
+            | Self::AwaitingTransform { keep }
+            | Self::TransformingValue { keep, .. } => *keep,
+            Self::KeepingValue(scope) => Some(*scope),
+            Self::AwaitingValue | Self::ObfuscatedValue => None,
+        }
+    }
+
+    /// The range of the literal being read, for the phases that read one.
+    const fn literal_mut(&mut self) -> Option<&mut Range<usize>> {
+        match self {
+            Self::ReadingKey { literal, .. } | Self::TransformingValue { literal, .. } => {
+                Some(literal)
+            }
+            Self::AwaitingKey { .. }
+            | Self::AwaitingValue
+            | Self::ObfuscatedValue
+            | Self::KeepingValue(_)
+            | Self::AwaitingTransform { .. } => None,
+        }
+    }
+
+    /// Whether the characters of the current literal go to the output as they are read. A
+    /// transformed literal is written in one piece when the value ends, and an obfuscated one is
+    /// dropped.
+    const fn copies_literal(&self) -> bool {
+        matches!(self, Self::ReadingKey { .. } | Self::KeepingValue(_))
+    }
+}
+
 /// One pass over one input.
-struct Pass<'a, F, E> {
+struct ParserState<'a, F, E> {
     config: &'a JsonObfuscatorConfig,
     input: &'a str,
     out: &'a mut String,
@@ -400,22 +477,10 @@ struct Pass<'a, F, E> {
     transform: Option<F>,
     report: &'a mut JsonObfuscationReport<E>,
 
-    /// Byte range of the literal being read, excluding whitespace the scanner skipped after it.
-    literal: core::ops::Range<usize>,
-    /// The depth at which `keeping` stops.
-    keep_depth: usize,
-    /// True while reading a key rather than a value.
-    key: bool,
-    /// True once the current value has been replaced, so a value spanning several characters is
-    /// replaced once rather than per character.
-    wiped: bool,
-    /// True while inside a value that is kept as sent.
-    keeping: bool,
-    /// True while reading a value that `transform` will rewrite.
-    transforming: bool,
+    phase: ParserPhase,
 }
 
-impl<F, E> Pass<'_, F, E>
+impl<F, E> ParserState<'_, F, E>
 where
     F: for<'a> FnMut(&'a str) -> Result<Cow<'a, str>, E>,
 {
@@ -429,61 +494,38 @@ where
             match op {
                 Op::BeginObject => {
                     self.closures.push(ClosureKind::Object);
-                    self.set_key();
-                    self.transforming = false;
+                    // Opening a container drops a pending transform but not the kept subtree.
+                    self.begin_next_token(self.phase.kept_subtree());
                 }
                 Op::BeginArray => {
                     self.closures.push(ClosureKind::Array);
-                    self.set_key();
-                    self.transforming = false;
+                    self.begin_next_token(self.phase.kept_subtree());
                 }
                 Op::EndArray | Op::EndObject => {
                     self.closures.pop();
-                    self.set_key();
-                    self.finish_value(depth);
+                    let keep = self.finish_value(depth);
+                    self.begin_next_token(keep);
                 }
                 Op::ObjectValue | Op::ArrayValue => {
-                    self.set_key();
-                    self.finish_value(depth);
+                    let keep = self.finish_value(depth);
+                    self.begin_next_token(keep);
                 }
                 Op::BeginLiteral | Op::Continue => {
                     // Track the literal's byte range, so it can be read back as a slice of the
                     // input instead of being copied into a buffer character by character.
+                    let end = i + c.len_utf8();
                     if op == Op::BeginLiteral {
-                        self.literal = i..i + c.len_utf8();
-                    } else {
-                        self.literal.end = i + c.len_utf8();
+                        self.begin_literal(i..end);
+                    } else if let Some(literal) = self.phase.literal_mut() {
+                        literal.end = end;
                     }
 
-                    if self.transforming {
-                        // The literal is written in one piece, once it has been transformed.
-                        continue;
-                    } else if !self.key && !self.keeping {
-                        if !self.wiped {
-                            self.out.push_str(OBFUSCATED_VALUE);
-                            self.wiped = true;
-                        }
+                    if !self.phase.copies_literal() {
                         continue;
                     }
                     // A key, or a value being kept: copied through below.
                 }
-                Op::ObjectKey => {
-                    // The scanner guarantees a key is a quoted string, so the quotes are the first
-                    // and last characters of the literal.
-                    let key = self.literal_str().trim_matches('"');
-                    if !self.keeping && self.config.keep_keys.contains(key) {
-                        self.keeping = true;
-                        self.keep_depth = depth + 1;
-                    } else if !self.transforming
-                        && self.transform.is_some()
-                        && self.config.transform_keys.contains(key)
-                    {
-                        // Only a string value is transformed. Anything else ends the attempt and
-                        // is obfuscated as usual.
-                        self.transforming = true;
-                    }
-                    self.key = false;
-                }
+                Op::ObjectKey => self.finish_key(depth),
                 Op::SkipSpace => continue,
                 Op::Error => {
                     self.out.push_str(TRUNCATION_MARKER);
@@ -503,30 +545,88 @@ where
         self.report.scan_error = scanner.err;
     }
 
+    /// Starts the next key or value, inside `keep` if a kept subtree is still open.
+    ///
     /// A key follows at the top level and inside an object, but not inside an array.
-    fn set_key(&mut self) {
-        self.key = matches!(self.closures.last(), None | Some(ClosureKind::Object));
-        self.wiped = false;
+    fn begin_next_token(&mut self, keep: Option<KeptSubtree>) {
+        let expects_key = matches!(self.closures.last(), None | Some(ClosureKind::Object));
+        self.phase = if expects_key {
+            ParserPhase::AwaitingKey { keep }
+        } else if let Some(scope) = keep {
+            ParserPhase::KeepingValue(scope)
+        } else {
+            ParserPhase::AwaitingValue
+        };
     }
 
-    /// The characters of the literal that just ended, quotes included for a string.
-    fn literal_str(&self) -> &str {
-        // `literal` is built from `char_indices` offsets of `input`, so it is in bounds and on
-        // character boundaries; `unwrap_or_default` only keeps that assumption from panicking.
-        self.input.get(self.literal.clone()).unwrap_or_default()
-    }
-
-    /// Handles the end of a value: rewrites it through `transform` if one was collected, or leaves
-    /// a kept subtree once the pass climbs back out of it.
-    fn finish_value(&mut self, depth: usize) {
-        if !self.transforming {
-            if self.keeping && depth < self.keep_depth {
-                self.keeping = false;
+    /// Starts reading a literal in the phases that care what it says, and writes the obfuscated
+    /// value for the ones that do not.
+    fn begin_literal(&mut self, literal: Range<usize>) {
+        match self.phase {
+            ParserPhase::AwaitingKey { keep } => {
+                self.phase = ParserPhase::ReadingKey { keep, literal };
             }
-            return;
+            ParserPhase::AwaitingTransform { keep } => {
+                self.phase = ParserPhase::TransformingValue { keep, literal };
+            }
+            ParserPhase::AwaitingValue => {
+                self.out.push_str(OBFUSCATED_VALUE);
+                self.phase = ParserPhase::ObfuscatedValue;
+            }
+            // The scanner does not start a literal inside a literal, and a kept value needs no
+            // range: it is copied as it is read.
+            ParserPhase::ReadingKey { .. }
+            | ParserPhase::ObfuscatedValue
+            | ParserPhase::KeepingValue(_)
+            | ParserPhase::TransformingValue { .. } => {}
         }
-        self.transforming = false;
+    }
 
+    /// Chooses how the value of the key just read is handled.
+    fn finish_key(&mut self, depth: usize) {
+        let ParserPhase::ReadingKey { keep, literal } = &self.phase else {
+            // The scanner reports a key only after its literal, so this is unreachable.
+            // Obfuscating is the safe answer if it ever is reached.
+            self.phase = ParserPhase::AwaitingValue;
+            return;
+        };
+        let keep = *keep;
+        // The scanner guarantees a key is a quoted string, so the quotes are the first and last
+        // characters of the literal.
+        let key = self.input.get(literal.clone()).unwrap_or_default();
+        let key = key.trim_matches('"');
+        let transforms = self.transform.is_some() && self.config.transform_keys.contains(key);
+
+        self.phase = match keep {
+            // Inside a kept subtree the value is kept whatever the key says, except that a
+            // transform key still rewrites its own value.
+            Some(scope) if transforms => ParserPhase::AwaitingTransform { keep: Some(scope) },
+            Some(scope) => ParserPhase::KeepingValue(scope),
+            // A key in both sets is kept rather than transformed.
+            None if self.config.keep_keys.contains(key) => ParserPhase::KeepingValue(KeptSubtree {
+                parent_depth: depth,
+            }),
+            None if transforms => ParserPhase::AwaitingTransform { keep: None },
+            None => ParserPhase::AwaitingValue,
+        };
+    }
+
+    /// Handles the end of a value: rewrites it through `transform` if a literal was collected, or
+    /// leaves a kept subtree once the pass climbs back out of it. Returns the kept subtree that is
+    /// still open.
+    fn finish_value(&mut self, depth: usize) -> Option<KeptSubtree> {
+        let ParserPhase::TransformingValue { keep, literal } = &self.phase else {
+            let keep = self.phase.kept_subtree();
+            return keep.filter(|kept| depth > kept.parent_depth);
+        };
+        let keep = *keep;
+        let literal = literal.clone();
+        self.transform_value(literal);
+        keep
+    }
+
+    /// Writes the collected literal through `transform`.
+    fn transform_value(&mut self, literal: Range<usize>) {
         let Some(transform) = self.transform.as_mut() else {
             return;
         };
@@ -534,7 +634,10 @@ where
         // A literal arrives here as it was written. A string is unescaped before it is
         // transformed; anything else - a number, `true`, a string `serde_json` will not accept -
         // is passed on verbatim, which is what the Agent does when it cannot unquote.
-        let literal = self.input.get(self.literal.clone()).unwrap_or_default();
+        //
+        // `literal` is built from `char_indices` offsets of `input`, so it is in bounds and on
+        // character boundaries; `unwrap_or_default` only keeps that assumption from panicking.
+        let literal = self.input.get(literal).unwrap_or_default();
         let value = match unescape(literal, self.unescaped) {
             Unescaped::Borrowed(s) => s,
             Unescaped::Buffered => self.unescaped.as_str(),
@@ -817,6 +920,53 @@ mod tests {
             &obfuscate_sql_values(&obf_keys(&[], &["object"]), input),
             expected,
         );
+    }
+
+    /// A kept subtree is copied as sent, but a transform key inside it still rewrites its own
+    /// value, and keeping resumes for the rest of the subtree.
+    #[test]
+    fn test_transform_key_inside_a_kept_subtree_still_transforms() {
+        let input =
+            r#"{"kept":{"plain":"sent","query":"select 42","after":"sent"},"outside":"sent"}"#;
+        let JsonObfuscationOutcome { output, report } = obf_keys(&["kept"], &["query"])
+            .obfuscate_with(input, |v| {
+                Ok::<_, SqlObfuscationError>(Cow::Owned(v.to_uppercase()))
+            });
+
+        assert!(report.is_clean());
+        assert_eq!(
+            output,
+            r#"{"kept":{"plain":"sent","query":"SELECT 42","after":"sent"},"outside":"?"}"#
+        );
+    }
+
+    /// A key in both sets is kept, and a kept subtree does not adopt the keep depth of a nested
+    /// keep key: the subtree ends where the outer key opened it.
+    #[test]
+    fn test_keep_wins_over_transform_for_the_same_key() {
+        let obfuscator = obf_keys(&["both", "inner"], &["both"]);
+        let input = r#"{"both":{"inner":{"deep":1}},"next":"sent"}"#;
+        let JsonObfuscationOutcome { output, report } = obfuscator.obfuscate_with(input, |v| {
+            Ok::<_, SqlObfuscationError>(Cow::Owned(v.to_uppercase()))
+        });
+
+        assert!(report.is_clean());
+        assert_eq!(output, r#"{"both":{"inner":{"deep":1}},"next":"?"}"#);
+    }
+
+    /// A bare top-level literal is a value, not a key, so it is obfuscated. A literal that follows
+    /// a complete document is where the Agent's scanner leaves it: at the top level, read as a key.
+    #[test]
+    fn test_top_level_literal_is_a_value() {
+        for input in ["42", r#""bare""#, "true", "null"] {
+            let (output, err) = obf(&[]).obfuscate(input);
+            assert_eq!(err, None, "input: {input}");
+            assert_eq!(output, r#""?""#, "input: {input}");
+        }
+
+        let (output, err) = obf(&[]).obfuscate(r#"{"a":1} 42"#);
+        assert_eq!(err, None);
+        assert_eq!(output, r#"{"a":"?"} 42"#);
     }
 
     /// Without a callback, a transform key is just another key. This is the Agent's behavior when
