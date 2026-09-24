@@ -54,7 +54,7 @@ They are responsible for deciding whether or not to sample, and storing the info
 
 The actual USDTs emitted are:
 
-* `ddheap:alloc(void *user, uint64_t size, uint64_t weight)` — fired on sampled allocations; `user` is the user-visible pointer, `size` in bytes, `weight` is the unbiased size estimator (`nsamples * interval`)
+* `ddheap:alloc(void *user, uint64_t size, uint64_t weighted_bytes)` — fired on sampled allocations; `user` is the user-visible pointer, `size` is the application-requested allocation size in bytes, `weighted_bytes` is the estimated allocated bytes represented by this sampled allocation computed as `size / (1 - exp(-size / interval))` where `interval` is the mean sampling distance. Small allocations have weighted_bytes close to one sampling interval; large allocations have weighted_bytes close to their actual size.
 * `ddheap:free(void *ptr)` — fired when a previously-sampled allocation is freed
 * `ddheap:mmap` - TODO 
 * `ddheap:munmap` - TODO

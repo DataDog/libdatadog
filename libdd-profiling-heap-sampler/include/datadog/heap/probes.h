@@ -32,11 +32,13 @@
 
 /*
  * Emits the `ddheap:alloc` USDT.
- *   user   - user-visible allocation pointer
- *   size   - allocation size in bytes
- *   weight - unbiased size estimator (nsamples * interval)
+ *   user          - user-visible allocation pointer
+ *   size          - application-requested allocation size in bytes
+ *   weighted_bytes - estimated allocated bytes represented by this sampled
+ *                   allocation, computed as size / (1 - exp(-size / interval))
+ *                   where interval is the mean sampling distance.
  */
-void dd_probe_alloc(void *user, uint64_t size, uint64_t weight);
+void dd_probe_alloc(void *user, uint64_t size, uint64_t weighted_bytes);
 
 /*
  * Emits the `ddheap:free` USDT.

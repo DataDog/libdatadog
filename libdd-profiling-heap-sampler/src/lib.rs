@@ -203,7 +203,7 @@ mod tests {
             assert!(dd_tl_state_get().is_null());
             let req = dd_allocation_requested(1, 1);
             assert_eq!(req.size, 1);
-            assert_eq!(req.weight, 0);
+            assert_eq!(req.weighted_bytes, 0);
             // Semaphore is inactive (no profiler), so TLS is never touched.
             assert!(dd_tl_state_get().is_null());
         })
@@ -219,14 +219,14 @@ mod tests {
                 size: 64,
                 user_size: 64,
                 alignment: 8,
-                weight: 0,
+                weighted_bytes: 0,
             };
             assert_eq!(dd_allocation_created(fake, req), fake);
         }
     }
 
     // With live-heap tracking compiled out, even a "sampled" allocation
-    // (weight > 0) is never flagged: the created pointer is the raw pointer
+    // (weighted_bytes > 0) is never flagged: the created pointer is the raw pointer
     // unchanged. The alloc USDT still fires (allocation profiling), but
     // there is no tag/header, so no matching free is expected.
     #[cfg(not(feature = "live-heap"))]
@@ -238,7 +238,7 @@ mod tests {
                 size: 64,
                 user_size: 64,
                 alignment: 8,
-                weight: 5,
+                weighted_bytes: 5,
             };
             assert_eq!(dd_allocation_created(fake, req), fake);
         }
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(req.size, 64);
         assert_eq!(req.user_size, 64);
         assert_eq!(req.alignment, 8);
-        assert_eq!(req.weight, 0);
+        assert_eq!(req.weighted_bytes, 0);
         assert!(!tl.reentry_guard);
     }
 
@@ -404,5 +404,206 @@ mod tests {
         })
         .join()
         .unwrap();
+    }
+}
+
+// Tests for the per-allocation unbiased byte weight calculation.
+// These exercise the allocation_weight helper deterministically via the
+// dd_test_allocation_weight C test entry point.
+#[cfg(all(test, target_os = "linux", not(miri)))]
+mod weight_tests {
+    use super::*;
+
+    extern "C" {
+        fn dd_test_allocation_weight(size: u64, interval: u64) -> u64;
+    }
+
+    fn weight(size: u64, interval: u64) -> u64 {
+        unsafe { dd_test_allocation_weight(size, interval) }
+    }
+
+    /// Helper: compute expected weight with f64 precision for comparison.
+    fn expected_weight(size: f64, interval: f64) -> f64 {
+        let p = -(-size / interval).exp_m1();
+        size / p
+    }
+
+    // Small allocation: size = 64, interval = 512 KiB.
+    // The weight should be approximately one sampling interval (~512 KiB)
+    // because the allocation is so small relative to the interval that each
+    // sample represents roughly `interval` bytes.
+    #[test]
+    fn small_allocation_weight_approximately_one_interval() {
+        let interval: u64 = 512 * 1024;
+        let size: u64 = 64;
+        let w = weight(size, interval);
+
+        // For very small S/R, weight ~= R * (1 + S/(2R) + ...)
+        // With size=64, interval=512K: weight should be very close to interval.
+        let tolerance = interval / 100; // 1% tolerance
+        assert!(
+            w > interval - tolerance && w < interval + tolerance,
+            "small allocation weight {w} should be approximately interval {interval}"
+        );
+    }
+
+    // Allocation at the sampling interval: size == interval.
+    // weight should be approximately interval / (1 - exp(-1)) ~= 1.582 * interval.
+    #[test]
+    fn allocation_at_interval_weight() {
+        let interval: u64 = 512 * 1024;
+        let size: u64 = interval;
+        let w = weight(size, interval);
+
+        let expected = expected_weight(size as f64, interval as f64);
+        let tolerance = (expected * 0.001) as u64; // 0.1% tolerance
+        assert!(
+            (w as f64 - expected).abs() < tolerance as f64,
+            "interval-sized allocation weight {w} should be ~{expected:.0} \
+             (1.582 * interval = {})",
+            (1.582 * interval as f64) as u64
+        );
+    }
+
+    // Large allocation: size = 8 * interval.
+    // The allocation is almost certain to be sampled (p ~= 1), so weight
+    // should be very close to the actual size.
+    #[test]
+    fn large_allocation_weight_close_to_size() {
+        let interval: u64 = 512 * 1024;
+        let size: u64 = 8 * interval;
+        let w = weight(size, interval);
+
+        // p = 1 - exp(-8) ~= 0.99966; weight ~= size / 0.99966 ~= size * 1.0003
+        let tolerance = size / 1000; // 0.1% tolerance
+        assert!(
+            (w as i64 - size as i64).unsigned_abs() < tolerance,
+            "large allocation weight {w} should be close to size {size} \
+             (diff = {})",
+            (w as i64 - size as i64).abs()
+        );
+    }
+
+    // Monotonic large-allocation behavior: as size grows much larger than
+    // the interval, weight/size should approach 1.
+    #[test]
+    fn large_allocation_weight_over_size_approaches_one() {
+        let interval: u64 = 512 * 1024;
+        let mut prev_ratio = f64::MAX;
+        for multiplier in [4u64, 8, 16, 32, 64] {
+            let size = multiplier * interval;
+            let w = weight(size, interval);
+            let ratio = w as f64 / size as f64;
+            // At 4x interval: 1/(1-exp(-4)) ~= 1.0187, so use 2% tolerance.
+            assert!(
+                (ratio - 1.0).abs() < 0.02,
+                "size={size} ({}x interval): weight/size = {ratio:.6}, expected ~1.0",
+                multiplier
+            );
+            // Verify monotonic (non-increasing) convergence toward 1.0.
+            assert!(
+                ratio <= prev_ratio,
+                "ratio should not increase as size grows: {ratio:.6} > {prev_ratio:.6}"
+            );
+            prev_ratio = ratio;
+        }
+    }
+
+    // Disabled sampling: interval == 0 should always return weight 0.
+    #[test]
+    fn zero_interval_returns_zero_weight() {
+        assert_eq!(weight(64, 0), 0);
+        assert_eq!(weight(1024, 0), 0);
+        assert_eq!(weight(0, 0), 0);
+    }
+
+    // Zero-size allocation: should return weight 0.
+    #[test]
+    fn zero_size_returns_zero_weight() {
+        assert_eq!(weight(0, 512 * 1024), 0);
+    }
+
+    // Verify the slow path produces the new weight semantics.
+    // Set up a thread-local state that will immediately sample, then check
+    // that the returned weight matches allocation_weight(size, interval).
+    #[test]
+    fn slow_path_produces_correct_weight() {
+        let interval: u64 = 512 * 1024;
+        let size: usize = 256;
+
+        let mut tl = dd_tl_state_t {
+            sampling_interval: interval,
+            remaining_bytes: 0, // will trigger sampling
+            remaining_bytes_initialized: true,
+            initialized: true,
+            reentry_guard: false,
+            rng: 42,
+        };
+
+        let req = unsafe { dd_allocation_requested_slow(&mut tl, size, 8) };
+
+        // The allocation was sampled, so weighted_bytes > 0.
+        assert!(
+            req.weighted_bytes > 0,
+            "sampled allocation must have weighted_bytes > 0"
+        );
+
+        // weighted_bytes should match the deterministic allocation_weight calculation.
+        let expected = weight(size as u64, interval);
+        assert_eq!(
+            req.weighted_bytes,
+            expected,
+            "slow path weighted_bytes {w} != allocation_weight({size}, {interval}) = {expected}",
+            w = req.weighted_bytes
+        );
+
+        // The reentry guard should still be open (waiting for created).
+        assert!(tl.reentry_guard);
+    }
+
+    // Statistical regression: perform many allocations of a fixed size and
+    // verify that the sum of weights converges to the actual total bytes.
+    // Uses a deterministic seed via the LCG so this is not flaky.
+    #[test]
+    fn statistical_weight_sum_converges_to_total_bytes() {
+        let interval: u64 = 512 * 1024;
+        let alloc_size: usize = 128;
+        let num_allocations: usize = 200_000;
+
+        let mut tl = dd_tl_state_t {
+            sampling_interval: interval,
+            remaining_bytes: -(interval as i64), // start cold
+            remaining_bytes_initialized: true,
+            initialized: true,
+            reentry_guard: false,
+            rng: 12345,
+        };
+
+        let total_allocated = (alloc_size as u64) * (num_allocations as u64);
+        let mut weight_sum: u64 = 0;
+
+        for _ in 0..num_allocations {
+            // Simulate the fast-path counter increment.
+            tl.remaining_bytes += alloc_size as i64;
+            if tl.remaining_bytes >= 0 {
+                // Would enter slow path.
+                tl.reentry_guard = false;
+                let req = unsafe { dd_allocation_requested_slow(&mut tl, alloc_size, 8) };
+                weight_sum += req.weighted_bytes;
+                // Close the reentry guard as dd_allocation_created_slow would.
+                tl.reentry_guard = false;
+            }
+        }
+
+        // The sum of weights should be within 10% of total allocated bytes.
+        // With 200K allocations of 128 bytes = ~24.4 MiB total, and interval
+        // of 512 KiB, we expect roughly 48 samples. The statistical error
+        // for a Poisson process should be well within 10%.
+        let ratio = weight_sum as f64 / total_allocated as f64;
+        assert!(
+            (ratio - 1.0).abs() < 0.10,
+            "weight_sum/total_allocated = {ratio:.4} (weight_sum={weight_sum}, \
+             total={total_allocated}), expected within 10% of 1.0"
+        );
     }
 }
