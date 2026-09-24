@@ -41,11 +41,14 @@ tool, so a change there requires bumping all of them.
    git tag -s "$tag" -m "$tag" && git push origin "$tag"
    ```
    The ruleset also restricts who may create a tag, so this needs an account
-   permitted to. `ci-tools-release` then builds the binary and attaches it to a
-   release of that tag. Later pull requests download it.
+   permitted to.
+5. `ci-tools-release` then waits on the `publish-ci-tools` environment, which
+   takes an approval from `libdatadog-owners` and does not let whoever pushed
+   the tag approve their own release. Once approved it builds the binary and
+   attaches it to a release of that tag, and later pull requests download it.
 
-Skipping step 4 is safe: every workflow keeps building from source until the
-tag exists.
+Skipping steps 4 and 5 is safe: every workflow keeps building from source
+until the tag is released.
 
 ## Adding a new tool
 

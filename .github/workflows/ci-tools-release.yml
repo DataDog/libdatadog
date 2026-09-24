@@ -13,7 +13,7 @@ name: CI tools - Publish a tool binary
 on:
   push:
     tags:
-      - 'ci-tool-*-v*'
+      - 'ci-tool-*-v*' # if this pattern is changed, check the publish-ci-tools environment rules
 
 permissions:
   contents: read
@@ -27,6 +27,7 @@ env:
 
 jobs:
   publish:
+    environment: publish-ci-tools
     runs-on: ubuntu-latest
     permissions:
       contents: write
