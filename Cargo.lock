@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "criterion",
  "prost",
