@@ -1,3 +1,6 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 edition = "2021"
 license = "Apache 2.0"
@@ -110,6 +113,7 @@ windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"
 microseh.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 libc.workspace = true
 tempfile.workspace = true
 httpmock.workspace = true
