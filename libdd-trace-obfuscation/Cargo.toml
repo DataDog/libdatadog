@@ -19,7 +19,7 @@ percent-encoding = { workspace = true, features = ["std"] }
 log.workspace = true
 fluent-uri.workspace = true
 libdd-trace-protobuf = { version = "5.0.1", path = "../libdd-trace-protobuf" }
-libdd-trace-utils = { version = "12.0.0", path = "../libdd-trace-utils", default-features = false }
+libdd-trace-utils = { version = "13.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-common = { version = "7.0.0", path = "../libdd-common", default-features = false }
 
 [features]

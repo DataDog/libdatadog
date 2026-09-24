@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
