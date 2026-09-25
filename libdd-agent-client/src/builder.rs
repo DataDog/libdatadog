@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use libdd_http_client::RetryConfig;
 
-use crate::{error::BuildError, language_metadata::LanguageMetadata, AgentClient};
+use crate::{AgentClient, error::BuildError, language_metadata::LanguageMetadata};
 
 /// Default timeout for agent requests.
 pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;

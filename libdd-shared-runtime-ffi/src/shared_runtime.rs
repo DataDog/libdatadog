@@ -3,7 +3,7 @@
 
 use crate::catch_panic;
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, SharedRuntimeError};
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::ptr::NonNull;
 use std::sync::Arc;
 

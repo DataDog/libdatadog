@@ -6,10 +6,10 @@
 use std::{
     mem,
     ptr::NonNull,
-    sync::atomic::{compiler_fence, Ordering},
+    sync::atomic::{Ordering, compiler_fence},
 };
 
-use super::{with_tls_slot, ThreadContext, ThreadContextRecord};
+use super::{ThreadContext, ThreadContextRecord, with_tls_slot};
 
 impl ThreadContextRecord {
     /// Update the record in-place. Sets `valid=0` before the update and `valid=1` after, so a

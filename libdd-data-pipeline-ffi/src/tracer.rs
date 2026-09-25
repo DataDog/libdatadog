@@ -11,11 +11,11 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
-use crate::structured_value::{encode_value, TracerValueToken};
+use crate::structured_value::{TracerValueToken, encode_value};
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v04::{
@@ -803,8 +803,8 @@ mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
     use crate::structured_value::{
-        ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
-        ddog_tracer_encoded_value_free, TracerEncodedValue,
+        TracerEncodedValue, ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
+        ddog_tracer_encoded_value_free,
     };
     use std::mem::MaybeUninit;
 
@@ -1387,30 +1387,38 @@ mod tests {
             let bools = [true, false];
             let ints = [-1, 2];
             let doubles = [1.25, 2.5];
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             assert_eq!(event.0.name.as_ref(), "exception");
             assert_eq!(event.0.time_unix_nano, 123);
@@ -1480,30 +1488,38 @@ mod tests {
             let ints: [i64; 0] = [];
             let doubles: [f64; 0] = [];
 
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             for key in ["strings", "bools", "ints", "doubles"] {
                 assert_eq!(
@@ -1740,12 +1756,14 @@ mod tests {
                     .is_none()
             );
             let codes = [1i64, 2];
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("codes"),
-                Slice::from(&codes[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("codes"),
+                    Slice::from(&codes[..])
+                )
+                .is_none()
+            );
 
             assert!(ddog_tracer_span_add_event(Some(&mut span), Some(event)).is_none());
 

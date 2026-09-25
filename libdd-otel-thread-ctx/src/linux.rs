@@ -31,7 +31,7 @@ pub use shared::*;
 
 use std::{
     mem, ptr,
-    sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
+    sync::atomic::{AtomicPtr, AtomicU8, Ordering, compiler_fence},
 };
 
 // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via

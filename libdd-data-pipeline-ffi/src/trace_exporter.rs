@@ -9,12 +9,12 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-use libdd_data_pipeline::OtlpProtocol;
 
 // FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
 // don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
@@ -616,8 +616,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
 
 /// Returns a `CardinalityLimitConfig` with default values
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit(
-) -> CardinalityLimitConfig {
+pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit()
+-> CardinalityLimitConfig {
     CardinalityLimitConfig::default()
 }
 
@@ -702,7 +702,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
                     return Some(Box::new(ExporterError::new(
                         ErrorCode::InvalidInput,
                         &ErrorCode::InvalidInput.to_string(),
-                    )))
+                    )));
                 }
             };
             match serde_json::from_str::<
@@ -937,8 +937,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_trace_utils::span::v04::SpanSlice;
     use std::{borrow::Borrow, mem::MaybeUninit};
 

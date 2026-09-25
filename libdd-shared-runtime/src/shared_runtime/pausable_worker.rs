@@ -6,9 +6,9 @@
 use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
+use libdd_capabilities::MaybeSend;
 use libdd_capabilities::maybe_send::MaybeSync;
 use libdd_capabilities::spawn::SpawnError;
-use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
 use std::future::Future;
 use tokio::select;
@@ -216,7 +216,7 @@ mod tests {
 
     use super::*;
     use std::{
-        sync::mpsc::{channel, Sender},
+        sync::mpsc::{Sender, channel},
         time::Duration,
     };
 

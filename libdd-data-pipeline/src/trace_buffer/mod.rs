@@ -16,12 +16,12 @@ use std::{
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::{SharedRuntime, Worker};
 use libdd_trace_utils::span::{
-    span_pool::{PooledChunks, SpanPool},
     BytesData,
+    span_pool::{PooledChunks, SpanPool},
 };
 
 use crate::trace_exporter::{
-    agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
+    TraceExporter, agent_response::AgentResponse, error::TraceExporterError,
 };
 
 /// Trait for types stored in a [`TraceBuffer`] that can report their approximate byte size.
@@ -1008,8 +1008,8 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};

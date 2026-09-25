@@ -209,9 +209,11 @@ fn set_builder_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
     endpoint: TelemetryEndpoint,
 ) -> ffi::MaybeError {
-    try_c!(telemetry_builder
-        .config
-        .set_endpoint(endpoint.into_config()));
+    try_c!(
+        telemetry_builder
+            .config
+            .set_endpoint(endpoint.into_config())
+    );
     ffi::MaybeError::None
 }
 

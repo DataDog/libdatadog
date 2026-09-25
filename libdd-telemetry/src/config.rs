@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use http::{Uri, uri::PathAndQuery};
+use libdd_common::{Endpoint, config::parse_env, parse_uri};
 use std::{borrow::Cow, time::Duration};
 use tracing::debug;
 

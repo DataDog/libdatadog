@@ -6,9 +6,9 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use flate2::{write::GzEncoder, Compression};
+use flate2::{Compression, write::GzEncoder};
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
-use serde_json::{from_slice, Value};
+use serde_json::{Value, from_slice};
 use std::io::Write as _;
 
 use crate::{

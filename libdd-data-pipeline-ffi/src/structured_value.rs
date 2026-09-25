@@ -152,7 +152,7 @@ fn encode_one(
         _ => {
             return Err(invalid_input(
                 "structured value contains an unknown token kind",
-            ))
+            ));
         }
     }
     Ok(())

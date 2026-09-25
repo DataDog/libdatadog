@@ -7,7 +7,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use cadence::{MetricSink, SinkStats};
 use libdd_common::Endpoint;
-use libdd_shared_runtime::{worker::Worker, SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle, worker::Worker};
 use std::fmt;
 use std::io;
 use std::panic::RefUnwindSafe;
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::error;
 
-use super::{sink, QUEUE_SIZE};
+use super::{QUEUE_SIZE, sink};
 
 /// A [`MetricSink`] that offloads sent metrics to a [`SharedRuntime`].
 #[derive(Clone)]

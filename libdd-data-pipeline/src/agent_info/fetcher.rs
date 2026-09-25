@@ -4,10 +4,10 @@
 //! up-to-date
 
 use super::{
-    schema::{AgentInfo, AgentInfoStruct},
     AGENT_INFO_CACHE,
+    schema::{AgentInfo, AgentInfoStruct},
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use bytes::Bytes;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};

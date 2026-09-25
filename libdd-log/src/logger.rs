@@ -7,7 +7,7 @@ use tracing::subscriber::DefaultGuard;
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::{Layered, SubscriberExt};
 use tracing_subscriber::reload::Handle;
-use tracing_subscriber::{fmt, reload, Layer, Registry};
+use tracing_subscriber::{Layer, Registry, fmt, reload};
 
 pub type Error = String;
 
@@ -355,7 +355,7 @@ mod tests {
     use tempfile::TempDir;
     use tracing::field::{Field, Visit};
     use tracing::subscriber::Interest;
-    use tracing::{debug, error, info, trace, warn, Event, Metadata, Subscriber};
+    use tracing::{Event, Metadata, Subscriber, debug, error, info, trace, warn};
     use tracing_subscriber::layer::{Context, Layer};
 
     use super::*;

@@ -16,8 +16,8 @@
 //! This module is only available on Linux (the only platform that supports the TLSDESC dialect used
 //! by this crate) and only when the `sanity-check` feature is enabled.
 
-use anyhow::{bail, Context};
-use elf::{abi, endian::AnyEndian, ElfBytes};
+use anyhow::{Context, bail};
+use elf::{ElfBytes, abi, endian::AnyEndian};
 use std::path::{Path, PathBuf};
 
 const SYMBOL: &str = "otel_thread_ctx_v1";

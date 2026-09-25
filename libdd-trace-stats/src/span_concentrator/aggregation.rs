@@ -14,11 +14,11 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{cardinality_limit_telemetry::CollapsedFieldSet, StatSpan};
+use crate::span_concentrator::{StatSpan, cardinality_limit_telemetry::CollapsedFieldSet};
 
 use super::{
-    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
     CardinalityLimitConfig,
+    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
 };
 
 /// Sentinel value used for cardinality limiting.

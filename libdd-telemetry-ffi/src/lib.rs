@@ -109,14 +109,14 @@ pub(crate) use c_setters;
 #[cfg(test)]
 mod tests {
     use crate::{builder::*, worker_handle::*};
-    use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
     use ffi::MaybeError;
+    use ffi::tags::{PushTagResult, ddog_Vec_Tag_new, ddog_Vec_Tag_push};
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::{
-            metrics::{MetricNamespace, MetricType},
             LogLevel,
+            metrics::{MetricNamespace, MetricType},
         },
         worker::TelemetryWorkerBuilder,
     };
@@ -209,13 +209,15 @@ mod tests {
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
-            assert!(ddog_telemetry_builder_with_str_named_property(
-                &mut builder,
-                ffi::CharSlice::from("doesnt exist"),
-                ffi::CharSlice::from("abc")
-            )
-            .to_std()
-            .is_none(),);
+            assert!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("doesnt exist"),
+                    ffi::CharSlice::from("abc")
+                )
+                .to_std()
+                .is_none(),
+            );
         }
     }
 
