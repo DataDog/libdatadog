@@ -16,7 +16,8 @@ pub use agentless::{
     agentless_stats_version, AgentlessStatsConfig, AgentlessV04Error, AgentlessV04Exporter,
 };
 pub use agentless::{
-    send_agentless_traces, send_agentless_traces_with_observer, AgentlessError,
-    AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT,
+    send_agentless_traces, send_agentless_traces_v1, send_agentless_traces_with_observer,
+    send_agentless_traces_with_observer_v1, AgentlessError, AgentlessTraceConfig,
+    DEFAULT_AGENTLESS_TIMEOUT,
 };
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;

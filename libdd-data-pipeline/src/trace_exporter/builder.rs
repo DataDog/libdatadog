@@ -1237,6 +1237,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     | TraceExporterOutputFormat::V1
             ),
             TraceExporterInputFormat::V05 => matches!(output, TraceExporterOutputFormat::V05),
+            // V1 input is always sent v1-native (see `send_trace_chunks_inner_v1`); it never
+            // negotiates down to a v0.4-encoded output, which would require v0.4<->v1
+            // conversion.
+            TraceExporterInputFormat::V1 => matches!(output, TraceExporterOutputFormat::V1),
         }
     }
 }
