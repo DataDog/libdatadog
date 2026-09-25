@@ -8,6 +8,8 @@ members = [
   "libdd-profiling-heap-sampler",
   "libdd-profiling-heap-allocator",
   "libdd-gotter",
+  "libdd-profiling-heap-jemalloc",
+  "libdd-profiling-heap-jemalloc-preload",
   "libdd-profiling-heap-gotter",
   "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",
