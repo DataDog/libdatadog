@@ -22,7 +22,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         // protoc is required to compile proto files. This uses protobuf_src to compile protoc
         // from the source, setting the env var to tell prost_build where to find it.
-        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+        // SAFETY: build scripts run single-threaded; no other thread accesses the
+        // environment concurrently.
+        unsafe {
+            std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+        }
 
         let mut config = prost_build::Config::new();
 
