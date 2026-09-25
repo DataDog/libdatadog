@@ -19,7 +19,7 @@ pub enum StackTraceNewResult {
 /// Create a new StackTrace, and returns an opaque reference to it.
 /// # Safety
 /// No safety issues.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> StackTraceNewResult {
     StackTraceNewResult::Ok(StackTrace::new_incomplete().into())
@@ -28,12 +28,14 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> StackTraceNewResult {
 /// # Safety
 /// The `frame` can be null, but if non-null it must point to a Frame
 /// made by this module, which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTrace>) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !trace.is_null() {
-        drop((*trace).take())
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !trace.is_null() {
+            drop((*trace).take())
+        }
     }
 }
 
@@ -43,7 +45,7 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTra
 /// The frame can be non-null, but if non-null it must point to a Frame made by this module,
 /// which has not previously been dropped.
 /// The frame is consumed, and does not need to be dropped after this operation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
@@ -51,23 +53,27 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut frame: *mut Handle<StackFrame>,
     incomplete: bool,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        trace
-            .to_inner_mut()?
-            .push_frame(*frame.take()?, incomplete)?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            trace
+                .to_inner_mut()?
+                .push_frame(*frame.take()?, incomplete)?;
+        })
+    }
 }
 
 /// # Safety
 /// The `stacktrace` can be null, but if non-null it must point to a StackTrace made by this module,
 /// which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_set_complete(
     mut trace: *mut Handle<StackTrace>,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        trace.to_inner_mut()?.set_complete()?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            trace.to_inner_mut()?.set_complete()?;
+        })
+    }
 }

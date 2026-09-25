@@ -15,7 +15,7 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, CharSlice, Handle, Slice, ToIn
 use libdd_crashtracker::{CrashtrackerReceiverConfig, StackTrace, DEFAULT_SYMBOLS};
 pub use spans::*;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 /// Disables the crashtracker.
 /// Note that this does not restore the old signal handlers, but rather turns crash-tracking into a
@@ -33,7 +33,7 @@ pub unsafe extern "C" fn ddog_crasht_disable() -> VoidResult {
     VoidResult::Ok
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 /// Enables the crashtracker, if it had been previously disabled.
 /// If crashtracking has not been initialized, this function will have no effect.
@@ -49,7 +49,7 @@ pub unsafe extern "C" fn ddog_crasht_enable() -> VoidResult {
     VoidResult::Ok
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Reinitialize the crash-tracking infrastructure after a fork.
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn ddog_crasht_update_on_fork(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Initialize the crash-tracking infrastructure.
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn ddog_crasht_init(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Reconfigure the crashtracker and re-enables it.
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn ddog_crasht_reconfigure(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Initialize the crash-tracking infrastructure without launching the receiver.
@@ -173,13 +173,13 @@ pub unsafe extern "C" fn ddog_crasht_init_without_receiver(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Returns a list of signals suitable for use in a crashtracker config.
 pub extern "C" fn ddog_crasht_default_signals() -> Slice<'static, libc::c_int> {
     Slice::new(&DEFAULT_SYMBOLS)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Report an unhandled exception as a crash event.
@@ -219,20 +219,22 @@ pub unsafe extern "C" fn ddog_crasht_report_unhandled_exception(
     error_message: CharSlice,
     mut runtime_stack: *mut Handle<StackTrace>,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        let error_type_opt = error_type.try_to_string_option()?;
-        let error_message_opt = error_message.try_to_string_option()?;
-        let stack = *runtime_stack.take()?;
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let error_type_opt = error_type.try_to_string_option()?;
+            let error_message_opt = error_message.try_to_string_option()?;
+            let stack = *runtime_stack.take()?;
 
-        libdd_crashtracker::report_unhandled_exception(
-            error_type_opt.as_deref(),
-            error_message_opt.as_deref(),
-            stack,
-        )?;
-    })
+            libdd_crashtracker::report_unhandled_exception(
+                error_type_opt.as_deref(),
+                error_message_opt.as_deref(),
+                stack,
+            )?;
+        })
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Register the expected PID of the socket-based crash receiver
 ///
 /// When `collect_all_threads` is enabled and the receiver is reached via a Unix
@@ -247,7 +249,7 @@ pub extern "C" fn ddog_crasht_set_expected_receiver_pid(pid: i32) {
     libdd_crashtracker::set_expected_receiver_pid(pid);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Returns the currently registered expected receiver PID, or 0 if unset.
 pub extern "C" fn ddog_crasht_get_expected_receiver_pid() -> i32 {
     libdd_crashtracker::get_expected_receiver_pid()

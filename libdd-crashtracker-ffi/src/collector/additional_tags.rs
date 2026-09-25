@@ -13,14 +13,14 @@ use libdd_common_ffi::{
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_additional_tags() -> VoidResult {
     wrap_with_void_ffi_result!({ libdd_crashtracker::clear_additional_tags()? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically registers a string as an additional tag.
@@ -37,7 +37,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_additional_tag(s: CharSlice) -> Resu
     wrap_with_ffi_result!({ libdd_crashtracker::insert_additional_tag(s.to_string()) })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically removes a completed SpanId.

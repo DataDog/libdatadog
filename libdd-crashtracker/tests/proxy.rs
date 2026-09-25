@@ -53,17 +53,27 @@ fn spawn_connect_proxy() -> (SocketAddr, Receiver<String>) {
 async fn direct_crash_requests_use_https_proxy() -> anyhow::Result<()> {
     let (proxy_address, targets) = spawn_connect_proxy();
 
-    std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
-    std::env::set_var("DD_API_KEY", "test-api-key");
-    std::env::set_var(
-        "DD_APM_TELEMETRY_DD_URL",
-        "https://telemetry.example.invalid",
-    );
-    std::env::set_var("DD_TRACE_AGENT_URL", "https://telemetry.example.invalid");
-    std::env::set_var("DD_ERRORS_INTAKE_DD_URL", "https://errors.example.invalid");
-    std::env::set_var("HTTPS_PROXY", format!("http://{proxy_address}"));
-    std::env::set_var("NO_PROXY", "");
-    std::env::remove_var("REQUEST_METHOD");
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("DD_API_KEY", "test-api-key") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe {
+        std::env::set_var(
+            "DD_APM_TELEMETRY_DD_URL",
+            "https://telemetry.example.invalid",
+        )
+    };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "https://telemetry.example.invalid") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("DD_ERRORS_INTAKE_DD_URL", "https://errors.example.invalid") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("HTTPS_PROXY", format!("http://{proxy_address}")) };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("NO_PROXY", "") };
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::remove_var("REQUEST_METHOD") };
 
     let mut builder = CrashInfoBuilder::new();
     builder.with_kind(ErrorKind::UnixSignal)?;

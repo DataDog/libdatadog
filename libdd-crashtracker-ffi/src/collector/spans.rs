@@ -11,7 +11,7 @@ use libdd_common_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, 
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
@@ -26,14 +26,14 @@ pub unsafe extern "C" fn ddog_crasht_clear_span_ids() -> VoidResult {
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_clear_trace_ids() -> VoidResult {
     wrap_with_void_ffi_result!({ libdd_crashtracker::clear_traces()? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically registers an active traceId.
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_trace_id(id_high: u64, id_low: u64) 
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically registers an active SpanId.
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn ddog_crasht_insert_span_id(id_high: u64, id_low: u64) -
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically removes a completed SpanId.
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn ddog_crasht_remove_span_id(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically removes a completed TraceId.

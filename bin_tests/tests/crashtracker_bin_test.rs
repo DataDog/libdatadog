@@ -29,7 +29,7 @@ use serde_json::Value;
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.
 macro_rules! crash_tracking_tests {
-    ($(($test_name:ident, $profile:expr, $mode:expr, $crash_type:expr)),* $(,)?) => {
+    ($(($test_name:ident, $profile:expr_2021, $mode:expr_2021, $crash_type:expr_2021)),* $(,)?) => {
         $(
             #[test]
             #[cfg_attr(miri, ignore)]

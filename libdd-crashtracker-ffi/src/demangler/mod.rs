@@ -14,7 +14,7 @@ use symbolic_demangle::Demangle;
 /// # Safety
 /// `name` should be a valid reference to a utf8 encoded String.
 /// The string is copied into the result, and does not need to outlive this call
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_demangle(

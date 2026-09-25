@@ -32,16 +32,18 @@ mod unix {
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            std::arch::asm!("mov eax, [0]", options(nostack));
-        }
+        unsafe {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                std::arch::asm!("mov eax, [0]", options(nostack));
+            }
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            #[cfg(target_arch = "aarch64")]
+            {
+                std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            }
+            anyhow::bail!("Failed to cause segmentation fault")
         }
-        anyhow::bail!("Failed to cause segmentation fault")
     }
 
     pub fn main() -> anyhow::Result<()> {
@@ -95,10 +97,13 @@ mod unix {
         // In Debug builds the collector is slow, so the default 4 s receiver timeout
         // can expire before DD_CRASHTRACK_DONE is sent.
         if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
-            env::set_var(
-                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
-                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
-            );
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            unsafe {
+                env::set_var(
+                    "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                    TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+                )
+            };
         }
 
         let mut config = CrashtrackerConfiguration::builder()
@@ -161,7 +166,7 @@ mod unix {
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
             #[cfg(target_os = "linux")]
             "assert_fail" => {
-                extern "C" {
+                unsafe extern "C" {
                     fn trigger_c_assert() -> !;
                 }
                 // SAFETY: trigger_c_assert calls the real C assert() macro,

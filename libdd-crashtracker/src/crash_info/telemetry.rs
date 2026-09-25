@@ -163,7 +163,7 @@ impl CrashPing {
 }
 
 macro_rules! parse_tags {
-    (   $tag_iterator:expr,
+    (   $tag_iterator:expr_2021,
         $($tag_name:literal => $var:ident),* $(,)?)  => {
         $(
             let mut $var: Option<&str> = None;

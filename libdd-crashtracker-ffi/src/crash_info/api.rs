@@ -9,33 +9,37 @@ use libdd_crashtracker::CrashInfo;
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_demangle_names(
     mut crash_info: *mut Handle<CrashInfo>,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.demangle_names()?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.demangle_names()?;
+        })
+    }
 }
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Frame
 /// made by this module, which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashInfo>) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !builder.is_null() {
-        drop((*builder).take())
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !builder.is_null() {
+            drop((*builder).take())
+        }
     }
 }
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 #[cfg(unix)]
@@ -43,15 +47,17 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.normalize_ips(pid)?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.normalize_ips(pid)?;
+        })
+    }
 }
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 #[cfg(unix)]
@@ -59,9 +65,11 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.resolve_names(pid)?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.resolve_names(pid)?;
+        })
+    }
 }
 
 /// # Safety
@@ -76,7 +84,7 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
 // separately.
 // While this is more efficient, it means that you are forced to do both operations, and you are not
 // able to do only one of them.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 #[cfg(unix)]
@@ -84,25 +92,29 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_enrich_callstacks(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.enrich_callstacks(pid)?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.enrich_callstacks(pid)?;
+        })
+    }
 }
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
 /// which has not previously been dropped.
 /// The CharSlice must be valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_upload_to_endpoint(
     mut crash_info: *mut Handle<CrashInfo>,
     endpoint: Option<&Endpoint>,
 ) -> VoidResult {
-    wrap_with_void_ffi_result!({
-        crash_info
-            .to_inner_mut()?
-            .upload_to_endpoint(&endpoint.cloned())?;
-    })
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info
+                .to_inner_mut()?
+                .upload_to_endpoint(&endpoint.cloned())?;
+        })
+    }
 }

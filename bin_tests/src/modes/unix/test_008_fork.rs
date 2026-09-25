@@ -37,8 +37,10 @@ impl Behavior for Test {
 
 #[inline(never)]
 unsafe fn deref_ptr(ptr: *mut u8) {
-    // Do the segfault in as identical as possible a manner as the main test
-    *std::hint::black_box(ptr) = std::hint::black_box(1);
+    unsafe {
+        // Do the segfault in as identical as possible a manner as the main test
+        *std::hint::black_box(ptr) = std::hint::black_box(1);
+    }
 }
 
 fn post() -> anyhow::Result<()> {

@@ -48,7 +48,7 @@ mod tests {
     use crate::crash_info::test_utils::TestInstance;
 
     macro_rules! tag {
-        ($key:expr, $val:expr) => {
+        ($key:expr_2021, $val:expr_2021) => {
             format!("{}:{}", $key, $val)
         };
     }
