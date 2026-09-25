@@ -2,6 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod crate_detection;
-pub mod github_output;
 pub mod git;
+pub mod github_output;
 pub mod workspace;
