@@ -22,7 +22,7 @@ use wait_timeout::ChildExt;
 /// Convert a Path to &str, returning an error if it contains non-UTF-8
 /// characters.
 macro_rules! path_str {
-    ($path:expr) => {
+    ($path:expr_2021) => {
         $path
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("path contains non-UTF-8 characters: {:?}", $path))

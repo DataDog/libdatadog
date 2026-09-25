@@ -551,22 +551,22 @@ impl<T> Sender<T> {
             return Err(TraceBufferError::BatchFull(e));
         }
         state.metrics.spans_queued += chunk_len;
-        let gen = state.batch.batch_gen;
+        let r#gen = state.batch.batch_gen;
         if state.flush_needed.is_none()
             && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
         {
             state.flush_needed = Some(FlushType::Automatic);
             self.waiter.notify_receiver(state);
         }
-        Ok(gen)
+        Ok(r#gen)
     }
 
     fn trigger_flush(&self) -> Result<BatchGeneration, TraceBufferError> {
         let mut state = self.get_running_state()?;
-        let gen = state.batch.batch_gen;
+        let r#gen = state.batch.batch_gen;
         state.flush_needed = Some(FlushType::Force);
         self.waiter.notify_receiver(state);
-        Ok(gen)
+        Ok(r#gen)
     }
 
     /// Flush the current batch and wait, up to `timeout`, for the exporter to export the

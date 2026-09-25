@@ -157,7 +157,7 @@ impl Drop for ExporterError {
 
 /// Frees `error` and all its contents. After being called error will not point to a valid memory
 /// address so any further actions on it could lead to undefined behavior.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_error_free(error: Option<Box<ExporterError>>) {
     if let Some(error) = error {
         drop(error)

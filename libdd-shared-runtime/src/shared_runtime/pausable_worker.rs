@@ -31,7 +31,7 @@ type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>>>>;
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn tokio_spawn_fn<T: Send + 'static>(
     handle: &tokio::runtime::Handle,
-) -> impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T> {
+) -> impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T> + use<T> {
     let h = handle.clone();
     move |future| {
         let jh = h.spawn(future);
@@ -177,13 +177,16 @@ impl<T: Worker + MaybeSend + MaybeSync + 'static> PausableWorker<T> {
                     stop_token.cancel();
                 }
 
-                if let Ok(worker) = handle.await {
-                    debug!(?worker, "Worker paused successfully");
-                    *self = PausableWorker::Paused { worker };
-                    Ok(())
-                } else {
-                    *self = PausableWorker::InvalidState;
-                    Err(PausableWorkerError::TaskAborted)
+                match handle.await {
+                    Ok(worker) => {
+                        debug!(?worker, "Worker paused successfully");
+                        *self = PausableWorker::Paused { worker };
+                        Ok(())
+                    }
+                    _ => {
+                        *self = PausableWorker::InvalidState;
+                        Err(PausableWorkerError::TaskAborted)
+                    }
                 }
             }
             PausableWorker::Paused { .. } => Ok(()),

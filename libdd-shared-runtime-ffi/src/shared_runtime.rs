@@ -81,7 +81,7 @@ macro_rules! panic_error {
 }
 
 /// Frees a `SharedRuntimeFFIError`. After this call the pointer is invalid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<SharedRuntimeFFIError>>) {
     catch_panic!(drop(error), ())
 }
@@ -93,37 +93,41 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 ///
 /// The caller owns the handle and must eventually pass it to
 /// [`ddog_shared_runtime_free`] (or another consumer that takes ownership).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_new(
     out_handle: NonNull<*const ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
-    catch_panic!(
-        match ForkSafeRuntime::new() {
-            Ok(runtime) => {
-                out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
-                None
-            }
-            Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-        },
-        panic_error!()
-    )
+    unsafe {
+        catch_panic!(
+            match ForkSafeRuntime::new() {
+                Ok(runtime) => {
+                    out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
+                    None
+                }
+                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+            },
+            panic_error!()
+        )
+    }
 }
 
 /// Free a handle, decrementing the `Arc` strong count.
 ///
 /// The underlying runtime may not be dropped if other components are still using it.
 /// Use [`ddog_shared_runtime_shutdown`] to cleanly stop workers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const ForkSafeRuntime) {
-    catch_panic!(
-        {
-            if !handle.is_null() {
-                // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
-                drop(Arc::from_raw(handle));
-            }
-        },
-        ()
-    )
+    unsafe {
+        catch_panic!(
+            {
+                if !handle.is_null() {
+                    // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
+                    drop(Arc::from_raw(handle));
+                }
+            },
+            ()
+        )
+    }
 }
 
 /// Must be called in the parent process before `fork()`.
@@ -133,7 +137,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const ForkSafeRuntime
 ///
 /// Returns an error if `handle` is null.
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
     handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
@@ -161,7 +165,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
 ///
 /// Returns `None` on success, or an error if workers could not be restarted.
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
     handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
@@ -193,7 +197,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_parent(
 /// Returns `None` on success, or an error if the runtime could not be
 /// reinitialized.
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
     handle: Option<&ForkSafeRuntime>,
 ) -> Option<Box<SharedRuntimeFFIError>> {
@@ -225,7 +229,7 @@ pub unsafe extern "C" fn ddog_shared_runtime_after_fork_child(
 /// Returns `None` on success, or `SharedRuntimeErrorCode::ShutdownTimedOut`
 /// if the timeout was reached.
 /// The handle must have been initialized with `ddog_shared_runtime_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_shutdown(
     handle: Option<&ForkSafeRuntime>,
     timeout_ms: u64,

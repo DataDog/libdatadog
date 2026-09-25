@@ -256,7 +256,7 @@ mod tests {
 
     /// Check if a and b are approximately equal with the given precision or 1.0e-6 by default
     macro_rules! assert_approx_eq {
-        ($a:expr, $b:expr) => {{
+        ($a:expr_2021, $b:expr_2021) => {{
             let (a, b) = (&$a, &$b);
             assert!(
                 (*a - *b).abs() < 1.0e-6,
@@ -265,7 +265,7 @@ mod tests {
                 *b
             );
         }};
-        ($a:expr, $b:expr, $precision:expr) => {{
+        ($a:expr_2021, $b:expr_2021, $precision:expr_2021) => {{
             let (a, b) = (&$a, &$b);
             assert!(
                 (*a - *b).abs() < $precision,

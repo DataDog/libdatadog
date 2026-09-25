@@ -66,7 +66,7 @@ fn time_now() -> f64 {
 }
 
 macro_rules! telemetry_worker_log {
-    ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
+    ($worker:expr_2021 , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
                 worker.runtime_id = %$worker.runtime_id,
@@ -79,7 +79,7 @@ macro_rules! telemetry_worker_log {
             }
         }
     };
-    ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
+    ($worker:expr_2021 , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
                 worker.runtime_id = %$worker.runtime_id,
