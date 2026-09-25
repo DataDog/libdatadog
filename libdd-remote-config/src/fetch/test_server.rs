@@ -53,122 +53,123 @@ impl RemoteConfigServer {
     ) -> Result<Response<http_common::Body>, Infallible> {
         let request: ClientGetConfigsRequest =
             serde_json::from_str(core::str::from_utf8(&body_bytes).unwrap()).unwrap();
-        let response = if let Some(response) = self.next_response.lock().unwrap().take() {
-            response
-        } else {
-            let known: HashMap<_, _> = request
-                .cached_target_files
-                .iter()
-                .map(|m| (m.path.clone(), m.hashes[0].hash.clone()))
-                .collect();
-            let files = self.files.lock().unwrap();
-            let applied_files: HashMap<_, _> = files
-                .iter()
-                .filter(|(_, (targets, _, _))| {
-                    let tracer = request
-                        .client
-                        .as_ref()
-                        .unwrap()
-                        .client_tracer
-                        .as_ref()
-                        .unwrap();
-                    targets.iter().any(|t| {
-                        t.service == tracer.service
-                            && t.env == tracer.env
-                            && t.app_version == tracer.app_version
-                    })
-                })
-                .collect();
-            let states = &request
-                .client
-                .as_ref()
-                .unwrap()
-                .state
-                .as_ref()
-                .unwrap()
-                .config_states;
-            // A change of config_status is itself a change the client must observe, so it
-            // cannot be answered with the "nothing changed" empty reply.
-            if *self.config_status.lock().unwrap() == ConfigStatus::Ok
-                && applied_files.len() == states.len()
-                && states.iter().all(|s| {
-                    for (p, (_, v, _)) in applied_files.iter() {
-                        if p.product().to_string() == s.product
-                            && p.config_id() == s.id
-                            && *v == s.version
-                        {
-                            return true;
-                        }
-                    }
-                    false
-                })
-            {
-                Response::new(http_common::Body::from("{}"))
-            } else {
-                let target_info: Vec<_> = applied_files
+        let response = match self.next_response.lock().unwrap().take() {
+            Some(response) => response,
+            _ => {
+                let known: HashMap<_, _> = request
+                    .cached_target_files
                     .iter()
-                    .map(|(p, (_, v, file))| {
-                        (
-                            p.to_string(),
-                            format!("{:x}", Sha256::digest(file)),
-                            to_raw_value(v).unwrap(),
-                            file.clone(),
-                        )
-                    })
-                    .filter(|(p, hash, _, _)| {
-                        if let Some(existing) = known.get(p) {
-                            existing != hash
-                        } else {
-                            true
-                        }
+                    .map(|m| (m.path.clone(), m.hashes[0].hash.clone()))
+                    .collect();
+                let files = self.files.lock().unwrap();
+                let applied_files: HashMap<_, _> = files
+                    .iter()
+                    .filter(|(_, (targets, _, _))| {
+                        let tracer = request
+                            .client
+                            .as_ref()
+                            .unwrap()
+                            .client_tracer
+                            .as_ref()
+                            .unwrap();
+                        targets.iter().any(|t| {
+                            t.service == tracer.service
+                                && t.env == tracer.env
+                                && t.app_version == tracer.app_version
+                        })
                     })
                     .collect();
-                let targets = TargetsList {
-                    signatures: vec![],
-                    signed: TargetsData {
-                        _type: "",
-                        custom: TargetsCustom {
-                            agent_refresh_interval: Some(1000),
-                            opaque_backend_state: "some state",
+                let states = &request
+                    .client
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .as_ref()
+                    .unwrap()
+                    .config_states;
+                // A change of config_status is itself a change the client must observe, so it
+                // cannot be answered with the "nothing changed" empty reply.
+                if *self.config_status.lock().unwrap() == ConfigStatus::Ok
+                    && applied_files.len() == states.len()
+                    && states.iter().all(|s| {
+                        for (p, (_, v, _)) in applied_files.iter() {
+                            if p.product().to_string() == s.product
+                                && p.config_id() == s.id
+                                && *v == s.version
+                            {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                {
+                    Response::new(http_common::Body::from("{}"))
+                } else {
+                    let target_info: Vec<_> = applied_files
+                        .iter()
+                        .map(|(p, (_, v, file))| {
+                            (
+                                p.to_string(),
+                                format!("{:x}", Sha256::digest(file)),
+                                to_raw_value(v).unwrap(),
+                                file.clone(),
+                            )
+                        })
+                        .filter(|(p, hash, _, _)| {
+                            if let Some(existing) = known.get(p) {
+                                existing != hash
+                            } else {
+                                true
+                            }
+                        })
+                        .collect();
+                    let targets = TargetsList {
+                        signatures: vec![],
+                        signed: TargetsData {
+                            _type: "",
+                            custom: TargetsCustom {
+                                agent_refresh_interval: Some(1000),
+                                opaque_backend_state: "some state",
+                            },
+                            expires: OffsetDateTime::from_unix_timestamp(253402300799).unwrap(),
+                            spec_version: "1.0.0",
+                            targets: target_info
+                                .iter()
+                                .map(|(p, hash, version, _)| {
+                                    (
+                                        p.as_str(),
+                                        TargetData {
+                                            custom: HashMap::from([("v", &**version)]),
+                                            hashes: HashMap::from([("sha256", hash.as_str())]),
+                                            length: 0,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                            version: 1,
                         },
-                        expires: OffsetDateTime::from_unix_timestamp(253402300799).unwrap(),
-                        spec_version: "1.0.0",
-                        targets: target_info
+                    };
+                    let response = ClientGetConfigsResponse {
+                        roots: vec![], /* not checked */
+                        targets: base64::engine::general_purpose::STANDARD
+                            .encode(serde_json::to_vec(&targets).unwrap())
+                            .into_bytes(),
+                        target_files: target_info
                             .iter()
-                            .map(|(p, hash, version, _)| {
-                                (
-                                    p.as_str(),
-                                    TargetData {
-                                        custom: HashMap::from([("v", &**version)]),
-                                        hashes: HashMap::from([("sha256", hash.as_str())]),
-                                        length: 0,
-                                    },
-                                )
+                            .map(|(p, _, _, file)| File {
+                                path: p.to_string(),
+                                raw: base64::engine::general_purpose::STANDARD
+                                    .encode(file)
+                                    .into_bytes(),
                             })
                             .collect(),
-                        version: 1,
-                    },
-                };
-                let response = ClientGetConfigsResponse {
-                    roots: vec![], /* not checked */
-                    targets: base64::engine::general_purpose::STANDARD
-                        .encode(serde_json::to_vec(&targets).unwrap())
-                        .into_bytes(),
-                    target_files: target_info
-                        .iter()
-                        .map(|(p, _, _, file)| File {
-                            path: p.to_string(),
-                            raw: base64::engine::general_purpose::STANDARD
-                                .encode(file)
-                                .into_bytes(),
-                        })
-                        .collect(),
-                    client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
-                    config_status: *self.config_status.lock().unwrap() as i32,
-                };
-                Response::new(http_common::Body::from(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                        client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
+                        config_status: *self.config_status.lock().unwrap() as i32,
+                    };
+                    Response::new(http_common::Body::from(
+                        serde_json::to_vec(&response).unwrap(),
+                    ))
+                }
             }
         };
         *self.last_request.lock().unwrap() = Some(request);
