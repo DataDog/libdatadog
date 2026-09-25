@@ -1,9 +1,9 @@
 // Copyright 2022-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::{AsBytes, CharSlice};
 use crate::Error;
-use libdd_common::tag::{parse_tags, Tag};
+use crate::slice::{AsBytes, CharSlice};
+use libdd_common::tag::{Tag, parse_tags};
 
 #[must_use]
 #[unsafe(no_mangle)]

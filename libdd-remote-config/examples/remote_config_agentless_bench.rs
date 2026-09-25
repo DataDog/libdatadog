@@ -35,10 +35,10 @@
 
 use libdd_capabilities::HttpClientCapability as _;
 use libdd_common::Endpoint;
-use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
-use libdd_remote_config::file_storage::ParsedFileStorage;
 use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::Target;
+use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
+use libdd_remote_config::file_storage::ParsedFileStorage;
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Command;

@@ -9,8 +9,8 @@ use core::marker::PhantomData;
 use core::slice;
 use core::str::Utf8Error;
 use libdd_common::error::FfiSafeErrorMessage;
-use serde::ser::Error;
 use serde::Serializer;
+use serde::ser::Error;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

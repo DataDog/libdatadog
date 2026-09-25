@@ -178,7 +178,7 @@ mod sealed {
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
-    use http::{header::HeaderName, HeaderValue};
+    use http::{HeaderValue, header::HeaderName};
 
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";

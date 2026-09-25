@@ -165,7 +165,7 @@ pub fn count_active_threads() -> anyhow::Result<usize> {
         use core::mem::{size_of, zeroed};
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
         };
 
         let current_pid = std::process::id();
@@ -430,13 +430,15 @@ mod tests {
         let guard = create_temp_file_path("test_prefix", "dat");
 
         // Verify path format
-        assert!(guard
-            .as_ref()
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .starts_with("test_prefix_"));
+        assert!(
+            guard
+                .as_ref()
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("test_prefix_")
+        );
         assert_eq!(guard.as_ref().extension().unwrap(), "dat");
 
         // Test RAII cleanup: create file and verify it's cleaned up when guard drops
