@@ -57,19 +57,17 @@ impl MutableMetadataHandle {
 
     /// Set the runtime_id value
     pub fn set_runtime_id(&self, runtime_id: String) {
-        self.0.rcu(|current| {
-            let mut next = (**current).clone();
-            next.runtime_id = runtime_id.clone();
-            next
+        self.update(|mut metadata| {
+            metadata.runtime_id = runtime_id.clone();
+            metadata
         });
     }
 
     /// Set the process tags value
     pub fn set_process_tags(&self, process_tags: String) {
-        self.0.rcu(|current| {
-            let mut next = (**current).clone();
-            next.process_tags = process_tags.clone();
-            next
+        self.update(|mut metadata| {
+            metadata.process_tags = process_tags.clone();
+            metadata
         });
     }
 
@@ -78,9 +76,9 @@ impl MutableMetadataHandle {
     /// Use this method to update multiple fields at once. Modify the supplied snapshot
     /// rather than replacing it with a previously loaded value. The closure may run
     /// more than once when another writer updates the handle concurrently.
-    pub fn update<F>(&self, f: F)
+    pub fn update<F>(&self, mut f: F)
     where
-        F: Fn(MutableMetadata) -> MutableMetadata,
+        F: FnMut(MutableMetadata) -> MutableMetadata,
     {
         self.0.rcu(|current| {
             let next = (**current).clone();

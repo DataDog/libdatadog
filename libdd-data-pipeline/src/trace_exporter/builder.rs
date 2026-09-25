@@ -39,6 +39,7 @@ use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::warn;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
@@ -884,7 +885,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             }));
 
         let mutable_metadata = match self.mutable_metadata {
-            Some(handle) => handle,
+            Some(handle) => {
+                if self.runtime_id.is_some() {
+                    warn!("`set_runtime_id` value is ignored because `set_mutable_metadata` is also set");
+                }
+                if !self.process_tags.is_empty() {
+                    warn!("`set_process_tags` value is ignored because `set_mutable_metadata` is also set");
+                }
+                handle
+            }
             None => {
                 let mut metadata = MutableMetadata::default();
                 metadata.runtime_id = self
