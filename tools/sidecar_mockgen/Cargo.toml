@@ -1,5 +1,6 @@
 [package]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 name = "sidecar_mockgen"
 version = "0.1.0"
 publish = false

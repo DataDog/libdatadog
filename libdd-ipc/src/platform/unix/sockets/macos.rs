@@ -49,7 +49,7 @@ fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> i
     if path.as_os_str().len() <= SUN_PATH_MAX {
         return f(path);
     }
-    extern "C" {
+    unsafe extern "C" {
         fn pthread_chdir_np(path: *const libc::c_char) -> libc::c_int;
         fn pthread_fchdir_np(fd: libc::c_int) -> libc::c_int;
     }

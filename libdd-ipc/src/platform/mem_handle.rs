@@ -47,9 +47,11 @@ impl NamedShmHandle {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
-        match self.path.as_option() {
-            Some(shm_path) => shm_path.name.to_bytes(),
-            None => b"",
+        unsafe {
+            match self.path.as_option() {
+                Some(shm_path) => shm_path.name.to_bytes(),
+                None => b"",
+            }
         }
     }
 }
@@ -191,7 +193,7 @@ impl MappedMem<NamedShmHandle> {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
-        self.mem.get_path()
+        unsafe { self.mem.get_path() }
     }
 }
 

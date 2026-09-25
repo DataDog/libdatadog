@@ -143,7 +143,7 @@ mod tests {
 
     use super::PlatformHandle;
     macro_rules! assert_file_is_open_for_writing {
-        ($file:expr) => {{
+        ($file:expr_2021) => {{
             writeln!($file, "test").unwrap();
         }};
     }
