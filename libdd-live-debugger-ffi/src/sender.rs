@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tokio_util::task::TaskTracker;
 
 macro_rules! try_c {
-    ($failable:expr) => {
+    ($failable:expr_2021) => {
         match $failable {
             Ok(o) => o,
             Err(e) => return MaybeError::Some(libdd_common_ffi::Error::from(format!("{:?}", e))),
@@ -113,7 +113,7 @@ pub struct SenderHandle {
     channel: mpsc::Sender<SendData>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_build_tags(
     debugger_version: CharSlice,
     env: CharSlice,
@@ -130,7 +130,7 @@ pub extern "C" fn ddog_live_debugger_build_tags(
     ))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_tags_from_raw(tags: CharSlice) -> Box<String> {
     Box::new(percent_encode(tags.as_bytes(), CONTROLS).to_string())
 }
@@ -154,7 +154,7 @@ fn spawn_sender_inner(config: Config, tags: String, handle: &mut *mut SenderHand
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_spawn_sender(
     endpoint: &Endpoint,
     tags: Box<String>,
@@ -168,7 +168,7 @@ pub extern "C" fn ddog_live_debugger_spawn_sender(
 /// Builds an [`Endpoint`] for sending debugger and SymDB payloads directly to
 /// the Datadog intake (agentless), targeting `debugger-intake.{site}`. The
 /// returned endpoint must be freed with `ddog_endpoint_drop`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_endpoint_from_site_and_api_key(
     site: CharSlice,
     api_key: CharSlice,
@@ -187,12 +187,12 @@ pub extern "C" fn ddog_live_debugger_endpoint_from_site_and_api_key(
 /// `ddog_live_debugger_sender_config_*` functions, then hand it to
 /// `ddog_live_debugger_spawn_sender_with_config` (which consumes it). If the
 /// config is not spawned, free it with `ddog_live_debugger_sender_config_drop`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_new() -> Box<Config> {
     Box::new(Config::default())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_set_endpoint(
     config: &mut Config,
     endpoint: &Endpoint,
@@ -201,7 +201,7 @@ pub extern "C" fn ddog_live_debugger_sender_config_set_endpoint(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_set_symdb_endpoint(
     config: &mut Config,
     endpoint: &Endpoint,
@@ -210,7 +210,7 @@ pub extern "C" fn ddog_live_debugger_sender_config_set_symdb_endpoint(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_add_additional_endpoint(
     config: &mut Config,
     endpoint: &Endpoint,
@@ -219,7 +219,7 @@ pub extern "C" fn ddog_live_debugger_sender_config_add_additional_endpoint(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_add_additional_symdb_endpoint(
     config: &mut Config,
     endpoint: &Endpoint,
@@ -228,13 +228,13 @@ pub extern "C" fn ddog_live_debugger_sender_config_add_additional_symdb_endpoint
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_sender_config_drop(_: Box<Config>) {}
 
 /// Spawns a sender from a fully-configured [`Config`], consuming it. Supports
 /// SymDB and additional dual-ship endpoints, unlike
 /// `ddog_live_debugger_spawn_sender`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_spawn_sender_with_config(
     config: Box<Config>,
     tags: Box<String>,
@@ -243,7 +243,7 @@ pub extern "C" fn ddog_live_debugger_spawn_sender_with_config(
     spawn_sender_inner(*config, *tags, handle)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_send_raw_data(
     handle: &mut SenderHandle,
     debugger_type: DebuggerType,
@@ -258,7 +258,7 @@ pub extern "C" fn ddog_live_debugger_send_raw_data(
 /// Enqueues a raw SymDB (symbol database) payload to be forwarded to the SymDB
 /// intake. The body is sent verbatim with the given `content_type`; `data` is
 /// owned and freed once sent. Returns `true` if the payload was enqueued.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_send_symdb_data(
     handle: &mut SenderHandle,
     content_type: CharSlice,
@@ -273,7 +273,7 @@ pub extern "C" fn ddog_live_debugger_send_symdb_data(
         .is_ok()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_live_debugger_send_payload(
     handle: &mut SenderHandle,
     data: &DebuggerPayload,
@@ -288,16 +288,20 @@ pub extern "C" fn ddog_live_debugger_send_payload(
         .is_err()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_live_debugger_drop_sender(sender: *mut SenderHandle) {
-    drop(Box::from_raw(sender));
+    unsafe {
+        drop(Box::from_raw(sender));
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_live_debugger_join_sender(sender: *mut SenderHandle) {
-    let sender = Box::from_raw(sender);
-    drop(sender.channel);
-    _ = sender.join.join();
+    unsafe {
+        let sender = Box::from_raw(sender);
+        drop(sender.channel);
+        _ = sender.join.join();
+    }
 }

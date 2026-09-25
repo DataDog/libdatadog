@@ -197,16 +197,15 @@ impl TraceFlusher {
         let mut entry = configs.writers.entry(endpoint.clone());
         let writer = match entry {
             Entry::Occupied(ref mut entry) => entry.get_mut(),
-            Entry::Vacant(entry) => {
-                if let Ok(writer) = crate::agent_remote_config::new_writer(&endpoint) {
-                    entry.insert(AgentRemoteConfig {
-                        writer,
-                        last_write: Instant::now(),
-                    })
-                } else {
+            Entry::Vacant(entry) => match crate::agent_remote_config::new_writer(&endpoint) {
+                Ok(writer) => entry.insert(AgentRemoteConfig {
+                    writer,
+                    last_write: Instant::now(),
+                }),
+                _ => {
                     return;
                 }
-            }
+            },
         };
         writer.writer.write(contents.as_slice());
 

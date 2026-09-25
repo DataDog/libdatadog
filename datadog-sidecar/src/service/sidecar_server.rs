@@ -598,7 +598,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .filter(|a| match a {
                 SidecarAction::FfeExposureBatch(batch) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
-                        if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
+                        match ffe_exposures_flusher::exposure_endpoint(base) { Some(ep) => {
                             let batch = batch.clone();
                             let client = ffe_http_client.clone();
                             let deduplicator = self.server.ffe_exposure_deduplicator.clone();
@@ -611,11 +611,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
                                 )
                                 .await;
                             });
-                        } else {
+                        } _ => {
                             debug!(
                                 "ffe_exposures_flusher: could not derive endpoint, dropping batch"
                             );
-                        }
+                        }}
                     } else {
                         debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
                     }
@@ -623,8 +623,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }
                 SidecarAction::FfeFlagEvaluationBatch(batch) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
-                        if let Some(ep) = ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
-                        {
+                        match ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
+                        { Some(ep) => {
                             self.server.ffe_flagevaluation_coalescer.enqueue(
                                 ffe_http_client.clone(),
                                 ep,
@@ -634,11 +634,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
                                 ),
                                 trace_config.tracer_version.as_str(),
                             );
-                        } else {
+                        } _ => {
                             debug!(
                                 "ffe_flagevaluation_flusher: could not derive endpoint, dropping batch"
                             );
-                        }
+                        }}
                     } else {
                         debug!(
                             "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
@@ -647,16 +647,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     false
                 }
                 SidecarAction::FfeEvaluationMetrics { context, metrics } => {
-                    if let Some(ep) = session.get_otlp_metrics_endpoint().clone() {
+                    match session.get_otlp_metrics_endpoint().clone() { Some(ep) => {
                         let client = ffe_http_client.clone();
                         let context = context.clone();
                         let metrics = metrics.clone();
                         tokio::spawn(async move {
                             ffe_metrics_flusher::send_metrics(&client, &ep, context, metrics).await;
                         });
-                    } else {
+                    } _ => {
                         debug!("ffe_metrics_flusher: no configured endpoint, dropping batch");
-                    }
+                    }}
                     false
                 }
                 _ => true,
@@ -1075,23 +1075,26 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
-        if let Some(endpoint) = trace_config.endpoint.clone() {
-            let server = self.server.clone();
-            let retry_interval = trace_config.retry_interval;
-            tokio::spawn(async move {
-                match handle.map() {
-                    Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+        match trace_config.endpoint.clone() {
+            Some(endpoint) => {
+                let server = self.server.clone();
+                let retry_interval = trace_config.retry_interval;
+                tokio::spawn(async move {
+                    match handle.map() {
+                        Ok(mapped) => {
+                            let bytes = tinybytes::Bytes::from(mapped);
+                            server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                        }
+                        Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                     }
-                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
-                }
-            });
-        } else {
-            warn!(
-                "Received trace data ({handle:?}) for missing session {}",
-                instance_id.session_id
-            );
+                });
+            }
+            _ => {
+                warn!(
+                    "Received trace data ({handle:?}) for missing session {}",
+                    instance_id.session_id
+                );
+            }
         }
     }
 
@@ -1105,18 +1108,21 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
 
-        if let Some(endpoint) = trace_config.endpoint.clone() {
-            let server = self.server.clone();
-            let retry_interval = trace_config.retry_interval;
-            tokio::spawn(async move {
-                let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
-            });
-        } else {
-            warn!(
-                "Received trace data for missing session {}",
-                instance_id.session_id
-            );
+        match trace_config.endpoint.clone() {
+            Some(endpoint) => {
+                let server = self.server.clone();
+                let retry_interval = trace_config.retry_interval;
+                tokio::spawn(async move {
+                    let bytes = tinybytes::Bytes::from(data);
+                    server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+                });
+            }
+            _ => {
+                warn!(
+                    "Received trace data for missing session {}",
+                    instance_id.session_id
+                );
+            }
         }
     }
 
@@ -1132,30 +1138,33 @@ impl SidecarInterface for ConnectionSidecarHandler {
         self.track_instance(&instance_id);
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
-            let server = self.server.clone();
-            let retry_interval = trace_config.retry_interval;
-            tokio::spawn(async move {
-                match handle.map() {
-                    Ok(mapped) => {
-                        let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v1(
-                            generic,
-                            &lang_interpreter,
-                            &lang_vendor,
-                            bytes,
-                            &endpoint,
-                            retry_interval,
-                        );
+        match trace_config.endpoint_v1.clone() {
+            Some(endpoint) => {
+                let server = self.server.clone();
+                let retry_interval = trace_config.retry_interval;
+                tokio::spawn(async move {
+                    match handle.map() {
+                        Ok(mapped) => {
+                            let bytes = tinybytes::Bytes::from(mapped);
+                            server.send_trace_v1(
+                                generic,
+                                &lang_interpreter,
+                                &lang_vendor,
+                                bytes,
+                                &endpoint,
+                                retry_interval,
+                            );
+                        }
+                        Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                     }
-                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
-                }
-            });
-        } else {
-            warn!(
-                "Received trace data ({handle:?}) for missing session {}",
-                instance_id.session_id
-            );
+                });
+            }
+            _ => {
+                warn!(
+                    "Received trace data ({handle:?}) for missing session {}",
+                    instance_id.session_id
+                );
+            }
         }
     }
 
@@ -1171,25 +1180,28 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session = self.server.get_session(&instance_id.session_id);
         let trace_config = session.get_trace_config();
 
-        if let Some(endpoint) = trace_config.endpoint_v1.clone() {
-            let server = self.server.clone();
-            let retry_interval = trace_config.retry_interval;
-            tokio::spawn(async move {
-                let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v1(
-                    generic,
-                    &lang_interpreter,
-                    &lang_vendor,
-                    bytes,
-                    &endpoint,
-                    retry_interval,
+        match trace_config.endpoint_v1.clone() {
+            Some(endpoint) => {
+                let server = self.server.clone();
+                let retry_interval = trace_config.retry_interval;
+                tokio::spawn(async move {
+                    let bytes = tinybytes::Bytes::from(data);
+                    server.send_trace_v1(
+                        generic,
+                        &lang_interpreter,
+                        &lang_vendor,
+                        bytes,
+                        &endpoint,
+                        retry_interval,
+                    );
+                });
+            }
+            _ => {
+                warn!(
+                    "Received trace data for missing session {}",
+                    instance_id.session_id
                 );
-            });
-        } else {
-            warn!(
-                "Received trace data for missing session {}",
-                instance_id.session_id
-            );
+            }
         }
     }
 

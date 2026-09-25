@@ -6,7 +6,7 @@ use std::future::Future;
 
 #[macro_export]
 macro_rules! spawn_map_err {
-    ($fut:expr, $err:expr) => {
+    ($fut:expr_2021, $err:expr_2021) => {
         tokio::spawn(async move {
             if let Err(e) = tokio::spawn($fut).await {
                 ($err)(e);

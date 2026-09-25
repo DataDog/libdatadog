@@ -512,10 +512,13 @@ impl TelemetryCachedClient {
                 SidecarAction::Telemetry(t) => actions.push(t),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
                     let metric_name = point.0.clone();
-                    if let Some(telemetry_action) = self.to_telemetry_point(point) {
-                        actions.push(telemetry_action);
-                    } else {
-                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    match self.to_telemetry_point(point) {
+                        Some(telemetry_action) => {
+                            actions.push(telemetry_action);
+                        }
+                        _ => {
+                            warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                        }
                     }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately

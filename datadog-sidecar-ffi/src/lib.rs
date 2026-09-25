@@ -77,7 +77,7 @@ fn otlp_metrics_endpoint_with_agent_test_token(
     otlp_metrics_endpoint
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[cfg(target_os = "windows")]
 pub extern "C" fn ddog_setup_crashtracking(
     endpoint: Option<&Endpoint>,
@@ -97,28 +97,30 @@ pub struct NativeFile {
 /// # Safety
 /// Caller must ensure the file descriptor associated with FILE pointer is open, and valid
 /// Caller must not close the FILE associated file descriptor after calling this function
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_ph_file_from(file: *mut libc::FILE) -> NativeFile {
-    #[cfg(unix)]
-    let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
-    #[cfg(windows)]
-    let handle =
-        PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
+    unsafe {
+        #[cfg(unix)]
+        let handle = PlatformHandle::from_raw_fd(libc::fileno(file));
+        #[cfg(windows)]
+        let handle =
+            PlatformHandle::from_raw_handle(libc::get_osfhandle(libc::fileno(file)) as RawHandle);
 
-    NativeFile {
-        handle: Box::from(handle),
+        NativeFile {
+            handle: Box::from(handle),
+        }
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_ph_file_clone(platform_handle: &NativeFile) -> Box<NativeFile> {
     Box::new(NativeFile {
         handle: platform_handle.handle.clone(),
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_ph_file_drop(ph: NativeFile) {
     drop(ph)
 }
@@ -128,7 +130,7 @@ pub enum AgentRemoteConfigReader {
     Unnamed(datadog_sidecar::agent_remote_config::AgentRemoteConfigReader<ShmHandle>),
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_alloc_anon_shm_handle(
     size: usize,
     handle: &mut *mut ShmHandle,
@@ -138,7 +140,7 @@ pub extern "C" fn ddog_alloc_anon_shm_handle(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_alloc_anon_shm_handle_named(
     size: usize,
     handle: &mut *mut ShmHandle,
@@ -150,7 +152,7 @@ pub extern "C" fn ddog_alloc_anon_shm_handle_named(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_map_shm(
     handle: Box<ShmHandle>,
     mapped: &mut *mut MappedMem<ShmHandle>,
@@ -167,15 +169,15 @@ pub extern "C" fn ddog_map_shm(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_unmap_shm(mapped: Box<MappedMem<ShmHandle>>) -> Box<ShmHandle> {
     Box::new((*mapped).into())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_drop_anon_shm_handle(_: Box<ShmHandle>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_create_agent_remote_config_writer(
     writer: &mut *mut AgentRemoteConfigWriter<ShmHandle>,
     handle: &mut *mut ShmHandle,
@@ -187,14 +189,14 @@ pub extern "C" fn ddog_create_agent_remote_config_writer(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_reader_for_endpoint(
     endpoint: &Endpoint,
 ) -> Box<AgentRemoteConfigReader> {
     Box::new(AgentRemoteConfigReader::Named(new_reader(endpoint)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_agent_remote_config_reader_for_anon_shm(
     handle: &ShmHandle,
@@ -207,7 +209,7 @@ pub unsafe extern "C" fn ddog_agent_remote_config_reader_for_anon_shm(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_write(
     writer: &AgentRemoteConfigWriter<ShmHandle>,
     data: ffi::CharSlice,
@@ -227,7 +229,7 @@ where
     new
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_read<'a>(
     reader: &'a mut AgentRemoteConfigReader,
     data: &mut ffi::CharSlice<'a>,
@@ -242,14 +244,14 @@ pub extern "C" fn ddog_agent_remote_config_read<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_reader_drop(_: Box<AgentRemoteConfigReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_agent_remote_config_writer_drop(_: Box<AgentRemoteConfigWriter<ShmHandle>>) {
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
     language: &ffi::CharSlice<'a>,
@@ -279,14 +281,14 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
 
 /// # Safety
 /// Argument should point to a valid C string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_remote_config_reader_for_path(
     path: *const c_char,
 ) -> Box<RemoteConfigReader> {
-    Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path)))
+    unsafe { Box::new(RemoteConfigReader::from_path(CStr::from_ptr(path))) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_remote_config_path(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
@@ -295,12 +297,14 @@ extern "C" fn ddog_remote_config_path(
     let target = unsafe { &*target };
     path_for_remote_config(id, target).into_raw()
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 unsafe extern "C" fn ddog_remote_config_path_free(path: *mut c_char) {
-    drop(CString::from_raw(path));
+    unsafe {
+        drop(CString::from_raw(path));
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_remote_config_read<'a>(
     reader: &'a mut RemoteConfigReader,
     data: &mut ffi::CharSlice<'a>,
@@ -310,15 +314,15 @@ pub extern "C" fn ddog_remote_config_read<'a>(
     new
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_remote_config_reader_drop(_: Box<RemoteConfigReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_transport_drop(_: Box<SidecarTransport>) {}
 
 /// # Safety
 /// Caller must ensure the process is safe to fork, at the time when this method is called
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
 
@@ -337,7 +341,7 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
     let cfg = datadog_sidecar::config::FromEnv::config();
     #[cfg(unix)]
@@ -347,7 +351,7 @@ pub extern "C" fn ddog_sidecar_connect_master(pid: i32) -> MaybeError {
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_connect_worker(
     pid: i32,
     connection: &mut *mut SidecarTransport,
@@ -358,33 +362,33 @@ pub extern "C" fn ddog_sidecar_connect_worker(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_shutdown_master_listener() -> MaybeError {
     try_c!(MasterListener::shutdown());
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_is_master_listener_active(pid: i32) -> bool {
     MasterListener::is_active(pid)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
     try_c!(MasterListener::clear_inherited_state());
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> MaybeError {
     try_c!(blocking::ping(transport));
 
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_flush(
     transport: &mut Box<SidecarTransport>,
     options: SidecarFlushOptions,
@@ -394,7 +398,7 @@ pub extern "C" fn ddog_sidecar_flush(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     session_id: ffi::CharSlice,
@@ -406,19 +410,19 @@ pub unsafe extern "C" fn ddog_sidecar_instanceId_build(
     ))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_instanceId_drop(instance_id: Box<InstanceId>) {
     drop(instance_id)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_queueId_generate() -> QueueId {
     QueueId::new_unique()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     language_name: ffi::CharSlice,
@@ -434,14 +438,14 @@ pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_build(
     Box::from(inner)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_runtimeMeta_drop(meta: Box<RuntimeMetadata>) {
     drop(meta)
 }
 
 /// Reports the runtime configuration to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
     transport: &mut Box<SidecarTransport>,
@@ -476,7 +480,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_enqueueConfig(
 }
 
 /// Reports an endpoint to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
     transport: &mut Box<SidecarTransport>,
@@ -508,7 +512,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addEndpoint(
 }
 
 /// Reports a dependency to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
     transport: &mut Box<SidecarTransport>,
@@ -538,7 +542,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addDependency(
 }
 
 /// Reports an integration to the telemetry.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
     transport: &mut Box<SidecarTransport>,
@@ -571,7 +575,7 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_addIntegration(
 }
 
 /// Enqueues a list of actions to be performed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
     transport: &mut Box<SidecarTransport>,
@@ -592,7 +596,7 @@ pub unsafe extern "C" fn ddog_sidecar_lifecycle_end(
 }
 
 /// Enqueues a list of actions to be performed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_application_remove(
     transport: &mut Box<SidecarTransport>,
@@ -605,7 +609,7 @@ pub unsafe extern "C" fn ddog_sidecar_application_remove(
 }
 
 /// Flushes the telemetry data.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
     transport: &mut Box<SidecarTransport>,
@@ -628,13 +632,13 @@ pub unsafe extern "C" fn ddog_sidecar_telemetry_flush(
 }
 
 /// Returns whether the sidecar transport is closed or not.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_is_closed(transport: &mut Box<SidecarTransport>) -> bool {
     transport.is_closed()
 }
 
 /// Sets the configuration for a session.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     transport: &mut Box<SidecarTransport>,
@@ -667,87 +671,88 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     root_session_id: ffi::CharSlice,
     parent_session_id: ffi::CharSlice,
 ) -> MaybeError {
-    let session_id_str: String = session_id.to_utf8_lossy().into();
-    let otlp_metrics_endpoint: Option<Endpoint> =
-        unsafe { otlp_metrics_endpoint.as_ref().cloned() };
-    let otlp_metrics_endpoint =
-        otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
-    let session_config = SessionConfig {
-        endpoint: agent_endpoint.clone(),
-        dogstatsd_endpoint: dogstatsd_endpoint.clone(),
-        otlp_metrics_endpoint,
-        language: language.to_utf8_lossy().into(),
-        language_version: language_version.to_utf8_lossy().into(),
-        tracer_version: tracer_version.to_utf8_lossy().into(),
-        flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
-        remote_config_poll_interval: Duration::from_millis(
-            remote_config_poll_interval_millis as u64,
-        ),
-        telemetry_heartbeat_interval: Duration::from_millis(
-            telemetry_heartbeat_interval_millis as u64,
-        ),
-        telemetry_extended_heartbeat_interval: Duration::from_millis(
-            telemetry_extended_heartbeat_interval_millis,
-        ),
-        force_flush_size,
-        force_drop_size,
-        log_level: log_level.to_utf8_lossy().into(),
-        log_file: if log_path.is_empty() {
-            config::FromEnv::log_method()
-        } else {
-            LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
-        },
-        remote_config_products: ffi::Slice::from_raw_parts(
-            remote_config_products,
-            remote_config_products_count,
-        )
-        .as_slice()
-        .to_vec(),
-        remote_config_capabilities: ffi::Slice::from_raw_parts(
-            remote_config_capabilities,
-            remote_config_capabilities_count,
-        )
-        .as_slice()
-        .to_vec(),
-        remote_config_enabled,
-        process_tags: process_tags.to_vec(),
-        peer_tag_keys: vec![],
-        span_kinds_stats_computed: vec![],
-        hostname: hostname.to_utf8_lossy().into(),
-        root_service: root_service.to_utf8_lossy().into(),
-        root_session_id: if root_session_id.is_empty() {
-            None
-        } else {
-            Some(root_session_id.to_utf8_lossy().into())
-        },
-        parent_session_id: if parent_session_id.is_empty() {
-            None
-        } else {
-            Some(parent_session_id.to_utf8_lossy().into())
-        },
-        retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
-    };
-    #[cfg(unix)]
-    try_c!(blocking::set_session_config(
-        transport,
-        session_id_str,
-        &session_config,
-        is_fork,
-    ));
-    #[cfg(windows)]
-    try_c!(blocking::set_session_config(
-        transport,
-        session_id_str,
-        datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
-        &session_config,
-        is_fork,
-    ));
+    unsafe {
+        let session_id_str: String = session_id.to_utf8_lossy().into();
+        let otlp_metrics_endpoint: Option<Endpoint> = otlp_metrics_endpoint.as_ref().cloned();
+        let otlp_metrics_endpoint =
+            otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
+        let session_config = SessionConfig {
+            endpoint: agent_endpoint.clone(),
+            dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+            otlp_metrics_endpoint,
+            language: language.to_utf8_lossy().into(),
+            language_version: language_version.to_utf8_lossy().into(),
+            tracer_version: tracer_version.to_utf8_lossy().into(),
+            flush_interval: Duration::from_millis(flush_interval_milliseconds as u64),
+            remote_config_poll_interval: Duration::from_millis(
+                remote_config_poll_interval_millis as u64,
+            ),
+            telemetry_heartbeat_interval: Duration::from_millis(
+                telemetry_heartbeat_interval_millis as u64,
+            ),
+            telemetry_extended_heartbeat_interval: Duration::from_millis(
+                telemetry_extended_heartbeat_interval_millis,
+            ),
+            force_flush_size,
+            force_drop_size,
+            log_level: log_level.to_utf8_lossy().into(),
+            log_file: if log_path.is_empty() {
+                config::FromEnv::log_method()
+            } else {
+                LogMethod::File(String::from(log_path.to_utf8_lossy()).into())
+            },
+            remote_config_products: ffi::Slice::from_raw_parts(
+                remote_config_products,
+                remote_config_products_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_capabilities: ffi::Slice::from_raw_parts(
+                remote_config_capabilities,
+                remote_config_capabilities_count,
+            )
+            .as_slice()
+            .to_vec(),
+            remote_config_enabled,
+            process_tags: process_tags.to_vec(),
+            peer_tag_keys: vec![],
+            span_kinds_stats_computed: vec![],
+            hostname: hostname.to_utf8_lossy().into(),
+            root_service: root_service.to_utf8_lossy().into(),
+            root_session_id: if root_session_id.is_empty() {
+                None
+            } else {
+                Some(root_session_id.to_utf8_lossy().into())
+            },
+            parent_session_id: if parent_session_id.is_empty() {
+                None
+            } else {
+                Some(parent_session_id.to_utf8_lossy().into())
+            },
+            retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+        };
+        #[cfg(unix)]
+        try_c!(blocking::set_session_config(
+            transport,
+            session_id_str,
+            &session_config,
+            is_fork,
+        ));
+        #[cfg(windows)]
+        try_c!(blocking::set_session_config(
+            transport,
+            session_id_str,
+            datadog_sidecar::service::RemoteConfigNotifyFunction(_remote_config_notify_function,),
+            &session_config,
+            is_fork,
+        ));
 
-    MaybeError::None
+        MaybeError::None
+    }
 }
 
 /// Updates the process_tags for an existing session.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     transport: &mut Box<SidecarTransport>,
@@ -764,7 +769,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
 /// Records the tracer's auto-resolved default service name for the session
 /// (process-bound; sidecar emits `svc.auto:<name>` when `DD_SERVICE` is not
 /// currently set for the active request). Pass an empty `CharSlice` to clear.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
     transport: &mut Box<SidecarTransport>,
@@ -784,7 +789,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
 /// mutable; refresh on each RINIT). When `true` the sidecar emits
 /// `svc.user:true`; when `false` it falls back to the previously-recorded
 /// `svc.auto:<name>` (if any).
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_user_service_defined(
     transport: &mut Box<SidecarTransport>,
@@ -842,7 +847,7 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
 ///
 /// # Safety
 /// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_log(
     session_id_ffi: CharSlice,
     runtime_id_ffi: CharSlice,
@@ -989,7 +994,7 @@ fn ddog_sidecar_enqueue_telemetry_log_impl(
 ///
 /// # Safety
 /// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_point(
     session_id_ffi: CharSlice,
     runtime_id_ffi: CharSlice,
@@ -1058,7 +1063,7 @@ fn ddog_sidecar_enqueue_telemetry_point_impl(
 ///
 /// # Safety
 /// Pointers must be valid, strings must be null-terminated if not null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_enqueue_telemetry_metric(
     session_id_ffi: CharSlice,
     runtime_id_ffi: CharSlice,
@@ -1115,7 +1120,7 @@ fn ddog_sidecar_enqueue_telemetry_metric_impl(
 }
 
 /// Sends a trace to the sidecar via shared memory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
     transport: &mut Box<SidecarTransport>,
@@ -1138,7 +1143,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_shm(
 }
 
 /// Sends a trace as bytes to the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     transport: &mut Box<SidecarTransport>,
@@ -1161,7 +1166,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
 /// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
 /// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
 /// `/v1.0/traces` endpoint.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     transport: &mut Box<SidecarTransport>,
@@ -1195,7 +1200,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
 /// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
 /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
 /// endpoint.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     transport: &mut Box<SidecarTransport>,
@@ -1224,7 +1229,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
@@ -1247,7 +1252,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_data(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
@@ -1256,7 +1261,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     queue_id: QueueId,
     payload: Box<DebuggerPayload>,
 ) -> MaybeError {
-    ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
+    unsafe { ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload]) }
 }
 
 #[repr(C)]
@@ -1316,7 +1321,7 @@ pub struct FfeFlagEvaluation<'a> {
 /// # Safety
 /// `context` and every element in `exposures` must contain valid UTF-8
 /// `CharSlice` values. Empty `exposures` is a no-op.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     transport: &mut Box<SidecarTransport>,
@@ -1386,7 +1391,7 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// # Safety
 /// `context` and every element in `flag_evaluations` must contain valid UTF-8
 /// `CharSlice` values. Empty `flag_evaluations` is a no-op.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
     transport: &mut Box<SidecarTransport>,
@@ -1459,7 +1464,7 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
 /// # Safety
 /// `context` and every element in `metrics` must contain valid UTF-8
 /// `CharSlice` values. Empty `metrics` is a no-op.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     transport: &mut Box<SidecarTransport>,
@@ -1648,7 +1653,7 @@ fn optional_json_object_string(slice: CharSlice) -> Result<Option<String>, Strin
     Ok(prune_evaluation_context_json(value))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals
 pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics(
@@ -1667,7 +1672,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_diagnostics(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     transport: &mut Box<SidecarTransport>,
@@ -1695,7 +1700,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     MaybeError::None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_request_config(
     transport: &mut Box<SidecarTransport>,
@@ -1714,41 +1719,45 @@ pub unsafe extern "C" fn ddog_sidecar_set_request_config(
 }
 
 /// Dumps the current state of the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dump(
     transport: &mut Box<SidecarTransport>,
 ) -> ffi::CharSlice<'_> {
-    let str = match blocking::dump(transport) {
-        Ok(dump) => dump,
-        Err(e) => format!("{e:?}"),
-    };
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    unsafe {
+        let str = match blocking::dump(transport) {
+            Ok(dump) => dump,
+            Err(e) => format!("{e:?}"),
+        };
+        let size = str.len();
+        let malloced = libc::malloc(size) as *mut u8;
+        let buf = slice::from_raw_parts_mut(malloced, size);
+        buf.copy_from_slice(str.as_bytes());
+        ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    }
 }
 
 /// Retrieves the current statistics of the sidecar.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_stats(
     transport: &mut Box<SidecarTransport>,
 ) -> ffi::CharSlice<'_> {
-    let str = match blocking::stats(transport) {
-        Ok(stats) => stats,
-        Err(e) => format!("{e:?}"),
-    };
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    unsafe {
+        let str = match blocking::stats(transport) {
+            Ok(stats) => stats,
+            Err(e) => format!("{e:?}"),
+        };
+        let size = str.len();
+        let malloced = libc::malloc(size) as *mut u8;
+        let buf = slice::from_raw_parts_mut(malloced, size);
+        buf.copy_from_slice(str.as_bytes());
+        ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
+    }
 }
 
 /// Send a DogStatsD "count" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
     transport: &mut Box<SidecarTransport>,
@@ -1772,7 +1781,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_count(
 }
 
 /// Send a DogStatsD "distribution" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
     transport: &mut Box<SidecarTransport>,
@@ -1796,7 +1805,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_distribution(
 }
 
 /// Send a DogStatsD "gauge" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
     transport: &mut Box<SidecarTransport>,
@@ -1820,7 +1829,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_gauge(
 }
 
 /// Send a DogStatsD "histogram" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
     transport: &mut Box<SidecarTransport>,
@@ -1844,7 +1853,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_histogram(
 }
 
 /// Send a DogStatsD "set" metric.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
     transport: &mut Box<SidecarTransport>,
@@ -1868,7 +1877,7 @@ pub unsafe extern "C" fn ddog_sidecar_dogstatsd_set(
 }
 
 /// Sets x-datadog-test-session-token on all requests for the given session.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
     transport: &mut Box<SidecarTransport>,
@@ -1889,7 +1898,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_test_session_token(
 ///
 /// * `transport` - The transport used for communication.
 /// * `factory` - A C function that must return a pointer to "ddog_SidecarTransport"
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub extern "C" fn ddog_sidecar_reconnect(
     transport: &mut Box<SidecarTransport>,
@@ -1899,14 +1908,14 @@ pub extern "C" fn ddog_sidecar_reconnect(
 }
 
 /// Gets an agent info reader.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_reader(endpoint: &Endpoint) -> Box<AgentInfoReader> {
     Box::new(AgentInfoReader::new(endpoint))
 }
 
 /// Gets the current agent info environment (or empty if not existing)
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
     reader: &'a mut AgentInfoReader,
@@ -1926,7 +1935,7 @@ pub unsafe extern "C" fn ddog_get_agent_info_env<'a>(
 }
 
 /// Gets the container tags hash from agent info (or empty if not existing)
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_get_agent_info_container_tags_hash<'a>(
     reader: &'a mut AgentInfoReader,
@@ -1943,7 +1952,7 @@ pub unsafe extern "C" fn ddog_get_agent_info_container_tags_hash<'a>(
 
 #[macro_export]
 macro_rules! check {
-    ($failable:expr, $msg:expr) => {
+    ($failable:expr_2021, $msg:expr_2021) => {
         match $failable {
             Ok(o) => o,
             Err(e) => {
@@ -1966,98 +1975,101 @@ pub struct SenderParameters {
     pub url: CharSlice<'static>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     traces: &mut TracesBytes,
     parameters: &mut SenderParameters,
 ) {
-    let size: usize = traces.iter().map(|trace| trace.len()).sum();
+    unsafe {
+        let size: usize = traces.iter().map(|trace| trace.len()).sum();
 
-    // Check connection to the sidecar
-    if parameters.transport.is_closed() {
-        tracing::info!(
-            "Skipping flushing traces of size {} as connection to sidecar failed",
-            size
-        );
-        return;
-    }
-
-    // Create and map shared memory
-    let shm = check!(
-        ShmHandle::new(parameters.limit),
-        "Failed to create shared memory"
-    );
-
-    let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
-
-    for chunk in traces.iter_mut() {
-        for span in chunk.iter_mut() {
-            span.dedup();
-        }
-    }
-
-    // Write traces to the shared memory
-    let mut shm_slice = mapped_shm.as_slice_mut();
-    let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
-        Ok(()) => shm_slice_len - shm_slice.len(),
-        Err(_) => {
-            tracing::error!("Failed serializing the traces");
+        // Check connection to the sidecar
+        if parameters.transport.is_closed() {
+            tracing::info!(
+                "Skipping flushing traces of size {} as connection to sidecar failed",
+                size
+            );
             return;
         }
-    };
 
-    // Send traces to the sidecar via the shared memory handler
-    let mut size_hint = written;
-    if parameters.n_requests > 0 {
-        size_hint = size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
-    }
+        // Create and map shared memory
+        let shm = check!(
+            ShmHandle::new(parameters.limit),
+            "Failed to create shared memory"
+        );
 
-    let send_error = blocking::send_trace_v04_shm(
-        &mut parameters.transport,
-        &parameters.instance_id,
-        shm,
-        size_hint,
-        check!(
-            (&parameters.tracer_headers_tags).try_into(),
-            "Failed to convert tracer headers tags"
-        ),
-    );
+        let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
-    // Retry sending traces via bytes if there was an error
-    if send_error.is_err() {
-        match blocking::send_trace_v04_bytes(
+        for chunk in traces.iter_mut() {
+            for span in chunk.iter_mut() {
+                span.dedup();
+            }
+        }
+
+        // Write traces to the shared memory
+        let mut shm_slice = mapped_shm.as_slice_mut();
+        let shm_slice_len = shm_slice.len();
+        let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
+            Ok(()) => shm_slice_len - shm_slice.len(),
+            Err(_) => {
+                tracing::error!("Failed serializing the traces");
+                return;
+            }
+        };
+
+        // Send traces to the sidecar via the shared memory handler
+        let mut size_hint = written;
+        if parameters.n_requests > 0 {
+            size_hint =
+                size_hint.max((parameters.buffer_size / parameters.n_requests + 1) as usize);
+        }
+
+        let send_error = blocking::send_trace_v04_shm(
             &mut parameters.transport,
             &parameters.instance_id,
-            msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
+            shm,
+            size_hint,
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"
             ),
-        ) {
-            Ok(_) => {}
-            Err(_) => tracing::debug!(
-                "Failed sending traces via shm to sidecar: {}",
-                send_error.err().unwrap_unchecked().to_string()
-            ),
-        };
-    }
+        );
 
-    tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
-    // tracing::info!(
-    //     "Flushing traces of size {} to send-queue for {}",
-    //     size,
-    //     parameters.url
-    // );
+        // Retry sending traces via bytes if there was an error
+        if send_error.is_err() {
+            match blocking::send_trace_v04_bytes(
+                &mut parameters.transport,
+                &parameters.instance_id,
+                msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
+                check!(
+                    (&parameters.tracer_headers_tags).try_into(),
+                    "Failed to convert tracer headers tags"
+                ),
+            ) {
+                Ok(_) => {}
+                Err(_) => tracing::debug!(
+                    "Failed sending traces via shm to sidecar: {}",
+                    send_error.err().unwrap_unchecked().to_string()
+                ),
+            };
+        }
+
+        tracing::event!(target: "info", tracing::Level::INFO, "Flushing trace of size {} to send-queue for {}", size, parameters.url);
+        // tracing::info!(
+        //     "Flushing traces of size {} to send-queue for {}",
+        //     size,
+        //     parameters.url
+        // );
+    }
 }
 
 /// Drops the agent info reader.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTransport>) {
     // This shall fail.
@@ -2085,7 +2097,7 @@ pub struct AppsecCResponse {
 ///
 /// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
     transport: &mut Box<SidecarTransport>,
@@ -2106,7 +2118,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_appsec_message(
 ///
 /// Returns a zeroed `ddog_AppsecCResponse` (null ptr) on transport errors.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn datadog_sidecar_send_appsec_message_without_reconnect(
     transport: &mut Box<SidecarTransport>,
@@ -2143,7 +2155,7 @@ fn appsec_c_response(response: std::io::Result<(Vec<u8>, bool)>) -> AppsecCRespo
 
 /// Frees an `AppsecCResponse` returned by an AppSec message function.
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
     if !response.ptr.is_null() {
         // SAFETY: ptr/len/capacity were produced by ManuallyDrop<Vec> in

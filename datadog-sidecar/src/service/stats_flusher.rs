@@ -299,11 +299,10 @@ pub(crate) fn get_or_create_concentrator(
                     session_config_closure,
                     process_tags,
                 );
-                let worker = telemetry_mutex
+                telemetry_mutex
                     .lock_or_panic()
                     .as_ref()
-                    .map(|c| c.worker.clone());
-                worker
+                    .map(|c| c.worker.clone())
             };
 
             let state = Arc::new(SpanConcentratorState {
