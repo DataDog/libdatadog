@@ -9,8 +9,8 @@ mod otlp_export_tests {
     use libdd_trace_utils::span::v05::dict::SharedDict;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
 
     fn get_v04_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {

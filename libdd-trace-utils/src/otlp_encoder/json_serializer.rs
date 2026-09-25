@@ -7,18 +7,18 @@
 //! This is the only place the OTLP/JSON wire shape is defined: the prost types are the single
 //! source of truth, serialized directly to the OTLP/JSON wire format here.
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::ser::{Serialize, SerializeMap, Serializer};
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-    any_value::Value as ProtoValue, AnyValue, ArrayValue, InstrumentationScope, KeyValue,
-    KeyValueList,
+    AnyValue, ArrayValue, InstrumentationScope, KeyValue, KeyValueList,
+    any_value::Value as ProtoValue,
 };
 use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource;
 use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
-    span::{Event, Link},
     ResourceSpans, ScopeSpans, Span, Status,
+    span::{Event, Link},
 };
 
 /// Top-level wrapper: `serde_json::to_vec(&OtlpJson(req))` yields the OTLP/JSON body.
@@ -391,10 +391,10 @@ mod tests {
     use super::*;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-        any_value::Value as PV, AnyValue, KeyValue,
+        AnyValue, KeyValue, any_value::Value as PV,
     };
     use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
-        span::Link, ResourceSpans, ScopeSpans, Span, Status,
+        ResourceSpans, ScopeSpans, Span, Status, span::Link,
     };
 
     fn span_json(s: Span) -> serde_json::Value {

@@ -5,7 +5,7 @@
 //! DDSketch summaries from the span concentrator are bucketed into fixed explicit bounds (seconds).
 
 use super::config::OtlpMetricsConfig;
-use super::exporter::{send_otlp_http, OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES};
+use super::exporter::{OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES, send_otlp_http};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
@@ -15,7 +15,7 @@ use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
 use libdd_trace_stats::stats_exporter::{FlushableStatsExport, StatsCap};
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::error;
