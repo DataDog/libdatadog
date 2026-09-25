@@ -50,9 +50,11 @@ pub struct CrashtrackerConfiguration {
     /// `EnabledWithSymbolsInReceiver`; other modes retain the collector stack.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     unwind_from_ucontext: bool,
-    /// For software-generated signals, drop leading libc frames identified as
-    /// signal-delivery functions (raise/pthread_kill) from the crashing stack.
-    /// Requires `EnabledWithSymbolsInReceiver`.
+    /// For software-generated signals, drop the leading signal-delivery libc
+    /// frames from the crashing stack: the whole libc segment for thread-directed
+    /// (`SI_TKILL`, e.g. raise/abort) signals, otherwise only frames named as
+    /// delivery functions (raise/pthread_kill). Requires
+    /// `EnabledWithSymbolsInReceiver`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     trim_signal_delivery_frames: bool,
     /// Name frames that symbolization could not resolve as `module+offset`.

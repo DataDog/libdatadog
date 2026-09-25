@@ -171,18 +171,18 @@ fn resolve_frames(
 #[cfg(target_os = "linux")]
 fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut CrashInfo) {
     // A software-generated fatal signal may be captured inside raise/pthread_kill.
-    // Remove only frames whose symbols identify that delivery path, leaving
-    // unrelated libc work intact. Trim the crashed thread's copy as well.
-    if config.trim_signal_delivery_frames()
-        && crash_info
-            .sig_info
-            .as_ref()
-            .is_some_and(|sig_info| sig_info.si_code <= 0)
-    {
-        trim_signal_delivery_frames(&mut crash_info.error.stack);
+    // Remove only frames of that delivery path, leaving unrelated libc work
+    // intact. Trim the crashed thread's copy as well.
+    let si_code = crash_info
+        .sig_info
+        .as_ref()
+        .map(|sig_info| sig_info.si_code);
+    if config.trim_signal_delivery_frames() && si_code.is_some_and(|si_code| si_code <= 0) {
+        let thread_directed = si_code == Some(libc::SI_TKILL);
+        trim_signal_delivery_frames(&mut crash_info.error.stack, thread_directed);
         for thread in crash_info.error.threads.iter_mut().flatten() {
             if thread.crashed {
-                trim_signal_delivery_frames(&mut thread.stack);
+                trim_signal_delivery_frames(&mut thread.stack, thread_directed);
             }
         }
     }
@@ -195,16 +195,18 @@ fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut Cra
     }
 }
 
+/// A thread-directed signal (`SI_TKILL`) is how raise, pthread_kill and abort
+/// deliver, so the whole leading libc segment is that delivery path. Names alone
+/// cannot identify it: musl's stripped libc names hidden helpers such as
+/// `__restore_sigs`, where raise's signal is delivered, after the nearest
+/// export, and its CFI-less x86_64 raise may not appear at all.
 #[cfg(target_os = "linux")]
-fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace) {
+fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace, thread_directed: bool) {
     let delivery_frames = stack
         .frames
         .iter()
         .take_while(|frame| {
             let Some(path) = frame.path.as_deref() else {
-                return false;
-            };
-            let Some(function) = frame.function.as_deref() else {
                 return false;
             };
             let basename = std::path::Path::new(path)
@@ -215,17 +217,22 @@ fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace) {
                 || basename == "libpthread.so.0"
                 || basename.starts_with("libc-")
                 || basename.starts_with("ld-musl-");
+            if !in_libc || thread_directed {
+                return in_libc;
+            }
+            let Some(function) = frame.function.as_deref() else {
+                return false;
+            };
             let function = function.strip_prefix("__GI_").unwrap_or(function);
-            in_libc
-                && matches!(
-                    function,
-                    "raise"
-                        | "__libc_raise"
-                        | "gsignal"
-                        | "pthread_kill"
-                        | "__pthread_kill"
-                        | "__pthread_kill_implementation"
-                )
+            matches!(
+                function,
+                "raise"
+                    | "__libc_raise"
+                    | "gsignal"
+                    | "pthread_kill"
+                    | "__pthread_kill"
+                    | "__pthread_kill_implementation"
+            )
         })
         .count();
     // An all-libc stack (e.g. a libc-internal abort) has no application frame
@@ -279,7 +286,7 @@ mod tests {
             false,
         );
 
-        trim_signal_delivery_frames(&mut stack);
+        trim_signal_delivery_frames(&mut stack, false);
 
         assert_eq!(stack.frames.len(), 2);
         assert_eq!(stack.frames[0].function.as_deref(), Some("main"));
@@ -318,9 +325,32 @@ mod tests {
             false,
         );
 
-        trim_signal_delivery_frames(&mut stack);
+        trim_signal_delivery_frames(&mut stack, true);
 
         assert_eq!(stack.frames.len(), 2);
+    }
+
+    #[test]
+    fn trims_whole_libc_segment_for_thread_directed_signals() {
+        // musl raise: the signal is delivered in the hidden __restore_sigs, which
+        // symbolizes as the preceding export, and CFI-less raise is skipped.
+        let mut stack = StackTrace::from_frames(
+            vec![
+                frame("/lib/ld-musl-x86_64.so.1", "0x5e4e0", Some("__setjmp")),
+                frame("/lib/ld-musl-x86_64.so.1", "0x5e60c", None),
+                frame("/opt/app", "0x2", Some("main")),
+                frame("/lib/ld-musl-x86_64.so.1", "0x3", Some("__libc_start_main")),
+            ],
+            false,
+        );
+        let mut by_name = stack.clone();
+
+        trim_signal_delivery_frames(&mut stack, true);
+        assert_eq!(stack.frames.len(), 2);
+        assert_eq!(stack.frames[0].function.as_deref(), Some("main"));
+
+        trim_signal_delivery_frames(&mut by_name, false);
+        assert_eq!(by_name.frames.len(), 4);
     }
 
     #[test]
@@ -333,16 +363,16 @@ mod tests {
             false,
         );
         let original = stack.clone();
-        trim_signal_delivery_frames(&mut stack);
+        trim_signal_delivery_frames(&mut stack, false);
         assert_eq!(stack, original);
 
         stack.frames[0].function = None;
-        trim_signal_delivery_frames(&mut stack);
+        trim_signal_delivery_frames(&mut stack, false);
         assert_eq!(stack.frames.len(), 2);
 
         stack.frames[0].function = Some("raise".to_string());
         stack.frames[0].path = Some("/opt/app".to_string());
-        trim_signal_delivery_frames(&mut stack);
+        trim_signal_delivery_frames(&mut stack, false);
         assert_eq!(stack.frames.len(), 2);
     }
 
