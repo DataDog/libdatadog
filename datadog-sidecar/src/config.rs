@@ -163,7 +163,9 @@ impl FromEnv {
             SIDECAR_IPC_MODE_SHARED => IpcMode::Shared,
             SIDECAR_IPC_MODE_PER_PROCESS => IpcMode::InstancePerProcess,
             SIDECAR_HELP => {
-                println!("help: {ENV_SIDECAR_IPC_MODE}: {SIDECAR_IPC_MODE_SHARED}|{SIDECAR_IPC_MODE_PER_PROCESS}");
+                println!(
+                    "help: {ENV_SIDECAR_IPC_MODE}: {SIDECAR_IPC_MODE_SHARED}|{SIDECAR_IPC_MODE_PER_PROCESS}"
+                );
                 IpcMode::default()
             }
             _ => IpcMode::default(),
@@ -178,7 +180,9 @@ impl FromEnv {
             SIDECAR_LOG_METHOD_STDOUT => LogMethod::Stdout,
             SIDECAR_LOG_METHOD_STDERR => LogMethod::Stderr,
             SIDECAR_HELP => {
-                println!("help: {ENV_SIDECAR_LOG_METHOD}: {SIDECAR_LOG_METHOD_DISABLED}|{SIDECAR_LOG_METHOD_STDOUT}|{SIDECAR_LOG_METHOD_STDERR}|file:///path/to/file");
+                println!(
+                    "help: {ENV_SIDECAR_LOG_METHOD}: {SIDECAR_LOG_METHOD_DISABLED}|{SIDECAR_LOG_METHOD_STDOUT}|{SIDECAR_LOG_METHOD_STDERR}|file:///path/to/file"
+                );
                 LogMethod::default()
             }
             method if method.starts_with("file://") => {

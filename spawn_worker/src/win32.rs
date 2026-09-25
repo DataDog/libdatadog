@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use kernel32::{CreateFileA, WaitForSingleObject};
-use std::ffi::{c_void, OsStr, OsString};
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{File, OpenOptions};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
@@ -17,29 +17,29 @@ use winapi::{
     FILE_SHARE_WRITE, GENERIC_READ, GENERIC_WRITE, LPCSTR, OPEN_EXISTING, SECURITY_ATTRIBUTES,
     WAIT_OBJECT_0,
 };
-use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{
-    DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE, INVALID_HANDLE_VALUE,
+    DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::System::Threading::{
-    CreateProcessW, GetCurrentProcess, GetExitCodeProcess, InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute, CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP,
-    CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, INFINITE,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, STARTUPINFOW_FLAGS,
+    CREATE_DEFAULT_ERROR_MODE, CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT,
+    CreateProcessW, DETACHED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    STARTUPINFOW, STARTUPINFOW_FLAGS, UpdateProcThreadAttribute,
 };
+use windows::core::{PCWSTR, PWSTR};
 use windows::{
-    core::PCSTR,
     Win32::{
         Foundation::{GetLastError, HMODULE},
         System::LibraryLoader::{
-            GetModuleFileNameW, GetModuleHandleExA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            GetModuleFileNameW, GetModuleHandleExA,
         },
     },
+    core::PCSTR,
 };
 
-use crate::{LibDependency, Target, ENV_PASS_FD_KEY};
+use crate::{ENV_PASS_FD_KEY, LibDependency, Target};
 
 fn write_trampoline(process_name: &Option<String>) -> io::Result<(PathBuf, File)> {
     let path = if let Some(process_name) = process_name {

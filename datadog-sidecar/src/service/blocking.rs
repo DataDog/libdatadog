@@ -7,12 +7,12 @@ use super::{
 };
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
-use libdd_common::tag::Tag;
 use libdd_common::MutexExt;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::SeqpacketConn;
 use libdd_ipc::codec::DecodeError;
 use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
-use libdd_ipc::SeqpacketConn;
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
@@ -88,12 +88,16 @@ impl SidecarTransport {
                 static RECONNECT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
             }
             if RECONNECT_IN_PROGRESS.with(Cell::get) {
-                warn!("Reconnect already in progress on this thread; not attempting a nested reconnect.");
+                warn!(
+                    "Reconnect already in progress on this thread; not attempting a nested reconnect."
+                );
                 return false;
             }
             RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(true));
             let reconnected = (|| {
-                warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
+                warn!(
+                    "The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug."
+                );
                 let new = match factory() {
                     None => return false,
                     Some(n) => n.inner.into_inner(),
@@ -168,7 +172,10 @@ impl SidecarTransport {
             || e.kind() == io::ErrorKind::ConnectionReset
             || e.kind() == io::ErrorKind::NotConnected
         {
-            warn!("with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug", e.kind());
+            warn!(
+                "with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug",
+                e.kind()
+            );
             if let Some(ref reconnect) = self.reconnect_fn {
                 if Self::do_reconnect(&mut self.inner, reconnect, true) {
                     return f(&mut self.inner.lock_or_panic());

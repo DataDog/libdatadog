@@ -9,7 +9,7 @@ use libdd_trace_utils::span::v04::{
 };
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead

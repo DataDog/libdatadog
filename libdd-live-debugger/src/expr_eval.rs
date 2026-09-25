@@ -169,7 +169,10 @@ impl EvErr {
                         first_entries.join(", ")
                     )
                 } else {
-                    format!("Could not fetch index {dim} (evaluated to {index}) on {source} (evaluated to [{}])", first_entries.join(", "))
+                    format!(
+                        "Could not fetch index {dim} (evaluated to {index}) on {source} (evaluated to [{}])",
+                        first_entries.join(", ")
+                    )
                 }
             }
             InvalidFetch::Nested(e, source, prop, base, nested) => {
@@ -183,7 +186,12 @@ impl EvErr {
                         eval.iref_string(base)
                     )
                 } else {
-                    format!("Could not {} property {prop} (evaluated to {}) on {source} (evaluated to {})", fetch_mode(e), eval.get_string(nested), eval.iref_string(base))
+                    format!(
+                        "Could not {} property {prop} (evaluated to {}) on {source} (evaluated to {})",
+                        fetch_mode(e),
+                        eval.get_string(nested),
+                        eval.iref_string(base)
+                    )
                 }
             }
         })
@@ -459,7 +467,7 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                     StringComparison::Matches => {
                         return Regex::new(needle.as_str())
                             .map_err(|e| EvErr::str(format!("{needle} is an invalid regex: {e}")))
-                            .map(|r| r.is_match(&haystack))
+                            .map(|r| r.is_match(&haystack));
                     }
                 }
             }
@@ -655,8 +663,8 @@ mod tests {
         Reference, StringComparison, StringSource,
     };
     use crate::{
-        eval_condition, eval_intermediate_to_string, eval_string, eval_value, DslString, Evaluator,
-        IntermediateValue, ProbeCondition, ProbeValue, ResultError, ResultValue,
+        DslString, Evaluator, IntermediateValue, ProbeCondition, ProbeValue, ResultError,
+        ResultValue, eval_condition, eval_intermediate_to_string, eval_string, eval_value,
     };
     use std::borrow::Cow;
     use std::cmp::Ordering;

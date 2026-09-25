@@ -1,31 +1,31 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
+use crate::log::{MULTI_LOG_FILTER, MULTI_LOG_WRITER, TemporarilyRetainedMapStats};
 use crate::service::{
-    sidecar_interface::serve_sidecar_interface_connection,
-    telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
-    tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
     SidecarInterface,
+    sidecar_interface::serve_sidecar_interface_connection,
+    telemetry::{TelemetryCachedClient, TelemetryCachedClientSet},
+    tracing::TraceFlusher,
 };
 use libdd_common::{Endpoint, MutexExt};
-use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_ipc::SeqpacketConn;
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
 use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::trace_utils::SendData;
-use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use libdd_trace_utils::tracer_payload::TraceChunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
+use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Borrow;
 use std::borrow::Cow;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,9 +35,9 @@ use tracing::{debug, error, info, trace, warn};
 
 #[cfg(unix)]
 use crate::appsec::AppSecManager;
-use crate::config::get_product_endpoint;
 #[cfg(unix)]
 use crate::config::AppSecConfig;
+use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
@@ -48,8 +48,8 @@ use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
-    flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
-    SpanConcentratorState, StatsConfig,
+    ConcentratorKey, SpanConcentratorState, StatsConfig, flush_all_stats_now,
+    get_or_create_concentrator, stats_endpoint,
 };
 #[cfg(unix)]
 use crate::service::telemetry::InProcessTelemetryClientFactory;
@@ -59,7 +59,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_ipc::ipc_server::OwnedServerConn;
-use libdd_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
+use libdd_live_debugger::sender::{DebuggerType, agent_info_supports_debugger_v2_endpoint};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
@@ -335,7 +335,10 @@ impl SidecarServer {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
-                error!("Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}", e);
+                error!(
+                    "Failed to convert SerializedTracerHeaderTags into TracerHeaderTags with error {:?}",
+                    e
+                );
                 return;
             }
         };
@@ -718,7 +721,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
             let mut telemetry_guard = telemetry_mutex.lock_or_panic();
             let Some(telemetry) = telemetry_guard.as_mut() else {
                 // Extremely rare: the client was stopped between the two get_or_create calls.
-                warn!("enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions");
+                warn!(
+                    "enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions"
+                );
                 return;
             };
 
@@ -1277,7 +1282,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         remote_config_generation: u64,
     ) {
         self.track_instance(&instance_id);
-        debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
+        debug!(
+            "Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}"
+        );
 
         let session = self.server.get_session(&instance_id.session_id);
         let runtime_info = session.get_runtime(&instance_id.runtime_id);
@@ -1570,7 +1577,7 @@ mod tests {
     };
     use httpmock::{Method::POST, MockServer};
     use libdd_ffe::telemetry::flagevaluation::EVP_FLAGEVALUATION_PATH;
-    use tokio::time::{sleep, Duration as TokioDuration};
+    use tokio::time::{Duration as TokioDuration, sleep};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
     /// `enqueue_actions`, which uses only the shared server state and never reads the connection,
@@ -1661,11 +1668,13 @@ mod tests {
                 cfg.set_endpoint(endpoint).unwrap();
             });
 
-        assert!(!handler
-            .server
-            .get_runtime(&instance_id)
-            .lock_applications()
-            .contains_key(&queue_id));
+        assert!(
+            !handler
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id)
+        );
 
         handler
             .enqueue_actions(
@@ -1686,11 +1695,13 @@ mod tests {
         }
 
         exposures_mock.assert_async().await;
-        assert!(!handler
-            .server
-            .get_runtime(&instance_id)
-            .lock_applications()
-            .contains_key(&queue_id));
+        assert!(
+            !handler
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id)
+        );
     }
 
     #[tokio::test]
@@ -1722,11 +1733,13 @@ mod tests {
                 });
             });
 
-        assert!(!handler
-            .server
-            .get_runtime(&instance_id)
-            .lock_applications()
-            .contains_key(&queue_id));
+        assert!(
+            !handler
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id)
+        );
 
         handler
             .enqueue_actions(
@@ -1747,11 +1760,13 @@ mod tests {
         }
 
         metrics_mock.assert_async().await;
-        assert!(!handler
-            .server
-            .get_runtime(&instance_id)
-            .lock_applications()
-            .contains_key(&queue_id));
+        assert!(
+            !handler
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id)
+        );
     }
 
     #[tokio::test]
@@ -1945,11 +1960,13 @@ mod tests {
             .entry(queue_id)
             .or_default();
 
-        assert!(handler
-            .server
-            .get_runtime(&instance_id)
-            .lock_applications()
-            .contains_key(&queue_id));
+        assert!(
+            handler
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id)
+        );
 
         handler
             .enqueue_actions(instance_id, queue_id, Vec::new())

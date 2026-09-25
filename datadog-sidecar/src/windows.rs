@@ -8,9 +8,9 @@ use futures::FutureExt;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
-use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use libdd_crashtracker_ffi::{Metadata, ddog_crasht_init_windows};
 use manual_future::ManualFuture;
-use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::{SpawnWorker, Stdio, TrampolineData, write_crashtracking_trampoline};
 use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
@@ -28,7 +28,7 @@ use winapi::{
         processthreadsapi::{GetCurrentProcess, OpenProcessToken},
         securitybaseapi::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation},
         winbase::LocalFree,
-        winnt::{TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER},
+        winnt::{TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel, TokenUser},
     },
 };
 

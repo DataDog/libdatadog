@@ -136,8 +136,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     buffer.push(snapshot);
 
     #[allow(clippy::unwrap_used)]
-    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger
-    else {
+    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else {
         unreachable!();
     };
 

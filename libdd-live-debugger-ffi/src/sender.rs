@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::send_data::serialize_debugger_payload;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::{CharSlice, MaybeError};
 use libdd_live_debugger::debugger_defs::DebuggerPayload;
 use libdd_live_debugger::sender;
-use libdd_live_debugger::sender::{debugger_intake_endpoint, generate_tags, Config, DebuggerType};
+use libdd_live_debugger::sender::{Config, DebuggerType, debugger_intake_endpoint, generate_tags};
 use log::{debug, warn};
-use percent_encoding::{percent_encode, CONTROLS};
+use percent_encoding::{CONTROLS, percent_encode};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use tokio::sync::mpsc;
@@ -136,9 +136,11 @@ pub extern "C" fn ddog_live_debugger_tags_from_raw(tags: CharSlice) -> Box<Strin
 }
 
 fn spawn_sender_inner(config: Config, tags: String, handle: &mut *mut SenderHandle) -> MaybeError {
-    let runtime = try_c!(tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build());
+    let runtime = try_c!(
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+    );
 
     let (tx, mailbox) = mpsc::channel(5000);
     let config = Arc::new(config);

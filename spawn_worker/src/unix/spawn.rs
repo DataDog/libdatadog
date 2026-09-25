@@ -93,7 +93,7 @@ use io_lifetimes::OwnedFd;
 
 use nix::{sys::wait::WaitStatus, unistd::Pid};
 
-use crate::fork::{fork, Fork};
+use crate::fork::{Fork, fork};
 use nix::libc;
 
 #[derive(Clone)]

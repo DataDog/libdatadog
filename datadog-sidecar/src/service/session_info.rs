@@ -12,7 +12,7 @@ use futures::future;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
-use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_common::{Endpoint, MutexExt, tag::Tag};
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
@@ -243,7 +243,9 @@ impl SessionInfo {
         ) -> anyhow::Result<()> {
             async fn finish_sender(debugger_type: DebuggerType, sender: PayloadSender) {
                 match sender.finish().await {
-                    Ok(payloads) => debug!("Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"),
+                    Ok(payloads) => debug!(
+                        "Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"
+                    ),
                     Err(e) => error!("Error sending to live debugger endpoint: {e:?}"),
                 }
             }
@@ -317,7 +319,10 @@ impl SessionInfo {
                     }
                 );
             } else {
-                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data", self.session_id);
+                warn!(
+                    "Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data",
+                    self.session_id
+                );
             }
         } else {
             warn!(
@@ -340,11 +345,13 @@ mod tests {
 
         // Test that a new runtime is created if it doesn't exist
         let _ = session_info.get_runtime(&runtime_id);
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id));
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id)
+        );
     }
 
     #[tokio::test]
@@ -368,15 +375,19 @@ mod tests {
         session_info.get_runtime(&runtime_id2);
 
         session_info.shutdown_runtime(&runtime_id1).await;
-        assert!(!session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id1));
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id2));
+        assert!(
+            !session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id1)
+        );
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id2)
+        );
     }
 }

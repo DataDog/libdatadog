@@ -10,28 +10,28 @@
 pub mod span;
 
 use crate::span::TracesBytes;
-use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
+use datadog_sidecar::agent_remote_config::{AgentRemoteConfigWriter, new_reader, reader_from_shm};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
-    blocking::{self, SidecarTransport},
     AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
     FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
     FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
     FfeTelemetryContext as SidecarFfeTelemetryContext, FlagEvalEventContext, FlagKey, InstanceId,
-    QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarFlushOptions, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS,
-    MAX_FIELD_LENGTH,
+    MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, QueueId, RuntimeMetadata,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
+    TargetingRuleKey, VariantKey,
+    blocking::{self, SidecarTransport},
 };
-use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
-use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
+use datadog_sidecar::service::{InternalTelemetryActions, get_telemetry_action_sender};
+use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
 use libc::c_char;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
@@ -50,7 +50,7 @@ use libdd_telemetry::{
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
-use std::ffi::{c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 #[cfg(unix)]
@@ -62,7 +62,7 @@ use std::slice;
 use std::sync::Arc;
 use std::time::Duration;
 
-use datadog_sidecar::setup::{connect_to_master, MasterListener};
+use datadog_sidecar::setup::{MasterListener, connect_to_master};
 
 fn otlp_metrics_endpoint_with_agent_test_token(
     mut otlp_metrics_endpoint: Option<Endpoint>,
@@ -1354,19 +1354,23 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
     context: &FfeTelemetryContext<'_>,
     exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
-    let exposures = try_c!(exposures
-        .try_as_slice()
-        .map_err(|e| format!("Invalid exposure slice: {e}")));
+    let exposures = try_c!(
+        exposures
+            .try_as_slice()
+            .map_err(|e| format!("Invalid exposure slice: {e}"))
+    );
 
     if exposures.is_empty() {
         return MaybeError::None;
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let exposures = try_c!(exposures
-        .iter()
-        .map(ffe_exposure_from_ffi)
-        .collect::<Result<Vec<_>, _>>());
+    let exposures = try_c!(
+        exposures
+            .iter()
+            .map(ffe_exposure_from_ffi)
+            .collect::<Result<Vec<_>, _>>()
+    );
 
     if exposures.is_empty() {
         return MaybeError::None;
@@ -1424,19 +1428,23 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
     context: &FfeTelemetryContext<'_>,
     flag_evaluations: Slice<FfeFlagEvaluation<'_>>,
 ) -> MaybeError {
-    let flag_evaluations = try_c!(flag_evaluations
-        .try_as_slice()
-        .map_err(|e| format!("Invalid flag evaluation slice: {e}")));
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .try_as_slice()
+            .map_err(|e| format!("Invalid flag evaluation slice: {e}"))
+    );
 
     if flag_evaluations.is_empty() {
         return MaybeError::None;
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let flag_evaluations = try_c!(flag_evaluations
-        .iter()
-        .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
-        .collect::<Result<Vec<_>, _>>());
+    let flag_evaluations = try_c!(
+        flag_evaluations
+            .iter()
+            .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
+            .collect::<Result<Vec<_>, _>>()
+    );
 
     if flag_evaluations.is_empty() {
         return MaybeError::None;
@@ -1478,13 +1486,15 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     }
 
     let context = try_c!(ffe_context_from_ffi(context));
-    let metrics = try_c!(metrics
-        .try_as_slice()
-        .map_err(|e| format!("Invalid metric slice: {e}"))
-        .and_then(|metrics| metrics
-            .iter()
-            .map(ffe_metric_from_ffi)
-            .collect::<Result<Vec<_>, _>>()));
+    let metrics = try_c!(
+        metrics
+            .try_as_slice()
+            .map_err(|e| format!("Invalid metric slice: {e}"))
+            .and_then(|metrics| metrics
+                .iter()
+                .map(ffe_metric_from_ffi)
+                .collect::<Result<Vec<_>, _>>())
+    );
 
     if metrics.is_empty() {
         return MaybeError::None;

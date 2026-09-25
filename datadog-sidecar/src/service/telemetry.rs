@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use libdd_common::MutexExt;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use crate::primary_sidecar_identifier;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
 use libdd_ipc::platform::NamedShmHandle;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -40,8 +40,8 @@ use libdd_telemetry::worker::{LifecycleAction, TelemetryActions};
 /// [`NativeCapabilities`].
 type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use manual_future::ManualFuture;
-use serde_with::{serde_as, VecSkipError};
-use tokio::time::{sleep, sleep_until, Instant as TokioInstant};
+use serde_with::{VecSkipError, serde_as};
+use tokio::time::{Instant as TokioInstant, sleep, sleep_until};
 
 #[derive(Debug)]
 pub struct InternalTelemetryActions {
@@ -517,7 +517,9 @@ impl TelemetryCachedClient {
                             actions.push(telemetry_action);
                         }
                         _ => {
-                            warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                            warn!(
+                                "Attempted to send telemetry point for unregistered metric: {metric_name}"
+                            );
                         }
                     }
                 }
@@ -547,7 +549,9 @@ impl TelemetryCachedClient {
             let mut cache = COMPOSER_CACHE.lock().await;
             let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
                 Err(e) => {
-                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
+                    warn!(
+                        "Failed to report dependencies from {path:?}, could not read modification time: {e:?}"
+                    );
                     Arc::new(vec![])
                 }
                 Ok(modification) => {

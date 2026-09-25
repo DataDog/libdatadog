@@ -3,16 +3,16 @@
 
 // imports for structs defined in this file
 use crate::config;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
+pub use libdd_ffe::telemetry::FfeTelemetryContext;
 pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, EvalError, FfeFlagEvaluationBatch, FfeFlagEvaluationEvent,
-    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH,
-    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
+    FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
+    TargetingRuleKey, VariantKey,
 };
-pub use libdd_ffe::telemetry::FfeTelemetryContext;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
@@ -58,7 +58,7 @@ pub(crate) mod tracing;
 #[cfg(windows)]
 pub use remote_configs::RemoteConfigNotifyFunction;
 pub use sidecar_interface::{DynamicInstrumentationConfigState, SidecarFlushOptions};
-pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
+pub use telemetry::{InternalTelemetryActions, get_telemetry_action_sender};
 pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

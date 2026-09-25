@@ -1,19 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::{SpawnWorker, Stdio, TrampolineData, getpid};
 
 use crate::config::Config;
 use crate::enter_listener_loop;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
-use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
-use nix::sys::socket::{shutdown, Shutdown};
+use nix::fcntl::{F_GETFL, F_SETFL, OFlag, fcntl};
+use nix::sys::socket::{Shutdown, shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::select;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::{error, info, warn};
 
 #[cfg(target_os = "linux")]

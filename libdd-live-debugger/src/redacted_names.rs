@@ -5,8 +5,8 @@
 
 use libdd_common::regex_engine::Regex;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
     HashSet::from([

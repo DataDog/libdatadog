@@ -4,21 +4,21 @@
 use anyhow::Context;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
-use spawn_worker::{entrypoint, Entrypoint, Stdio};
+use spawn_worker::{Entrypoint, Stdio, entrypoint};
 use std::fs::File;
 use std::future::Future;
 use std::{
     io,
     sync::{
-        atomic::{AtomicI32, Ordering},
         Arc,
+        atomic::{AtomicI32, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 
-use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
+use crate::service::blocking::SidecarTransport;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
