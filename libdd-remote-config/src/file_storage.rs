@@ -3,7 +3,7 @@
 
 use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
-use crate::parse::{default_registry, ParserRegistry};
+use crate::parse::{ParserRegistry, default_registry};
 use crate::{RemoteConfigParsed, RemoteConfigPath};
 use libdd_common::MutexExt;
 use std::ops::Deref;

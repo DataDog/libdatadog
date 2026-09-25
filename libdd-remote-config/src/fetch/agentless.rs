@@ -1,8 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::fetch::FileStorage;
 use crate::RemoteConfigPath;
+use crate::fetch::FileStorage;
 
 use std::{fmt, ops::RangeInclusive, time::Duration};
 
@@ -10,9 +10,8 @@ use anyhow::{bail, format_err};
 use base64::Engine;
 use hashbrown::{HashMap, HashSet};
 use http::{
-    header,
+    Method, Request, Uri, header,
     uri::{Authority, PathAndQuery},
-    Method, Request, Uri,
 };
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
@@ -1192,8 +1191,8 @@ mod cache {
     use std::sync::{Arc, Mutex, MutexGuard};
 
     use crate::{
-        fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
         RemoteConfigPath,
+        fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
     };
     use hashbrown::HashMap;
     use libdd_capabilities::{HttpClientCapability, SleepCapability};
@@ -1504,8 +1503,8 @@ mod tests {
     use crate::fetch::AgentlessConfig;
     use crate::fetch::NativeAgentlessFetcher;
 
-    use super::trim_hash_target_path;
     use super::Site;
+    use super::trim_hash_target_path;
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -1602,11 +1601,12 @@ mod tests {
         let cfg = AgentlessConfig::new("host".to_string(), &endpoint).expect("well-formed");
         assert_eq!(cfg.hostname(), "host");
         // Endpoint has been rewritten to `config.<site>` and kept the api key.
-        assert!(cfg
-            .agentless_endpoint()
-            .url
-            .host()
-            .is_some_and(|h| h.starts_with("config.")));
+        assert!(
+            cfg.agentless_endpoint()
+                .url
+                .host()
+                .is_some_and(|h| h.starts_with("config."))
+        );
         assert!(cfg.agentless_endpoint().api_key.is_some());
     }
 

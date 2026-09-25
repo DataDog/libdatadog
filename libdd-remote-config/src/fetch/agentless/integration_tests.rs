@@ -35,8 +35,8 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use crate::fetch::{ConfigFetcherState, ConfigInvariants, FileStorage};
 use crate::RemoteConfigPath;
+use crate::fetch::{ConfigFetcherState, ConfigInvariants, FileStorage};
 use libdd_capabilities::http::{HttpClientCapability, HttpError};
 use libdd_capabilities::maybe_send::MaybeSend;
 use std::collections::VecDeque;

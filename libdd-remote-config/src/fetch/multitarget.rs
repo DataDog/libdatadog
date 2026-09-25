@@ -2,13 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    random_uuid_string, ConfigApplyState, ConfigFetcherState, ConfigInvariants,
-    ConfigProductCapabilities, FileStorage, RefcountedFile, RefcountingStorage,
-    RefcountingStorageStats, SharedFetcher,
+    ConfigApplyState, ConfigFetcherState, ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    RefcountedFile, RefcountingStorage, RefcountingStorageStats, SharedFetcher, random_uuid_string,
 };
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
-use futures_util::future::Shared;
 use futures_util::FutureExt;
+use futures_util::future::Shared;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use manual_future::ManualFuture;
@@ -185,10 +184,10 @@ struct RuntimeInfo<N: NotifyTarget> {
 }
 
 impl<
-        N: NotifyTarget + 'static,
-        S: FileStorage + Clone + Sync + Send + 'static,
-        C: HttpClientCapability + SleepCapability + Send + Sync + 'static,
-    > MultiTargetFetcher<N, S, C>
+    N: NotifyTarget + 'static,
+    S: FileStorage + Clone + Sync + Send + 'static,
+    C: HttpClientCapability + SleepCapability + Send + Sync + 'static,
+> MultiTargetFetcher<N, S, C>
 where
     S::StoredFile: RefcountedFile + Sync + Send,
     S: MultiTargetHandlers<N, S, C>,
