@@ -24,7 +24,7 @@
 //! * RELA / JMPREL relocation arrays. REL arrays are parsed but conservatively skipped when
 //!   patching because their implicit addends cannot be recovered reliably after relocation.
 
-use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use core::slice;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -63,8 +63,8 @@ unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 }
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
+    _SC_PAGESIZE, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC,
+    PT_LOAD, dl_iterate_phdr, dl_phdr_info, mprotect, sysconf,
 };
 
 // ELF dynamic-section tags. The `libc` crate doesn't export these
@@ -143,11 +143,7 @@ impl<'a> DynamicInfo<'a> {
                 |addr: usize| -> Option<usize> { find_containing_load_segment(phdrs, base, addr) };
             let correct = |a: u64| -> usize {
                 let a = u64_to_usize(a);
-                if a > base {
-                    a
-                } else {
-                    base + a
-                }
+                if a > base { a } else { base + a }
             };
 
             let mut strtab: *const c_char = core::ptr::null();
@@ -1513,7 +1509,7 @@ mod tests {
         assert!(is_got_pointer_reloc(1)); // R_X86_64_64
         assert!(is_got_pointer_reloc(6)); // R_X86_64_GLOB_DAT
         assert!(is_got_pointer_reloc(7)); // R_X86_64_JUMP_SLOT
-                                          // aarch64
+        // aarch64
         assert!(is_got_pointer_reloc(257)); // R_AARCH64_ABS64
         assert!(is_got_pointer_reloc(1025)); // R_AARCH64_GLOB_DAT
         assert!(is_got_pointer_reloc(1026)); // R_AARCH64_JUMP_SLOT
