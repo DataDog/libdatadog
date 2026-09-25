@@ -171,8 +171,7 @@ fn resolve_frames(
 #[cfg(target_os = "linux")]
 fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut CrashInfo) {
     // A software-generated fatal signal may be captured inside raise/pthread_kill.
-    // Remove only frames of that delivery path, leaving unrelated libc work
-    // intact. Trim the crashed thread's copy as well.
+    // Remove delivery frames from both copies of the crashed thread's stack.
     let si_code = crash_info
         .sig_info
         .as_ref()
@@ -195,44 +194,59 @@ fn finish_native_stacks(config: &CrashtrackerConfiguration, crash_info: &mut Cra
     }
 }
 
-/// A thread-directed signal (`SI_TKILL`) is how raise, pthread_kill and abort
-/// deliver, so the whole leading libc segment is that delivery path. Names alone
-/// cannot identify it: musl's stripped libc names hidden helpers such as
-/// `__restore_sigs`, where raise's signal is delivered, after the nearest
-/// export, and its CFI-less x86_64 raise may not appear at all.
+/// Stripped musl can report its hidden `__restore_sigs` as the preceding
+/// `__setjmp`/`sigsetjmp` export, and x86_64 may omit raise itself. Only for
+/// that recognizable pattern, trim the leading musl segment. `SI_TKILL` alone
+/// is insufficient: a signal from another thread can interrupt unrelated libc
+/// work in the crashing thread.
 #[cfg(target_os = "linux")]
 fn trim_signal_delivery_frames(stack: &mut crate::crash_info::StackTrace, thread_directed: bool) {
+    fn module_name(frame: &crate::crash_info::StackFrame) -> Option<&str> {
+        let path = frame.path.as_deref()?;
+        Some(
+            std::path::Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path),
+        )
+    }
+
+    fn is_delivery_function(function: &str) -> bool {
+        matches!(
+            function.strip_prefix("__GI_").unwrap_or(function),
+            "raise"
+                | "__libc_raise"
+                | "gsignal"
+                | "pthread_kill"
+                | "__pthread_kill"
+                | "__pthread_kill_implementation"
+        )
+    }
+
+    let trim_musl_segment = thread_directed
+        && stack.frames.first().is_some_and(|frame| {
+            module_name(frame).is_some_and(|module| module.starts_with("ld-musl-"))
+                && frame.function.as_deref().is_some_and(|function| {
+                    matches!(function, "__restore_sigs" | "__setjmp" | "sigsetjmp")
+                        || is_delivery_function(function)
+                })
+        });
     let delivery_frames = stack
         .frames
         .iter()
         .take_while(|frame| {
-            let Some(path) = frame.path.as_deref() else {
+            let Some(basename) = module_name(frame) else {
                 return false;
             };
-            let basename = std::path::Path::new(path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or(path);
             let in_libc = basename == "libc.so.6"
                 || basename == "libpthread.so.0"
                 || basename.starts_with("libc-")
                 || basename.starts_with("ld-musl-");
-            if !in_libc || thread_directed {
-                return in_libc;
-            }
-            let Some(function) = frame.function.as_deref() else {
+            if !in_libc {
                 return false;
-            };
-            let function = function.strip_prefix("__GI_").unwrap_or(function);
-            matches!(
-                function,
-                "raise"
-                    | "__libc_raise"
-                    | "gsignal"
-                    | "pthread_kill"
-                    | "__pthread_kill"
-                    | "__pthread_kill_implementation"
-            )
+            }
+            (trim_musl_segment && basename.starts_with("ld-musl-"))
+                || frame.function.as_deref().is_some_and(is_delivery_function)
         })
         .count();
     // An all-libc stack (e.g. a libc-internal abort) has no application frame
@@ -331,26 +345,42 @@ mod tests {
     }
 
     #[test]
-    fn trims_whole_libc_segment_for_thread_directed_signals() {
+    fn trims_musl_raise_segment_for_thread_directed_signals() {
         // musl raise: the signal is delivered in the hidden __restore_sigs, which
-        // symbolizes as the preceding export, and CFI-less raise is skipped.
-        let mut stack = StackTrace::from_frames(
-            vec![
-                frame("/lib/ld-musl-x86_64.so.1", "0x5e4e0", Some("__setjmp")),
-                frame("/lib/ld-musl-x86_64.so.1", "0x5e60c", None),
-                frame("/opt/app", "0x2", Some("main")),
-                frame("/lib/ld-musl-x86_64.so.1", "0x3", Some("__libc_start_main")),
-            ],
-            false,
-        );
-        let mut by_name = stack.clone();
+        // symbolizes as the preceding export; CFI-less raise may be skipped.
+        for (path, symbol) in [
+            ("/lib/ld-musl-x86_64.so.1", "__setjmp"),
+            ("/lib/ld-musl-aarch64.so.1", "sigsetjmp"),
+        ] {
+            let mut stack = StackTrace::from_frames(
+                vec![
+                    frame(path, "0x5e4e0", Some(symbol)),
+                    frame(path, "0x5e60c", None),
+                    frame("/opt/app", "0x2", Some("main")),
+                    frame(path, "0x3", Some("__libc_start_main")),
+                ],
+                false,
+            );
+            trim_signal_delivery_frames(&mut stack, true);
+            assert_eq!(stack.frames.len(), 2);
+            assert_eq!(stack.frames[0].function.as_deref(), Some("main"));
+        }
+    }
 
-        trim_signal_delivery_frames(&mut stack, true);
-        assert_eq!(stack.frames.len(), 2);
-        assert_eq!(stack.frames[0].function.as_deref(), Some("main"));
-
-        trim_signal_delivery_frames(&mut by_name, false);
-        assert_eq!(by_name.frames.len(), 4);
+    #[test]
+    fn keeps_libc_interrupted_by_thread_directed_signal() {
+        for path in ["/lib/libc.so.6", "/lib/ld-musl-x86_64.so.1"] {
+            let mut stack = StackTrace::from_frames(
+                vec![
+                    frame(path, "0x1", Some("poll")),
+                    frame("/opt/app", "0x2", Some("main")),
+                ],
+                false,
+            );
+            let original = stack.clone();
+            trim_signal_delivery_frames(&mut stack, true);
+            assert_eq!(stack, original);
+        }
     }
 
     #[test]
