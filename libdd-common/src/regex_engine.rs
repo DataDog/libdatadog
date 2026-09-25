@@ -12,6 +12,12 @@
 //! when `regex-lite` is enabled, for consumers that evaluate user-provided
 //! regexes requiring Unicode character class support.
 
+/// Whether the selected regex engine lacks its own literal prefilter.
+pub const NEEDS_LITERAL_PREFILTER: bool = cfg!(all(
+    feature = "regex-lite",
+    not(feature = "require-regex-full")
+));
+
 #[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
 pub use regex_lite::{escape, Captures, Error, Regex, RegexBuilder, Replacer};
 
