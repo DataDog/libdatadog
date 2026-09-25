@@ -7,8 +7,7 @@ use crate::AtomicOption;
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
-#[cfg(target_os = "linux")]
-use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{ffi::CString, io, ptr::NonNull};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -23,6 +22,7 @@ pub struct AnonHandle {
     pub(crate) size: usize,
 }
 
+/// A mapping of a shared-memory segment, at an address that never changes.
 pub struct MappedMem<T>
 where
     T: MemoryHandle,
@@ -31,6 +31,15 @@ where
     pub(crate) ptr: NonNull<libc::c_void>,
     #[cfg(windows)]
     pub(crate) ptr: NonNull<winapi::ctypes::c_void>,
+    /// Exactly what was handed to `mmap`/`MapViewOfFile`, and what its unmap gets back.
+    /// Fixed for the life of the mapping.
+    pub(crate) mapped_len: usize,
+    /// The backed prefix of the reservation: the part that may actually be touched.
+    ///
+    /// Only ever grows. Touching past it faults rather than failing - `SIGBUS` on the tail of
+    /// a file-backed mapping, an access violation on reserved-but-uncommitted Windows pages -
+    /// so this, never `mapped_len`, bounds every slice handed out.
+    pub(crate) usable: AtomicUsize,
     pub(crate) mem: T,
 }
 
@@ -54,7 +63,7 @@ impl NamedShmHandle {
     }
 }
 
-fn page_aligned_size(size: usize) -> usize {
+pub(crate) fn page_aligned_size(size: usize) -> usize {
     let page_size = page_size::get();
     // round up to nearest page
     ((size - 1) & !(page_size - 1)) + page_size
@@ -86,49 +95,6 @@ where
     fn map(self) -> io::Result<MappedMem<Self>>;
     fn get_shm(&self) -> &ShmHandle;
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn resize(&mut self, size: usize) -> anyhow::Result<()> {
-        let old_size = self.get_shm().size;
-        fn do_resize<F: FileBackedHandle>(handle: &mut F, size: usize) -> anyhow::Result<()> {
-            unsafe {
-                handle.set_mapping_size(size)?;
-            }
-            let new_size = handle.get_shm().size as libc::off_t;
-            let fd = handle.get_shm().handle.as_owned_fd()?;
-            // Try to use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time
-            // is recoverable; a later SIGBUS mid-execution is not.
-            #[cfg(target_os = "linux")]
-            match nix::fcntl::fallocate(
-                fd.as_raw_fd(),
-                nix::fcntl::FallocateFlags::empty(),
-                0,
-                new_size,
-            ) {
-                Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
-                    nix::unistd::ftruncate(fd, new_size)?
-                }
-                Err(e) => return Err(e.into()),
-                Ok(_) => {}
-            }
-            #[cfg(not(target_os = "linux"))]
-            nix::unistd::ftruncate(&fd, new_size)?;
-            Ok(())
-        }
-        // Reset on failure
-        do_resize(self, size).inspect_err(|_| unsafe {
-            let _ = self.set_mapping_size(old_size);
-        })
-    }
-    /// # Safety
-    /// Calling function needs to ensure it's appropriately resized
-    unsafe fn set_mapping_size(&mut self, size: usize) -> anyhow::Result<()> {
-        if size == 0 {
-            anyhow::bail!("Cannot allocate mapping of size zero");
-        }
-
-        self.get_shm_mut().size = page_aligned_size(size);
-        Ok(())
-    }
 }
 
 impl FileBackedHandle for ShmHandle {
@@ -169,15 +135,21 @@ impl MappedMem<NamedShmHandle> {
 
 impl<T: MemoryHandle> MappedMem<T> {
     pub fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.mem.get_size()) }
+        // SAFETY: `usable` bytes from the base are mapped and backed. It only ever grows, so
+        // the length read here stays valid for as long as the borrow does.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.get_size()) }
     }
 
     pub fn as_slice_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), self.mem.get_size()) }
+        let len = self.get_size();
+        // SAFETY: as above, and `&mut self` is the caller's guarantee of exclusivity within
+        // this process.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr().cast(), len) }
     }
 
+    /// How much of the mapping is backed and safe to touch.
     pub fn get_size(&self) -> usize {
-        self.mem.get_size()
+        self.usable.load(Ordering::Acquire)
     }
 }
 
@@ -199,7 +171,9 @@ impl<T: FileBackedHandle> From<MappedMem<T>> for ShmHandle {
     fn from(handle: MappedMem<T>) -> ShmHandle {
         ShmHandle {
             handle: handle.mem.get_shm().handle.clone(),
-            size: handle.mem.get_shm().size,
+            // What the mapping actually has backed, which is what a peer can safely map in
+            // turn - not the size this handle was created with.
+            size: handle.get_size(),
         }
     }
 }
@@ -235,7 +209,13 @@ impl TransferHandles for ShmHandle {
         &mut self,
         transport: Transport,
     ) -> Result<(), Transport::Error> {
-        self.handle.receive_handles(transport)
+        self.handle.receive_handles(transport)?;
+
+        if let Err(e) = self.limit_size_to_backing() {
+            tracing::error!("Could not size shared memory against its backing file: {e}");
+            self.size = 0;
+        }
+        Ok(())
     }
 }
 
@@ -263,7 +243,7 @@ mod tests {
         let shm = ShmHandle::new(5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        assert!(mapped.ensure_space(100000));
         assert!(mapped.as_slice().len() >= 100000);
         let mut exp = vec![0u8; mapped.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
@@ -277,12 +257,146 @@ mod tests {
         let shm = NamedShmHandle::create(path.clone(), 5).unwrap();
         let mut mapped = shm.map().unwrap();
         _ = mapped.as_slice_mut().write(&[1, 2, 3, 4, 5]).unwrap();
-        mapped.ensure_space(100000);
+        assert!(mapped.ensure_space(100000));
         assert!(mapped.as_slice().len() >= 100000);
 
         let other = NamedShmHandle::open(&path).unwrap().map().unwrap();
         let mut exp = vec![0u8; other.as_slice().len()];
         _ = (&mut exp[..5]).write(&[1, 2, 3, 4, 5]).unwrap();
         assert_eq!(other.as_slice(), exp.as_slice());
+    }
+
+    /// A handle's size arrives over IPC and is whatever the peer put there; only its
+    /// descriptor is vouched for by the kernel. Mapping more than the file holds would
+    /// `SIGBUS` on the tail - and in thread mode that tail is inside the PHP master, which may
+    /// be root while the peer is a worker that dropped privileges.
+    #[test]
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg_attr(miri, ignore)]
+    fn test_shm_size_is_clamped_to_its_backing() {
+        let mut shm = ShmHandle::new(4096).unwrap();
+
+        // Stands in for a peer that declared far more than it allocated.
+        shm.size = 1 << 30;
+        shm.limit_size_to_backing().unwrap();
+        assert_eq!(
+            shm.size, 4096,
+            "a declared size beyond the backing file must be clamped to it"
+        );
+
+        // Declaring less than the file holds is legitimate - the writer may have used only
+        // part of it - and must be left alone.
+        shm.size = 128;
+        shm.limit_size_to_backing().unwrap();
+        assert_eq!(shm.size, 128, "an under-declared size must be preserved");
+    }
+
+    /// The clamp has to happen when the handle is received, not when a consumer remembers to
+    /// ask: a caller that forgets would map past the end of the peer's segment.
+    #[test]
+    // Same gating as the test above: the clamp is a deliberate no-op where segments are a fixed
+    // size that carries its committed length internally.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg_attr(miri, ignore)]
+    fn received_shm_size_is_clamped_to_its_backing() {
+        use crate::handles::TransferHandles;
+        use crate::platform::FdSource;
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+        let shm = ShmHandle::new(4096).unwrap();
+        // Stands in for the descriptor arriving over SCM_RIGHTS.
+        let raw = shm.handle.as_owned_fd().unwrap().as_raw_fd();
+        let sent = unsafe { OwnedFd::from_raw_fd(nix::unistd::dup(raw).unwrap()) };
+
+        // ... paired with a size the peer made up.
+        let mut received = shm.clone();
+        received.size = 1 << 30;
+
+        let mut source = FdSource::new(vec![sent]);
+        received.receive_handles(&mut source).unwrap();
+
+        assert_eq!(
+            received.size, 4096,
+            "receiving a handle must clamp its declared size to the backing file"
+        );
+    }
+
+    /// Creating a segment is exclusive (`O_EXCL`) so that one planted by another user is
+    /// refused rather than adopted - but shared memory outlives the process that made it, so a
+    /// segment left behind by an earlier sidecar of our own must still be picked up, not
+    /// rejected. Without this, restarting a sidecar would fail on every one of its own segments.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_named_shm_recreate_adopts_our_own() {
+        let path = CString::new("/recreate-own").unwrap();
+        let first = NamedShmHandle::create(path.clone(), 5).unwrap();
+        let mut mapped = first.map().unwrap();
+        _ = mapped.as_slice_mut().write(&[9, 8, 7, 6, 5]).unwrap();
+
+        let again = NamedShmHandle::create(path.clone(), 5)
+            .expect("a pre-existing segment of our own must be adopted");
+        let again = again.map().unwrap();
+        assert_eq!(&again.as_slice()[..5], &[9, 8, 7, 6, 5]);
+    }
+    /// Growing a segment must not move it. This is the property the whole arrangement exists
+    /// for: a reservation is mapped once and growth commits backing store underneath it, so
+    /// callers may hold references into the segment across a growth and need no lock to keep
+    /// readers away from a resize.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn growing_a_segment_does_not_move_it() {
+        let shm = ShmHandle::new(4096).unwrap();
+        let mut mapped = shm.map().unwrap();
+        _ = mapped.as_slice_mut().write(&[7, 8, 9]).unwrap();
+
+        let base = mapped.as_slice().as_ptr();
+        let len_before = mapped.as_slice().len();
+        // Taken before the growth, read after it.
+        let first = &mapped.as_slice()[0];
+
+        assert!(mapped.ensure_space(1 << 20));
+
+        assert!(mapped.as_slice().len() >= 1 << 20);
+        assert!(mapped.as_slice().len() > len_before);
+        assert_eq!(mapped.as_slice().as_ptr(), base, "the mapping moved");
+        assert_eq!(
+            *first, 7,
+            "a reference taken before the growth must survive it"
+        );
+        assert_eq!(
+            &mapped.as_slice()[..3],
+            &[7, 8, 9],
+            "contents must survive too"
+        );
+    }
+
+    /// `ensure_space` is idempotent and order-free: `fallocate` allocates a range and never
+    /// shrinks the file, `VirtualAlloc(MEM_COMMIT)` tolerates already-committed pages, and
+    /// macOS only raises a length counter. Concurrent callers asking for different sizes must
+    /// therefore all end up with at least what they asked for, with no lock between them.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_growth_settles_on_the_largest_request() {
+        const SIZES: [usize; 6] = [1 << 16, 1 << 20, 1 << 18, 1 << 20, 1 << 14, 1 << 19];
+
+        let shm = ShmHandle::new(4096).unwrap();
+        let mapped = shm.map().unwrap();
+        let base = mapped.as_slice().as_ptr();
+
+        std::thread::scope(|scope| {
+            for size in SIZES {
+                let mapped = &mapped;
+                scope.spawn(move || {
+                    assert!(mapped.ensure_space(size), "growing to {size} failed");
+                    assert!(
+                        mapped.as_slice().len() >= size,
+                        "a grower must at least see its own request"
+                    );
+                });
+            }
+        });
+
+        assert!(mapped.as_slice().len() >= 1 << 20);
+        assert_eq!(mapped.as_slice().as_ptr(), base, "the mapping moved");
     }
 }

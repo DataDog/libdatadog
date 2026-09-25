@@ -573,7 +573,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn enter_crashtracker_receiver(&self) {
         #[cfg(unix)]
-        crate::crashtracker::run_crashtracker_receiver(self.connection.async_conn()).await;
+        crate::crashtracker::run_crashtracker_receiver(
+            self.connection.async_conn(),
+            self.connection.peer().pid,
+        )
+        .await;
     }
 
     async fn enqueue_actions(

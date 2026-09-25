@@ -129,7 +129,9 @@ impl AgentInfoFetcher {
                                 };
                             }
                             if let Some(ref writer) = writer {
-                                writer.write(&serde_json::to_vec(&status.info).unwrap())
+                                // A payload that does not fit is logged and dropped by the
+                                // writer; the previously published info stays readable.
+                                _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));

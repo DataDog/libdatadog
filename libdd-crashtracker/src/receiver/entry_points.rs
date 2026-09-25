@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
-use super::receive_report::receive_report_from_stream;
+use super::receive_report::{receive_report_from_stream, ReceiverFileAccess};
 use crate::crash_info::CrashInfo;
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
@@ -22,7 +22,12 @@ pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(receiver_entry_point(receiver_timeout(), stream))?;
+    // The crashing process started this receiver with its own privileges.
+    rt.block_on(receiver_entry_point(
+        receiver_timeout(),
+        stream,
+        ReceiverFileAccess::Trusted,
+    ))?;
     Ok(())
 }
 
@@ -31,13 +36,17 @@ pub async fn async_receiver_entry_point_unix_listener(
 ) -> anyhow::Result<()> {
     let (unix_stream, _) = listener.accept().await?;
     let stream = BufReader::new(unix_stream);
-    receiver_entry_point(receiver_timeout(), stream).await
+    // This standalone receiver trusts its collector.
+    receiver_entry_point(receiver_timeout(), stream, ReceiverFileAccess::Trusted).await
 }
 
+/// Receive a crash report from an established stream. The sidecar passes
+/// [`ReceiverFileAccess::Restricted`] for workers with fewer privileges than its host.
 pub async fn async_receiver_entry_point_stream(
     stream: impl AsyncBufReadExt + std::marker::Unpin,
+    access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
-    receiver_entry_point(receiver_timeout(), stream).await
+    receiver_entry_point(receiver_timeout(), stream, access).await
 }
 
 pub async fn async_receiver_entry_point_unix_socket(
@@ -106,18 +115,22 @@ pub fn get_receiver_unix_socket(socket_path: impl AsRef<str>) -> anyhow::Result<
 pub(crate) async fn receiver_entry_point(
     timeout: Duration,
     mut stream: impl AsyncBufReadExt + std::marker::Unpin,
+    access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
-    if let Some((config, mut crash_info)) = receive_report_from_stream(timeout, &mut stream).await?
+    if let Some((config, mut crash_info)) =
+        receive_report_from_stream(timeout, &mut stream, access).await?
     {
-        // Symbolization reads /proc/<pid>/maps, and the crashing process is
-        // waiting on POLLHUP from this connection to terminate. Hold it open
-        // until the report is symbolized, then release the process before the
-        // upload so a slow endpoint does not extend the crash pause.
-        if let Err(e) = resolve_frames(&config, &mut crash_info) {
-            crash_info
-                .log_messages
-                .push(format!("Error resolving frames: {e}"));
+        // The symbolizer opens ELF, perf-map and debug paths without our path checks. Restricted
+        // reports keep the symbols supplied by the worker instead of resolving them here.
+        if !access.is_restricted() {
+            if let Err(e) = resolve_frames(&config, &mut crash_info) {
+                crash_info
+                    .log_messages
+                    .push(format!("Error resolving frames: {e}"));
+            }
         }
+        // The crashing process waits for POLLHUP. Keep it alive for inspection, then release it
+        // before uploading so a slow endpoint does not prolong the crash pause.
         drop(stream);
 
         if config.demangle_names() {

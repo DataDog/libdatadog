@@ -542,56 +542,72 @@ impl TelemetryCachedClient {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
             let mut cache = COMPOSER_CACHE.lock().await;
-            let packages = match tokio::fs::metadata(&path).await.and_then(|m| m.modified()) {
-                Err(e) => {
-                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
-                    Arc::new(vec![])
+            // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
+            // and contents come from the same file.
+            let file = {
+                #[cfg(unix)]
+                if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                    libdd_common::unix_utils::open_regular_for_read(&path)
+                        .map(tokio::fs::File::from_std)
+                        .map_err(std::io::Error::from)
+                } else {
+                    tokio::fs::File::open(&path).await
                 }
-                Ok(modification) => {
-                    let now = SystemTime::now();
-                    if let Some((last_update, actions)) = cache.get(&path) {
-                        if modification < *last_update {
-                            completer.complete(actions.clone()).await;
-                            return;
-                        }
-                    }
-                    async fn parse(path: &PathBuf) -> anyhow::Result<Vec<data::Dependency>> {
-                        let mut json = tokio::fs::read(&path).await?;
-                        #[cfg(not(target_arch = "x86"))]
-                        let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
-                        #[cfg(target_arch = "x86")]
-                        let parsed = crate::interface::ComposerPackages { packages: vec![] }; // not interested in 32 bit
-                        Ok(parsed.packages)
-                    }
-                    let packages = Arc::new(parse(&path).await.unwrap_or_else(|e| {
-                        warn!("Failed to report dependencies from {path:?}: {e:?}");
-                        vec![]
-                    }));
-                    cache.insert(path, (now, packages.clone()));
-                    // cheap way to avoid unbounded caching
-                    const CACHE_INTERVAL: u64 = 2000;
-                    let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
-                    let now_secs = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    if now_secs > last_clean + CACHE_INTERVAL
-                        && LAST_CACHE_CLEAN
-                            .compare_exchange(
-                                last_clean,
-                                now_secs,
-                                Ordering::SeqCst,
-                                Ordering::Acquire,
-                            )
-                            .is_ok()
-                    {
-                        cache.retain(|_, (inserted, _)| {
-                            *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
-                        });
-                    }
-                    packages
+                #[cfg(not(unix))]
+                tokio::fs::File::open(&path).await
+            };
+            let modified = match &file {
+                Ok(file) => file.metadata().await.and_then(|m| m.modified()),
+                Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
+            };
+            let (file, modification) = match (file, modified) {
+                (Ok(file), Ok(modification)) => (file, modification),
+                (_, Err(e)) | (Err(e), _) => {
+                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
+                    completer.complete(Arc::new(vec![])).await;
+                    return;
                 }
             };
+
+            let now = SystemTime::now();
+            if let Some((last_update, actions)) = cache.get(&path) {
+                if modification < *last_update {
+                    completer.complete(actions.clone()).await;
+                    return;
+                }
+            }
+
+            async fn parse(mut file: tokio::fs::File) -> anyhow::Result<Vec<data::Dependency>> {
+                use tokio::io::AsyncReadExt;
+                let mut json = Vec::new();
+                file.read_to_end(&mut json).await?;
+                #[cfg(not(target_arch = "x86"))]
+                let parsed: ComposerPackages = simd_json::from_slice(json.as_mut_slice())?;
+                #[cfg(target_arch = "x86")]
+                let parsed = crate::interface::ComposerPackages { packages: vec![] }; // not interested in 32 bit
+                Ok(parsed.packages)
+            }
+            let packages = Arc::new(parse(file).await.unwrap_or_else(|e| {
+                warn!("Failed to report dependencies from {path:?}: {e:?}");
+                vec![]
+            }));
+            cache.insert(path, (now, packages.clone()));
+            // cheap way to avoid unbounded caching
+            const CACHE_INTERVAL: u64 = 2000;
+            let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
+            let now_secs = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if now_secs > last_clean + CACHE_INTERVAL
+                && LAST_CACHE_CLEAN
+                    .compare_exchange(last_clean, now_secs, Ordering::SeqCst, Ordering::Acquire)
+                    .is_ok()
+            {
+                cache.retain(|_, (inserted, _)| {
+                    *inserted > now.sub(Duration::from_secs(CACHE_INTERVAL))
+                });
+            }
             completer.complete(packages).await;
         });
         deps

@@ -617,6 +617,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    #[serial_test::serial(log_counter)]
     fn test_reconnect() {
         let tmpdir = tempdir().unwrap();
         let socket_path = tmpdir.path().join("test.sock");

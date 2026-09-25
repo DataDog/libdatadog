@@ -4,7 +4,11 @@
 mod platform_handle;
 
 pub mod locks;
+pub mod private_dir;
+pub mod process;
+pub mod shm_guard;
 pub mod sockets;
+pub use shm_guard::set_shm_owner_uid;
 pub use sockets::*;
 
 mod handles;
@@ -17,11 +21,7 @@ pub(crate) use mem_handle_macos::*;
 #[cfg(not(target_os = "macos"))]
 mod mem_handle;
 #[cfg(not(target_os = "macos"))]
-pub use mem_handle::set_shm_owner_uid;
-#[cfg(not(target_os = "macos"))]
 pub(crate) use mem_handle::*;
-#[cfg(target_os = "macos")]
-pub use mem_handle_macos::set_shm_owner_uid;
 
 #[no_mangle]
 #[cfg(polyfill_glibc_memfd)]

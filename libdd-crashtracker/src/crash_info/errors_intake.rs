@@ -544,6 +544,26 @@ impl ErrorsIntakeUploader {
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
+            // Apply the same path policy as the crash JSON output to its .errors companion.
+            #[cfg(unix)]
+            let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                libdd_common::unix_utils::open_regular_for_create(&file_path).with_context(
+                    || {
+                        format!(
+                            "Failed to create errors intake file {}",
+                            file_path.display()
+                        )
+                    },
+                )?
+            } else {
+                std::fs::File::create(&file_path).with_context(|| {
+                    format!(
+                        "Failed to create errors intake file {}",
+                        file_path.display()
+                    )
+                })?
+            };
+            #[cfg(not(unix))]
             let file = std::fs::File::create(&file_path).with_context(|| {
                 format!(
                     "Failed to create errors intake file {}",

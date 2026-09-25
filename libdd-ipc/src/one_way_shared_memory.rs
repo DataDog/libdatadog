@@ -279,11 +279,16 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
             let new_generation = source_data.meta.generation.load(Ordering::Acquire);
 
             let fetch_data = |reader: &'a mut OneWayShmReader<T, D>| {
-                let size = std::mem::size_of::<RawMetaData>() + source_data.meta.size;
+                let size = std::mem::size_of::<RawMetaData>().checked_add(source_data.meta.size)?;
 
                 #[allow(clippy::unwrap_used)]
                 let handle = reader.handle.as_mut().unwrap();
-                handle.ensure_space(size);
+                // `size` is the writer's, out of shared memory, so it can ask for more than
+                // the segment can hold. Treated as a failed read: the caller keeps whatever it
+                // had and tries again, rather than indexing past the mapping.
+                if !handle.ensure_space(size) {
+                    return None;
+                }
 
                 // aligned on 8 byte boundary, round up to closest 8 byte boundary
                 let mut new_mem = Vec::<u64>::with_capacity(size.div_ceil(8));
@@ -291,7 +296,8 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
                     reinterpret_u8_as_u64_slice(&handle.as_slice()[0..size])
                 });
 
-                // refetch, might have been resized
+                // Refetch: the mapping's address is fixed, but `ensure_space` above may have
+                // grown how much of it is readable, and this view was taken before that.
                 let source_data: &RawData =
                     unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
                 let copied_data: &RawData = new_mem.as_slice().into();
@@ -410,13 +416,24 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     /// Linux this also wakes readers blocked in
     /// [`OneWayShmReader::wait_for_change`]; the wake is a cheap no-op syscall when
     /// there are no waiters.
-    pub fn write(&self, contents: &[u8]) {
+    ///
+    /// Returns `false` without publishing anything if the segment cannot be grown to hold
+    /// `contents` - the previously published buffer stays current, and this payload is lost.
+    pub fn write(&self, contents: &[u8]) -> bool {
         let mut mapped = self.handle.lock_or_panic();
 
         let size = contents.len() + 1; // trailing zero byte, to keep some C code happy
-        mapped.ensure_space(std::mem::size_of::<RawMetaData>() + size);
+        let needed = std::mem::size_of::<RawMetaData>() + size;
+        if !mapped.ensure_space(needed) {
+            tracing::warn!(
+                "Dropping a {size} byte shared memory payload: {needed} bytes were needed and \
+                 the segment could not be grown past {}",
+                mapped.as_slice().len()
+            );
+            return false;
+        }
 
-        // Safety: ShmHandle is always big enough
+        // Safety: the segment holds `needed` bytes, as just ensured
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
         // unstable
         let data = unsafe { &mut *(mapped.as_slice_mut() as *mut [u8] as *mut RawData) };
@@ -431,6 +448,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         // Wake any readers blocked in `wait_for_change` on the generation word.
         // A wake with no waiters is a cheap no-op syscall.
         futex_wake((&data.meta.generation as *const AtomicU64).cast::<u32>());
+        true
     }
 
     /// Borrow the buffer currently published in the segment (excluding the
@@ -470,5 +488,75 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         let mapped = self.handle.lock_or_panic();
         let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
         data.meta.generation.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::NamedShmHandle;
+
+    fn test_path(name: &str) -> CString {
+        #[allow(clippy::unwrap_used)]
+        CString::new(format!("/ddtest-1way-{}-{name}", unsafe { libc::getpid() })).unwrap()
+    }
+
+    /// A payload the segment cannot hold must be refused outright: writing it would run off
+    /// the end of the mapping, and bumping the generation first would leave readers waiting on
+    /// a write that never lands. What was published before stays published.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn an_oversized_payload_is_refused_and_the_previous_one_stays() {
+        let path = test_path("big");
+        let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
+        assert!(writer.write(b"published"));
+
+        // Larger than any platform's reservation. The pages are never touched - `write` reads
+        // only the length before refusing - so this costs no resident memory.
+        let oversized = vec![0u8; 160 * 1024 * 1024];
+        assert!(
+            !writer.write(&oversized),
+            "a payload beyond the reservation must be refused"
+        );
+        assert_eq!(
+            writer.as_slice(),
+            b"published",
+            "the refused write must not have replaced the payload"
+        );
+
+        let mut reader = OneWayShmReader::new(open_named_shm(&path).unwrap(), ());
+        let (changed, data) = reader.read();
+        assert!(changed, "the generation must not have been left mid-write");
+        assert_eq!(data, b"published");
+    }
+
+    /// The published size is the writer's, and the writer is another process. One that cannot
+    /// be read - too large for the segment, or large enough to overflow the header arithmetic -
+    /// must come back as a failed read rather than an index past the mapping.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_forged_payload_size_does_not_take_the_reader_past_the_mapping() {
+        let path = test_path("forged");
+        let writer = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
+        assert!(writer.write(b"published"));
+
+        let mut reader = OneWayShmReader::new(open_named_shm(&path).unwrap(), ());
+        assert_eq!(reader.read().1, b"published");
+
+        for forged in [usize::MAX, 1 << 30] {
+            // Stand in for a peer publishing an impossible size, with an even generation so
+            // the reader takes it for a complete write.
+            let mut mapped = open_named_shm(&path).unwrap();
+            let data = unsafe { &mut *(mapped.as_slice_mut() as *mut [u8] as *mut RawData) };
+            data.meta.size = forged;
+            data.meta.generation.fetch_add(2, Ordering::Release);
+
+            let (changed, data) = reader.read();
+            assert!(!changed, "a size of {forged} cannot count as a new payload");
+            assert_eq!(
+                data, b"published",
+                "the reader must keep the last payload it could read"
+            );
+        }
     }
 }

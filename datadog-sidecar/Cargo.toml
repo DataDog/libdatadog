@@ -49,7 +49,7 @@ base64 = { workspace = true, features = ["std"] }
 spawn_worker = { path = "../spawn_worker" }
 zwohash = { workspace = true, default-features = true }
 sha2 = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }
 
 prctl.workspace = true
@@ -87,7 +87,9 @@ winapi = { workspace = true, features = ["securitybaseapi", "sddl", "winerror", 
 
 [dev-dependencies]
 libc.workspace = true
+serial_test.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros"] }
 httpmock.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }

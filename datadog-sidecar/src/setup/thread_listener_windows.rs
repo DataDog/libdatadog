@@ -7,6 +7,7 @@ use std::thread::{self, JoinHandle};
 use tokio::sync::oneshot;
 use tracing::{error, info};
 
+use crate::auth::ConnectionAuthorizer;
 use crate::config::Config;
 use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
@@ -19,7 +20,6 @@ static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new(
 pub struct MasterListener {
     shutdown_tx: Option<oneshot::Sender<()>>,
     thread_handle: Option<JoinHandle<()>>,
-    pid: i32,
 }
 
 impl MasterListener {
@@ -27,7 +27,9 @@ impl MasterListener {
     ///
     /// This spawns a new OS thread that creates a named pipe server
     /// to listen for worker connections. Only one listener can be active per process.
-    pub fn start(pid: i32, _config: Config) -> io::Result<()> {
+    pub fn start(_config: Config) -> io::Result<()> {
+        let pid = std::process::id();
+
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
             .lock()
@@ -56,7 +58,6 @@ impl MasterListener {
         *listener_guard = Some(MasterListener {
             shutdown_tx: Some(shutdown_tx),
             thread_handle: Some(thread_handle),
-            pid,
         });
 
         info!("Started Windows named pipe listener (PID {})", pid);
@@ -88,15 +89,19 @@ impl MasterListener {
         }
     }
 
-    /// Check if the master listener is active for the given PID.
-    pub fn is_active(pid: i32) -> bool {
+    /// Whether this process has a running master listener.
+    /// Windows does not inherit this state across process creation.
+    pub fn is_active() -> bool {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         if let Ok(listener_guard) = listener_mutex.lock() {
-            listener_guard.as_ref().is_some_and(|l| l.pid == pid)
+            listener_guard.is_some()
         } else {
             false
         }
     }
+
+    /// Counterpart of the Unix entry point, and a no-op here.
+    pub fn reap_bound_files_at_exit() {}
 
     /// Clear inherited listener state.
     /// Kept for API compatibility with Unix version.
@@ -141,6 +146,9 @@ fn run_listener_windows(
         enable_ctrl_c_handler: false,
         external_shutdown_rx: None,
         init_shm_eagerly: true,
+        // Resolves to AuthPolicy::OsEnforced on Windows: the pipe's DACL already refuses
+        // cross-user connects.
+        authorizer: std::sync::Arc::new(ConnectionAuthorizer::for_in_process_listener()),
     };
 
     crate::entry::enter_listener_loop_with_config(

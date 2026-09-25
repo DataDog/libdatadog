@@ -138,7 +138,9 @@ impl RemoteConfigWriter {
         })
     }
 
-    pub fn write(&self, contents: &[u8]) {
+    /// Returns `false` if the segment could not be grown to hold `contents`, in which case
+    /// nothing was published and the previous payload stays current.
+    pub fn write(&self, contents: &[u8]) -> bool {
         self.writer.write(contents)
     }
 
@@ -187,8 +189,19 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
+            // No limiter means no rate limiting: the segment could not be created, which is
+            // already reported where it happened.
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                Some(SHM_LIMITER.lock_or_panic().alloc())
+                SHM_LIMITER.as_ref().and_then(|limiter| {
+                    let allocated = limiter.lock_or_panic().alloc();
+                    if allocated.is_none() {
+                        warn!(
+                            "No rate limiter slot available for live debugging config {path}; \
+                             not rate limited"
+                        );
+                    }
+                    allocated
+                })
             } else {
                 None
             },

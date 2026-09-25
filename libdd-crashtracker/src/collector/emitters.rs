@@ -4,6 +4,8 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+#[cfg(target_os = "linux")]
+use crate::crash_info::ThreadData;
 use crate::runtime_callback::{
     get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
     CallbackData,
@@ -17,6 +19,7 @@ use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
     io::{Read, Write},
+    time::Instant,
 };
 use thiserror::Error;
 
@@ -64,7 +67,7 @@ impl CrashKindData {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
-    pipe: &mut impl Write,
+    pipe: &mut (impl Write + Send),
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
@@ -72,6 +75,7 @@ pub(crate) fn emit_crashreport(
     crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] threads_deadline: Instant,
 ) -> Result<(), EmitterError> {
     // Crash-ping
     // The receiver dispatches the crash ping as soon as it sees the metadata
@@ -102,8 +106,16 @@ pub(crate) fn emit_crashreport(
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
 
-    // Stack trace emission
-    match crash {
+    #[cfg(target_os = "linux")]
+    let crash_site = match &crash {
+        // SAFETY: the pointer came from the signal handler; null is checked inside.
+        CrashKindData::UnixSignal { ucontext, .. } => unsafe {
+            crash_site_from_ucontext(*ucontext)
+        },
+        CrashKindData::UnhandledException { .. } => None,
+    };
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    let supplied_main = match crash {
         CrashKindData::UnixSignal { ucontext, .. } => {
             emit_ucontext(pipe, ucontext)?;
             if config.resolve_frames() != StacktraceCollection::Disabled {
@@ -116,12 +128,26 @@ pub(crate) fn emit_crashreport(
             if is_runtime_callback_registered() {
                 emit_runtime_stack(pipe)?;
             }
+            None
         }
         CrashKindData::UnhandledException { stacktrace } => {
-            // SAFETY: This branch only executes for unhandled exceptions, never
-            // from a signal handler
-            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+            emit_whole_stacktrace(pipe, &stacktrace)?;
+            Some(stacktrace)
         }
+    };
+
+    // Send the basic report first so a failed unwind cannot lose it.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        let _ = emit_threads(
+            pipe,
+            config,
+            ppid,
+            crashing_tid,
+            crash_site,
+            supplied_main,
+            threads_deadline,
+        );
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -403,19 +429,171 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
     Ok(())
 }
 
-/// SAFETY:
-///    This function is not safe to call from a signal handler.
-///    Although `serde_json::to_writer` does not technically allocate memory
-///    itself, it takes in `StackTrace` which is allocated and is only intended
-///    to be used in a non-signal-handler context
-unsafe fn emit_whole_stacktrace(
-    w: &mut impl Write,
-    stacktrace: StackTrace,
-) -> Result<(), EmitterError> {
+/// Write a complete stack from the collector child, outside the crashing process's handler.
+fn emit_whole_stacktrace(w: &mut impl Write, stacktrace: &StackTrace) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
-    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    serde_json::to_writer(&mut *w, stacktrace)?;
     writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// The instruction and stack pointer the kernel saved when it delivered the signal, used to
+/// trim our own handler frames off the crashing thread's stack.
+///
+/// # Safety
+/// `ucontext` must be the pointer the signal handler received, or null.
+#[cfg(target_os = "linux")]
+unsafe fn crash_site_from_ucontext(ucontext: *const ucontext_t) -> Option<(u64, u64)> {
+    if ucontext.is_null() {
+        return None;
+    }
+    let uc = &*ucontext;
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let gregs = &uc.uc_mcontext.gregs;
+        Some((
+            gregs[libc::REG_RIP as usize] as u64,
+            gregs[libc::REG_RSP as usize] as u64,
+        ))
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mc = &uc.uc_mcontext;
+        Some((mc.pc, mc.sp))
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = uc;
+        None
+    }
+}
+
+/// Emit each thread as it finishes so timeouts preserve completed stacks.
+///
+/// This runs only in the collector child. A scoped thread provides an ordinary stack:
+/// DWARF parsing can overflow the alternate signal stack inherited from the parent.
+#[cfg(target_os = "linux")]
+fn emit_threads<W: Write + Send>(
+    w: &mut W,
+    config: &CrashtrackerConfiguration,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+    crash_site: Option<(u64, u64)>,
+    supplied_main: Option<StackTrace>,
+    deadline: Instant,
+) -> Result<(), EmitterError> {
+    use crate::crash_info::{CachedElfResolvers, ErrorData};
+    use crate::ptrace_collector::{
+        parse_hex_address, stream_thread_contexts, thread_data_from_capture,
+    };
+
+    let budget = deadline.saturating_duration_since(Instant::now());
+    if budget.is_zero() {
+        return Ok(());
+    }
+
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<(bool, usize), EmitterError> {
+                // blazesym's types are not Send; create and retain the cache on this thread.
+                let normalizer = ErrorData::create_normalizer();
+                let src = ErrorData::create_symbolizer_source(ppid as u32);
+                let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+                let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
+                let mut enrich_stack = |stack: &mut StackTrace| {
+                    // Failed lookups leave raw addresses and record errors on the frames.
+                    let _ =
+                        stack.normalize_ips(&normalizer, (ppid as u32).into(), &mut elf_resolvers);
+                    let _ = stack.resolve_names(&src, elf_resolvers.symbolizer());
+                };
+
+                // Preserve the runtime's exception stack independently of thread collection.
+                if let Some(mut stack) = supplied_main {
+                    enrich_stack(&mut stack);
+                    emit_whole_stacktrace(w, &stack)?;
+                }
+
+                let mut unsymbolized = 0usize;
+                let mut emit = |tid, captured| -> Result<(), EmitterError> {
+                    let mut thread =
+                        thread_data_from_capture(ppid, crashing_tid, crash_site, tid, captured);
+                    if Instant::now() < deadline {
+                        enrich_stack(&mut thread.stack);
+
+                        // Replace the primary stack only if trimming reached the faulting frame.
+                        let at_crash_site = crash_site.is_some_and(|(ip, _)| {
+                            thread
+                                .stack
+                                .frames
+                                .first()
+                                .and_then(|frame| frame.ip.as_deref())
+                                .and_then(parse_hex_address)
+                                == Some(ip)
+                        });
+                        if thread.crashed && at_crash_site {
+                            // Send enrichment before collecting later threads can time out.
+                            emit_whole_stacktrace(w, &thread.stack)?;
+                        }
+                    } else {
+                        unsymbolized += 1;
+                    }
+                    emit_thread(w, &thread)
+                };
+                let mut write_result = Ok(());
+                let incomplete = stream_thread_contexts(
+                    ppid,
+                    crashing_tid,
+                    config.max_threads(),
+                    budget,
+                    |tid, captured| {
+                        if write_result.is_ok() {
+                            write_result = emit(tid, captured);
+                        }
+                    },
+                )
+                .unwrap_or(true);
+                write_result?;
+                Ok((incomplete, unsymbolized))
+            })
+            .join()
+    });
+
+    // Keep the basic report if the collection thread panics.
+    let Ok(result) = outcome else {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+        writeln!(w, "{{\"threads_collection_failed\": 1}}")?;
+        writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+        w.flush()?;
+        return Ok(());
+    };
+    let (incomplete, unsymbolized) = result?;
+
+    // Record incomplete collection even when the basic report was delivered successfully.
+    if incomplete || unsymbolized > 0 {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+        if incomplete {
+            writeln!(w, "{{\"threads_incomplete\": 1}}")?;
+        }
+        if unsymbolized > 0 {
+            writeln!(w, "{{\"threads_unsymbolized\": {unsymbolized}}}")?;
+        }
+        writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+        w.flush()?;
+    }
+
+    Ok(())
+}
+
+/// Complete sections allow primary-stack updates between threads.
+#[cfg(target_os = "linux")]
+fn emit_thread(w: &mut impl Write, thread: &ThreadData) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREADS}")?;
+    serde_json::to_writer(&mut *w, thread)?;
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_THREADS}")?;
     w.flush()?;
     Ok(())
 }
@@ -813,7 +991,7 @@ mod tests {
         stacktrace.set_complete().unwrap();
 
         let mut buf = Vec::new();
-        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
+        emit_whole_stacktrace(&mut buf, &stacktrace).expect("to work ;-)");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains("\"ip\":\"0x4d2\""));

@@ -90,7 +90,9 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T> {
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
-    pub fn write(&self, contents: &[u8]) {
+    /// Returns `false` if the segment could not be grown to hold `contents`, in which case
+    /// nothing was published and the previous payload stays current.
+    pub fn write(&self, contents: &[u8]) -> bool {
         self.0.write(contents)
     }
 

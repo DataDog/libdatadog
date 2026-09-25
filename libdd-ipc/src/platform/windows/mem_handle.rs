@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, PlatformHandle, ShmHandle, ShmPath,
 };
@@ -9,7 +10,7 @@ use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr::{null_mut, NonNull};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::{io, mem};
 use winapi::shared::minwindef::{DWORD, LPVOID};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
@@ -26,6 +27,9 @@ const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
     let shm = handle.get_shm_mut();
+    // The whole reservation in one view. The section was created with `SEC_RESERVE`, so this
+    // costs address space and nothing else until pages are committed - and the view never has
+    // to be replaced to make room, so every address in it is stable.
     let raw_ptr = unsafe {
         MapViewOfFile(
             shm.handle.as_raw_handle() as HANDLE,
@@ -41,7 +45,8 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
     if shm.size & NOT_COMMITTED != 0 {
         shm.size &= !NOT_COMMITTED;
         if shm.size == 0 {
-            // We don't know the size of a freshly opened object yet. Query it.
+            // We don't know the size of a freshly opened object yet. Query it: on a reserved
+            // section the committed run at the base is exactly what its creator committed.
             shm.size = unsafe {
                 let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
                 if VirtualQuery(
@@ -58,7 +63,13 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             unsafe { VirtualAlloc(ptr.as_ptr(), shm.size, MEM_COMMIT, PAGE_READWRITE) };
         }
     }
-    Ok(MappedMem { ptr, mem: handle })
+    let usable = shm.size.min(MAPPING_MAX_SIZE);
+    Ok(MappedMem {
+        ptr,
+        mapped_len: MAPPING_MAX_SIZE,
+        usable: AtomicUsize::new(usable),
+        mem: handle,
+    })
 }
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
@@ -113,6 +124,13 @@ impl ShmHandle {
     }
 
     /// Refresh the size of the shared memory segment
+    /// No-op on Windows: the view is a fixed size and carries its committed length in itself,
+    /// so a wire-supplied size cannot make a mapping exceed its backing. Kept so callers
+    /// guarding a peer-supplied handle need no `cfg`.
+    pub(crate) fn limit_size_to_backing(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
     pub fn adjust_to_file_size(&mut self) -> std::io::Result<()> {
         self.size = NOT_COMMITTED;
         Ok(())
@@ -162,32 +180,81 @@ impl NamedShmHandle {
     }
 }
 
-impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
-    pub fn ensure_space(&mut self, expected_size: usize) {
-        let current_size = self.mem.get_shm().size;
-        if expected_size <= current_size {
-            return;
+/// Remove a shared-memory name.
+///
+/// Nothing to do on Windows: a section has no filesystem entry and lives exactly as long as
+/// the handles to it, so one whose owner died is already gone.
+pub(crate) fn unlink_shm_name(_name: &CStr) {}
+
+impl<T: FileBackedHandle> MappedMem<T> {
+    /// Pick up pages that somebody else committed, without committing any.
+    ///
+    /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a
+    /// segment a peer grew stays invisible here until something asks. On a `SEC_RESERVE`
+    /// section the committed run at the base is what the section's mappers have committed
+    /// between them - the same thing [`mmap_handle`] uses to size a freshly opened view - and
+    /// querying it commits nothing, so this can be called on paths that must not allocate.
+    ///
+    /// Returns the usable length afterwards.
+    pub fn refresh_size(&self) -> usize {
+        let committed = unsafe {
+            let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
+            if VirtualQuery(
+                self.ptr.as_ptr().cast_const(),
+                info.as_mut_ptr(),
+                mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+            ) == 0
+            {
+                0
+            } else {
+                let info = info.assume_init();
+                // A reserved-but-uncommitted base reports the whole reservation as one
+                // region; only a committed run says anything about what may be touched.
+                if info.State == MEM_COMMIT {
+                    info.RegionSize
+                } else {
+                    0
+                }
+            }
+        };
+        self.usable
+            .fetch_max(committed.min(self.mapped_len), Ordering::AcqRel);
+        self.get_size()
+    }
+
+    /// Commit `expected_size` bytes of the reserved view, leaving the view where it is, and
+    /// report whether that many bytes are now usable.
+    ///
+    /// Committing a page that is already committed is explicitly allowed, so this commits the
+    /// whole range from the base rather than tracking a delta: any number of callers may then
+    /// do it concurrently, in any order, and the result is the same. Windows cannot resize a
+    /// section at all, which is why the view covers the reservation from the start.
+    ///
+    /// `false` means the request exceeds the reservation, or the commit failed, and nothing
+    /// may be written past what the view already has.
+    #[must_use = "a segment that could not be grown is still too short to write to"]
+    pub fn ensure_space(&self, expected_size: usize) -> bool {
+        if expected_size <= self.get_size() {
+            return true;
+        }
+        let expected_size = page_aligned_size(expected_size);
+        if expected_size > self.mapped_len {
+            return false;
         }
 
-        #[allow(clippy::panic)]
-        if expected_size > MAPPING_MAX_SIZE {
-            panic!(
-                "Tried to allocate {expected_size} bytes for shared mapping (limit: {MAPPING_MAX_SIZE} bytes)",
-            );
-        }
-
-        #[allow(clippy::unwrap_used)]
-        unsafe {
-            self.mem.set_mapping_size(expected_size).unwrap();
-        }
-        let new_size = self.mem.get_shm().size;
-        unsafe {
+        if unsafe {
             VirtualAlloc(
-                (self.ptr.as_ptr() as usize + current_size) as LPVOID,
-                new_size - current_size,
+                self.ptr.as_ptr() as LPVOID,
+                expected_size,
                 MEM_COMMIT,
                 PAGE_READWRITE,
             )
-        };
+        }
+        .is_null()
+        {
+            return false;
+        }
+        self.usable.fetch_max(expected_size, Ordering::AcqRel);
+        true
     }
 }
