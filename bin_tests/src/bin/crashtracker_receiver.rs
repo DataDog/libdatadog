@@ -75,6 +75,5 @@ fn receive_with_sentinel_stack() -> anyhow::Result<()> {
     runtime.block_on(libdd_crashtracker::async_receiver_entry_point_stream(
         stream,
     ))?;
-    drop(source);
     Ok(())
 }

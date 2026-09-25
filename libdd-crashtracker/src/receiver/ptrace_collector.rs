@@ -127,35 +127,36 @@ fn replace_registers_from_ucontext(
     }
     let original = registers;
 
+    macro_rules! set_register {
+        ($field:ident) => {
+            registers.$field = parse_register(context, stringify!($field))
+                .ok_or(PtraceError::Registers(tid, libc::EINVAL))?
+        };
+    }
+
     #[cfg(target_arch = "x86_64")]
     {
         let expected_arch = "x86_64";
         if context.arch != expected_arch {
             return Err(PtraceError::Registers(tid, libc::EINVAL));
         }
-        macro_rules! set_register {
-            ($field:ident, $name:literal) => {
-                registers.$field = parse_register(context, $name)
-                    .ok_or(PtraceError::Registers(tid, libc::EINVAL))?
-            };
-        }
-        set_register!(rip, "rip");
-        set_register!(rsp, "rsp");
-        set_register!(rbp, "rbp");
-        set_register!(rax, "rax");
-        set_register!(rbx, "rbx");
-        set_register!(rcx, "rcx");
-        set_register!(rdx, "rdx");
-        set_register!(rsi, "rsi");
-        set_register!(rdi, "rdi");
-        set_register!(r8, "r8");
-        set_register!(r9, "r9");
-        set_register!(r10, "r10");
-        set_register!(r11, "r11");
-        set_register!(r12, "r12");
-        set_register!(r13, "r13");
-        set_register!(r14, "r14");
-        set_register!(r15, "r15");
+        set_register!(rip);
+        set_register!(rsp);
+        set_register!(rbp);
+        set_register!(rax);
+        set_register!(rbx);
+        set_register!(rcx);
+        set_register!(rdx);
+        set_register!(rsi);
+        set_register!(rdi);
+        set_register!(r8);
+        set_register!(r9);
+        set_register!(r10);
+        set_register!(r11);
+        set_register!(r12);
+        set_register!(r13);
+        set_register!(r14);
+        set_register!(r15);
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -163,10 +164,8 @@ fn replace_registers_from_ucontext(
         if context.arch != "aarch64" {
             return Err(PtraceError::Registers(tid, libc::EINVAL));
         }
-        registers.pc =
-            parse_register(context, "pc").ok_or(PtraceError::Registers(tid, libc::EINVAL))?;
-        registers.sp =
-            parse_register(context, "sp").ok_or(PtraceError::Registers(tid, libc::EINVAL))?;
+        set_register!(pc);
+        set_register!(sp);
         for (index, register) in registers.regs.iter_mut().enumerate() {
             let name = format!("x{index}");
             *register =
