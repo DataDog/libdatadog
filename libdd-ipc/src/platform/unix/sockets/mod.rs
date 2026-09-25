@@ -7,7 +7,7 @@
 //! - macOS: `AF_UNIX SOCK_DGRAM` with an fd-passing connection handshake. This emulates the
 //!   semantics which SOCK_SEQPACKET provides us on Linux.
 
-use nix::sys::socket::{recvmsg, sendmsg, AddressFamily, SockFlag, SockType};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, recvmsg, sendmsg};
 pub use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, UnixAddr};
 #[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;

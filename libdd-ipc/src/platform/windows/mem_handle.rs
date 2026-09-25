@@ -8,17 +8,17 @@ use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, mem};
 use winapi::shared::minwindef::{DWORD, LPVOID};
 use winapi::um::handleapi::INVALID_HANDLE_VALUE;
 use winapi::um::memoryapi::{
-    MapViewOfFile, UnmapViewOfFile, VirtualAlloc, VirtualQuery, FILE_MAP_WRITE,
+    FILE_MAP_WRITE, MapViewOfFile, UnmapViewOfFile, VirtualAlloc, VirtualQuery,
 };
 use winapi::um::winbase::{CreateFileMappingA, OpenFileMappingA};
 use winapi::um::winnt::{
-    HANDLE, LPCSTR, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_READWRITE, SEC_RESERVE,
+    HANDLE, LPCSTR, MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_READWRITE, SEC_RESERVE,
 };
 
 const MAPPING_MAX_SIZE: usize = 100_000_000; // 100 MB ought to be enough for everybody?

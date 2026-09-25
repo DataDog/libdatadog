@@ -22,11 +22,11 @@
 //! - Success → live server.  `ECONNRESET` → stale socket file.
 
 use super::{
-    create_unix_socket, max_message_size, poll_with_timeout, sendmsg, set_nonblocking,
-    ControlMessage, MsgFlags, SeqpacketConn, SeqpacketListener, UnixAddr,
+    ControlMessage, MsgFlags, SeqpacketConn, SeqpacketListener, UnixAddr, create_unix_socket,
+    max_message_size, poll_with_timeout, sendmsg, set_nonblocking,
 };
 use crate::PeerCredentials;
-use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
+use nix::sys::socket::{AddressFamily, SockFlag, SockType, bind};
 use std::os::fd::RawFd;
 use std::{
     ffi::CString,
@@ -146,7 +146,9 @@ impl SeqpacketListener {
                 // does not die. The client will retry via the reconnect mechanism.
                 Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
                     // Shouldn't occur with our larger buffers, but guard defensively.
-                    tracing::warn!("rendezvous socket: oversized datagram discarded (EMSGSIZE), client will retry");
+                    tracing::warn!(
+                        "rendezvous socket: oversized datagram discarded (EMSGSIZE), client will retry"
+                    );
                     continue;
                 }
                 other => other?,

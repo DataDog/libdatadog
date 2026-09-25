@@ -3,8 +3,8 @@
 
 use crate::platform::PlatformHandle;
 use io_lifetimes::{
-    views::{SocketlikeView, SocketlikeViewType},
     AsSocketlike,
+    views::{SocketlikeView, SocketlikeViewType},
 };
 use std::io;
 use std::marker::PhantomData;

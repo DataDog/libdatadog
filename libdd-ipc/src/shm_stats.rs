@@ -49,16 +49,16 @@ use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
 use std::hint;
 use std::io;
-use std::sync::atomic::{fence, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering::*};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*, fence};
 use std::thread;
 use zwohash::ZwoHasher;
 
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    cardinality_limit_telemetry::CollapsedFieldsMetrics, FixedAggregationKey, FlushResult,
-    FlushableConcentrator,
+    FixedAggregationKey, FlushResult, FlushableConcentrator,
+    cardinality_limit_telemetry::CollapsedFieldsMetrics,
 };
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -968,8 +968,8 @@ mod tests {
             DEFAULT_STRING_POOL_BYTES,
         )
         .unwrap();
-        assert!(c
-            .flush(
+        assert!(
+            c.flush(
                 false,
                 "h".into(),
                 "e".into(),
@@ -977,7 +977,8 @@ mod tests {
                 "s".into(),
                 "r".into()
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]

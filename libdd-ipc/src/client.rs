@@ -3,7 +3,7 @@
 
 //! Generic IPC client connection state shared by all generated channel types.
 
-use crate::platform::{max_message_size, SeqpacketConn, HANDLE_SUFFIX_SIZE};
+use crate::platform::{HANDLE_SUFFIX_SIZE, SeqpacketConn, max_message_size};
 
 #[cfg(unix)]
 use std::os::unix::io::{OwnedFd, RawFd};
@@ -131,9 +131,7 @@ impl IpcClientConn {
         let target = self.send_count;
         trace!(
             "call: sent packet {}, waiting for ack {} (ack_count={})",
-            self.send_count,
-            target,
-            self.ack_count
+            self.send_count, target, self.ack_count
         );
         loop {
             let (n, resp_fds) = self

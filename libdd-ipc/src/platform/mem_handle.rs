@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::handles::{HandlesTransport, TransferHandles};
-use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use crate::AtomicOption;
+use crate::handles::{HandlesTransport, TransferHandles};
+use crate::platform::{OwnedFileHandle, PlatformHandle, mmap_handle, munmap_handle};
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};

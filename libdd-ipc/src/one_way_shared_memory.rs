@@ -22,8 +22,8 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use std::time::Duration;
 
 pub struct OneWayShmWriter<T>
