@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
+use crate::span::v1::TracerPayload;
+use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
-use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {
     const U16_MAX: usize = u16::MAX as usize;
@@ -249,7 +249,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{encode_span, ChunkContext};
+    use span_v1::{ChunkContext, encode_span};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {

@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{ser::Error as _, Serialize, Serializer};
+use serde::{Serialize, Serializer, ser::Error as _};
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 

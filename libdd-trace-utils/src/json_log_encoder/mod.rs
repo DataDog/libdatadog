@@ -22,9 +22,9 @@
 mod span;
 mod span_v1;
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
+use crate::span::v1::TracerPayload;
+use crate::span::v04::Span;
 use span::LogSpan;
 use span_v1::{ChunkContextV1, LogSpanV1};
 use std::io::Write;

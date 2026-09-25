@@ -11,7 +11,7 @@ use tracing::{debug, error};
 use crate::span::span_pool::PooledChunks;
 use crate::span::v1::{AttributeValue, SpanKind, TraceChunk};
 use crate::span::vec_map::VecMap;
-use crate::span::{self, trace_utils::get_root_span_index, trace_utils_v1, TraceData};
+use crate::span::{self, TraceData, trace_utils::get_root_span_index, trace_utils_v1};
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -389,7 +389,10 @@ impl TraceFilterer {
             }
             "http.status_code" => {
                 if !normalizer::is_valid_http_status_code(value) {
-                    debug!(?value,"trace filter on http.status_code ignored because root span's `http.status_code` is invalid");
+                    debug!(
+                        ?value,
+                        "trace filter on http.status_code ignored because root span's `http.status_code` is invalid"
+                    );
                     return false;
                 }
                 filter.matches_tag_value(value)
@@ -403,10 +406,10 @@ impl TraceFilterer {
 mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;
-    use crate::span::v04::{SpanBytes, VecMap};
     use crate::span::v1::{
         AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
     };
+    use crate::span::v04::{SpanBytes, VecMap};
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {

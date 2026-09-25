@@ -4,11 +4,11 @@
 //! Agentless JSON encoding for a representative HTTP flush: 20 five-span traces with repeated
 //! runtime and HTTP metadata. A second case adds one span link to each root span.
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::agentless_encoder::encode_payload;
-use libdd_trace_utils::span::v04::{Span, SpanLink, VecMap};
 use libdd_trace_utils::span::BytesData;
+use libdd_trace_utils::span::v04::{Span, SpanLink, VecMap};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 const NUM_TRACES: usize = 20;

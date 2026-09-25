@@ -19,14 +19,14 @@
 
 use std::alloc::System;
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
-use libdd_common::bench_utils::{memory_allocated_criterion, AllocatedBytesMeasurement};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group};
+use libdd_common::bench_utils::{AllocatedBytesMeasurement, memory_allocated_criterion};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::msgpack_decoder;
+use libdd_trace_utils::span::SharedDictBytes;
 use libdd_trace_utils::span::v04::SpanBytes;
 use libdd_trace_utils::span::v05::{self, from_v04_span};
 use libdd_trace_utils::span::vec_map::VecMap;
-use libdd_trace_utils::span::SharedDictBytes;
 
 /// Number of meta tags per span. Picked to resemble a typical instrumented span (service/runtime
 /// metadata, a couple of resource attributes, thread info, etc.).

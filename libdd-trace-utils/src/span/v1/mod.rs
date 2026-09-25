@@ -94,7 +94,7 @@ impl<T: TraceData> PartialEq for AttributeValue<T> {
 /// borrowed (e.g. `&str`). To define a generic function taking any `Span<T>` you can use the
 /// [`TraceData`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v1::Span, TraceData};
+/// use libdd_trace_utils::span::{TraceData, v1::Span};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.attributes.get("foo");
 /// }
