@@ -69,14 +69,16 @@ impl EnvGuard {
     /// drop.
     pub fn set(key: &'static str, value: &str) -> Self {
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, value);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var(key, value) };
         EnvGuard { key, saved }
     }
 
     /// Remove the environment variable. The previous value (if any) is restored on drop.
     pub fn remove(key: &'static str) -> Self {
         let saved = std::env::var(key).ok();
-        std::env::remove_var(key);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::remove_var(key) };
         EnvGuard { key, saved }
     }
 }
@@ -84,8 +86,10 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         match &self.saved {
-            Some(s) => std::env::set_var(self.key, s),
-            None => std::env::remove_var(self.key),
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            Some(s) => unsafe { std::env::set_var(self.key, s) },
+            // TODO: Audit that the environment access only happens in single-threaded code.
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }

@@ -127,7 +127,7 @@ pub trait AsBytes<'a> {
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
     unsafe fn assume_utf8(&self) -> &'a str {
-        core::str::from_utf8_unchecked(self.as_bytes())
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
     }
 }
 

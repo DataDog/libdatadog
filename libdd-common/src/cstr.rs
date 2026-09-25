@@ -24,7 +24,7 @@ pub const fn validate_cstr_contents(bytes: &[u8]) {
 
 #[macro_export]
 macro_rules! cstr {
-    ($s:expr) => {{
+    ($s:expr_2021) => {{
         let mut bytes = $s.as_bytes();
         if bytes[bytes.len() - 1usize] != b'\0' {
             bytes = concat!($s, "\0").as_bytes();

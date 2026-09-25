@@ -115,7 +115,7 @@ fn read_aas_var(name: &str) -> Option<String> {
 }
 
 macro_rules! get_trimmed_env_var {
-    ($name:expr) => {
+    ($name:expr_2021) => {
         crate::azure_app_services::read_aas_var($name)
             .map(|v| v.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -123,7 +123,7 @@ macro_rules! get_trimmed_env_var {
 }
 
 macro_rules! get_value_or_unknown {
-    ($name:expr) => {
+    ($name:expr_2021) => {
         $name.as_ref().map(|s| s.as_str()).unwrap_or(UNKNOWN_VALUE)
     };
 }

@@ -89,7 +89,7 @@ impl Tag {
 // https://docs.datadoghq.com/getting_started/tagging/#define-tags
 #[macro_export]
 macro_rules! tag {
-    ($key:expr, $val:expr) => {{
+    ($key:expr_2021, $val:expr_2021) => {{
         // Keys come in "value" or "key:value" format. This pattern is always
         // the key:value format, which means the value should not be empty.
         // todo: the implementation here differs subtly from Tag::from_value,

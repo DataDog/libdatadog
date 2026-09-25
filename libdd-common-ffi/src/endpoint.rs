@@ -8,7 +8,7 @@ use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
 use libdd_common::{parse_uri, Endpoint};
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<Endpoint>> {
     parse_uri(url.to_utf8_lossy().as_ref())
@@ -16,7 +16,7 @@ pub extern "C" fn ddog_endpoint_from_url(url: crate::CharSlice) -> Option<Box<En
         .map(|url| Box::new(Endpoint::from_url(url)))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_filename(filename: crate::CharSlice) -> Option<Box<Endpoint>> {
     let url = format!("file://{}", filename.to_utf8_lossy());
@@ -25,7 +25,7 @@ pub extern "C" fn ddog_endpoint_from_filename(filename: crate::CharSlice) -> Opt
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their
 // own subdomains.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<Endpoint> {
     let mut parts = Parts::default();
@@ -40,7 +40,7 @@ pub extern "C" fn ddog_endpoint_from_api_key(api_key: crate::CharSlice) -> Box<E
 
 // We'll just specify the base site here. If api key provided, different intakes need to use their
 // own subdomains.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_endpoint_from_api_key_and_site(
     api_key: crate::CharSlice,
@@ -61,12 +61,12 @@ pub extern "C" fn ddog_endpoint_from_api_key_and_site(
     None
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_endpoint_set_timeout(endpoint: &mut Endpoint, millis: u64) {
     endpoint.timeout_ms = millis;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_endpoint_set_test_token(endpoint: &mut Endpoint, token: crate::CharSlice) {
     endpoint.test_token = if token.is_empty() {
         None
@@ -77,7 +77,7 @@ extern "C" fn ddog_endpoint_set_test_token(endpoint: &mut Endpoint, token: crate
 
 /// Set whether to use the system DNS resolver when building the reqwest client.
 /// If false, the default in-process resolver is used.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_endpoint_set_use_system_resolver(
     endpoint: &mut Endpoint,
     use_system_resolver: bool,
@@ -85,7 +85,7 @@ pub extern "C" fn ddog_endpoint_set_use_system_resolver(
     endpoint.use_system_resolver = use_system_resolver;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_endpoint_drop(_: Box<Endpoint>) {}
 
 #[cfg(test)]

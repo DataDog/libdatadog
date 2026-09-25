@@ -253,14 +253,20 @@ mod tests {
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
         let old_dir_value = env::var(ENV_SSL_CERT_DIR).unwrap_or_default();
 
-        env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe {
+            env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+            env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
+        }
         let connector = Connector::new_no_proxy();
 
         assert!(matches!(connector, Connector::Http(_)));
 
-        env::set_var(ENV_SSL_CERT_FILE, old_value);
-        env::set_var(ENV_SSL_CERT_DIR, old_dir_value);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe {
+            env::set_var(ENV_SSL_CERT_FILE, old_value);
+            env::set_var(ENV_SSL_CERT_DIR, old_dir_value);
+        }
     }
 
     #[test]
@@ -273,11 +279,17 @@ mod tests {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
-        env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe {
+            env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
+        }
         let connector = Connector::new_no_proxy();
         assert!(matches!(connector, Connector::Https(_)));
 
-        env::set_var(ENV_SSL_CERT_FILE, old_value);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe {
+            env::set_var(ENV_SSL_CERT_FILE, old_value);
+        }
     }
 
     #[tokio::test]

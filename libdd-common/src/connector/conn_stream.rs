@@ -146,7 +146,7 @@ impl ConnStream {
     pub fn from_http_connector_with_uri(
         c: &mut HttpConnector,
         uri: hyper::Uri,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static {
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static + use<> {
         c.call(uri).map(|r| match r {
             Ok(t) => Ok(ConnStream::Tcp { transport: t }),
             Err(e) => Err(e.into()),
@@ -158,7 +158,7 @@ impl ConnStream {
         c: &mut hyper_rustls::HttpsConnector<C>,
         uri: hyper::Uri,
         require_tls: bool,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static + use<C>
     where
         C: Service<hyper::Uri> + 'static,
         C::Response:
@@ -182,7 +182,7 @@ impl ConnStream {
     pub fn from_tunnel_with_uri<C>(
         c: &mut C,
         uri: hyper::Uri,
-    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static
+    ) -> impl Future<Output = Result<ConnStream, ConnStreamError>> + 'static + use<C>
     where
         C: Service<hyper::Uri> + 'static,
         C::Response:
