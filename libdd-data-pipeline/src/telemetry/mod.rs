@@ -7,6 +7,7 @@ pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
@@ -31,7 +32,7 @@ pub struct TelemetryClientBuilder {
     language_version: Option<String>,
     tracer_version: Option<String>,
     config: libdd_telemetry::config::Config,
-    runtime_id: Option<String>,
+    mutable_metadata: Option<MutableMetadataHandle>,
 }
 
 impl TelemetryClientBuilder {
@@ -90,9 +91,9 @@ impl TelemetryClientBuilder {
         self
     }
 
-    /// Sets runtime id for the telemetry client.
-    pub fn set_runtime_id(mut self, id: &str) -> Self {
-        self.runtime_id = Some(id.to_string());
+    /// Sets shared metadata.
+    pub fn set_mutable_metadata(mut self, metadata: MutableMetadataHandle) -> Self {
+        self.mutable_metadata = Some(metadata);
         self
     }
 
@@ -150,9 +151,7 @@ impl TelemetryClientBuilder {
         builder.application.env = self.env;
         builder.application.service_version = self.service_version;
 
-        if let Some(id) = self.runtime_id {
-            builder.runtime_id = Some(id);
-        }
+        builder.mutable_metadata = self.mutable_metadata;
 
         // No cancellation runtime handle: telemetry workers driven by SharedRuntime
         // handle shutdown via WorkerHandle::stop, not the per-handle deadline path.
@@ -431,6 +430,7 @@ mod tests {
     use libdd_capabilities::HttpError;
     use libdd_capabilities_impl::NativeCapabilities;
 
+    use libdd_common::mutable_metadata::MutableMetadata;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
@@ -443,6 +443,8 @@ mod tests {
         url: &str,
         runtime: &ForkSafeRuntime,
     ) -> (TelemetryClient<NativeCapabilities>, WorkerHandle) {
+        let mut metadata = MutableMetadata::default();
+        metadata.runtime_id = "foo".into();
         let (client, worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_service_version("test_version")
@@ -450,7 +452,7 @@ mod tests {
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_runtime_id("foo")
+            .set_mutable_metadata(metadata.into())
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
@@ -989,6 +991,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn session_headers_telemetry_test() {
+        let mut metadata = MutableMetadata::default();
+        metadata.runtime_id = "foo".into();
         let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
@@ -1009,7 +1013,7 @@ mod tests {
             .set_language("test_language")
             .set_language_version("test_language_version")
             .set_tracer_version("test_tracer_version")
-            .set_runtime_id("foo")
+            .set_mutable_metadata(metadata.into())
             .set_url(&server.url("/"))
             .set_heartbeat(100)
             .set_debug_enabled(true)
