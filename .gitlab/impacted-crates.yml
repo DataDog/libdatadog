@@ -58,11 +58,9 @@ compute_impacted_crates:
       printf 'AFFECTED_CRATES=%s\nIMPACTED_STATUS=%s\n' "$AFFECTED_CRATES" "$IMPACTED_STATUS" | tee impacted-crates.env
       # Record the changed files so downstream jobs can make path-based decisions.
       git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
-      # Classifications for the downstream pipeline, which cannot read changed_files.txt
-      # (the benchmarks job can). FFI_TOUCHED=false lets the downstream packaging chain
-      # skip itself; emitted only when the diff was readable -- absent means undetermined,
-      # and the chain runs full. WORKSPACE_LEVEL_CHANGE guards downstream test scoping:
-      # workspace-level changes map to no member crate but can affect everything.
+      # Classifications for the downstream pipeline, which cannot read changed_files.txt.
+      # - FFI_TOUCHED=false skips packaging. Absent means undetermined, making the the full chain run.
+      # - WORKSPACE_LEVEL_CHANGE indicates if there are workspace-level changes that can affect everything.
       FFI_PATH_RE='(^[a-z0-9][a-z0-9-]*-ffi/|^builder/|^build-common/|^cmake/|^examples/ffi/|^tests/run-package-tests\.ps1$|^tests/windows_package/|^windows/|^Cargo\.lock$|^Cargo\.toml$|^Cross\.toml$|^rust-toolchain\.toml$|^nightly-toolchain\.toml$|^\.cargo/)'
       WORKSPACE_LEVEL_RE='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|nightly-toolchain\.toml)$'
       if [[ -s changed_files.txt ]]; then
