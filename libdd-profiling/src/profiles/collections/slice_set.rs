@@ -43,8 +43,10 @@ impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
         &mut self,
         slice: &[T],
     ) -> Result<ThinSlice<'static, T>, SetError> {
-        let hash = Hasher::default().hash_one(slice);
-        self.insert_unique_uncontended_with_hash(hash, slice)
+        unsafe {
+            let hash = Hasher::default().hash_one(slice);
+            self.insert_unique_uncontended_with_hash(hash, slice)
+        }
     }
 
     /// # Safety

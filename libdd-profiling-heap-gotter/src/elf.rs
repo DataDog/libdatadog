@@ -189,54 +189,57 @@ impl SymbolOverrides {
         library_name: String,
         guard: &mut PageProtGuard,
     ) {
-        // Detect base-address reuse: a previous `dlclose` may have freed
-        // the load address, and a later `dlopen` can place a different
-        // library at the same address. If the name differs from what we
-        // recorded, treat this as a fresh library so its GOT gets patched.
-        let entry_is_new = match self.patched_libraries.entry(dyn_info.base_address()) {
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(PatchedLibrary {
-                    library_name,
-                    processed: true,
-                });
-                true
+        unsafe {
+            // Detect base-address reuse: a previous `dlclose` may have freed
+            // the load address, and a later `dlopen` can place a different
+            // library at the same address. If the name differs from what we
+            // recorded, treat this as a fresh library so its GOT gets patched.
+            let entry_is_new = match self.patched_libraries.entry(dyn_info.base_address()) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(PatchedLibrary {
+                        library_name,
+                        processed: true,
+                    });
+                    true
+                }
+                std::collections::hash_map::Entry::Occupied(mut e)
+                    if e.get().library_name != library_name =>
+                {
+                    // Base-address reuse: replace the stale entry.
+                    e.insert(PatchedLibrary {
+                        library_name,
+                        processed: true,
+                    });
+                    true
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    e.get_mut().processed = true;
+                    false
+                }
+            };
+            if !entry_is_new {
+                return;
             }
-            std::collections::hash_map::Entry::Occupied(mut e)
-                if e.get().library_name != library_name =>
-            {
-                // Base-address reuse: replace the stale entry.
-                e.insert(PatchedLibrary {
-                    library_name,
-                    processed: true,
-                });
-                true
-            }
-            std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().processed = true;
-                false
-            }
-        };
-        if !entry_is_new {
-            return;
-        }
 
-        // Pointer width alone does not make a relocation safely substitutable; see
-        // `is_rela_got_pointer_reloc`. GOT slots (`GLOB_DAT` / `JUMP_SLOT`) resolve to exactly the
-        // symbol address `S` because the dynamic linker ignores the addend, while absolute
-        // pointer-width relocations resolve to `S + A` and so need a zero addend, since the target
-        // and hook have unrelated code layouts. REL entries use an implicit addend that is
-        // no longer reliably recoverable after dynamic linking, so skip them conservatively.
-        for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
-            if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
-                continue;
+            // Pointer width alone does not make a relocation safely substitutable; see
+            // `is_rela_got_pointer_reloc`. GOT slots (`GLOB_DAT` / `JUMP_SLOT`) resolve to exactly
+            // the symbol address `S` because the dynamic linker ignores the addend,
+            // while absolute pointer-width relocations resolve to `S + A` and so need a
+            // zero addend, since the target and hook have unrelated code layouts. REL
+            // entries use an implicit addend that is no longer reliably recoverable
+            // after dynamic linking, so skip them conservatively.
+            for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
+                if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
+                    continue;
+                }
+                Self::process_relocation(
+                    &self.overrides,
+                    dyn_info,
+                    elf64_r_sym(reloc.r_info),
+                    reloc.r_offset as usize,
+                    guard,
+                );
             }
-            Self::process_relocation(
-                &self.overrides,
-                dyn_info,
-                elf64_r_sym(reloc.r_info),
-                reloc.r_offset as usize,
-                guard,
-            );
         }
     }
 
@@ -257,34 +260,36 @@ impl SymbolOverrides {
         r_offset: usize,
         guard: &mut PageProtGuard,
     ) {
-        // st_name -> string in strtab. Walk lazily: we look up the
-        // name in the override map; if it's not there, skip. Relocation
-        // symbol indices come from the object being inspected, so guard
-        // them before dereferencing dyn_info.symtab.
-        let Some(cstr) = dyn_info.sym_name(sym_index) else {
-            return;
-        };
-        if cstr.to_bytes().is_empty() {
-            return;
-        }
-        let Ok(name) = cstr.to_str() else { return };
+        unsafe {
+            // st_name -> string in strtab. Walk lazily: we look up the
+            // name in the override map; if it's not there, skip. Relocation
+            // symbol indices come from the object being inspected, so guard
+            // them before dereferencing dyn_info.symtab.
+            let Some(cstr) = dyn_info.sym_name(sym_index) else {
+                return;
+            };
+            if cstr.to_bytes().is_empty() {
+                return;
+            }
+            let Ok(name) = cstr.to_str() else { return };
 
-        let Some(ov) = overrides.get(name) else {
-            return;
-        };
-        // `ref_slot==0` means we never resolved the real symbol, so the
-        // hook would call a NULL pointer. Skip.
-        let real = ov.ref_slot.load(Ordering::Acquire);
-        if real == 0 {
-            return;
-        }
+            let Some(ov) = overrides.get(name) else {
+                return;
+            };
+            // `ref_slot==0` means we never resolved the real symbol, so the
+            // hook would call a NULL pointer. Skip.
+            let real = ov.ref_slot.load(Ordering::Acquire);
+            if real == 0 {
+                return;
+            }
 
-        let addr = r_offset + dyn_info.base_address();
-        if addr == ov.do_not_override_this_symbol {
-            return;
+            let addr = r_offset + dyn_info.base_address();
+            if addr == ov.do_not_override_this_symbol {
+                return;
+            }
+            // Re-patching an already-hooked entry with the same hook address is
+            // idempotent, so no per-entry dedup is needed.
+            guard.override_entry(addr, ov.new_symbol);
         }
-        // Re-patching an already-hooked entry with the same hook address is
-        // idempotent, so no per-entry dedup is needed.
-        guard.override_entry(addr, ov.new_symbol);
     }
 }

@@ -153,107 +153,119 @@ mod linux {
     }
 
     unsafe fn do_malloc(size: usize) -> Option<LiveAlloc> {
-        let ptr = libc::malloc(size) as *mut u8;
-        if ptr.is_null() {
-            return None;
+        unsafe {
+            let ptr = libc::malloc(size) as *mut u8;
+            if ptr.is_null() {
+                return None;
+            }
+            Some(LiveAlloc { ptr, size, seed: 0 })
         }
-        Some(LiveAlloc { ptr, size, seed: 0 })
     }
 
     unsafe fn do_calloc(nmemb: usize, size: usize) -> Option<LiveAlloc> {
-        let ptr = libc::calloc(nmemb, size) as *mut u8;
-        if ptr.is_null() {
-            return None;
+        unsafe {
+            let ptr = libc::calloc(nmemb, size) as *mut u8;
+            if ptr.is_null() {
+                return None;
+            }
+            // calloc zeroes memory; verify that before we overwrite with a
+            // seed pattern. Catches allocator confusion between raw and
+            // user pointers.
+            let total = nmemb.saturating_mul(size);
+            let slice = std::slice::from_raw_parts(ptr, total);
+            assert!(
+                slice.iter().all(|&b| b == 0),
+                "calloc returned non-zeroed memory"
+            );
+            Some(LiveAlloc {
+                ptr,
+                size: total,
+                seed: 0,
+            })
         }
-        // calloc zeroes memory; verify that before we overwrite with a
-        // seed pattern. Catches allocator confusion between raw and
-        // user pointers.
-        let total = nmemb.saturating_mul(size);
-        let slice = std::slice::from_raw_parts(ptr, total);
-        assert!(
-            slice.iter().all(|&b| b == 0),
-            "calloc returned non-zeroed memory"
-        );
-        Some(LiveAlloc {
-            ptr,
-            size: total,
-            seed: 0,
-        })
     }
 
     unsafe fn do_aligned_alloc(alignment: usize, size: usize) -> Option<LiveAlloc> {
-        // aligned_alloc requires size % alignment == 0. Round up.
-        let rounded = size.div_ceil(alignment) * alignment;
-        let ptr = libc::aligned_alloc(alignment, rounded) as *mut u8;
-        if ptr.is_null() {
-            return None;
+        unsafe {
+            // aligned_alloc requires size % alignment == 0. Round up.
+            let rounded = size.div_ceil(alignment) * alignment;
+            let ptr = libc::aligned_alloc(alignment, rounded) as *mut u8;
+            if ptr.is_null() {
+                return None;
+            }
+            assert_eq!(
+                (ptr as usize) % alignment,
+                0,
+                "aligned_alloc returned misaligned pointer"
+            );
+            Some(LiveAlloc {
+                ptr,
+                size: rounded,
+                seed: 0,
+            })
         }
-        assert_eq!(
-            (ptr as usize) % alignment,
-            0,
-            "aligned_alloc returned misaligned pointer"
-        );
-        Some(LiveAlloc {
-            ptr,
-            size: rounded,
-            seed: 0,
-        })
     }
 
     unsafe fn do_posix_memalign(alignment: usize, size: usize) -> Option<LiveAlloc> {
-        // posix_memalign requires alignment to be a power of two and a
-        // multiple of sizeof(void*).
-        if alignment < std::mem::size_of::<*mut u8>() || !alignment.is_power_of_two() {
-            return None;
+        unsafe {
+            // posix_memalign requires alignment to be a power of two and a
+            // multiple of sizeof(void*).
+            if alignment < std::mem::size_of::<*mut u8>() || !alignment.is_power_of_two() {
+                return None;
+            }
+            let mut out: *mut libc::c_void = std::ptr::null_mut();
+            let rc = libc::posix_memalign(&mut out, alignment, size);
+            if rc != 0 || out.is_null() {
+                return None;
+            }
+            assert_eq!(
+                (out as usize) % alignment,
+                0,
+                "posix_memalign returned misaligned pointer"
+            );
+            Some(LiveAlloc {
+                ptr: out as *mut u8,
+                size,
+                seed: 0,
+            })
         }
-        let mut out: *mut libc::c_void = std::ptr::null_mut();
-        let rc = libc::posix_memalign(&mut out, alignment, size);
-        if rc != 0 || out.is_null() {
-            return None;
-        }
-        assert_eq!(
-            (out as usize) % alignment,
-            0,
-            "posix_memalign returned misaligned pointer"
-        );
-        Some(LiveAlloc {
-            ptr: out as *mut u8,
-            size,
-            seed: 0,
-        })
     }
 
     unsafe fn do_realloc(old: LiveAlloc, new_size: usize) -> Option<LiveAlloc> {
-        // Verify old contents before releasing the block.
-        verify_content(old.as_slice(), old.seed);
-        let new_ptr = libc::realloc(old.ptr as *mut libc::c_void, new_size) as *mut u8;
-        if new_ptr.is_null() {
-            // Old block is still live on realloc failure. Return it as-is.
-            return Some(old);
+        unsafe {
+            // Verify old contents before releasing the block.
+            verify_content(old.as_slice(), old.seed);
+            let new_ptr = libc::realloc(old.ptr as *mut libc::c_void, new_size) as *mut u8;
+            if new_ptr.is_null() {
+                // Old block is still live on realloc failure. Return it as-is.
+                return Some(old);
+            }
+            // Preserved bytes are `min(old.size, new_size)`; verify them
+            // against the OLD seed. Any misplaced offset in the sampler's
+            // realloc path shows up as a mismatch here.
+            let preserved = old.size.min(new_size);
+            let preserved_slice = std::slice::from_raw_parts(new_ptr, preserved);
+            // Re-run the deterministic fill to know what those bytes should be.
+            let mut expected = vec![0u8; preserved];
+            fill_content(&mut expected, old.seed);
+            assert_eq!(
+                preserved_slice,
+                &expected[..],
+                "realloc did not preserve user contents"
+            );
+            Some(LiveAlloc {
+                ptr: new_ptr,
+                size: new_size,
+                seed: 0,
+            })
         }
-        // Preserved bytes are `min(old.size, new_size)`; verify them
-        // against the OLD seed. Any misplaced offset in the sampler's
-        // realloc path shows up as a mismatch here.
-        let preserved = old.size.min(new_size);
-        let preserved_slice = std::slice::from_raw_parts(new_ptr, preserved);
-        // Re-run the deterministic fill to know what those bytes should be.
-        let mut expected = vec![0u8; preserved];
-        fill_content(&mut expected, old.seed);
-        assert_eq!(
-            preserved_slice,
-            &expected[..],
-            "realloc did not preserve user contents"
-        );
-        Some(LiveAlloc {
-            ptr: new_ptr,
-            size: new_size,
-            seed: 0,
-        })
     }
 
     unsafe fn do_free(a: LiveAlloc) {
-        verify_content(a.as_slice(), a.seed);
-        libc::free(a.ptr as *mut libc::c_void);
+        unsafe {
+            verify_content(a.as_slice(), a.seed);
+            libc::free(a.ptr as *mut libc::c_void);
+        }
     }
 
     fn worker(

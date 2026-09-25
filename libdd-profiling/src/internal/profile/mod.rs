@@ -203,73 +203,75 @@ impl Profile {
         Locations: ExactSizeIterator<Item = api2::Location2>,
         Labels: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
     {
-        let Some(translator) = &mut self.profiles_dictionary_translator else {
-            anyhow::bail!("profiles dictionary not set");
-        };
-
-        // In debug builds, we iterate over the labels twice. That's not
-        // something the trait bounds support, so we collect into a vector.
-        // Since this is debug-only, the performance is fine.
-        #[cfg(debug_assertions)]
-        let labels = labels.collect::<Vec<_>>();
-        #[cfg(debug_assertions)]
-        {
-            Self::validate_sample_labels2(labels.as_slice())?;
-        }
-
-        let string_table = &mut self.strings;
-        let functions = &mut self.functions;
-        let mappings = &mut self.mappings;
-        let locations_set = &mut self.locations;
-        let labels_set = &mut self.labels;
-
-        let labels = {
-            let mut lbls = Vec::new();
-            // Using try_reserve_exact because it will be converted to Box<[]>,
-            // so excess capacity would make that conversion more expensive.
-            lbls.try_reserve_exact(labels.len())?;
-            for label in labels {
-                let label = label.context("profile label failed to convert")?;
-                let key = translator.translate_string(string_table, label.key.into())?;
-                let internal_label = if !label.str.is_empty() {
-                    let str = string_table.try_intern(label.str)?;
-                    Label::str(key, str)
-                } else {
-                    let num = label.num;
-                    let num_unit = string_table.try_intern(label.num_unit)?;
-                    Label::num(key, num, num_unit)
-                };
-
-                let id = labels_set.try_dedup(internal_label)?;
-                lbls.push(id);
-            }
-            lbls.into_boxed_slice()
-        };
-
-        let mut internal_locations = Vec::new();
-        internal_locations
-            .try_reserve_exact(locations.len())
-            .context("failed to reserve memory for sample locations")?;
-        for location in locations {
-            let l = Location {
-                mapping_id: translator.translate_mapping(
-                    mappings,
-                    string_table,
-                    location.mapping,
-                )?,
-                function_id: translator.translate_function(
-                    functions,
-                    string_table,
-                    location.function,
-                )?,
-                address: location.address,
-                line: location.line,
+        unsafe {
+            let Some(translator) = &mut self.profiles_dictionary_translator else {
+                anyhow::bail!("profiles dictionary not set");
             };
-            let location_id = locations_set.checked_dedup(l)?;
-            internal_locations.push(location_id);
-        }
 
-        self.try_add_sample_internal(values, labels, internal_locations, timestamp)
+            // In debug builds, we iterate over the labels twice. That's not
+            // something the trait bounds support, so we collect into a vector.
+            // Since this is debug-only, the performance is fine.
+            #[cfg(debug_assertions)]
+            let labels = labels.collect::<Vec<_>>();
+            #[cfg(debug_assertions)]
+            {
+                Self::validate_sample_labels2(labels.as_slice())?;
+            }
+
+            let string_table = &mut self.strings;
+            let functions = &mut self.functions;
+            let mappings = &mut self.mappings;
+            let locations_set = &mut self.locations;
+            let labels_set = &mut self.labels;
+
+            let labels = {
+                let mut lbls = Vec::new();
+                // Using try_reserve_exact because it will be converted to Box<[]>,
+                // so excess capacity would make that conversion more expensive.
+                lbls.try_reserve_exact(labels.len())?;
+                for label in labels {
+                    let label = label.context("profile label failed to convert")?;
+                    let key = translator.translate_string(string_table, label.key.into())?;
+                    let internal_label = if !label.str.is_empty() {
+                        let str = string_table.try_intern(label.str)?;
+                        Label::str(key, str)
+                    } else {
+                        let num = label.num;
+                        let num_unit = string_table.try_intern(label.num_unit)?;
+                        Label::num(key, num, num_unit)
+                    };
+
+                    let id = labels_set.try_dedup(internal_label)?;
+                    lbls.push(id);
+                }
+                lbls.into_boxed_slice()
+            };
+
+            let mut internal_locations = Vec::new();
+            internal_locations
+                .try_reserve_exact(locations.len())
+                .context("failed to reserve memory for sample locations")?;
+            for location in locations {
+                let l = Location {
+                    mapping_id: translator.translate_mapping(
+                        mappings,
+                        string_table,
+                        location.mapping,
+                    )?,
+                    function_id: translator.translate_function(
+                        functions,
+                        string_table,
+                        location.function,
+                    )?,
+                    address: location.address,
+                    line: location.line,
+                };
+                let location_id = locations_set.checked_dedup(l)?;
+                internal_locations.push(location_id);
+            }
+
+            self.try_add_sample_internal(values, labels, internal_locations, timestamp)
+        }
     }
 
     /// Gets the profiles dictionary, needed for `api2` operations.
