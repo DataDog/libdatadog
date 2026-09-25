@@ -270,9 +270,12 @@ pub fn decode_to_trace_chunks(
             Ok((convert_trace_chunks_v04_to_v05(&data)?, size))
         }
         TraceEncoding::V1 => {
-            let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
+            let (mut data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
                 anyhow::format_err!("Error deserializing trace from request body: {e}")
             })?;
+            // V1 attributes are flat triplets that may repeat keys, so the decoder leaves the maps
+            // un-deduped; dedup once here so re-encoding doesn't take the warning fallback.
+            data.dedup();
             Ok((TraceChunks::V1(Box::new(data)), size))
         }
     }
@@ -356,6 +359,40 @@ mod tests {
             create_test_no_alloc_span(1234, 12342, 12341, 1, false),
             create_test_no_alloc_span(1234, 12343, 12342, 1, false),
         ]
+    }
+
+    #[test]
+    fn test_decode_v1_dedups_attributes() {
+        use crate::span::v1::{AttributeValue, SpanBytes as V1SpanBytes, TraceChunkBytes};
+
+        let key = || BytesString::from_slice(b"k").unwrap();
+        let attrs = || {
+            let mut m = VecMap::new();
+            m.insert(key(), AttributeValue::Int(1));
+            m
+        };
+        let payload = v1::TracerPayload {
+            attributes: attrs(),
+            chunks: vec![TraceChunkBytes {
+                attributes: attrs(),
+                spans: vec![V1SpanBytes {
+                    attributes: attrs(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let bytes = crate::msgpack_encoder::v1::to_vec_from_v1(&payload);
+
+        let (decoded, _) =
+            decode_to_trace_chunks(libdd_tinybytes::Bytes::from(bytes), TraceEncoding::V1).unwrap();
+        let TraceChunks::V1(decoded) = decoded else {
+            panic!("expected a V1 payload");
+        };
+        assert!(decoded.attributes.is_deduped());
+        assert!(decoded.chunks[0].attributes.is_deduped());
+        assert!(decoded.chunks[0].spans[0].attributes.is_deduped());
     }
 
     #[test]
