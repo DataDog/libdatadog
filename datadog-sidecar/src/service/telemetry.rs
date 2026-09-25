@@ -609,7 +609,7 @@ type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
 
 pub struct TelemetryCachedClientSet {
-    pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -652,6 +652,19 @@ impl Clone for TelemetryCachedClientSet {
 }
 
 impl TelemetryCachedClientSet {
+    /// Clone client handles while holding only the cache lock.
+    ///
+    /// `enqueue_actions` may acquire this cache after the application and client locks. Callers
+    /// must inspect clients only after the cache lock has been released, or the reverse ordering
+    /// can deadlock the sidecar.
+    pub(crate) fn snapshot(&self) -> Vec<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+        self.inner
+            .lock_or_panic()
+            .values()
+            .map(|entry| Arc::clone(&entry.client))
+            .collect()
+    }
+
     fn get_existing_client(
         &self,
         service: &str,
@@ -706,9 +719,21 @@ impl TelemetryCachedClientSet {
         new_client
     }
 
-    pub fn remove_telemetry_client(&self, service: &str, env: &str) {
+    pub fn remove_telemetry_client(
+        &self,
+        service: &str,
+        env: &str,
+        expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    ) {
         let key = (service.to_string(), env.to_string());
-        self.inner.lock_or_panic().remove(&key);
+        let mut clients = self.inner.lock_or_panic();
+        let is_expected = clients
+            .get(&key)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.client, expected));
+
+        if is_expected {
+            clients.remove(&key);
+        }
     }
 }
 
@@ -791,6 +816,115 @@ fn get_telemetry_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Statistics must release the cache before waiting for an individual client.
+    #[tokio::test(flavor = "current_thread")]
+    async fn statistics_does_not_block_client_retirement() {
+        let server = SidecarServer::default();
+        let client = Arc::new(Mutex::new(None));
+        server.telemetry_clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&client),
+            },
+        );
+
+        // Retirement owns this mutex before removing the entry from the cache.
+        // Keep it locked until we know statistics has begun visiting the entry.
+        let client_guard = client.lock_or_panic();
+        let references_before_stats = Arc::strong_count(&client);
+        let stats_server = server.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let stats = std::thread::spawn(move || runtime.block_on(stats_server.compute_stats()));
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let stats_started = loop {
+            // A snapshot clones the client before waiting on its mutex. The old
+            // implementation instead keeps the cache locked while waiting.
+            if Arc::strong_count(&client) > references_before_stats
+                || server.telemetry_clients.inner.try_lock().is_err()
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+
+        let clients = server.telemetry_clients.clone();
+        let retiring_client = Arc::clone(&client);
+        let (retired_tx, retired_rx) = std::sync::mpsc::channel();
+        let retirement = std::thread::spawn(move || {
+            clients.remove_telemetry_client("service", "env", &retiring_client);
+            retired_tx.send(()).unwrap();
+        });
+        let retired = retired_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+
+        // Release the contended mutex before asserting so a regression fails
+        // normally rather than leaving deadlocked test threads behind.
+        drop(client_guard);
+        stats.join().unwrap();
+        retirement.join().unwrap();
+        assert!(stats_started, "statistics never visited the cached client");
+        assert!(
+            retired,
+            "statistics held the client cache while waiting on the client"
+        );
+    }
+
+    /// Snapshotting clones handles without locking clients or depending on later cache membership.
+    #[test]
+    fn client_snapshot_does_not_depend_on_cache_membership() {
+        let clients = TelemetryCachedClientSet {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_handle: None,
+        };
+        let client = Arc::new(Mutex::new(None));
+        clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&client),
+            },
+        );
+
+        let client_guard = client.lock_or_panic();
+        let snapshot = clients.snapshot();
+
+        assert_eq!(snapshot.len(), 1);
+        assert!(Arc::ptr_eq(&snapshot[0], &client));
+        clients.remove_telemetry_client("service", "env", &client);
+        assert_eq!(snapshot.len(), 1);
+
+        drop(client_guard);
+        assert!(snapshot[0].lock_or_panic().is_none());
+    }
+
+    /// A delayed removal must not evict a newer client stored under the same key.
+    #[test]
+    fn stale_client_removal_preserves_replacement() {
+        let clients = TelemetryCachedClientSet {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_handle: None,
+        };
+        let stale = Arc::new(Mutex::new(None));
+        let replacement = Arc::new(Mutex::new(None));
+        clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&replacement),
+            },
+        );
+
+        clients.remove_telemetry_client("service", "env", &stale);
+
+        let snapshot = clients.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert!(Arc::ptr_eq(&snapshot[0], &replacement));
+    }
 
     #[test]
     fn in_process_client_keeps_instance_and_rebinds_application() {

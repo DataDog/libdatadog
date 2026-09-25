@@ -477,14 +477,12 @@ impl SidecarServer {
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
-        let (futures, metric_counts): (Vec<_>, Vec<_>) = {
-            let clients = self.telemetry_clients.inner.lock_or_panic();
-
+        let (futures, metric_counts, active_telemetry_clients): (Vec<_>, Vec<_>, u32) = {
+            let clients = self.telemetry_clients.snapshot();
             let futures = clients
-                .values()
+                .iter()
                 .filter_map(|client| {
                     client
-                        .client
                         .lock_or_panic()
                         .as_ref()
                         .and_then(|c| c.worker.stats().ok())
@@ -492,17 +490,20 @@ impl SidecarServer {
                 .collect::<Vec<_>>();
 
             let metric_counts = clients
-                .values()
+                .iter()
                 .map(|client| {
                     client
-                        .client
                         .lock_or_panic()
                         .as_ref()
                         .map_or(0, |c| c.telemetry_metrics.len() as u32)
                 })
                 .collect::<Vec<_>>();
 
-            (futures, metric_counts)
+            (
+                futures,
+                metric_counts,
+                clients.len().try_into().unwrap_or(u32::MAX),
+            )
         };
 
         let telemetry_stats = futures::future::join_all(futures).await;
@@ -517,12 +518,7 @@ impl SidecarServer {
                 .values()
                 .map(|s| s.lock_runtimes().len() as u32)
                 .sum(),
-            active_telemetry_clients: self
-                .telemetry_clients
-                .inner
-                .lock_or_panic()
-                .values()
-                .count() as u32,
+            active_telemetry_clients,
             active_apps: sessions
                 .values()
                 .map(|s| {
@@ -830,9 +826,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
             // Remove from the map synchronously so new get_or_create calls get a fresh entry;
             // take() is deferred to the spawned task to avoid racing with in-flight tasks.
             if remove_client {
-                self.server
-                    .telemetry_clients
-                    .remove_telemetry_client(service, env);
+                self.server.telemetry_clients.remove_telemetry_client(
+                    service,
+                    env,
+                    &telemetry_mutex,
+                );
                 info!("Removing telemetry client for instance {instance_id:?}");
             }
         } else {
@@ -1375,16 +1373,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
         if options.telemetry {
             let workers: Vec<_> = {
-                let clients = self.server.telemetry_clients.inner.lock_or_panic();
+                let clients = self.server.telemetry_clients.snapshot();
                 clients
-                    .values()
-                    .filter_map(|entry| {
-                        entry
-                            .client
-                            .lock_or_panic()
-                            .as_ref()
-                            .map(|c| c.worker.clone())
-                    })
+                    .iter()
+                    .filter_map(|client| client.lock_or_panic().as_ref().map(|c| c.worker.clone()))
                     .collect()
             };
             futures::future::join_all(workers.into_iter().map(|worker| async move {
