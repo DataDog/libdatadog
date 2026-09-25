@@ -14,7 +14,7 @@ mod unix {
     use anyhow::Context;
     use bin_tests::modes::behavior::get_behavior;
     use nix::{
-        sys::signal::{kill, raise, Signal},
+        sys::signal::{Signal, kill, raise},
         unistd::Pid,
     };
     use std::env;

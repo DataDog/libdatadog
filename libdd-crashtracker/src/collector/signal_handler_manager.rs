@@ -7,8 +7,8 @@ use core::ptr;
 use core::sync::atomic::AtomicBool;
 use core::sync::atomic::Ordering::SeqCst;
 use libc::{
-    c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
-    PROT_WRITE, SIGSTKSZ,
+    MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ, PROT_WRITE, SIGSTKSZ, c_void, mmap,
+    sigaltstack, siginfo_t,
 };
 use libdd_common::unix_utils::terminate;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};

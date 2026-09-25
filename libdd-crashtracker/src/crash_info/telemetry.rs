@@ -82,7 +82,10 @@ impl CrashPingBuilder {
                 sig_info.si_code_human_readable, sig_info.si_signo_human_readable
             )
         } else {
-            format!("Crashtracker crash ping: crash processing started - Process terminated due to {:?}", kind)
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated due to {:?}",
+                kind
+            )
         };
 
         Ok(CrashPing {
@@ -473,8 +476,8 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
 mod tests {
     use super::TelemetryCrashUploader;
     use crate::{
-        crash_info::{test_utils::TestInstance, CrashInfo, CrashInfoBuilder, Metadata},
         ErrorKind,
+        crash_info::{CrashInfo, CrashInfoBuilder, Metadata, test_utils::TestInstance},
     };
     use libdd_common::Endpoint;
     use libdd_telemetry::data::LogLevel;
@@ -844,9 +847,11 @@ mod tests {
         assert!(result.is_ok());
         let crash_ping = result.unwrap();
         assert!(crash_ping.siginfo().is_none());
-        assert!(crash_ping
-            .message()
-            .contains("Crashtracker crash ping: crash processing started - Process terminated"));
+        assert!(
+            crash_ping
+                .message()
+                .contains("Crashtracker crash ping: crash processing started - Process terminated")
+        );
 
         // Test that crash ping fails without metadata
         let mut crash_info_builder = CrashInfoBuilder::new();
@@ -856,10 +861,12 @@ mod tests {
         crash_info_builder.with_kind(ErrorKind::UnixSignal).unwrap();
         let result = crash_info_builder.build_crash_ping();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("metadata is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("metadata is required")
+        );
 
         // Test successful build with both fields
         let mut crash_info_builder = CrashInfoBuilder::new();
@@ -911,10 +918,13 @@ mod tests {
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
-        assert_eq!(crash_ping.message(), format!(
-            "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
-            sig_info.si_code_human_readable, sig_info.si_signo_human_readable
-        ));
+        assert_eq!(
+            crash_ping.message(),
+            format!(
+                "Crashtracker crash ping: crash processing started - Process terminated with {:?} ({:?})",
+                sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+            )
+        );
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
@@ -937,9 +947,11 @@ mod tests {
 
         assert!(!crash_ping.crash_uuid().is_empty());
         assert!(Uuid::parse_str(crash_ping.crash_uuid()).is_ok());
-        assert!(crash_ping
-            .message()
-            .contains("crash processing started - my process panicked"));
+        assert!(
+            crash_ping
+                .message()
+                .contains("crash processing started - my process panicked")
+        );
         assert_eq!(crash_ping.metadata(), &metadata);
         assert_eq!(crash_ping.siginfo(), Some(&sig_info));
     }
@@ -1017,10 +1029,12 @@ mod tests {
         assert_eq!(uploaded_metadata, &expected_metadata_json);
 
         assert!(message_json["message"].is_string());
-        assert!(message_json["message"]
-            .as_str()
-            .unwrap()
-            .contains("crash processing started"));
+        assert!(
+            message_json["message"]
+                .as_str()
+                .unwrap()
+                .contains("crash processing started")
+        );
         Ok(())
     }
 

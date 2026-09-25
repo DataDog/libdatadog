@@ -3,8 +3,8 @@
 
 use ::function_name::named;
 use libdd_common_ffi::{
-    slice::AsBytes, utils::ToHexStr, wrap_with_void_ffi_result, CharSlice, Error, Handle, ToInner,
-    VoidResult,
+    CharSlice, Error, Handle, ToInner, VoidResult, slice::AsBytes, utils::ToHexStr,
+    wrap_with_void_ffi_result,
 };
 use libdd_crashtracker::{BuildIdType, FileType, StackFrame};
 

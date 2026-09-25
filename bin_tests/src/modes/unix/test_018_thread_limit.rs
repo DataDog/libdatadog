@@ -5,7 +5,7 @@
 //! verifying the crash report contains all of them.
 
 use crate::modes::behavior::Behavior;
-use libdd_crashtracker::{default_max_threads, CrashtrackerConfiguration};
+use libdd_crashtracker::{CrashtrackerConfiguration, default_max_threads};
 use std::path::Path;
 use std::sync::{Arc, Barrier};
 

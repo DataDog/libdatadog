@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use libdd_common_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{CharSlice, slice::AsBytes};
 #[repr(C)]
 pub struct Span<'a> {
     pub id: CharSlice<'a>,

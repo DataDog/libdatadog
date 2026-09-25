@@ -8,7 +8,7 @@
 // 3. The crash report is correctly generated
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use std::fs;
 use std::path::Path;

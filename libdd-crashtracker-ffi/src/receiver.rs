@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use libdd_common_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidResult};
+use libdd_common_ffi::{CharSlice, VoidResult, slice::AsBytes, wrap_with_void_ffi_result};
 #[unsafe(no_mangle)]
 #[must_use]
 #[named]

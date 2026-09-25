@@ -9,8 +9,8 @@
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{
-    clear_runtime_callback, register_runtime_frame_callback, CrashtrackerConfiguration,
-    RuntimeStackFrame,
+    CrashtrackerConfiguration, RuntimeStackFrame, clear_runtime_callback,
+    register_runtime_frame_callback,
 };
 use std::path::Path;
 

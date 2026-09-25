@@ -4,13 +4,13 @@
 use crate::Metadata;
 use anyhow::Result;
 use libdd_common::Endpoint;
-use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
 use std::ffi::c_void;
-use windows::core::{HRESULT, HSTRING};
 use windows::Win32::Foundation::{BOOL, E_FAIL, S_OK};
 use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows::Win32::System::ErrorReporting::WER_RUNTIME_EXCEPTION_INFORMATION;
+use windows::core::{HRESULT, HSTRING};
 
 #[unsafe(no_mangle)]
 #[must_use]

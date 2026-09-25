@@ -8,13 +8,13 @@ use std::time::SystemTime;
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
-    telemetry::CrashPing, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, ThreadData,
-    TARGET_TRIPLE,
+    CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE, ThreadData,
+    telemetry::CrashPing,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use http::{Uri, uri::PathAndQuery};
+use libdd_common::{Endpoint, config::parse_env, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

@@ -641,10 +641,12 @@ mod tests {
         assert!(!crash_info.incomplete);
 
         // A log message should be recorded noting that no frames were received
-        assert!(crash_info
-            .log_messages
-            .iter()
-            .any(|msg| msg.contains("No native stack frames received")));
+        assert!(
+            crash_info
+                .log_messages
+                .iter()
+                .any(|msg| msg.contains("No native stack frames received"))
+        );
     }
 
     #[test]

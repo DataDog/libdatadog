@@ -3,7 +3,7 @@
 
 use function_name::named;
 use libdd_common::Endpoint;
-use libdd_common_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
+use libdd_common_ffi::{Handle, ToInner, VoidResult, wrap_with_void_ffi_result};
 use libdd_crashtracker::CrashInfo;
 
 /// # Safety

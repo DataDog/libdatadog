@@ -75,11 +75,11 @@ pub mod shared;
 
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::{
-    begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
-    default_signals, disable, enable, end_op, get_expected_receiver_pid, init,
-    insert_additional_tag, insert_span, insert_trace, on_fork, reconfigure, remove_additional_tag,
-    remove_span, remove_trace, report_unhandled_exception, reset_counters,
-    set_expected_receiver_pid, update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
+    DEFAULT_SYMBOLS, OpTypes, begin_op, clear_additional_tags, clear_spans, clear_traces,
+    consume_and_emit_additional_tags, default_signals, disable, enable, end_op,
+    get_expected_receiver_pid, init, insert_additional_tag, insert_span, insert_trace, on_fork,
+    reconfigure, remove_additional_tag, remove_span, remove_trace, report_unhandled_exception,
+    reset_counters, set_expected_receiver_pid, update_config, update_metadata,
 };
 
 #[cfg(all(windows, feature = "collector_windows"))]
@@ -97,12 +97,12 @@ pub use receiver::{
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{
-    default_max_threads, CrashtrackerConfiguration, CrashtrackerConfigurationBuilder,
-    CrashtrackerReceiverConfig, StacktraceCollection,
+    CrashtrackerConfiguration, CrashtrackerConfigurationBuilder, CrashtrackerReceiverConfig,
+    StacktraceCollection, default_max_threads,
 };
 
 #[cfg(all(unix, feature = "benchmarking"))]
 pub use receiver::benchmark;
 
 #[cfg(unix)]
-pub use common::{get_tests_folder_path, SharedLibrary};
+pub use common::{SharedLibrary, get_tests_folder_path};

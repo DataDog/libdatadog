@@ -6,11 +6,11 @@ use super::parse_hex_address;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
 use crate::{
+    CrashtrackerConfiguration, StackTrace,
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
@@ -972,13 +972,15 @@ mod tests {
         );
 
         // Verify a log message was recorded about no frames
-        assert!(builder
-            .log_messages
-            .as_ref()
-            .map(|msgs| msgs
-                .iter()
-                .any(|msg| msg.contains("No native stack frames received")))
-            .unwrap_or(false));
+        assert!(
+            builder
+                .log_messages
+                .as_ref()
+                .map(|msgs| msgs
+                    .iter()
+                    .any(|msg| msg.contains("No native stack frames received")))
+                .unwrap_or(false)
+        );
     }
 
     #[test]

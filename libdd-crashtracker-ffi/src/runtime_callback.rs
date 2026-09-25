@@ -7,9 +7,9 @@
 //! crash callbacks that can provide stack traces for dynamic languages.
 #[cfg(unix)]
 use libdd_crashtracker::{
+    CallbackError, RuntimeStackFrame as CoreRuntimeStackFrame, RuntimeStacktraceStringCallback,
     get_registered_callback_type_ptr, is_runtime_callback_registered,
-    register_runtime_frame_callback, register_runtime_stacktrace_string_callback, CallbackError,
-    RuntimeStackFrame as CoreRuntimeStackFrame, RuntimeStacktraceStringCallback,
+    register_runtime_frame_callback, register_runtime_stacktrace_string_callback,
 };
 
 use libdd_common_ffi::CharSlice;

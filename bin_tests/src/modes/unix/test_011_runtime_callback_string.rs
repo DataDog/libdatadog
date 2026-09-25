@@ -9,7 +9,7 @@
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{
-    clear_runtime_callback, register_runtime_stacktrace_string_callback, CrashtrackerConfiguration,
+    CrashtrackerConfiguration, clear_runtime_callback, register_runtime_stacktrace_string_callback,
 };
 use std::ffi::c_char;
 use std::path::Path;

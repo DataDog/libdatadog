@@ -11,11 +11,11 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 mod unix {
-    use anyhow::ensure;
     use anyhow::Context;
+    use anyhow::ensure;
     use std::env;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use libdd_common::tag;

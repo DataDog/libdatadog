@@ -4,7 +4,7 @@ mod datatypes;
 pub use datatypes::*;
 
 use ::function_name::named;
-use libdd_common_ffi::{slice::AsBytes, wrap_with_ffi_result, CharSlice, StringWrapperResult};
+use libdd_common_ffi::{CharSlice, StringWrapperResult, slice::AsBytes, wrap_with_ffi_result};
 use symbolic_common::Name;
 use symbolic_demangle::Demangle;
 
@@ -42,7 +42,10 @@ fn test_demangle() {
     let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::Complete) }
         .unwrap()
         .into();
-    assert_eq!(result, "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady(unsigned int*, unsigned int, bool, std::chrono::duration<long, std::ratio<(long)1, (long)1> >, std::chrono::duration<long, std::ratio<(long)1, (long)1000000000> >)");
+    assert_eq!(
+        result,
+        "std::__atomic_futex_unsigned_base::_M_futex_wait_until_steady(unsigned int*, unsigned int, bool, std::chrono::duration<long, std::ratio<(long)1, (long)1> >, std::chrono::duration<long, std::ratio<(long)1, (long)1000000000> >)"
+    );
 
     let result: String = unsafe { ddog_crasht_demangle(test_slice, DemangleOptions::NameOnly) }
         .unwrap()
