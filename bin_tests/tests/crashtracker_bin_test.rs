@@ -203,8 +203,7 @@ fn test_crash_tracking_bin_assert_fail() {
 /// This verifies that `PR_SET_PTRACER` is correctly called in the unhandled exception
 /// path so the receiver can ptrace the still-alive parent process.
 ///
-/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
-/// report `yama ptrace_scope = 2` at the moment
+/// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -213,7 +212,8 @@ fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
         BuildProfile::Release,
         TestMode::UnhandledExceptionMultiThread,
         CrashType::UnhandledException,
-    );
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1");
     let artifacts = StandardArtifacts::new(config.profile);
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
@@ -222,7 +222,13 @@ fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
             .validate_error_kind("UnhandledException")?
             .validate_error_message_contains(
                 "Process was terminated due to an unhandled exception of type 'RuntimeException'",
-            )?;
+            )?
+            .validate_callstack_functions(&["test_function1", "test_function2"])?;
+
+        assert!(
+            payload["ucontext"].is_null(),
+            "unhandled exception should not have a saved signal context"
+        );
 
         let all_threads = payload["error"]["threads"]
             .as_array()
@@ -354,8 +360,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
 ///
-/// Ignored because it needs an environment that permits ptrace attach. Our CI runners
-/// report `yama ptrace_scope = 2` at the moment.
+/// Requires a Linux environment that permits ptrace attach.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -482,6 +487,144 @@ fn test_crash_tracking_multi_thread_collection() {
             }
         }
 
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn parse_hex_field(value: &Value) -> anyhow::Result<u64> {
+    let text = value
+        .as_str()
+        .context("expected hexadecimal address string")?;
+    Ok(u64::from_str_radix(
+        text.strip_prefix("0x").unwrap_or(text),
+        16,
+    )?)
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn crashed_thread_frames(payload: &Value) -> anyhow::Result<&[Value]> {
+    let threads = payload["error"]["threads"]
+        .as_array()
+        .context("error.threads should be an array")?;
+    let crashed = threads
+        .iter()
+        .find(|thread| thread["crashed"].as_bool() == Some(true))
+        .context("no crashed thread in error.threads")?;
+    Ok(crashed["stack"]["frames"]
+        .as_array()
+        .context("crashed thread has no stack frames")?)
+}
+
+/// The test receiver substitutes a sentinel collector stack while retaining
+/// the real crash context. The receiver must promote the saved-context unwind.
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_promotes_saved_context_stack() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Debug,
+        TestMode::MultiThreadCollection,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+    .with_env("DD_TEST_REPLACE_STACKTRACE", "1");
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let (ip_register, sp_register) = match payload["ucontext"]["arch"].as_str() {
+            Some("x86_64") => ("rip", "rsp"),
+            Some("aarch64") => ("pc", "sp"),
+            other => anyhow::bail!("unsupported saved context architecture: {other:?}"),
+        };
+        let saved_ip = parse_hex_field(&payload["ucontext"]["registers"][ip_register])?;
+        let saved_sp = parse_hex_field(&payload["ucontext"]["registers"][sp_register])?;
+
+        let error_frames = payload["error"]["stack"]["frames"]
+            .as_array()
+            .context("error.stack.frames should be an array")?;
+        anyhow::ensure!(
+            error_frames.len() > 1,
+            "saved-context unwind should contain multiple frames: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            parse_hex_field(&error_frames[0]["ip"])? == saved_ip
+                && parse_hex_field(&error_frames[0]["sp"])? == saved_sp,
+            "error.stack should start at the saved crash registers: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            error_frames.iter().any(|frame| frame["function"]
+                .as_str()
+                .is_some_and(|name| name.contains("cause_segfault"))),
+            "symbolized crash stack should contain cause_segfault: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            !error_frames
+                .iter()
+                .any(|frame| frame["function"].as_str() == Some("collector_fallback_sentinel")),
+            "receiver left the collector fallback stack in error.stack"
+        );
+
+        let crashed_frames = crashed_thread_frames(payload)?;
+        let first = crashed_frames
+            .first()
+            .context("crashed thread stack is empty")?;
+        anyhow::ensure!(
+            parse_hex_field(&first["ip"])? == saved_ip
+                && parse_hex_field(&first["sp"])? == saved_sp,
+            "crashed thread stack should start at the saved crash registers: {crashed_frames:?}"
+        );
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// With in-process symbolization, the receiver must leave the collector's
+/// named primary stack intact even while collecting remote thread stacks.
+#[test]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_keeps_inprocess_symbols_with_saved_context() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Debug,
+        TestMode::MultiThreadCollection,
+        CrashType::NullDeref,
+    )
+    .with_env("DD_TEST_UNWIND_FROM_UCONTEXT", "1")
+    .with_env("DD_TEST_STACKTRACE_COLLECTION", "inprocess_symbols");
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        let error_frames = payload["error"]["stack"]["frames"]
+            .as_array()
+            .context("error.stack.frames should be an array")?;
+        anyhow::ensure!(
+            error_frames.iter().any(|frame| frame["function"]
+                .as_str()
+                .is_some_and(|name| name.contains("cause_segfault"))),
+            "collector's in-process function name was lost: {error_frames:?}"
+        );
+        anyhow::ensure!(
+            !crashed_thread_frames(payload)?.is_empty(),
+            "remote crashed-thread stack should still be collected"
+        );
         Ok(())
     });
 

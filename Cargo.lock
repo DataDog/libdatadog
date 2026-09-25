@@ -468,6 +468,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
