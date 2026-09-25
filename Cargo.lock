@@ -2728,6 +2728,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-ai-usage"
+version = "0.1.0"
+
+[[package]]
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [
