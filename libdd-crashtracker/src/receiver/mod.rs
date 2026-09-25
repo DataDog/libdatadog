@@ -11,8 +11,6 @@ pub use entry_points::{
     receiver_entry_point_unix_socket,
 };
 pub use receive_report::ReceiverFileAccess;
-#[cfg(target_os = "linux")]
-mod ptrace_collector;
 mod receive_report;
 
 #[cfg(feature = "benchmarking")]

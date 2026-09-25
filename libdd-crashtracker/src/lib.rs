@@ -59,6 +59,10 @@ mod collector_windows;
 #[cfg(unix)]
 mod common;
 mod crash_info;
+/// Ptrace-based thread collection. Used by the collector, which unwinds the crashing process
+/// with that process's own privileges, and by the receiver for trusted reports only.
+#[cfg(all(target_os = "linux", any(feature = "collector", feature = "receiver")))]
+mod ptrace_collector;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
 mod runtime_callback;

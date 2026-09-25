@@ -1,40 +1,18 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Ptrace-based thread context collection with libunwind remote unwinding.
-//! This is compiled for Linux only.
+//! Collect thread stacks with ptrace and libunwind on Linux.
 //!
-//! This provides ptrace-based thread context collection that runs in the
-//! receiver process. It uses libunwind's remote unwinding APIs to generate full
-//! stack traces for all threads in the crashed process.
+//! The collector is a child of the crashing process, using its credentials and owning its
+//! ptrace stop notifications. Trusted receivers can also collect threads as a fallback.
+//! Restricted receivers only consume supplied stacks.
 //!
-//! The flow is:
-//! 1. Enumerate threads from /proc/<parent_pid>/task/
-//! 2. Attach to each thread using PTRACE_SEIZE + PTRACE_INTERRUPT (stops the thread)
-//! 3. While the thread is stopped, use libunwind remote APIs to unwind the stack:
-//!    - UnwAddrSpace::new()             address space with the ptrace accessors
-//!    - UptInfo::new(tid)               ptrace unwinding state
-//!    - unw_init_remote()               initialize remote cursor
-//!    - unw_step_remote() loop          walk frames
-//! 4. Detach from the thread via PTRACE_DETACH
+//! Threads share one libunwind address space to reuse its DWARF cache. Each capture records
+//! instruction and stack pointers; symbolization happens after the thread is detached.
 //!
-//! `UnwAddrSpace` and `UptInfo` are the RAII wrappers from `libdd-libunwind-sys`; they
-//! release the underlying libunwind resources on drop. The bundled
-//! `RemoteUnwindResources` is deliberately not used here because it pairs one address
-//! space with one thread; this collector shares a single address space across
-//! every thread in the process
-//!
-//! Only instruction and stack pointers are captured here. Symbol names for these
-//! frames are resolved later by `CrashInfo::enrich_callstacks`, which runs blazesym
-//! over every thread stack under the same `EnabledWithSymbolsInReceiver` setting and
-//! overwrites `StackFrame::function` anyway.
-//!
-//! The crashed parent process stays alive (blocked in the signal handler) until
-//! receiver.finish() completes. This guarantees the target process remains a valid
-//! ptrace target for the entire duration of thread collection.
-//!
-//! The parent calls prctl(PR_SET_PTRACER, receiver_pid) before forking the collector,
-//! which grants the receiver ptrace permission
+//! The crashing process grants access with PR_SET_PTRACER and waits for reporting to finish.
+
+#![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -44,7 +22,7 @@ use libdd_libunwind_sys::{
     UptInfo, UNW_REG_IP, UNW_REG_SP,
 };
 
-use crate::crash_info::{StackFrame, StackTrace};
+use crate::crash_info::{StackFrame, StackTrace, ThreadData};
 
 /// Maximum number of stack frames to capture per thread
 const MAX_FRAMES: usize = 512;
@@ -407,24 +385,12 @@ fn capture_with_retry(
     None
 }
 
-/// Stream thread contexts to a callback one at a time.
+/// Visit the crashing thread first, then other threads up to the cap or timeout.
 ///
-/// For each thread in the process the callback receives the TID and an optional
-/// `CapturedThreadContext` (None if attachment or unwinding failed).
-///
-/// The `crashing_tid` is always processed first (regardless of `/proc` iteration
-/// order) to guarantee it appears in the output even when the `max_threads` cap
-/// truncates collection.
-///
-/// Two deadlines bound collection:
-/// - An *overall* deadline derived from `timeout`, shared across all threads.
-/// - A *per-thread stop* deadline of at most `STOP_TIMEOUT_PER_THREAD` (capped at the overall
-///   deadline) so that a single slow-to-stop thread cannot starve the rest.
-///
-/// Returns `Ok(incomplete)` where `incomplete` is `true` when collection was cut
-/// short by the timeout or the `max_threads` cap, meaning there may be additional
-/// threads that were not visited.
-pub fn stream_thread_contexts<F>(
+/// The callback owns each capture, or receives None if attachment or unwinding failed.
+/// Each stop also has a STOP_TIMEOUT_PER_THREAD limit. Returns true if threads were left
+/// unvisited.
+pub(crate) fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
     max_threads: usize,
@@ -432,7 +398,7 @@ pub fn stream_thread_contexts<F>(
     mut callback: F,
 ) -> Result<bool, PtraceError>
 where
-    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>),
+    F: FnMut(libc::pid_t, Option<CapturedThreadContext>),
 {
     let overall_deadline = Instant::now() + timeout;
     let tids = enumerate_threads(parent_pid)?;
@@ -450,7 +416,7 @@ where
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
         let context = capture_with_retry(crashing_tid, &addr_space, overall_deadline);
-        callback(crashing_tid, context.as_ref());
+        callback(crashing_tid, context);
         processed += 1;
     }
 
@@ -463,12 +429,87 @@ where
         }
 
         let context = capture_with_retry(tid, &addr_space, overall_deadline);
-        callback(tid, context.as_ref());
+        callback(tid, context);
         processed += 1;
     }
 
     let incomplete = processed < total_eligible;
     Ok(incomplete)
+}
+
+/// Add thread metadata and trim handler frames from the crashing thread's stack.
+pub(crate) fn thread_data_from_capture(
+    parent_pid: libc::pid_t,
+    crashing_tid: libc::pid_t,
+    crash_site: Option<(u64, u64)>,
+    tid: libc::pid_t,
+    captured: Option<CapturedThreadContext>,
+) -> ThreadData {
+    let (name, state) = read_thread_stat(parent_pid, tid);
+    let name = name.unwrap_or_else(|| tid.to_string());
+
+    let mut stack = match captured {
+        Some(ctx) => ctx.stack_trace,
+        None => StackTrace::new_incomplete(),
+    };
+
+    let crashed = tid == crashing_tid;
+    if crashed {
+        if let Some((ip, sp)) = crash_site {
+            drop_frames_above_crash_site(&mut stack, ip, sp);
+        }
+    }
+
+    ThreadData {
+        crashed,
+        name,
+        stack,
+        state,
+    }
+}
+
+pub(crate) fn parse_hex_address(value: &str) -> Option<u64> {
+    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+}
+/// Remove handler frames above the faulting frame, if the unwind reached it.
+///
+/// Match both saved registers: stack-pointer ordering cannot identify the faulting frame
+/// when the handler uses an alternate signal stack. Leave an unmatched stack intact.
+pub(crate) fn drop_frames_above_crash_site(stack: &mut StackTrace, ip: u64, sp: u64) {
+    let is_crash_site = |frame: &StackFrame| {
+        frame.ip.as_deref().and_then(parse_hex_address) == Some(ip)
+            && frame.sp.as_deref().and_then(parse_hex_address) == Some(sp)
+    };
+
+    if let Some(crash_site) = stack.frames.iter().position(is_crash_site) {
+        stack.frames.drain(..crash_site);
+    }
+}
+/// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
+///
+/// The stat file format is: `pid (comm) state ...`
+/// `comm` (the thread name) is enclosed between the first `(` and the last `)`
+/// The state character immediately follows the closing `)`.
+fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
+    let content = match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
+        Ok(c) => c,
+        Err(_) => return (None, None),
+    };
+
+    let Some(name_start) = content.find('(') else {
+        return (None, None);
+    };
+    let Some(name_end) = content.rfind(')') else {
+        return (None, None);
+    };
+
+    let name = Some(content[name_start + 1..name_end].to_string());
+    let state = content[name_end + 1..]
+        .split_whitespace()
+        .next()
+        .map(|s| s.to_string());
+
+    (name, state)
 }
 
 #[cfg(test)]

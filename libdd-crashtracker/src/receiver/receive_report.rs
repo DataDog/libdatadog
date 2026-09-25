@@ -87,6 +87,7 @@ pub(crate) enum StdinState {
     SigInfo,
     SpanIds,
     StackTrace,
+    Threads,
     TraceIds,
     Ucontext,
     Waiting,
@@ -141,6 +142,15 @@ fn process_line(
             let val = val.as_i64().context("Vals are ints")?;
             builder.with_counter(key.clone(), val)?;
             StdinState::Counters
+        }
+
+        StdinState::Threads if line.starts_with(DD_CRASHTRACK_END_THREADS) => StdinState::Waiting,
+        StdinState::Threads => {
+            // Attached as it arrives, so a stream cut short by EOF or the deadline keeps the
+            // threads it did deliver. Untrusted like every other line here: a malformed entry
+            // ends the report rather than being guessed at.
+            builder.with_thread(serde_json::from_str(line)?)?;
+            StdinState::Threads
         }
 
         StdinState::WholeStackTrace if line.starts_with(DD_CRASHTRACK_END_WHOLE_STACKTRACE) => {
@@ -308,6 +318,7 @@ fn process_line(
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME) => {
             StdinState::RuntimeStackFrame(vec![])
         }
+        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREADS) => StdinState::Threads,
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
         }
@@ -507,8 +518,9 @@ pub(crate) async fn receive_report_from_stream(
     // Skip this for restricted reports: libunwind opens mapped ELF/debug files without our path
     // checks, and a worker can replace those paths with aliases to host-held descriptors. The
     // crashing thread's stack supplied by the worker is retained.
+    // Use this fallback only when the collector supplied no threads.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() && !access.is_restricted() {
+    if config.collect_all_threads() && !access.is_restricted() && builder.error.threads.is_none() {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
@@ -598,43 +610,26 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     budget: Duration,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::{StackTrace, ThreadData};
-    use crate::receiver::ptrace_collector::stream_thread_contexts;
+    use crate::ptrace_collector::{stream_thread_contexts, thread_data_from_capture};
 
-    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
-
+    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
-
-    let mut collected_threads = Vec::new();
+    let mut threads = Vec::new();
 
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         budget,
-        |tid, captured_context| {
-            let (name, state) = read_thread_stat(parent_pid, tid);
-            let name = name.unwrap_or_else(|| tid.to_string());
-
-            let mut stack = match captured_context {
-                Some(ctx) => ctx.stack_trace.clone(),
-                None => StackTrace::new_incomplete(),
-            };
-
-            let crashed = tid == crashing_tid;
-            if crashed {
-                if let Some((ip, sp)) = crash_site {
-                    drop_frames_above_crash_site(&mut stack, ip, sp);
-                }
-            }
-
-            collected_threads.push(ThreadData {
-                crashed,
-                name,
-                stack,
-                state,
-            });
+        |tid, captured| {
+            threads.push(thread_data_from_capture(
+                parent_pid,
+                crashing_tid,
+                crash_site,
+                tid,
+                captured,
+            ));
         },
     )?;
 
@@ -642,11 +637,10 @@ fn collect_and_add_thread_contexts(
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
     }
 
-    let _ = builder.with_threads(collected_threads);
+    let _ = builder.with_threads(threads);
 
     Ok(())
 }
-
 /// The instruction and stack pointer the kernel saved when it delivered the fatal
 /// signal.
 ///
@@ -654,6 +648,8 @@ fn collect_and_add_thread_contexts(
 /// exception has no ucontext at all
 #[cfg(target_os = "linux")]
 fn crash_site_registers(ucontext: &Ucontext) -> Option<(u64, u64)> {
+    use crate::ptrace_collector::parse_hex_address;
+
     let (ip_name, sp_name) = match ucontext.arch.as_str() {
         "x86_64" => ("rip", "rsp"),
         "aarch64" => ("pc", "sp"),
@@ -662,67 +658,6 @@ fn crash_site_registers(ucontext: &Ucontext) -> Option<(u64, u64)> {
     let ip = parse_hex_address(ucontext.registers.get(ip_name)?)?;
     let sp = parse_hex_address(ucontext.registers.get(sp_name)?)?;
     Some((ip, sp))
-}
-
-#[cfg(target_os = "linux")]
-fn parse_hex_address(value: &str) -> Option<u64> {
-    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
-}
-
-/// Drop the crashtracker's own frames from the top of the crashing thread's stack.
-///
-/// The receiver unwinds the crashing thread from its live registers, and by then that
-/// thread is parked inside our signal handler waiting for the receiver to finish. Its
-/// stack therefore begins inside libdatadog rather than at the faulting instruction,
-/// unlike `error.stack`, which libunwind seeds directly from the kernel-saved
-/// registers and which consequently never contains these frames.
-///
-/// Those same registers pinpoint the faulting frame, so everything above the frame
-/// matching them is ours. Instruction and stack pointer are matched as a pair rather
-/// than discarding frames below a stack-pointer threshold, because the handler may run
-/// on an alternate signal stack and such a stack is not guaranteed to be mapped below
-/// the thread's main stack.
-///
-/// When no frame matches, the stack is left untouched. An unwind that never reached the
-/// faulting frame is worth more intact than truncated on a guess.
-#[cfg(target_os = "linux")]
-fn drop_frames_above_crash_site(stack: &mut StackTrace, ip: u64, sp: u64) {
-    let is_crash_site = |frame: &StackFrame| {
-        frame.ip.as_deref().and_then(parse_hex_address) == Some(ip)
-            && frame.sp.as_deref().and_then(parse_hex_address) == Some(sp)
-    };
-
-    if let Some(crash_site) = stack.frames.iter().position(is_crash_site) {
-        stack.frames.drain(..crash_site);
-    }
-}
-
-/// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
-///
-/// The stat file format is: `pid (comm) state ...`
-/// `comm` (the thread name) is enclosed between the first `(` and the last `)`
-/// The state character immediately follows the closing `)`.
-#[cfg(target_os = "linux")]
-fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
-    let content = match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
-        Ok(c) => c,
-        Err(_) => return (None, None),
-    };
-
-    let Some(name_start) = content.find('(') else {
-        return (None, None);
-    };
-    let Some(name_end) = content.rfind(')') else {
-        return (None, None);
-    };
-
-    let name = Some(content[name_start + 1..name_end].to_string());
-    let state = content[name_end + 1..]
-        .split_whitespace()
-        .next()
-        .map(|s| s.to_string());
-
-    (name, state)
 }
 
 #[cfg(target_os = "linux")]
@@ -759,6 +694,92 @@ fn enrich_thread_name(_builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crash_info::ThreadData;
+
+    fn stack_with_frames(ip: &str, function: Option<&str>) -> StackTrace {
+        let mut stack = StackTrace::new_incomplete();
+        stack.frames.push(StackFrame {
+            ip: Some(ip.to_string()),
+            sp: Some("0x7ffd0000".to_string()),
+            function: function.map(|f| f.to_string()),
+            ..Default::default()
+        });
+        stack
+    }
+
+    fn parse_test_lines(lines: &[&str]) -> anyhow::Result<(CrashInfoBuilder, StdinState)> {
+        let mut builder = CrashInfoBuilder::default();
+        let mut config = None;
+        let logger = DebugLogger::disabled();
+        let mut state = StdinState::Waiting;
+        for line in lines {
+            state = process_line(&mut builder, &mut config, line, state, &logger)?;
+        }
+        Ok((builder, state))
+    }
+
+    /// Keep the primary stack and completed threads when the stream stops inside a section.
+    #[test]
+    fn threads_delivered_before_a_truncated_stream_are_kept() {
+        let primary = stack_with_frames("0x1000", Some("main"));
+        let delivered = ThreadData {
+            crashed: false,
+            name: "sleeper".to_string(),
+            stack: stack_with_frames("0x3000", Some("sleep")),
+            state: None,
+        };
+        let (builder, state) = parse_test_lines(&[
+            DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+            &serde_json::to_string(&primary).unwrap(),
+            DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+            DD_CRASHTRACK_BEGIN_THREADS,
+            &serde_json::to_string(&delivered).unwrap(),
+        ])
+        .unwrap();
+        assert!(matches!(state, StdinState::Threads));
+        assert_eq!(builder.error.stack, Some(primary));
+        assert_eq!(
+            builder.error.threads.as_deref(),
+            Some([delivered].as_slice())
+        );
+    }
+
+    /// Thread sections must append, preserving all frame details.
+    #[test]
+    fn threads_block_round_trips() {
+        let threads = vec![
+            ThreadData {
+                crashed: true,
+                name: "main".to_string(),
+                stack: stack_with_frames("0x1000", Some("main")),
+                state: Some("R".to_string()),
+            },
+            ThreadData {
+                crashed: false,
+                name: "sleeper".to_string(),
+                stack: stack_with_frames("0x2000", None),
+                state: None,
+            },
+        ];
+
+        let first = serde_json::to_string(&threads[0]).unwrap();
+        let second = serde_json::to_string(&threads[1]).unwrap();
+        for separate_sections in [false, true] {
+            let mut lines = vec![DD_CRASHTRACK_BEGIN_THREADS, &first];
+            if separate_sections {
+                lines.extend([DD_CRASHTRACK_END_THREADS, DD_CRASHTRACK_BEGIN_THREADS]);
+            }
+            lines.extend([&second, DD_CRASHTRACK_END_THREADS]);
+            let (builder, state) = parse_test_lines(&lines).unwrap();
+            assert!(matches!(state, StdinState::Waiting));
+            assert_eq!(builder.error.threads.as_deref(), Some(threads.as_slice()));
+        }
+    }
+
+    #[test]
+    fn a_malformed_threads_entry_is_refused() {
+        assert!(parse_test_lines(&[DD_CRASHTRACK_BEGIN_THREADS, "{not json"]).is_err());
+    }
 
     /// Reads from `socket` until `marker` shows up, then answers 200 so the
     /// uploader's request completes instead of waiting out its timeout.
@@ -1137,6 +1158,7 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod crashing_thread_tests {
     use super::*;
+    use crate::ptrace_collector::drop_frames_above_crash_site;
     use std::collections::HashMap;
 
     fn frame(ip: &str, sp: &str) -> StackFrame {
