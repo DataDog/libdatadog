@@ -2,6 +2,18 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v4.0.0..libdd-shared-runtime-v5.0.0) - 2026-09-24
+
+### Added
+
+- Add API to force flush stats on the trace exporter ([#2538](https://github.com/datadog/libdatadog/issues/2538)) - ([579abee](https://github.com/datadog/libdatadog/commit/579abeed865469ce015a80e58937dc15f8dffc6f))
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-shared-runtime-v3.0.0..libdd-shared-runtime-v4.0.0) - 2026-09-08
 
 ### Fixed

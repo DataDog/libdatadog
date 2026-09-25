@@ -2,6 +2,26 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v9.0.0..libdd-trace-stats-v10.0.0) - 2026-09-24
+
+### Added
+
+- Refactor agent's /info obfuscation config format ([#2490](https://github.com/datadog/libdatadog/issues/2490)) - ([45009c2](https://github.com/datadog/libdatadog/commit/45009c22401ccf5821a5315fb128a37b664018f7))
+- Generate agentless trace stats ([#2488](https://github.com/datadog/libdatadog/issues/2488)) - ([7d014fe](https://github.com/datadog/libdatadog/commit/7d014fe1695bc122925d6403e758c558059bb8c7))
+- Add API to force flush stats on the trace exporter ([#2538](https://github.com/datadog/libdatadog/issues/2538)) - ([579abee](https://github.com/datadog/libdatadog/commit/579abeed865469ce015a80e58937dc15f8dffc6f))
+
+### Changed
+
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Cardinality limit telemetry name ([#2559](https://github.com/datadog/libdatadog/issues/2559)) - ([30d0ea7](https://github.com/datadog/libdatadog/commit/30d0ea76ffa679c5d829c60d68bf3c0cda34675d))
+
+
+
 ## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v8.0.0..libdd-trace-stats-v9.0.0) - 2026-09-08
 
 ### Added

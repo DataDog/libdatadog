@@ -2,6 +2,30 @@
 
 
 
+## [13.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v12.0.0..libdd-trace-utils-v13.0.0) - 2026-09-24
+
+### Added
+
+- OTLP gRPC trace export ([#2171](https://github.com/datadog/libdatadog/issues/2171)) - ([a2a1dfb](https://github.com/datadog/libdatadog/commit/a2a1dfbd962598f4cd684cc17f0e90d07fa4dd4f))
+- Add v1-native OTLP encoder brick ([#2369](https://github.com/datadog/libdatadog/issues/2369)) - ([c56ed37](https://github.com/datadog/libdatadog/commit/c56ed37dadc770da9e597a6c9d0ca875e134fc91))
+
+### Changed
+
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Bench the actual path used by the trace exporter ([#2512](https://github.com/datadog/libdatadog/issues/2512)) - ([817cf82](https://github.com/datadog/libdatadog/commit/817cf820879a76fdd8eeb3ecb47e04e8f8ecbd6c))
+- Write agentless JSON directly ([#2454](https://github.com/datadog/libdatadog/issues/2454)) - ([132842f](https://github.com/datadog/libdatadog/commit/132842f1885b71a1c5f865a99329a920199e1895))
+- Encode agentless IDs without formatting ([#2452](https://github.com/datadog/libdatadog/issues/2452)) - ([513a0ae](https://github.com/datadog/libdatadog/commit/513a0ae6f22e04d4aa7475c1acb2512d4d754e47))
+- Use pooled spans on the send path ([#2382](https://github.com/datadog/libdatadog/issues/2382)) - ([286813f](https://github.com/datadog/libdatadog/commit/286813fc377c1f7a8ff0fe2739ac3648d6f5ffa3))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Use potential dedupe in otlp serialization path ([#2531](https://github.com/datadog/libdatadog/issues/2531)) - ([f0dc1a6](https://github.com/datadog/libdatadog/commit/f0dc1a63a43c71089d75785de1387dcc09dcb03d))
+- Add forgotten css to agentless v1 encoder ([#2557](https://github.com/datadog/libdatadog/issues/2557)) - ([c3e638d](https://github.com/datadog/libdatadog/commit/c3e638db5bed7007d01691fa68539279d3bdb86c))
+- Benchmark was doing many samples for deterministic heap usage ([#2465](https://github.com/datadog/libdatadog/issues/2465)) - ([441cdcf](https://github.com/datadog/libdatadog/commit/441cdcf2fa14ac2b0a75df3f901a219eda2cc705))
+
+
+
 ## [12.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v11.0.0..libdd-trace-utils-v12.0.0) - 2026-09-08
 
 ### Added

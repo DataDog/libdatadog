@@ -2,6 +2,33 @@
 
 
 
+## [11.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v10.0.0..libdd-data-pipeline-v11.0.0) - 2026-09-24
+
+### Added
+
+- Refactor agent's /info obfuscation config format ([#2490](https://github.com/datadog/libdatadog/issues/2490)) - ([45009c2](https://github.com/datadog/libdatadog/commit/45009c22401ccf5821a5315fb128a37b664018f7))
+- Generate agentless trace stats ([#2488](https://github.com/datadog/libdatadog/issues/2488)) - ([7d014fe](https://github.com/datadog/libdatadog/commit/7d014fe1695bc122925d6403e758c558059bb8c7))
+- OTLP gRPC trace export ([#2171](https://github.com/datadog/libdatadog/issues/2171)) - ([a2a1dfb](https://github.com/datadog/libdatadog/commit/a2a1dfbd962598f4cd684cc17f0e90d07fa4dd4f))
+- Add API to force flush stats on the trace exporter ([#2538](https://github.com/datadog/libdatadog/issues/2538)) - ([579abee](https://github.com/datadog/libdatadog/commit/579abeed865469ce015a80e58937dc15f8dffc6f))
+
+### Changed
+
+- Isolate enqueue timing in data-pipeline ([#2499](https://github.com/datadog/libdatadog/issues/2499)) - ([bdc5466](https://github.com/datadog/libdatadog/commit/bdc5466c8a5f33fc013d60ce500335e8cf40c8e7))
+- Stop OTLP gRPC post-connect test from hanging ([#2549](https://github.com/datadog/libdatadog/issues/2549)) - ([d3b93c6](https://github.com/datadog/libdatadog/commit/d3b93c690d07d4a09a24357b3b003fe94d50fb13))
+- Fix flaky OTLP gRPC exporter integration tests ([#2505](https://github.com/datadog/libdatadog/issues/2505)) - ([0629f0c](https://github.com/datadog/libdatadog/commit/0629f0c137f5435a967db9f490f8fcc72088d13c))
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Write agentless JSON directly ([#2454](https://github.com/datadog/libdatadog/issues/2454)) - ([132842f](https://github.com/datadog/libdatadog/commit/132842f1885b71a1c5f865a99329a920199e1895))
+- Use pooled spans on the send path ([#2382](https://github.com/datadog/libdatadog/issues/2382)) - ([286813f](https://github.com/datadog/libdatadog/commit/286813fc377c1f7a8ff0fe2739ac3648d6f5ffa3))
+- Apply small timeout pooling strategy to libdd-http-client as well ([#2449](https://github.com/datadog/libdatadog/issues/2449)) - ([16e10db](https://github.com/datadog/libdatadog/commit/16e10db927db4adcdf386cd09535e100bdf4f587))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Use potential dedupe in otlp serialization path ([#2531](https://github.com/datadog/libdatadog/issues/2531)) - ([f0dc1a6](https://github.com/datadog/libdatadog/commit/f0dc1a63a43c71089d75785de1387dcc09dcb03d))
+
+
+
 ## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v9.0.0..libdd-data-pipeline-v10.0.0) - 2026-09-08
 
 ### Added
