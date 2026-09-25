@@ -39,7 +39,6 @@ pub struct Entrypoint {
 pub enum Target {
     Entrypoint(Entrypoint),
     ManualTrampoline(String, String),
-    Noop,
 }
 
 #[derive(Clone, Debug)]
