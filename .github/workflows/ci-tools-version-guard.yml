@@ -1,0 +1,174 @@
+name: CI tools - Version guard
+
+# The .github/actions tools are consumed by CI as prebuilt binaries keyed on
+# the [package] version of their manifest (see .github/actions/ci-tools-bin).
+# A source change that does not move that version would therefore land without
+# ever reaching CI: every workflow would keep downloading the binary published
+# for the unchanged version.
+#
+# This guard fails such a pull request. ci-shared is linked into every tool, so
+# a change there requires a bump of every tool.
+
+on:
+  pull_request:
+    paths:
+      - '.github/actions/**'
+
+permissions:
+  contents: read
+
+jobs:
+  version-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0 # Full history, to diff against the base branch
+
+      - name: Require a version bump for every changed tool
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin \
+            "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+
+          # Resolve the branch point once, and compare both the changed files
+          # and the manifests against it. Reading the manifest from the tip of
+          # the base branch instead would let a source-only pull request pass
+          # as soon as the base branch bumped the tool itself: the two versions
+          # would differ although the pull request never touched one, and CI
+          # would keep downloading the binary published for its version. The
+          # same applies to any re-run of an older workflow.
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          echo "comparing against the merge base $base"
+
+          changed=$(git diff --name-only "$base" HEAD -- .github/actions)
+
+          # Only files that go into the binary count. An action.yml, a README
+          # or a workflow edit does not change what gets published.
+          builds_the_binary() { # $1 = package directory name
+            grep -qE "^\.github/actions/$1/(src/|build\.rs|Cargo\.toml)" <<<"$changed"
+          }
+
+          package_version() { # manifest contents on stdin
+            awk -F'"' '
+              /^\[package\]/ { in_pkg = 1; next }
+              /^\[/          { in_pkg = 0 }
+              in_pkg && /^version[[:space:]]*=/ { print $2; exit }
+            '
+          }
+
+          shared_changed=no
+          if builds_the_binary ci-shared; then
+            shared_changed=yes
+            echo "ci-shared changed: every tool needs a bump"
+          fi
+
+          failed=0
+          tags=()
+
+          # A member's own version is recorded in Cargo.lock as well, so the
+          # bump this guard demands leaves the lockfile stale. The publish
+          # workflow builds with --locked and would only fail once the tag is
+          # pushed, so the mismatch is caught here instead.
+          lock_version() { # $1 = package name
+            awk -F'"' -v pkg="$1" '
+              /^name = /    { name = $2 }
+              /^version = / { if (name == pkg) { print $2; exit } }
+            ' .github/actions/Cargo.lock
+          }
+
+          for manifest in .github/actions/*/Cargo.toml; do
+            package=$(basename "$(dirname "$manifest")")
+            manifest_version=$(package_version < "$manifest")
+            locked_version=$(lock_version "$package")
+            if [[ "$manifest_version" != "$locked_version" ]]; then
+              echo "::error file=.github/actions/Cargo.lock::Cargo.lock has" \
+                   "$package ${locked_version:-missing} while its manifest says" \
+                   "$manifest_version; refresh it with 'cargo update --workspace" \
+                   "--offline --manifest-path .github/actions/Cargo.toml' and commit it"
+              failed=1
+            fi
+          done
+
+          for manifest in .github/actions/*/Cargo.toml; do
+            dir=$(dirname "$manifest")
+            tool=$(basename "$dir")
+
+            # Tools are the packages with a binary target; ci-shared is a lib.
+            if [[ ! -f "$dir/src/main.rs" ]]; then
+              continue
+            fi
+
+            if [[ "$shared_changed" == "no" ]] && ! builds_the_binary "$tool"; then
+              echo "$tool: unchanged, no bump needed"
+              continue
+            fi
+
+            head_version=$(package_version < "$manifest")
+            if ! base_manifest=$(git show "$base:$manifest" 2>/dev/null); then
+              echo "$tool: new tool, nothing to compare against"
+              tags+=("ci-tool-$tool-v$head_version")
+              continue
+            fi
+            base_version=$(package_version <<<"$base_manifest")
+
+            if [[ "$head_version" == "$base_version" ]]; then
+              echo "::error file=$manifest::$tool changed but its version is still" \
+                   "$head_version; bump it so that CI picks up a freshly published binary"
+              failed=1
+              continue
+            fi
+
+            # Differing is not enough. The version has to move forward, or the
+            # published binary for the higher version stays the one CI serves.
+            highest=$(printf '%s\n%s\n' "$base_version" "$head_version" | sort -V | tail -1)
+            if [[ "$highest" != "$head_version" ]]; then
+              echo "::error file=$manifest::$tool went backwards, $base_version to" \
+                   "$head_version; the version has to increase"
+              failed=1
+              continue
+            fi
+
+            # And it must not name an already published binary, which would
+            # have been built from different sources. Happens when the base
+            # branch bumped the tool to the same version concurrently.
+            tool_tag="ci-tool-$tool-v$head_version"
+            if [[ -n "$(git ls-remote --tags origin "refs/tags/$tool_tag")" ]]; then
+              echo "::error file=$manifest::$tool_tag is already published, from different" \
+                   "sources; pick a version above $head_version for $tool"
+              failed=1
+              continue
+            fi
+
+            echo "$tool: $base_version -> $head_version"
+            tags+=("$tool_tag")
+          done
+
+          # A lockfile-only change alters the dependencies the binary is built
+          # from but not the tool's own behaviour, so it is reported rather
+          # than enforced: the next bump of a tool picks it up.
+          if grep -qE '^\.github/actions/Cargo\.(lock|toml)$' <<<"$changed"; then
+            echo "::warning::the .github/actions lockfile or workspace manifest changed;" \
+                 "published binaries keep their current dependencies until each tool" \
+                 "version is bumped"
+          fi
+
+          if [[ ${#tags[@]} -gt 0 ]]; then
+            {
+              echo "### Tag after merging"
+              echo
+              echo "Until these tags are pushed, every gated workflow rebuilds the tool from source."
+              echo
+              echo '```bash'
+              for tag in "${tags[@]}"; do
+                # Signed, because the tag ruleset requires a signature.
+                echo "git tag -s $tag -m $tag && git push origin $tag"
+              done
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          exit "$failed"
