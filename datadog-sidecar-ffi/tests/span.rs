@@ -104,12 +104,6 @@ fn ddog_v1_set_chunk_sampling_mechanism(
     }
 }
 
-fn ddog_v1_set_chunk_dropped_trace(b: &mut TracerPayloadV1Builder, chunk: usize, dropped: bool) {
-    if let Some(c) = b.chunk_ptr(chunk) {
-        unsafe { (*c).chunk_mut().dropped_trace = dropped };
-    }
-}
-
 fn ddog_v1_add_chunk_attr_str(
     b: &mut TracerPayloadV1Builder,
     chunk: usize,
@@ -457,7 +451,6 @@ fn getters_round_trip_setters() {
     ddog_v1_set_chunk_sampling_priority(&mut b, ci, 2);
     ddog_v1_set_chunk_origin(&mut b, ci, cs("lambda"));
     ddog_v1_set_chunk_sampling_mechanism(&mut b, ci, 4);
-    ddog_v1_set_chunk_dropped_trace(&mut b, ci, true);
     ddog_v1_add_chunk_attr_str(&mut b, ci, cs("c_key"), cs("c_val"));
 
     let si = ddog_v1_chunk_new_span(&mut b, ci);
@@ -503,7 +496,6 @@ fn getters_round_trip_setters() {
     assert!(ddog_v1_get_chunk_sampling_mechanism(&b, ci, &mut mech));
     assert_eq!(mech, 4);
     assert_eq!(ddog_v1_get_chunk_origin(&b, ci).to_utf8_lossy(), "lambda");
-    assert!(ddog_v1_get_chunk_dropped_trace(&b, ci));
     assert_eq!(ddog_v1_get_chunk_attr_count(&b, ci), 1);
     assert_eq!(
         ddog_v1_get_chunk_attr_key(&b, ci, 0).to_utf8_lossy(),
@@ -691,7 +683,6 @@ fn chunk_level_fields_encoded() {
     ddog_v1_set_chunk_sampling_priority(&mut b, ci, 2);
     ddog_v1_set_chunk_origin(&mut b, ci, cs("lambda"));
     ddog_v1_set_chunk_sampling_mechanism(&mut b, ci, 4);
-    ddog_v1_set_chunk_dropped_trace(&mut b, ci, true);
     let si = ddog_v1_chunk_new_span(&mut b, ci);
     ddog_v1_set_span_service(&mut b, ci, si, cs("svc"));
     ddog_v1_set_span_id(&mut b, ci, si, 1);
@@ -700,8 +691,6 @@ fn chunk_level_fields_encoded() {
     assert!(encoded.windows(b"lambda".len()).any(|w| w == b"lambda"));
     // sampling_mechanism = 4 (chunk key 0x07 + fixint 0x04)
     assert!(encoded.windows(2).any(|w| w == [0x07, 0x04]));
-    // dropped_trace true (chunk key 0x05 + msgpack true 0xc3)
-    assert!(encoded.windows(2).any(|w| w == [0x05, 0xc3]));
 }
 
 #[test]

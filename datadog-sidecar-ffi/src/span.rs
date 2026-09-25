@@ -511,15 +511,6 @@ pub extern "C" fn ddog_v1_get_chunk_origin(
     }
 }
 
-/// Whether the chunk is a dropped (p0) trace.
-#[no_mangle]
-pub extern "C" fn ddog_v1_get_chunk_dropped_trace(
-    builder: &TracerPayloadV1Builder,
-    chunk: usize,
-) -> bool {
-    builder.chunk(chunk).is_some_and(|c| c.dropped_trace)
-}
-
 /// Number of chunk-level attributes.
 #[no_mangle]
 pub extern "C" fn ddog_v1_get_chunk_attr_count(
