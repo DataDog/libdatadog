@@ -126,7 +126,7 @@ mod tests {
             resource: "GET /some/raclette".to_string(),
             service: "django".to_string(),
             name: "django.controller".to_string(),
-            span_id: rng.gen(),
+            span_id: rng.r#gen(),
             start: 1448466874000000000,
             trace_id: 424242,
             meta: HashMap::from([

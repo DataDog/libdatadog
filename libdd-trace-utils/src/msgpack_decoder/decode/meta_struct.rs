@@ -31,12 +31,11 @@ pub fn read_meta_struct<T: DeserializableTraceData>(
         let key = buf.read_string()?;
         let byte_array_len = read_byte_array_len(buf)? as usize;
 
-        if let Some(data) = buf.try_slice_and_advance(byte_array_len) {
-            Ok((key, data))
-        } else {
-            Err(DecodeError::InvalidFormat(
+        match buf.try_slice_and_advance(byte_array_len) {
+            Some(data) => Ok((key, data)),
+            _ => Err(DecodeError::InvalidFormat(
                 "Invalid data length".to_string(),
-            ))
+            )),
         }
     }
 

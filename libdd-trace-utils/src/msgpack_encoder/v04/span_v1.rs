@@ -570,7 +570,7 @@ fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
 }
 
 macro_rules! write_type {
-    ($writer:expr, $int_type:expr, $str_type:expr) => {{
+    ($writer:expr_2021, $int_type:expr_2021, $str_type:expr_2021) => {{
         write_map_len($writer, 2)?;
         write_const_msgpack_str!($writer, "type")?;
         write_u8($writer, $int_type)?;

@@ -58,7 +58,7 @@ const fn msgpack_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u
 }
 
 macro_rules! write_const_msgpack_str {
-    ($writer:expr, $str:expr) => {{
+    ($writer:expr_2021, $str:expr_2021) => {{
         use rmp::encode::ValueWriteError;
         const STRING_ENCODING_LEN: usize = super::msgpack_string_encoding_len($str);
         const STRING_ENCODING: [u8; STRING_ENCODING_LEN] =
