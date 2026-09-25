@@ -25,7 +25,7 @@ fn compress_profile(payload: &[u8], level: i32) -> std::io::Result<Vec<u8>> {
 
 #[wasm_bindgen_test::wasm_bindgen_test]
 fn trace_compression_uses_zrip() {
-    use trace_compression::{add_headers, compress, CompressionStrategy};
+    use trace_compression::{CompressionStrategy, add_headers, compress};
 
     let payload = b"hello zstd".repeat(100);
     let (compressed, strategy) = compress(payload.clone(), CompressionStrategy::Zstd { level: 1 });
@@ -38,7 +38,7 @@ fn trace_compression_uses_zrip() {
 
 #[wasm_bindgen_test::wasm_bindgen_test]
 fn trace_compression_levels_are_clamped() {
-    use trace_compression::{compress, CompressionStrategy};
+    use trace_compression::{CompressionStrategy, compress};
 
     let payload = b"hello zstd".repeat(100);
     for level in [-7, 4] {
@@ -57,7 +57,7 @@ fn trace_compression_levels_are_clamped() {
 
 #[wasm_bindgen_test::wasm_bindgen_test]
 fn trace_compression_zero_uses_level_three() {
-    use trace_compression::{compress, CompressionStrategy};
+    use trace_compression::{CompressionStrategy, compress};
 
     let payload = b"hello zstd".repeat(100);
     let (default_compressed, strategy) =
