@@ -14,10 +14,10 @@
 use anyhow::Result;
 use cargo_metadata::camino::Utf8Path;
 use cargo_metadata::Package;
-use ci_shared::git;
-use ci_shared::workspace;
 use ci_shared::crate_detection::CrateInfo;
+use ci_shared::git;
 use ci_shared::github_output::set_output;
+use ci_shared::workspace;
 use clap::Parser;
 use std::collections::HashSet;
 
@@ -31,7 +31,11 @@ struct Args {
 fn main() -> Result<()> {
     env_logger::init();
     let args = Args::parse();
-    let base_ref = args.base_ref.strip_prefix("origin/").unwrap_or(&args.base_ref).to_string();
+    let base_ref = args
+        .base_ref
+        .strip_prefix("origin/")
+        .unwrap_or(&args.base_ref)
+        .to_string();
 
     git::fetch_base(&base_ref)?;
 
@@ -39,7 +43,11 @@ fn main() -> Result<()> {
     log::info!("Changed files: {:?}", changed_files);
 
     let workspace = workspace::load()?;
-    let changed_crates = collect_changed_crates(&changed_files, workspace.members(), workspace.workspace_root());
+    let changed_crates = collect_changed_crates(
+        &changed_files,
+        workspace.members(),
+        workspace.workspace_root(),
+    );
 
     if changed_crates.is_empty() {
         log::info!("Changed crates is empty");
@@ -61,7 +69,11 @@ fn main() -> Result<()> {
     )
 }
 
-fn collect_changed_crates(changed_files: &[String], members: &[Package], workspace_root: &Utf8Path) -> Vec<CrateInfo> {
+fn collect_changed_crates(
+    changed_files: &[String],
+    members: &[Package],
+    workspace_root: &Utf8Path,
+) -> Vec<CrateInfo> {
     let mut crates: Vec<CrateInfo> = Vec::new();
     let mut crate_inventory: HashSet<String> = HashSet::new();
 
