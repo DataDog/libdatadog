@@ -3316,7 +3316,7 @@ name = "libdd-profiling-heap-allocator"
 version = "1.1.0"
 dependencies = [
  "criterion",
- "libc",
+ "libdd-common",
  "libdd-profiling-heap-sampler",
 ]
 
