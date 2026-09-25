@@ -163,6 +163,20 @@ commit message, so it's important that it accurately describes your changes.For 
 follow the conventional commit format described above. Our CI pipeline will automatically validate the PR title and fail
 if it doesn't comply with the format. You can update the PR title at any time to fix any validation issues.
 
+## Backporting
+
+Fixes that need to be released before the next regular release are backported onto the relevant release branch
+(for example `v43.0.1`) using backport labels.
+
+If your pull request is a critical `fix` change that needs to go into an active release branch, apply the
+`backport v<N>.<M>` label corresponding to that release line (for example, `backport v43.0`). The workflow automatically
+resolves the label to the newest `v<N>.<M>.*` branch. Adding the label triggers a validation workflow that comments on
+the pull request whether the change can be cherry-picked onto that branch without conflicts.
+
+When the pull request is merged, a `Backport` workflow automatically cherry-picks the change onto each labeled release
+branch and opens a pull request for each of them. New features, chores, and documentation changes are not
+backported.
+
 ## Final word
 
 Many thanks to all of our contributors, and looking forward to seeing you on Github! :tada:
