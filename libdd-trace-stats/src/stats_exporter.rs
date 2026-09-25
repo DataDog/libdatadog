@@ -911,11 +911,8 @@ mod tests {
 
     #[test]
     fn mutable_metadata_updates_propagate_to_encoded_payloads() {
-        let handle = get_test_metadata().mutable_metadata;
-        let meta = StatsMetadata {
-            mutable_metadata: handle.clone(),
-            ..get_test_metadata()
-        };
+        let meta = get_test_metadata();
+        let handle = meta.mutable_metadata.clone();
 
         let buckets = vec![pb::ClientStatsBucket::default()];
         let payload = encode_stats_payload(&meta, 1, buckets.clone());

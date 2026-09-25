@@ -9,12 +9,13 @@
 //! [`ddog_mutable_metadata_free`]. See the `libdd_common::mutable_metadata` module
 //! documentation for the read/write protocol.
 
+use ::function_name::named;
 use core::ptr::NonNull;
 
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 
 use crate::slice::{AsBytes, CharSlice};
-use crate::{Error, VoidResult};
+use crate::{wrap_with_void_ffi_result, Error, VoidResult};
 
 /// Creates a shared, updatable metadata handle initialized with default values.
 ///
@@ -52,19 +53,17 @@ pub unsafe extern "C" fn ddog_mutable_metadata_free(handle: Box<MutableMetadataH
 ///
 /// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
+#[named]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
     handle: Option<&MutableMetadataHandle>,
     runtime_id: CharSlice,
 ) -> VoidResult {
-    let runtime_id = runtime_id.to_utf8_lossy().into_owned();
-    match handle {
-        Some(handle) => {
-            handle.set_runtime_id(runtime_id);
-            VoidResult::Ok
-        }
-        None => VoidResult::Err(Error::from("Invalid handle")),
-    }
+    wrap_with_void_ffi_result!({
+        let handle = handle.ok_or_else(|| Error::from("Invalid handle"))?;
+        let runtime_id = runtime_id.to_utf8_lossy().into_owned();
+        handle.set_runtime_id(runtime_id);
+    })
 }
 
 /// Replaces the `process_tags` held by the shared mutable metadata handle.
@@ -73,19 +72,17 @@ pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
 ///
 /// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
+#[named]
 #[no_mangle]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_process_tags(
     handle: Option<&MutableMetadataHandle>,
     process_tags: CharSlice,
 ) -> VoidResult {
-    let process_tags = process_tags.to_utf8_lossy().into_owned();
-    match handle {
-        Some(handle) => {
-            handle.set_process_tags(process_tags);
-            VoidResult::Ok
-        }
-        None => VoidResult::Err(Error::from("Invalid handle")),
-    }
+    wrap_with_void_ffi_result!({
+        let handle = handle.ok_or_else(|| Error::from("Invalid handle"))?;
+        let process_tags = process_tags.to_utf8_lossy().into_owned();
+        handle.set_process_tags(process_tags);
+    })
 }
 
 #[cfg(test)]
@@ -174,11 +171,17 @@ mod tests {
         unsafe {
             let result = ddog_mutable_metadata_set_runtime_id(None, CharSlice::from("x"));
             let error = result.unwrap_err();
-            assert_eq!(error.to_string(), "Invalid handle");
+            assert_eq!(
+                error.to_string(),
+                "ddog_mutable_metadata_set_runtime_id failed: Invalid handle"
+            );
 
             let result = ddog_mutable_metadata_set_process_tags(None, CharSlice::from("k:v"));
             let error = result.unwrap_err();
-            assert_eq!(error.to_string(), "Invalid handle");
+            assert_eq!(
+                error.to_string(),
+                "ddog_mutable_metadata_set_process_tags failed: Invalid handle"
+            );
         }
     }
 
