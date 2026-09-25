@@ -95,7 +95,7 @@ impl TracerMetadata {
         #[cfg(feature = "otel-thread-ctx")]
         use otel_proto::common::v1::ArrayValue;
         use otel_proto::{
-            common::v1::{any_value, AnyValue, KeyValue, ProcessContext},
+            common::v1::{AnyValue, KeyValue, ProcessContext, any_value},
             resource::v1::Resource,
         };
 
@@ -217,8 +217,8 @@ pub enum AnonymousFileHandle {
 #[cfg(target_os = "linux")]
 mod linux {
     use anyhow::Context;
-    use rand::distributions::Alphanumeric;
     use rand::Rng;
+    use rand::distributions::Alphanumeric;
     use std::io::Write;
 
     /// Create a memfd file storing the tracer metadata. This function also attempts to publish the

@@ -5,7 +5,7 @@ extern crate alloc;
 
 pub mod tracer_metadata;
 
-use libdd_common_ffi::{self as ffi, slice::AsBytes, CString, CharSlice, Error};
+use libdd_common_ffi::{self as ffi, CString, CharSlice, Error, slice::AsBytes};
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
