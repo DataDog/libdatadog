@@ -7,7 +7,7 @@ use tracing::debug;
 
 use crate::span::span_pool::PooledChunks;
 
-use super::{v04::Span, SpanText, TraceData};
+use super::{SpanText, TraceData, v04::Span};
 use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span

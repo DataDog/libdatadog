@@ -6,14 +6,14 @@ use crate::platform::{
 };
 use io_lifetimes::OwnedFd;
 use libc::{chmod, off_t};
+use nix::NixPath;
 use nix::errno::Errno;
 #[cfg(target_os = "linux")]
-use nix::fcntl::{fallocate, FallocateFlags};
-use nix::fcntl::{open, OFlag};
-use nix::sys::mman::{self, mmap, munmap, MapFlags, ProtFlags};
+use nix::fcntl::{FallocateFlags, fallocate};
+use nix::fcntl::{OFlag, open};
+use nix::sys::mman::{self, MapFlags, ProtFlags, mmap, munmap};
 use nix::sys::stat::Mode;
-use nix::unistd::{fchown, ftruncate, mkdir, unlink, Uid};
-use nix::NixPath;
+use nix::unistd::{Uid, fchown, ftruncate, mkdir, unlink};
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io;
@@ -91,7 +91,9 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMe
             mem: handle,
         })
     } else {
-        Err(io::Error::other("Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file."))
+        Err(io::Error::other(
+            "Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file.",
+        ))
     }
 }
 
@@ -109,11 +111,7 @@ pub fn set_shm_owner_uid(uid: u32) {
 
 fn shm_owner_uid() -> Option<u32> {
     let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
-    if uid == NO_OWNER_UID {
-        None
-    } else {
-        Some(uid)
-    }
+    if uid == NO_OWNER_UID { None } else { Some(uid) }
 }
 
 impl ShmHandle {

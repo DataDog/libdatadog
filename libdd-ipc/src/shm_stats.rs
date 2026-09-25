@@ -49,16 +49,16 @@ use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
 use std::hint;
 use std::io;
-use std::sync::atomic::{fence, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering::*};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*, fence};
 use std::thread;
 use zwohash::ZwoHasher;
 
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    cardinality_limit_telemetry::CollapsedFieldsMetrics, FixedAggregationKey, FlushResult,
-    FlushableConcentrator,
+    FixedAggregationKey, FlushResult, FlushableConcentrator,
+    cardinality_limit_telemetry::CollapsedFieldsMetrics,
 };
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -222,30 +222,34 @@ fn bucket_start(bucket_idx: u8, bucket_region_size: u32) -> usize {
 }
 
 unsafe fn shm_header(base: *const u8) -> &'static ShmHeader {
-    &*(base as *const ShmHeader)
+    unsafe { &*(base as *const ShmHeader) }
 }
 
 unsafe fn bucket_header(base: *const u8, bkt_start: usize) -> &'static ShmBucketHeader {
-    &*(base.add(bkt_start) as *const ShmBucketHeader)
+    unsafe { &*(base.add(bkt_start) as *const ShmBucketHeader) }
 }
 
 unsafe fn entry_ref(base: *const u8, bkt_start: usize, slot: usize) -> &'static ShmEntry {
-    let p = base.add(bkt_start + bucket_hdr_size() + slot * size_of::<ShmEntry>());
-    &*(p as *const ShmEntry)
+    unsafe {
+        let p = base.add(bkt_start + bucket_hdr_size() + slot * size_of::<ShmEntry>());
+        &*(p as *const ShmEntry)
+    }
 }
 
 unsafe fn pool_base(base: *const u8, bkt_start: usize, slot_count: u32) -> *const u8 {
-    base.add(bkt_start + pool_start_within_bucket(slot_count))
+    unsafe { base.add(bkt_start + pool_start_within_bucket(slot_count)) }
 }
 
 unsafe fn sref_str<'a>(pool: *const u8, sr: StringRef) -> &'a str {
-    if sr.len == 0 {
-        return "";
+    unsafe {
+        if sr.len == 0 {
+            return "";
+        }
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            pool.add(sr.offset as usize),
+            sr.len as usize,
+        ))
     }
-    std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-        pool.add(sr.offset as usize),
-        sr.len as usize,
-    ))
 }
 
 fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
@@ -263,38 +267,43 @@ fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
 }
 
 unsafe fn key_matches(entry: &ShmEntry, input: &ShmSpanInput<'_>, pool: *const u8) -> bool {
-    let k = &*entry.key.get();
-    k.fixed.convert(|sr| unsafe { sref_str(pool, *sr) }) == input.fixed
-        && (k.peer_tag_count as usize) == input.peer_tags.len()
-        && input.peer_tags.iter().enumerate().all(|(i, &(ik, iv))| {
-            sref_str(pool, k.peer_tag_keys[i]) == ik && sref_str(pool, k.peer_tag_values[i]) == iv
-        })
+    unsafe {
+        let k = &*entry.key.get();
+        k.fixed.convert(|sr| sref_str(pool, *sr)) == input.fixed
+            && (k.peer_tag_count as usize) == input.peer_tags.len()
+            && input.peer_tags.iter().enumerate().all(|(i, &(ik, iv))| {
+                sref_str(pool, k.peer_tag_keys[i]) == ik
+                    && sref_str(pool, k.peer_tag_values[i]) == iv
+            })
+    }
 }
 
 unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) -> StringRef {
-    let len = s.len() as u32;
-    if len == 0 {
-        return StringRef::default();
-    }
-    let mut spins = 0u32;
-    loop {
-        let old = cursor.load(Relaxed);
-        let new = old.saturating_add(len);
-        if new > pool_size {
+    unsafe {
+        let len = s.len() as u32;
+        if len == 0 {
             return StringRef::default();
         }
-        if cursor
-            .compare_exchange_weak(old, new, Relaxed, Relaxed)
-            .is_ok()
-        {
-            std::ptr::copy_nonoverlapping(s.as_ptr(), pool.add(old as usize), len as usize);
-            return StringRef { offset: old, len };
-        }
-        spins += 1;
-        if spins.is_multiple_of(YIELD_AFTER_SPINS) {
-            thread::yield_now();
-        } else {
-            hint::spin_loop();
+        let mut spins = 0u32;
+        loop {
+            let old = cursor.load(Relaxed);
+            let new = old.saturating_add(len);
+            if new > pool_size {
+                return StringRef::default();
+            }
+            if cursor
+                .compare_exchange_weak(old, new, Relaxed, Relaxed)
+                .is_ok()
+            {
+                std::ptr::copy_nonoverlapping(s.as_ptr(), pool.add(old as usize), len as usize);
+                return StringRef { offset: old, len };
+            }
+            spins += 1;
+            if spins.is_multiple_of(YIELD_AFTER_SPINS) {
+                thread::yield_now();
+            } else {
+                hint::spin_loop();
+            }
         }
     }
 }
@@ -553,14 +562,16 @@ impl ShmSpanConcentrator {
         cursor: &AtomicU32,
         pool_size: u32,
     ) {
-        let k = &mut *entry.key.get();
-        let fi = &input.fixed;
-        k.fixed = fi.convert(|s| unsafe { alloc_str(pool, cursor, pool_size, s) });
-        let n = input.peer_tags.len().min(MAX_PEER_TAGS);
-        k.peer_tag_count = n as u8;
-        for (i, &(tk, tv)) in input.peer_tags[..n].iter().enumerate() {
-            k.peer_tag_keys[i] = alloc_str(pool, cursor, pool_size, tk);
-            k.peer_tag_values[i] = alloc_str(pool, cursor, pool_size, tv);
+        unsafe {
+            let k = &mut *entry.key.get();
+            let fi = &input.fixed;
+            k.fixed = fi.convert(|s| alloc_str(pool, cursor, pool_size, s));
+            let n = input.peer_tags.len().min(MAX_PEER_TAGS);
+            k.peer_tag_count = n as u8;
+            for (i, &(tk, tv)) in input.peer_tags[..n].iter().enumerate() {
+                k.peer_tag_keys[i] = alloc_str(pool, cursor, pool_size, tk);
+                k.peer_tag_values[i] = alloc_str(pool, cursor, pool_size, tv);
+            }
         }
     }
 
@@ -743,81 +754,83 @@ impl ShmSpanConcentrator {
     }
 
     unsafe fn read_entry(entry: &ShmEntry, pool: *const u8) -> pb::ClientGroupedStats {
-        let k = &*entry.key.get();
-        let f = &k.fixed;
-        let s = &entry.stats;
+        unsafe {
+            let k = &*entry.key.get();
+            let f = &k.fixed;
+            let s = &entry.stats;
 
-        macro_rules! read_str {
-            ($sref:expr) => {{
-                let r: StringRef = $sref;
-                if r.len == 0 {
-                    String::new()
-                } else {
-                    String::from_utf8_lossy(std::slice::from_raw_parts(
-                        pool.add(r.offset as usize),
-                        r.len as usize,
-                    ))
-                    .into_owned()
+            macro_rules! read_str {
+                ($sref:expr_2021) => {{
+                    let r: StringRef = $sref;
+                    if r.len == 0 {
+                        String::new()
+                    } else {
+                        String::from_utf8_lossy(std::slice::from_raw_parts(
+                            pool.add(r.offset as usize),
+                            r.len as usize,
+                        ))
+                        .into_owned()
+                    }
+                }};
+            }
+
+            let peer_tags: Vec<String> = (0..k.peer_tag_count as usize)
+                .map(|i| {
+                    format!(
+                        "{}:{}",
+                        read_str!(k.peer_tag_keys[i]),
+                        read_str!(k.peer_tag_values[i])
+                    )
+                })
+                .collect();
+
+            // fence(Acquire) in drain_bucket's spin-wait loop already synchronises these reads.
+            let hits = s.hits.load(Relaxed);
+            let errors = s.errors.load(Relaxed);
+            let duration_sum = s.duration_sum.load(Relaxed);
+            let top_level_hits = s.top_level_hits.load(Relaxed);
+
+            let mut ok_sketch = DDSketch::default();
+            let mut err_sketch = DDSketch::default();
+            for bin in 0..N_BINS {
+                let ok_count = s.ok_bins[bin].load(Relaxed);
+                let err_count = s.error_bins[bin].load(Relaxed);
+                let rep = bin_representative(bin);
+                if ok_count > 0 {
+                    let _ = ok_sketch.add_with_count(rep, ok_count as f64);
                 }
-            }};
-        }
-
-        let peer_tags: Vec<String> = (0..k.peer_tag_count as usize)
-            .map(|i| {
-                format!(
-                    "{}:{}",
-                    read_str!(k.peer_tag_keys[i]),
-                    read_str!(k.peer_tag_values[i])
-                )
-            })
-            .collect();
-
-        // fence(Acquire) in drain_bucket's spin-wait loop already synchronises these reads.
-        let hits = s.hits.load(Relaxed);
-        let errors = s.errors.load(Relaxed);
-        let duration_sum = s.duration_sum.load(Relaxed);
-        let top_level_hits = s.top_level_hits.load(Relaxed);
-
-        let mut ok_sketch = DDSketch::default();
-        let mut err_sketch = DDSketch::default();
-        for bin in 0..N_BINS {
-            let ok_count = s.ok_bins[bin].load(Relaxed);
-            let err_count = s.error_bins[bin].load(Relaxed);
-            let rep = bin_representative(bin);
-            if ok_count > 0 {
-                let _ = ok_sketch.add_with_count(rep, ok_count as f64);
+                if err_count > 0 {
+                    let _ = err_sketch.add_with_count(rep, err_count as f64);
+                }
             }
-            if err_count > 0 {
-                let _ = err_sketch.add_with_count(rep, err_count as f64);
-            }
-        }
 
-        pb::ClientGroupedStats {
-            service: read_str!(f.service_name),
-            name: read_str!(f.operation_name),
-            resource: read_str!(f.resource_name),
-            http_status_code: f.http_status_code,
-            r#type: read_str!(f.span_type),
-            db_type: String::new(),
-            hits,
-            errors,
-            duration: duration_sum,
-            ok_summary: ok_sketch.encode_to_vec(),
-            error_summary: err_sketch.encode_to_vec(),
-            synthetics: f.is_synthetics_request,
-            top_level_hits,
-            span_kind: read_str!(f.span_kind),
-            peer_tags,
-            is_trace_root: f.is_trace_root.into(),
-            http_method: read_str!(f.http_method),
-            http_endpoint: read_str!(f.http_endpoint),
-            grpc_status_code: f
-                .grpc_status_code
-                .map(|c| c.to_string())
-                .unwrap_or_default(),
-            service_source: read_str!(f.service_source),
-            span_derived_primary_tags: vec![],
-            additional_metric_tags: vec![],
+            pb::ClientGroupedStats {
+                service: read_str!(f.service_name),
+                name: read_str!(f.operation_name),
+                resource: read_str!(f.resource_name),
+                http_status_code: f.http_status_code,
+                r#type: read_str!(f.span_type),
+                db_type: String::new(),
+                hits,
+                errors,
+                duration: duration_sum,
+                ok_summary: ok_sketch.encode_to_vec(),
+                error_summary: err_sketch.encode_to_vec(),
+                synthetics: f.is_synthetics_request,
+                top_level_hits,
+                span_kind: read_str!(f.span_kind),
+                peer_tags,
+                is_trace_root: f.is_trace_root.into(),
+                http_method: read_str!(f.http_method),
+                http_endpoint: read_str!(f.http_endpoint),
+                grpc_status_code: f
+                    .grpc_status_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_default(),
+                service_source: read_str!(f.service_source),
+                span_derived_primary_tags: vec![],
+                additional_metric_tags: vec![],
+            }
         }
     }
 }
@@ -955,8 +968,8 @@ mod tests {
             DEFAULT_STRING_POOL_BYTES,
         )
         .unwrap();
-        assert!(c
-            .flush(
+        assert!(
+            c.flush(
                 false,
                 "h".into(),
                 "e".into(),
@@ -964,7 +977,8 @@ mod tests {
                 "s".into(),
                 "r".into()
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]

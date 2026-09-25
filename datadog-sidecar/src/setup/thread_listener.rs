@@ -95,21 +95,22 @@ impl MasterListener {
             .lock()
             .map_err(|e| io::Error::other(format!("Failed to acquire listener lock: {}", e)))?;
 
-        if let Some(mut master) = listener_guard.take() {
-            if let Some(tx) = master.shutdown_tx.take() {
-                let _ = tx.send(());
-            }
+        match listener_guard.take() {
+            Some(mut master) => {
+                if let Some(tx) = master.shutdown_tx.take() {
+                    let _ = tx.send(());
+                }
 
-            if let Some(handle) = master.thread_handle.take() {
-                handle
-                    .join()
-                    .map_err(|_| io::Error::other("Failed to join listener thread"))?;
-            }
+                if let Some(handle) = master.thread_handle.take() {
+                    handle
+                        .join()
+                        .map_err(|_| io::Error::other("Failed to join listener thread"))?;
+                }
 
-            info!("Master listener thread shut down successfully");
-            Ok(())
-        } else {
-            Err(io::Error::other("No master listener is running"))
+                info!("Master listener thread shut down successfully");
+                Ok(())
+            }
+            _ => Err(io::Error::other("No master listener is running")),
         }
     }
 
@@ -119,10 +120,9 @@ impl MasterListener {
     /// but don't own the actual thread.
     pub fn is_active(pid: i32) -> bool {
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
-        if let Ok(listener_guard) = listener_mutex.lock() {
-            listener_guard.as_ref().is_some_and(|l| l.pid == pid)
-        } else {
-            false
+        match listener_mutex.lock() {
+            Ok(listener_guard) => listener_guard.as_ref().is_some_and(|l| l.pid == pid),
+            _ => false,
         }
     }
 

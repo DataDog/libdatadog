@@ -11,8 +11,8 @@ use tokio::runtime::{Builder, Runtime};
 use tracing::{debug, error};
 
 use super::{
-    pausable_worker::{tokio_spawn_fn, PausableWorker},
     BlockingRuntime, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
+    pausable_worker::{PausableWorker, tokio_spawn_fn},
 };
 
 fn build_runtime(worker_threads: usize) -> Result<Runtime, io::Error> {
@@ -243,7 +243,7 @@ impl BlockingRuntime for ForkSafeRuntime {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::mpsc::{Receiver, Sender, channel};
     use std::time::Duration;
     use tokio::time::sleep;
 

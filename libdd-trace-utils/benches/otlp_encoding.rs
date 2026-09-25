@@ -5,12 +5,12 @@
 //! serializing that IR to the HTTP/protobuf and HTTP/JSON wire formats. Inputs are decoded from
 //! msgpack into borrowed `SpanSlice`s, matching the production exporter path.
 
-use criterion::{black_box, criterion_group, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, black_box, criterion_group};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::otlp_encoder::{
-    encode_otlp_json, encode_otlp_protobuf, map_traces_to_otlp, OtlpResourceInfo,
+    OtlpResourceInfo, encode_otlp_json, encode_otlp_protobuf, map_traces_to_otlp,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A realistic OTLP-bound span: a handful of string `meta` tags and a couple of numeric
 /// `metrics`, so the per-span attribute work (the dominant cost) is exercised.

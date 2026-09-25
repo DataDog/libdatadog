@@ -234,10 +234,12 @@ mod tests {
             .timeout(Duration::from_secs(5))
             .build();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("base_url is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("base_url is required")
+        );
     }
 
     #[test]
@@ -246,10 +248,12 @@ mod tests {
             .base_url("http://localhost".to_owned())
             .build();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("timeout is required"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("timeout is required")
+        );
     }
 
     #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri

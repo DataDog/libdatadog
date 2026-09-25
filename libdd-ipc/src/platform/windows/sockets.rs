@@ -33,8 +33,8 @@ use std::{
     pin::Pin,
     ptr::{null, null_mut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -50,17 +50,17 @@ use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::Storage::FileSystem::{
-    ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
-};
-use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState, PIPE_NOWAIT,
-    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-};
-use windows_sys::Win32::System::Threading::{
-    CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 use windows_sys::Win32::System::IO::{
     CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0,
+};
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeA, PIPE_NOWAIT, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT, PeekNamedPipe, SetNamedPipeHandleState,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventA, INFINITE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
 
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.

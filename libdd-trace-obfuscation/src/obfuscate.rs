@@ -8,8 +8,8 @@ use libdd_trace_protobuf::pb::{
     attribute_array_value::AttributeArrayValueType,
 };
 use libdd_trace_utils::span::{
-    v04::{self, AttributeAnyValue, AttributeArrayValue},
     SpanText, TraceData,
+    v04::{self, AttributeAnyValue, AttributeArrayValue},
 };
 
 use crate::{

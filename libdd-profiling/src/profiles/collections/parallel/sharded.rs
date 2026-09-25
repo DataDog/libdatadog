@@ -149,7 +149,7 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
     }
 
     unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {
-        self.find_with_hash(hash, key)
+        unsafe { self.find_with_hash(hash, key) }
     }
 
     unsafe fn insert_unique_uncontended_with_hash(
@@ -157,7 +157,7 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
         hash: u64,
         value: Self::Owned<'_>,
     ) -> Result<Self::Id, SetError> {
-        self.insert_unique_uncontended_with_hash(hash, value)
+        unsafe { self.insert_unique_uncontended_with_hash(hash, value) }
     }
 }
 

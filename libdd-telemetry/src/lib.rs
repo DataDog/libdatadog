@@ -18,8 +18,8 @@ pub mod info;
 pub mod metrics;
 pub mod worker;
 
-pub use libdd_common::tag::{parse_tags, Tag};
-pub use libdd_common::{parse_uri, Endpoint};
+pub use libdd_common::tag::{Tag, parse_tags};
+pub use libdd_common::{Endpoint, parse_uri};
 
 pub fn build_host() -> data::Host {
     debug!("Building telemetry host information");

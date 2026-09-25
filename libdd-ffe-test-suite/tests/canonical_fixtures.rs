@@ -5,8 +5,8 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use libdd_ffe::rules_based::{
-    get_assignment, AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError,
-    FlagType, Str, UniversalFlagConfig,
+    AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError, FlagType, Str,
+    UniversalFlagConfig, get_assignment,
 };
 use serde::Deserialize;
 

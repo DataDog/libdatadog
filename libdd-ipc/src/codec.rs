@@ -7,7 +7,7 @@
 //! Response wire format: `[N bytes: bincode payload]` (no discriminant)
 //! Ack wire format: `[1 byte: 0x00]`
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fmt;
 
 /// Encode data as a bincode payload.

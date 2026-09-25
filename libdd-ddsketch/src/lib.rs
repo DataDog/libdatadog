@@ -333,7 +333,7 @@ mod test {
     use super::*;
 
     macro_rules! assert_within {
-        ($x:expr, $y:expr, $tolerance:expr) => {
+        ($x:expr_2021, $y:expr_2021, $tolerance:expr_2021) => {
             let diff = $x - $y;
             assert!(
                 -$tolerance < diff && diff < $tolerance,

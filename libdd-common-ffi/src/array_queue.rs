@@ -79,7 +79,7 @@ pub enum ArrayQueueNewResult {
 
 /// Creates a new ArrayQueue with the given capacity and item_delete_fn.
 /// The item_delete_fn is called when an item is dropped from the queue.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_ArrayQueue_new(
     capacity: usize,
@@ -98,12 +98,14 @@ pub extern "C" fn ddog_ArrayQueue_new(
 /// Drops the ArrayQueue.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue: *mut ArrayQueue) {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !queue.is_null() {
-        drop(Box::from_raw(queue));
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !queue.is_null() {
+            drop(Box::from_raw(queue));
+        }
     }
 }
 
@@ -135,7 +137,7 @@ impl From<Result<Result<(), *mut c_void>, anyhow::Error>> for ArrayQueuePushResu
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new. The value
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_push(
     queue_ptr: &ArrayQueue,
     value: *mut c_void,
@@ -164,7 +166,7 @@ impl From<Result<Option<*mut c_void>, anyhow::Error>> for ArrayQueuePushResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new. The value
 /// is null or points to a valid memory location that can be deallocated by the item_delete_fn.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_ArrayQueue_force_push(
     queue_ptr: &ArrayQueue,
@@ -202,7 +204,7 @@ impl From<anyhow::Result<Option<*mut c_void>>> for ArrayQueuePopResult {
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_pop(queue_ptr: &ArrayQueue) -> ArrayQueuePopResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -231,7 +233,7 @@ impl From<anyhow::Result<bool>> for ArrayQueueBoolResult {
 /// Checks if the ArrayQueue is empty.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_is_empty(queue_ptr: &ArrayQueue) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -260,7 +262,7 @@ impl From<anyhow::Result<usize>> for ArrayQueueUsizeResult {
 /// Returns the length of the ArrayQueue.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -273,7 +275,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_len(queue_ptr: &ArrayQueue) -> ArrayQue
 /// Returns true if the underlying queue is full.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_is_full(queue_ptr: &ArrayQueue) -> ArrayQueueBoolResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -286,7 +288,7 @@ pub unsafe extern "C" fn ddog_ArrayQueue_is_full(queue_ptr: &ArrayQueue) -> Arra
 /// Returns the capacity of the ArrayQueue.
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ArrayQueue_capacity(queue_ptr: &ArrayQueue) -> ArrayQueueUsizeResult {
     (|| {
         let queue = ArrayQueue::as_inner_ref(queue_ptr)?;
@@ -303,7 +305,9 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
 
     unsafe extern "C" fn drop_item(item: *mut c_void) {
-        _ = Box::from_raw(item as *mut i32);
+        unsafe {
+            _ = Box::from_raw(item as *mut i32);
+        }
     }
 
     #[test]

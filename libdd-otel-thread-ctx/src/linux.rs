@@ -31,7 +31,7 @@ pub use shared::*;
 
 use std::{
     mem, ptr,
-    sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
+    sync::atomic::{AtomicPtr, AtomicU8, Ordering, compiler_fence},
 };
 
 // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
@@ -57,30 +57,32 @@ core::arch::global_asm!(
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
-    let ptr: usize;
-    // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
-    // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
-    // especially when this crate is linked statically. Harmless-looking rewrites can hide part
-    // of the sequence from the linker and produce a partially relaxed access that computes an
-    // invalid TLS address.
-    //
-    // This code match byte-per-byte what clang generates, and this is verified during tests.
-    core::arch::asm!(
-        "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
-        "call *otel_thread_ctx_v1@TLSCALL(%rax)",
-        "addq %fs:0, %rax",
-        // There is a call instruction, but the whole point of TLSDESC is to use a fast calling
-        // convention. GCC's x86-64 port assumes that FLAGS_REG and RAX are changed while all
-        // other registers are preserved[^1]. LLVM similarly only clobbers RAX[^2] (and flags).
-        // So we don't need to clobber additional registers or to use `clobber_abi` here (which
-        // would negate most of the advantage of TLSDESC).
+    unsafe {
+        let ptr: usize;
+        // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
+        // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
+        // especially when this crate is linked statically. Harmless-looking rewrites can hide part
+        // of the sequence from the linker and produce a partially relaxed access that computes an
+        // invalid TLS address.
         //
-        // [^1]: https://maskray.me/blog/2021-02-14-all-about-thread-local-storage
-        // [^2]: https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/lib/Target/X86/X86InstrCompiler.td
-        out("rax") ptr,
-        options(att_syntax),
-    );
-    ptr as *mut *mut ThreadContextRecord
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
+        core::arch::asm!(
+            "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
+            "call *otel_thread_ctx_v1@TLSCALL(%rax)",
+            "addq %fs:0, %rax",
+            // There is a call instruction, but the whole point of TLSDESC is to use a fast calling
+            // convention. GCC's x86-64 port assumes that FLAGS_REG and RAX are changed while all
+            // other registers are preserved[^1]. LLVM similarly only clobbers RAX[^2] (and flags).
+            // So we don't need to clobber additional registers or to use `clobber_abi` here (which
+            // would negate most of the advantage of TLSDESC).
+            //
+            // [^1]: https://maskray.me/blog/2021-02-14-all-about-thread-local-storage
+            // [^2]: https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/lib/Target/X86/X86InstrCompiler.td
+            out("rax") ptr,
+            options(att_syntax),
+        );
+        ptr as *mut *mut ThreadContextRecord
+    }
 }
 
 /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
@@ -88,24 +90,26 @@ unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
-    let ptr: usize;
-    // WARNING: do not change the assembly below. See the warning above for amd64, and
-    // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
-    // This code match byte-per-byte what clang generates, and this is verified during tests.
-    core::arch::asm!(
-        "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
-        "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
-        "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
-        ".tlsdesccall otel_thread_ctx_v1",
-        "blr   x1",
-        "mrs   x8, tpidr_el0",
-        "add   x0, x8, x0",
-        out("x0") ptr,
-        out("x1") _,
-        out("x8") _,
-        out("x30") _,
-    );
-    ptr as *mut *mut ThreadContextRecord
+    unsafe {
+        let ptr: usize;
+        // WARNING: do not change the assembly below. See the warning above for amd64, and
+        // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
+        core::arch::asm!(
+            "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
+            "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
+            "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
+            ".tlsdesccall otel_thread_ctx_v1",
+            "blr   x1",
+            "mrs   x8, tpidr_el0",
+            "add   x0, x8, x0",
+            out("x0") ptr,
+            out("x1") _,
+            out("x8") _,
+            out("x30") _,
+        );
+        ptr as *mut *mut ThreadContextRecord
+    }
 }
 
 /// Run `f` with an atomic view of the current thread's TLS slot.

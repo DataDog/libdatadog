@@ -584,10 +584,9 @@ mod tests {
         let mut fixture = TestFixture::new("test_postfork_parent");
         let file_path = fixture.file_path.clone();
 
-        // Queue up to the bounded channel capacity. Queueing more than this depends on the
-        // worker thread draining the channel quickly enough, which is scheduling-dependent.
+        // Queue profiles with a small delay to avoid filling the channel
         fixture
-            .queue_profiles(2, 0)
+            .queue_profiles(3, 10)
             .expect("Failed to queue profiles");
 
         // Abort immediately to maximize inflight capture

@@ -8,7 +8,7 @@
 //! Map sizes span the typical range up to a large end (128). We expect the advantage of `VecMap` to
 //! degrade with size and with duplicates rate.
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::vec_map::VecMap;
 use std::hint::black_box;

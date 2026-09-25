@@ -5,13 +5,13 @@ use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
 use crate::runtime_callback::{
-    get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
-    CallbackData,
+    CallbackData, get_registered_callback, invoke_runtime_callback_with_writer,
+    is_runtime_callback_registered,
 };
 use crate::shared::constants::*;
 use crate::{
-    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
-    StacktraceCollection,
+    CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace, StacktraceCollection,
+    translate_si_code,
 };
 use libc::{siginfo_t, ucontext_t};
 use std::{
@@ -202,8 +202,8 @@ unsafe fn emit_backtrace_via_libunwind(
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     use libdd_libunwind_sys::{
-        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_FP,
-        UNW_REG_IP, UNW_REG_SP,
+        UNW_REG_FP, UNW_REG_IP, UNW_REG_SP, UnwCursor, UnwWord, unw_get_proc_name, unw_get_reg,
+        unw_init_local2, unw_step,
     };
 
     if ucontext.is_null() {

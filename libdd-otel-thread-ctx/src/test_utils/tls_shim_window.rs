@@ -30,7 +30,7 @@
 //! different access sequence, _and_ we wish to upgrade our sequence accordingly.
 use std::{path::Path, str::FromStr};
 
-use elf::{abi, endian::AnyEndian, symbol::SymbolTable, ElfBytes};
+use elf::{ElfBytes, abi, endian::AnyEndian, symbol::SymbolTable};
 use object::read::archive::ArchiveFile;
 
 /// The exported TLS symbol whose access sequence we hash.

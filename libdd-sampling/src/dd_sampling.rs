@@ -134,11 +134,7 @@ impl SamplingMechanism {
 
             _ => AUTO_PAIR,
         };
-        if is_keep {
-            pair.keep
-        } else {
-            pair.reject
-        }
+        if is_keep { pair.keep } else { pair.reject }
     }
 
     /// Returns whether this mechanism is a probability (rate-based) sampling

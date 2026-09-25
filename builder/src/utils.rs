@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use libdd_common::regex_engine::{Captures, Regex};
 use std::fs::{self, OpenOptions};
 use std::io::Write;

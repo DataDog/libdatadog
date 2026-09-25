@@ -13,12 +13,12 @@ use anyhow::Context;
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 use bin_tests::test_runner::run_crash_no_op;
 use bin_tests::{
+    ArtifactsBuild, BuildProfile,
     artifacts::{self, StandardArtifacts},
     fetch_built_artifacts,
-    test_runner::{run_crash_test_with_artifacts, CrashTestConfig, ValidatorFn},
+    test_runner::{CrashTestConfig, ValidatorFn, run_crash_test_with_artifacts},
     test_types::{CrashType, TestMode},
     validation::PayloadValidator,
-    ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
     CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StackFrame,
@@ -29,7 +29,7 @@ use serde_json::Value;
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.
 macro_rules! crash_tracking_tests {
-    ($(($test_name:ident, $profile:expr, $mode:expr, $crash_type:expr)),* $(,)?) => {
+    ($(($test_name:ident, $profile:expr_2021, $mode:expr_2021, $crash_type:expr_2021)),* $(,)?) => {
         $(
             #[test]
             #[cfg_attr(miri, ignore)]
@@ -471,7 +471,9 @@ fn test_crash_tracking_multi_thread_collection() {
 
         if reached_crash_site {
             assert_eq!(
-                crashed_frames.first().and_then(|frame| frame["ip"].as_str()),
+                crashed_frames
+                    .first()
+                    .and_then(|frame| frame["ip"].as_str()),
                 Some(crash_site_ip),
                 "crashed thread should start at the faulting instruction, like error.stack; got: {crashed_frames:?}"
             );
@@ -1397,7 +1399,8 @@ fn test_crash_tracking_app(crash_type: &str) {
             "panic" => {
                 let message = error["message"].as_str().unwrap();
                 assert!(
-                    message.contains("Process panicked with message") && message.contains("program panicked"),
+                    message.contains("Process panicked with message")
+                        && message.contains("program panicked"),
                     "Expected panic message to contain 'Process panicked with message' and 'program panicked', got: {}",
                     message
                 );
@@ -2984,10 +2987,12 @@ fn assert_errors_intake_payload(errors_intake_content: &[u8], crash_typ: &str) {
     match crash_typ {
         "null_deref" => {
             assert_eq!(error["type"], "SIGSEGV");
-            assert!(error["message"]
-                .as_str()
-                .unwrap()
-                .contains("Process terminated"));
+            assert!(
+                error["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Process terminated")
+            );
             assert!(error["message"].as_str().unwrap().contains("SIGSEGV"));
         }
         "kill_sigabrt" | "raise_sigabrt" => {

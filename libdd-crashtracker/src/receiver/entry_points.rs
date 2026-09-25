@@ -2,10 +2,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
 use super::receive_report::receive_report_from_stream;
-use crate::crash_info::CrashInfo;
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
+use crate::crash_info::CrashInfo;
 use anyhow::Context;
 use std::time::Duration;
 use tokio::{

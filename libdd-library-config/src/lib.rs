@@ -489,9 +489,13 @@ impl Configurator {
 
     pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
         match target {
-            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Linux => {
+                "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
+            }
             Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+            Target::Windows => {
+                "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
+            }
         }
     }
 
@@ -569,7 +573,7 @@ impl Configurator {
                     Err(e) => {
                         return LoggedResult::Err(
                             anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
+                        );
                     }
                 }
             }
@@ -577,7 +581,7 @@ impl Configurator {
             Err(e) => {
                 return LoggedResult::Err(
                     anyhow::Error::from(e).context("failed to open config file"),
-                )
+                );
             }
         };
         let fleet_config = match fs::File::open(path_managed) {
@@ -604,7 +608,7 @@ impl Configurator {
                     Err(e) => {
                         return LoggedResult::Err(
                             anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
+                        );
                     }
                 }
             }
@@ -612,7 +616,7 @@ impl Configurator {
             Err(e) => {
                 return LoggedResult::Err(
                     anyhow::Error::from(e).context("failed to open config file"),
-                )
+                );
             }
         };
 
@@ -790,7 +794,9 @@ impl Configurator {
         }
 
         let messages = if self.debug_logs {
-            vec![format!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}")]
+            vec![format!(
+                "Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}"
+            )]
         } else {
             Vec::new()
         };

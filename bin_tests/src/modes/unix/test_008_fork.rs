@@ -10,7 +10,7 @@
 // - If the crashtracking data was received, then yay it worked!
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{self as crashtracker, CrashtrackerConfiguration};
-use nix::sys::wait::{waitpid, WaitStatus};
+use nix::sys::wait::{WaitStatus, waitpid};
 use nix::unistd::Pid;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -37,8 +37,10 @@ impl Behavior for Test {
 
 #[inline(never)]
 unsafe fn deref_ptr(ptr: *mut u8) {
-    // Do the segfault in as identical as possible a manner as the main test
-    *std::hint::black_box(ptr) = std::hint::black_box(1);
+    unsafe {
+        // Do the segfault in as identical as possible a manner as the main test
+        *std::hint::black_box(ptr) = std::hint::black_box(1);
+    }
 }
 
 fn post() -> anyhow::Result<()> {

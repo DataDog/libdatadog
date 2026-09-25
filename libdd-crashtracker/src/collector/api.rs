@@ -4,10 +4,11 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
+    CrashtrackerConfiguration, clear_spans, clear_traces,
+    collector::crash_handler::register_panic_hook,
     collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
     reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
-    update_metadata, CrashtrackerConfiguration,
+    update_metadata,
 };
 
 pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
@@ -118,7 +119,7 @@ pub fn reconfigure(
 mod single_threaded_tests {
     use super::*;
     use crate::{
-        begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
+        CrashtrackerConfigurationBuilder, StacktraceCollection, begin_op, insert_span, insert_trace,
     };
     use chrono::Utc;
     use core::time::Duration;
@@ -217,11 +218,7 @@ mod single_threaded_tests {
             ss_size: 0,
         };
         let res = unsafe { libc::sigaltstack(core::ptr::null(), &mut sigaltstack) };
-        if res == 0 {
-            Some(sigaltstack)
-        } else {
-            None
-        }
+        if res == 0 { Some(sigaltstack) } else { None }
     }
 
     #[cfg_attr(miri, ignore)]

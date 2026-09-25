@@ -5,8 +5,8 @@
 //noinspection RsUnusedImport
 use crate::platform::{deserialize_rawhandle, serialize_rawhandle};
 
-use io_lifetimes::views::{FilelikeView, FilelikeViewType};
 use io_lifetimes::AsFilelike;
+use io_lifetimes::views::{FilelikeView, FilelikeViewType};
 use serde::{Deserialize, Serialize};
 use std::{io, marker::PhantomData, sync::Arc};
 
@@ -84,7 +84,7 @@ impl<T> PlatformHandle<T> {
             None => {
                 return Err(io::Error::other(
                     "attempting to unwrap FD from invalid handle",
-                ))
+                ));
             }
         };
 
@@ -143,7 +143,7 @@ mod tests {
 
     use super::PlatformHandle;
     macro_rules! assert_file_is_open_for_writing {
-        ($file:expr) => {{
+        ($file:expr_2021) => {{
             writeln!($file, "test").unwrap();
         }};
     }

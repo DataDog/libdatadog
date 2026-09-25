@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::{
+    Attribute, EvaluationContext,
     ufc::{
         ComparisonOperator, Condition, ConditionCheck, ExtendedVersion, RuleWire,
         SemverComparisonOperator,
     },
-    Attribute, EvaluationContext,
 };
 
 impl RuleWire {
@@ -91,11 +91,11 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use crate::rules_based::{
+        EvaluationContext,
         ufc::{
             ComparisonOperator, Condition, ConditionCheck, ExtendedVersion, RuleWire,
             SemverComparisonOperator,
         },
-        EvaluationContext,
     };
 
     #[test]
@@ -147,11 +147,13 @@ mod tests {
 
     #[test]
     fn one_of_int() {
-        assert!(ConditionCheck::Membership {
-            expected_membership: true,
-            values: ["42".into()].into()
-        }
-        .eval(Some(&42.0.into())));
+        assert!(
+            ConditionCheck::Membership {
+                expected_membership: true,
+                values: ["42".into()].into()
+            }
+            .eval(Some(&42.0.into()))
+        );
     }
 
     #[test]
@@ -174,26 +176,34 @@ mod tests {
 
     #[test]
     fn is_null() {
-        assert!(ConditionCheck::Null {
-            expected_null: true
-        }
-        .eval(None));
-        assert!(!ConditionCheck::Null {
-            expected_null: true
-        }
-        .eval(Some(&10.0.into())));
+        assert!(
+            ConditionCheck::Null {
+                expected_null: true
+            }
+            .eval(None)
+        );
+        assert!(
+            !ConditionCheck::Null {
+                expected_null: true
+            }
+            .eval(Some(&10.0.into()))
+        );
     }
 
     #[test]
     fn is_not_null() {
-        assert!(!ConditionCheck::Null {
-            expected_null: false
-        }
-        .eval(None));
-        assert!(ConditionCheck::Null {
-            expected_null: false
-        }
-        .eval(Some(&10.0.into())));
+        assert!(
+            !ConditionCheck::Null {
+                expected_null: false
+            }
+            .eval(None)
+        );
+        assert!(
+            ConditionCheck::Null {
+                expected_null: false
+            }
+            .eval(Some(&10.0.into()))
+        );
     }
 
     #[test]

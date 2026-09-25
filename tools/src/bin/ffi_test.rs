@@ -6,7 +6,7 @@
 //! Builds and runs FFI examples to verify they compile and work correctly.
 //! Usage: cargo ffi-test [--skip-build] [--filter <pattern>] [--keep-artifacts]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use wait_timeout::ChildExt;
 /// Convert a Path to &str, returning an error if it contains non-UTF-8
 /// characters.
 macro_rules! path_str {
-    ($path:expr) => {
+    ($path:expr_2021) => {
         $path
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("path contains non-UTF-8 characters: {:?}", $path))

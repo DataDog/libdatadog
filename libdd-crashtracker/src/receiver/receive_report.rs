@@ -6,11 +6,11 @@ use super::parse_hex_address;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
 use crate::{
+    CrashtrackerConfiguration, StackTrace,
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
     receiver::debug_logger::{DebugLogger, ReceiverIssue},
     runtime_callback::RuntimeStack,
     shared::constants::*,
-    CrashtrackerConfiguration, StackTrace,
 };
 
 use anyhow::Context;
@@ -745,10 +745,13 @@ mod tests {
         // Stand in for the agent, so the debug log has somewhere to land
         // without a config block telling the receiver where to send.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        std::env::set_var(
-            "DD_TRACE_AGENT_URL",
-            format!("http://{}", listener.local_addr().unwrap()),
-        );
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe {
+            std::env::set_var(
+                "DD_TRACE_AGENT_URL",
+                format!("http://{}", listener.local_addr().unwrap()),
+            )
+        };
         let server = tokio::spawn(async move {
             tokio::time::timeout(
                 Duration::from_secs(5),
@@ -969,13 +972,15 @@ mod tests {
         );
 
         // Verify a log message was recorded about no frames
-        assert!(builder
-            .log_messages
-            .as_ref()
-            .map(|msgs| msgs
-                .iter()
-                .any(|msg| msg.contains("No native stack frames received")))
-            .unwrap_or(false));
+        assert!(
+            builder
+                .log_messages
+                .as_ref()
+                .map(|msgs| msgs
+                    .iter()
+                    .any(|msg| msg.contains("No native stack frames received")))
+                .unwrap_or(false)
+        );
     }
 
     #[test]

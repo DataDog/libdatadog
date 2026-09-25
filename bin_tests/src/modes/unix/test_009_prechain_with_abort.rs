@@ -19,7 +19,7 @@ use crate::modes::behavior::Behavior;
 use libc;
 use libdd_crashtracker::CrashtrackerConfiguration;
 use nix::{
-    sys::signal::{self, kill, SaFlags, SigAction, SigHandler, SigSet, Signal},
+    sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet, Signal, kill},
     unistd::Pid,
 };
 use std::path::Path;

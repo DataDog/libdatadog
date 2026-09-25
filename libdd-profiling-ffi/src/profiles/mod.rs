@@ -8,7 +8,7 @@ mod utf8;
 
 #[macro_export]
 macro_rules! ensure_non_null_out_parameter {
-    ($expr:expr) => {
+    ($expr:expr_2021) => {
         if $expr.is_null() {
             return $crate::ProfileStatus::from(c"null pointer used as out parameter");
         }
@@ -17,7 +17,7 @@ macro_rules! ensure_non_null_out_parameter {
 
 #[macro_export]
 macro_rules! ensure_non_null_insert {
-    ($expr:expr) => {
+    ($expr:expr_2021) => {
         if $expr.is_null() {
             return $crate::ProfileStatus::from(c"tried to insert a null pointer");
         }

@@ -30,7 +30,7 @@ pub use platform::send_acks_async;
 /// Must match the `MAX_BATCH` limit inside `send_acks_async`.
 pub const ACK_BUFFER_SIZE: u32 = 20;
 pub use platform::{
-    max_message_size, AsyncConn, PeerCredentials, SeqpacketConn, SeqpacketListener,
-    HANDLE_SUFFIX_SIZE,
+    AsyncConn, HANDLE_SUFFIX_SIZE, PeerCredentials, SeqpacketConn, SeqpacketListener,
+    max_message_size,
 };
 pub use platform::{recv_raw_async, send_raw_async};

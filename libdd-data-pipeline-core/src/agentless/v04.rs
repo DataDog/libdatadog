@@ -12,7 +12,7 @@ use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use thiserror::Error;
 
-use super::{send_agentless_traces, AgentlessError, AgentlessTraceConfig};
+use super::{AgentlessError, AgentlessTraceConfig, send_agentless_traces};
 
 /// Configuration for agentless trace stats.
 #[derive(Debug)]
@@ -301,9 +301,11 @@ mod tests {
         let stats_body = zstd::decode_all(requests[1].body().as_ref()).unwrap();
         #[cfg(not(feature = "compression"))]
         let stats_body = requests[1].body();
-        assert!(stats_body
-            .windows(b"container-1".len())
-            .any(|bytes| bytes == b"container-1"));
+        assert!(
+            stats_body
+                .windows(b"container-1".len())
+                .any(|bytes| bytes == b"container-1")
+        );
     }
 
     #[test]
@@ -345,9 +347,11 @@ mod tests {
         let requests = capabilities.requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].uri().path(), "/api/v0.4/traces");
-        assert!(!requests[0]
-            .headers()
-            .contains_key("datadog-client-computed-stats"));
+        assert!(
+            !requests[0]
+                .headers()
+                .contains_key("datadog-client-computed-stats")
+        );
     }
 
     #[test]
@@ -382,9 +386,11 @@ mod tests {
         #[cfg(not(feature = "compression"))]
         let body = requests[0].body().to_vec();
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(body["traces"][0]["spans"][0]["meta"]
-            .get("_dd.compute_stats")
-            .is_none());
+        assert!(
+            body["traces"][0]["spans"][0]["meta"]
+                .get("_dd.compute_stats")
+                .is_none()
+        );
         assert_eq!(body["traces"][0]["spans"][0]["name"], "operation");
         assert_eq!(
             requests[0].headers()["datadog-client-computed-stats"],

@@ -3,18 +3,18 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::trace_exporter::TraceExporterOutputFormat;
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::TraceExporterError;
-use crate::trace_exporter::TraceExporterOutputFormat;
-use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
+use http::{HeaderMap, HeaderValue, header::CONTENT_TYPE};
 use libdd_common::header::{
     APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_utils::span::{TraceData, v04::Span};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use libdd_trace_utils::tracer_payload::{self};

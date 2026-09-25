@@ -9,7 +9,7 @@ use libdd_trace_utils::span::v04::{
 };
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead
@@ -108,7 +108,7 @@ fn new_vector_push<T>(vec: &mut Vec<T>, el: T) -> &mut T {
     unsafe { vec.last_mut().unwrap_unchecked() }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 fn set_event_attribute(
     event: &mut SpanEventBytes,
     key: CharSlice,
@@ -139,20 +139,20 @@ fn set_event_attribute(
 pub type TraceBytes = Vec<SpanBytes>;
 pub type TracesBytes = Vec<TraceBytes>;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_traces() -> Box<TracesBytes> {
     Box::default()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_free_traces(_traces: Box<TracesBytes>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
     traces.len()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_trace(
     traces: &mut TracesBytes,
     index: usize,
@@ -162,29 +162,29 @@ pub extern "C" fn ddog_get_trace(
 
 // ------------------ TraceBytes ------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_traces_new_trace(traces: &mut TracesBytes) -> &mut TraceBytes {
     new_vector_item(traces)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_trace_size(trace: &TraceBytes) -> usize {
     trace.len()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Option<&mut SpanBytes> {
     trace.get_mut(index)
 }
 
 // ------------------- SpanBytes -------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_trace_new_span(trace: &mut TraceBytes) -> &mut SpanBytes {
     new_vector_item(trace)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_trace_new_span_with_capacities(
     trace: &mut TraceBytes,
     meta_size: usize,
@@ -202,7 +202,7 @@ pub extern "C" fn ddog_trace_new_span_with_capacities(
 
 /// The returned slice is an owned allocation that must be properly freed using
 /// [`ddog_free_charslice`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
     let debug_str = format!("{span:?}");
     let len = debug_str.len();
@@ -219,7 +219,7 @@ pub extern "C" fn ddog_span_debug_log(span: &SpanBytes) -> CharSlice<'static> {
 /// # Safety
 ///
 /// `slice` must be an owned char slice that has been returned by one of the functions of this API.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
     let (ptr, len) = slice.as_raw_parts();
 
@@ -233,107 +233,107 @@ pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_service(span: &mut SpanBytes, slice: CharSlice) {
     set_string_field(&mut span.service, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_service(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.service)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_name(span: &mut SpanBytes, slice: CharSlice) {
     set_string_field(&mut span.name, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_name(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.name)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_resource(span: &mut SpanBytes, slice: CharSlice) {
     set_string_field(&mut span.resource, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_resource(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.resource)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_type(span: &mut SpanBytes, slice: CharSlice) {
     set_string_field(&mut span.r#type, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_type(span: &mut SpanBytes) -> CharSlice<'_> {
     get_string_field(&span.r#type)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_trace_id(span: &mut SpanBytes, value: u64) {
     span.trace_id = value as u128;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_trace_id(span: &mut SpanBytes) -> u64 {
     span.trace_id as u64
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_id(span: &mut SpanBytes, value: u64) {
     span.span_id = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_id(span: &mut SpanBytes) -> u64 {
     span.span_id
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_parent_id(span: &mut SpanBytes, value: u64) {
     span.parent_id = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_parent_id(span: &mut SpanBytes) -> u64 {
     span.parent_id
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_start(span: &mut SpanBytes, value: i64) {
     span.start = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_start(span: &mut SpanBytes) -> i64 {
     span.start
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_duration(span: &mut SpanBytes, value: i64) {
     span.duration = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_duration(span: &mut SpanBytes) -> i64 {
     span.duration
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_span_error(span: &mut SpanBytes, value: i32) {
     span.error = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_error(span: &mut SpanBytes) -> i32 {
     span.error
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_span_meta(span: &mut SpanBytes, key: CharSlice, value: CharSlice) {
     insert_vec_map(
         &mut span.meta,
@@ -342,12 +342,12 @@ pub extern "C" fn ddog_add_span_meta(span: &mut SpanBytes, key: CharSlice, value
     );
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_del_span_meta(span: &mut SpanBytes, key: CharSlice) {
     remove_vec_map_slow(&mut span.meta, key);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_meta<'a>(
     span: &'a mut SpanBytes,
     key: CharSlice<'_>,
@@ -364,14 +364,14 @@ pub extern "C" fn ddog_get_span_meta<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_has_span_meta(span: &mut SpanBytes, key: CharSlice) -> bool {
     exists_vec_map(&span.meta, key)
 }
 
 /// The return value is an owned array of slices (`Box<[CharSlice]>`) that must be freed explicitly
 /// through [`ddog_span_free_keys_ptr`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_meta_get_keys<'a>(
     span: &'a mut SpanBytes,
     out_count: &mut usize,
@@ -379,17 +379,17 @@ pub extern "C" fn ddog_span_meta_get_keys<'a>(
     get_vec_map_keys(&span.meta, out_count)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_span_metrics(span: &mut SpanBytes, key: CharSlice, val: f64) {
     insert_vec_map(&mut span.metrics, key, val);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_del_span_metrics(span: &mut SpanBytes, key: CharSlice) {
     remove_vec_map_slow(&mut span.metrics, key);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_metrics(
     span: &mut SpanBytes,
     key: CharSlice,
@@ -405,12 +405,12 @@ pub extern "C" fn ddog_get_span_metrics(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_has_span_metrics(span: &mut SpanBytes, key: CharSlice) -> bool {
     exists_vec_map(&span.metrics, key)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_metrics_get_keys<'a>(
     span: &'a mut SpanBytes,
     out_count: &mut usize,
@@ -418,7 +418,7 @@ pub extern "C" fn ddog_span_metrics_get_keys<'a>(
     get_vec_map_keys(&span.metrics, out_count)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_span_meta_struct(span: &mut SpanBytes, key: CharSlice, val: CharSlice) {
     insert_vec_map(
         &mut span.meta_struct,
@@ -427,12 +427,12 @@ pub extern "C" fn ddog_add_span_meta_struct(span: &mut SpanBytes, key: CharSlice
     );
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_del_span_meta_struct(span: &mut SpanBytes, key: CharSlice) {
     remove_vec_map_slow(&mut span.meta_struct, key);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_get_span_meta_struct<'a>(
     span: &'a mut SpanBytes,
     key: CharSlice<'_>,
@@ -447,14 +447,14 @@ pub extern "C" fn ddog_get_span_meta_struct<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_has_span_meta_struct(span: &mut SpanBytes, key: CharSlice) -> bool {
     exists_vec_map(&span.meta_struct, key)
 }
 
 /// The return value is an array of slices (`Box<[CharSlice]>`) that must be freed explicitly
 /// through [`ddog_span_free_keys_ptr`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_meta_struct_get_keys<'a>(
     span: &'a mut SpanBytes,
     out_count: &mut usize,
@@ -466,7 +466,7 @@ pub extern "C" fn ddog_span_meta_struct_get_keys<'a>(
 ///
 /// `keys_ptr` must have been returned by one of the `ddog_xxx_get_keys()` functions, and must not
 /// have been already freed.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'_>, count: usize) {
     if keys_ptr.is_null() || count == 0 {
         return;
@@ -482,37 +482,37 @@ pub unsafe extern "C" fn ddog_span_free_keys_ptr(keys_ptr: *mut CharSlice<'_>, c
 
 // ------------------- SpanLinkBytes -------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_new_link(span: &mut SpanBytes) -> &mut SpanLinkBytes {
     new_vector_item(&mut span.span_links)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_link_tracestate(link: &mut SpanLinkBytes, slice: CharSlice) {
     set_string_field(&mut link.tracestate, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_link_trace_id(link: &mut SpanLinkBytes, value: u64) {
     link.trace_id = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_link_trace_id_high(link: &mut SpanLinkBytes, value: u64) {
     link.trace_id_high = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_link_span_id(link: &mut SpanLinkBytes, value: u64) {
     link.span_id = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_link_flags(link: &mut SpanLinkBytes, value: u32) {
     link.flags = value;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_link_attributes(
     link: &mut SpanLinkBytes,
     key: CharSlice,
@@ -527,22 +527,22 @@ pub extern "C" fn ddog_add_link_attributes(
 
 // ------------------- SpanEventBytes -------------------
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_span_new_event(span: &mut SpanBytes) -> &mut SpanEventBytes {
     new_vector_item(&mut span.span_events)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_event_name(event: &mut SpanEventBytes, slice: CharSlice) {
     set_string_field(&mut event.name, slice);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_event_time(event: &mut SpanEventBytes, val: u64) {
     event.time_unix_nano = val;
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_event_attributes_str(
     event: &mut SpanEventBytes,
     key: CharSlice,
@@ -555,7 +555,7 @@ pub extern "C" fn ddog_add_event_attributes_str(
     );
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_event_attributes_bool(
     event: &mut SpanEventBytes,
     key: CharSlice,
@@ -564,7 +564,7 @@ pub extern "C" fn ddog_add_event_attributes_bool(
     set_event_attribute(event, key, AttributeArrayValueBytes::Boolean(val));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_event_attributes_int(
     event: &mut SpanEventBytes,
     key: CharSlice,
@@ -573,7 +573,7 @@ pub extern "C" fn ddog_add_event_attributes_int(
     set_event_attribute(event, key, AttributeArrayValueBytes::Integer(val));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_add_event_attributes_float(
     event: &mut SpanEventBytes,
     key: CharSlice,
@@ -586,7 +586,7 @@ pub extern "C" fn ddog_add_event_attributes_float(
 
 /// The returned slice is an owned allocation that must be properly freed using
 /// [`ddog_free_charslice`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_serialize_trace_into_charslice(
     trace: &mut TraceBytes,
 ) -> CharSlice<'static> {

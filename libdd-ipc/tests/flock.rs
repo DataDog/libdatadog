@@ -10,13 +10,13 @@ use std::{
 
 use libdd_ipc::platform::locks::FLock;
 use spawn_worker::{
-    assert_child_exit, entrypoint, fork::set_default_child_panic_handler, Stdio, TrampolineData,
+    Stdio, TrampolineData, assert_child_exit, entrypoint, fork::set_default_child_panic_handler,
 };
 use tempfile::tempdir;
 
 static ENV_LOCK_PATH: &str = "__LOCK_PATH";
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn flock_test_entrypoint(_trampoline_data: &TrampolineData) {
     set_default_child_panic_handler();
     let lock_path = std::env::var(ENV_LOCK_PATH).unwrap();

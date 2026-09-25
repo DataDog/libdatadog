@@ -37,7 +37,7 @@ pub enum MetadataKind {
 ///
 /// # Returns
 /// A non-null pointer to a newly allocated `TracerMetadata` instance.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_new() -> *mut TracerMetadata {
     Box::into_raw(Box::new(TracerMetadata::default()))
 }
@@ -48,7 +48,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_new() -> *mut TracerMetadata {
 /// - `ptr` must be a pointer previously returned by `ddog_tracer_metadata_new`.
 /// - Double-freeing or passing an invalid pointer results in undefined behavior.
 /// - Passing a null pointer is safe and does nothing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_free(ptr: *mut TracerMetadata) {
     if ptr.is_null() {
         return;
@@ -69,7 +69,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_free(ptr: *mut TracerMetadata) {
 /// - Both `ptr` and `value` must be non-null.
 /// - `value` must point to a valid UTF-8 null-terminated string.
 /// - If the string is not valid UTF-8, the function does nothing.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_set(
     ptr: *mut TracerMetadata,
     kind: MetadataKind,
@@ -117,32 +117,34 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 /// # Platform Support
 /// This function currently only supports Linux via `memfd`. On other platforms,
 /// it will return an error.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_store(
     ptr: *mut TracerMetadata,
 ) -> Result<TracerMemfdHandle> {
-    if ptr.is_null() {
-        return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
-            "Failed to store tracer metadata: received a null pointer"
-        ))
-        .into();
-    }
+    unsafe {
+        if ptr.is_null() {
+            return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
+                "Failed to store tracer metadata: received a null pointer"
+            ))
+            .into();
+        }
 
-    let metadata = &mut *ptr;
-    let result: anyhow::Result<TracerMemfdHandle> =
-        match tracer_metadata::store_tracer_metadata(metadata) {
-            #[cfg(target_os = "linux")]
-            Ok(handle) => {
-                use std::os::fd::{IntoRawFd, OwnedFd};
-                let AnonymousFileHandle::Linux(memfd) = handle;
-                let owned_fd: OwnedFd = memfd.into_file().into();
-                Ok(TracerMemfdHandle {
-                    fd: owned_fd.into_raw_fd(),
-                })
-            }
-            #[cfg(not(target_os = "linux"))]
-            Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
-            Err(err) => Err(err),
-        };
-    result.into()
+        let metadata = &mut *ptr;
+        let result: anyhow::Result<TracerMemfdHandle> =
+            match tracer_metadata::store_tracer_metadata(metadata) {
+                #[cfg(target_os = "linux")]
+                Ok(handle) => {
+                    use std::os::fd::{IntoRawFd, OwnedFd};
+                    let AnonymousFileHandle::Linux(memfd) = handle;
+                    let owned_fd: OwnedFd = memfd.into_file().into();
+                    Ok(TracerMemfdHandle {
+                        fd: owned_fd.into_raw_fd(),
+                    })
+                }
+                #[cfg(not(target_os = "linux"))]
+                Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
+                Err(err) => Err(err),
+            };
+        result.into()
+    }
 }

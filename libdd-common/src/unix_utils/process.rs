@@ -1,8 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libc::{_exit, nfds_t, poll, pollfd, EXIT_FAILURE, POLLHUP};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
+use libc::{_exit, EXIT_FAILURE, POLLHUP, nfds_t, poll, pollfd};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
 use nix::unistd::Pid;
 use std::os::fd::RawFd;
 
@@ -166,7 +166,9 @@ mod tests {
                 assert!(errno > 0);
             }
             Err(PollError::UnexpectedResult(revents)) => {
-                println!("wait_for_pollhup({invalid_fd}, ..) returned UnexpectedResult({revents}) as allowed on this platform");
+                println!(
+                    "wait_for_pollhup({invalid_fd}, ..) returned UnexpectedResult({revents}) as allowed on this platform"
+                );
             }
             _ => panic!("Expected error for invalid FD, got: {result:?}"),
         }

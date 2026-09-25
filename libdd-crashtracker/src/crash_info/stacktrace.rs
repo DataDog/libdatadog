@@ -5,12 +5,12 @@
 use crate::CachedElfResolvers;
 #[cfg(unix)]
 use blazesym::{
+    Pid,
     normalize::Normalizer,
     symbolize::{
-        source::{Elf, Source},
         Input, Symbolized, Symbolizer, TranslateFileOffset,
+        source::{Elf, Source},
     },
-    Pid,
 };
 
 use schemars::JsonSchema;
@@ -530,7 +530,7 @@ mod unix_comment_tests {
 #[cfg(test)]
 mod unix_test {
     use super::*;
-    use crate::{get_tests_folder_path, SharedLibrary};
+    use crate::{SharedLibrary, get_tests_folder_path};
 
     #[test]
     #[cfg_attr(miri, ignore)]

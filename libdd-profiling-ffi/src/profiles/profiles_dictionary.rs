@@ -1,13 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::ProfileError;
 use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
 use crate::profiles::utf8::{self, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
-use crate::ProfileError;
-use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_common_ffi::MutSlice;
+use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_profiling::profiles::collections::StringRef;
 use libdd_profiling::profiles::datatypes::{
     Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary, StringId2,
@@ -17,46 +17,46 @@ use std::ffi::CStr;
 /// A StringId that represents the empty string.
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_EMPTY: StringId2 = StringId2::EMPTY;
 
 /// A StringId that represents the string "end_timestamp_ns".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_END_TIMESTAMP_NS: StringId2 =
     StringId2::from(StringRef::END_TIMESTAMP_NS);
 
 /// A StringId that represents the string "local root span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_LOCAL_ROOT_SPAN_ID: StringId2 =
     StringId2::from(StringRef::LOCAL_ROOT_SPAN_ID);
 
 /// A StringId that represents the string "trace endpoint".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_TRACE_ENDPOINT: StringId2 =
     StringId2::from(StringRef::TRACE_ENDPOINT);
 
 /// A StringId that represents the string "span id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_SPAN_ID: StringId2 = StringId2::from(StringRef::SPAN_ID);
 
 /// A StringId that represents the string "thread id".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_THREAD_ID: StringId2 = StringId2::from(StringRef::THREAD_ID);
 
 /// A StringId that represents the string "thread name".
 /// This is always available in every string set and can be used without
 /// needing to insert it into a string set.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static DDOG_PROF_STRINGID2_THREAD_NAME: StringId2 = StringId2::from(StringRef::THREAD_NAME);
 
 const NULL_PROFILES_DICTIONARY: &CStr = c"passed a null pointer for a ProfilesDictionary";
@@ -70,7 +70,7 @@ const NULL_PROFILES_DICTIONARY: &CStr = c"passed a null pointer for a ProfilesDi
 ///   [`ddog_prof_ProfilesDictionary_drop`] for more details.
 /// - If you need a copy, use [`ddog_prof_ProfilesDictionary_try_clone`]; don't just memcpy a new
 ///   handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_new(
     handle: *mut ArcHandle<ProfilesDictionary>,
 ) -> ProfileStatus {
@@ -92,7 +92,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_new(
 /// - `handle` must point to a live dictionary resource.
 /// - Do not duplicate handles via memcpy; always use this API to create new handles so the
 ///   reference count is maintained correctly.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_try_clone(
     out: *mut ArcHandle<ProfilesDictionary>,
     handle: ArcHandle<ProfilesDictionary>,
@@ -112,7 +112,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_try_clone(
 /// - `function_id` must be non-null and valid for writes of `FunctionId`.
 /// - `dict` must refer to a live dictionary.
 /// - `function` must be non-null and point to a valid `Function` for the duration of the call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
     function_id: *mut FunctionId2,
     dict: Option<&ProfilesDictionary>,
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_function(
 /// - `mapping_id` must be non-null and valid for writes of `MappingId`.
 /// - `dict` must refer to a live dictionary.
 /// - `mapping` must be non-null and point to a valid `Mapping` for the duration of the call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
     mapping_id: *mut MappingId2,
     dict: Option<&ProfilesDictionary>,
@@ -166,7 +166,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_mapping(
 /// - `handle` must refer to a live dictionary.
 /// - The UTF-8 policy indicated by `utf8_option` must be respected by caller for the provided
 ///   `byte_slice`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
     string_id: *mut StringId2,
     dict: Option<&ProfilesDictionary>,
@@ -197,7 +197,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_str(
 /// - `string_ids` must be a valid writable slice of `StringId2` with the same length as `strings`.
 /// - The UTF-8 policy indicated by `utf8_option` must be respected by the caller for every string
 ///   in `strings`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_strs(
     mut string_ids: MutSlice<StringId2>,
     dict: Option<&ProfilesDictionary>,
@@ -232,25 +232,25 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_insert_strs(
 ///     _any_ handle drops the resource, then all handles pointing the resource are now invalid,
 ///     even if though they are unaware of it.
 ///  4. The result pointer must valid for [`core::ptr::write`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
     result: *mut CharSlice<'static>,
     dict: Option<&ProfilesDictionary>,
     string_id: StringId2,
 ) -> ProfileStatus {
-    ensure_non_null_out_parameter!(result);
-    let Some(dict) = dict else {
-        return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
-    };
-    // SAFETY: It's not actually safe--as indicated in the docs
-    // for this function, the caller needs to be sure the string
-    // set in the dictionary outlives the slice.
-    result.write(unsafe {
-        std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(CharSlice::from(
-            dict.get_str(string_id),
-        ))
-    });
-    ProfileStatus::OK
+    unsafe {
+        ensure_non_null_out_parameter!(result);
+        let Some(dict) = dict else {
+            return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
+        };
+        // SAFETY: It's not actually safe--as indicated in the docs
+        // for this function, the caller needs to be sure the string
+        // set in the dictionary outlives the slice.
+        result.write(std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(
+            CharSlice::from(dict.get_str(string_id)),
+        ));
+        ProfileStatus::OK
+    }
 }
 
 /// Tries to get the function value associated with the function id.
@@ -260,7 +260,7 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
 ///  1. The `function_id` should belong to this dictionary.
 ///  2. The dictionary must be live for the duration of the call.
 ///  3. The result pointer must be valid for [`core::ptr::write`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_func(
     result: *mut Function2,
     dict: Option<&ProfilesDictionary>,
@@ -284,12 +284,14 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_func(
 /// - The underlying resource must be dropped exactly once across all copies of the handle. After
 ///   dropping, all other copies become invalid and must not be used; they should be discarded
 ///   without dropping.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
     handle: *mut ArcHandle<ProfilesDictionary>,
 ) {
-    if let Some(h) = handle.as_mut() {
-        h.drop_resource();
+    unsafe {
+        if let Some(h) = handle.as_mut() {
+            h.drop_resource();
+        }
     }
 }
 

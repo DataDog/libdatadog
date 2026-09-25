@@ -50,7 +50,7 @@ fn warn_if_not_isolated() {
 #[serial]
 fn install_keeps_heap_functional() {
     warn_if_not_isolated();
-    extern "C" {
+    unsafe extern "C" {
         fn malloc(size: usize) -> *mut c_void;
     }
 
@@ -275,14 +275,16 @@ fn realloc_of_sampled_allocation_preserves_data() {
 /// and (unlike aligned_alloc) it places no multiple-of-alignment
 /// constraint on the size.
 unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void {
-    if align <= 1 {
-        libc::malloc(size)
-    } else {
-        let mut out: *mut c_void = std::ptr::null_mut();
-        if libc::posix_memalign(&mut out, align, size) != 0 {
-            std::ptr::null_mut()
+    unsafe {
+        if align <= 1 {
+            libc::malloc(size)
         } else {
-            out
+            let mut out: *mut c_void = std::ptr::null_mut();
+            if libc::posix_memalign(&mut out, align, size) != 0 {
+                std::ptr::null_mut()
+            } else {
+                out
+            }
         }
     }
 }

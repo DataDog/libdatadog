@@ -26,16 +26,16 @@ use libdd_shared_runtime::Worker;
 use std::iter::Sum;
 use std::marker::PhantomData;
 use std::ops::Add;
+use std::{collections::HashSet, fmt::Debug, time::Duration};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     ops::ControlFlow,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
-use std::{collections::HashSet, fmt::Debug, time::Duration};
 // `web_time` re-exports `std::time::Instant`/`SystemTime` on native and
 // provides Performance.now()/Date.now()-backed shims on wasm32. We use
 // `time::Instant` and `time::SystemTime` through this module-local alias so
@@ -47,7 +47,7 @@ use std::sync::{Condvar, Mutex};
 
 use crate::metrics::MetricBucketStats;
 use futures::channel::oneshot;
-use http::{header, HeaderValue};
+use http::{HeaderValue, header};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -66,7 +66,7 @@ fn time_now() -> f64 {
 }
 
 macro_rules! telemetry_worker_log {
-    ($worker:expr , ERROR , $fmt_str:tt, $($arg:tt)*) => {
+    ($worker:expr_2021 , ERROR , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
                 worker.runtime_id = %$worker.runtime_id,
@@ -79,7 +79,7 @@ macro_rules! telemetry_worker_log {
             }
         }
     };
-    ($worker:expr , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
+    ($worker:expr_2021 , DEBUG , $fmt_str:tt, $($arg:tt)*) => {
         {
             debug!(
                 worker.runtime_id = %$worker.runtime_id,
@@ -1932,8 +1932,8 @@ mod tests {
     mod reset {
         use super::super::*;
         use crate::data::{
-            metrics::{MetricNamespace, MetricType},
             Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
+            metrics::{MetricNamespace, MetricType},
         };
         use libdd_capabilities_impl::NativeCapabilities;
         use libdd_shared_runtime::Worker;

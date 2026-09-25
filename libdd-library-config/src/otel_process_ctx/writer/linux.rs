@@ -3,7 +3,7 @@
 
 use core::{
     convert::TryInto,
-    ffi::{c_void, CStr},
+    ffi::{CStr, c_void},
     mem::ManuallyDrop,
     ptr::{self, NonNull},
     time::Duration,

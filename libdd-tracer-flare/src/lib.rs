@@ -12,14 +12,14 @@ pub mod zip;
 use std::{
     fmt::Display,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Mutex,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use libdd_remote_config::{
-    config::{agent_config::AgentConfigFile, agent_task::AgentTaskFile},
     RemoteConfigParsedData,
+    config::{agent_config::AgentConfigFile, agent_task::AgentTaskFile},
 };
 
 use crate::error::FlareError;
@@ -28,10 +28,10 @@ use {
     libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities},
     libdd_common::Endpoint,
     libdd_remote_config::{
+        RemoteConfigParsed, RemoteConfigProduct, Target,
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile},
-        RemoteConfigParsed, RemoteConfigProduct, Target,
     },
     std::ops::Deref,
     std::str::FromStr,
@@ -468,7 +468,7 @@ pub async fn run_remote_config_listener(
         None => {
             return Err(FlareError::ListeningError(
                 "Listener not initialized".to_string(),
-            ))
+            ));
         }
     };
     let mut state = FlareAction::None;
@@ -518,16 +518,16 @@ mod tests {
     use crate::{FlareError, LogLevel, TracerFlareManager};
     #[cfg(feature = "listener")]
     use libdd_remote_config::{
+        RemoteConfigPath,
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
             agent_task::{AgentTask, AgentTaskFile},
         },
         fetch::FileStorage,
         file_storage::ParsedFileStorage,
-        RemoteConfigPath,
     };
     #[cfg(feature = "listener")]
-    use std::sync::{atomic::Ordering, Arc};
+    use std::sync::{Arc, atomic::Ordering};
 
     #[test]
     fn test_try_from_string_to_flare_action() {

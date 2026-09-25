@@ -3,8 +3,8 @@
 
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time,
 };
@@ -19,12 +19,12 @@ use libdd_common::{Endpoint, MutexExt};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
+    CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::stats_payload_encoder::{
-    build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
-    MAX_GROUPED_STATS_PER_PAYLOAD,
+    MAX_GROUPED_STATS_PER_PAYLOAD, build_stats_payload, encode_stats_payload_msgpack,
+    split_stats_buckets,
 };
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -413,9 +413,9 @@ pub struct StatsExporter<
 }
 
 impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator,
-    > StatsExporter<Cap, Con>
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    Con: FlushableConcentrator,
+> StatsExporter<Cap, Con>
 {
     /// Return a new StatsExporter targeting the Datadog Agent's `/v0.6/stats`.
     ///
@@ -793,8 +793,8 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
@@ -856,15 +856,17 @@ mod tests {
             exporter,
             Err(AgentlessStatsExporterError::InvalidBucketSize)
         ));
-        assert!(AgentlessStatsExporter::new(
-            Duration::from_nanos(1),
-            get_test_metadata(),
-            target(),
-            NativeCapabilities::new_client(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .is_ok());
+        assert!(
+            AgentlessStatsExporter::new(
+                Duration::from_nanos(1),
+                get_test_metadata(),
+                target(),
+                NativeCapabilities::new_client(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .is_ok()
+        );
     }
 
     #[cfg(feature = "stats-obfuscation")]

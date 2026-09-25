@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use criterion::{black_box, criterion_group, Criterion};
+use criterion::{Criterion, black_box, criterion_group};
 use libdd_tinybytes::BytesString;
 use libdd_trace_obfuscation::replacer;
 use libdd_trace_protobuf::pb;

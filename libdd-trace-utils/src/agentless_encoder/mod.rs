@@ -26,14 +26,14 @@
 //!
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
-use crate::hex::{hex_low_u64, hex_u128, hex_u64};
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::hex::{hex_low_u64, hex_u64, hex_u128};
 use crate::span::v1;
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
-    ser::{SerializeMap, SerializeSeq},
     Serialize, Serializer,
+    ser::{SerializeMap, SerializeSeq},
 };
 use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;

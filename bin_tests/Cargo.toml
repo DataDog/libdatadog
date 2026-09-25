@@ -4,7 +4,8 @@
 [package]
 name = "bin_tests"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 build = "build.rs"
 

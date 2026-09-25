@@ -5,8 +5,8 @@ pub(super) mod span;
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
 use crate::span::DeserializableTraceData;
+use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
 use rmp::decode;
 use std::borrow::Borrow;
 

@@ -5,10 +5,10 @@ use crate::ProfileError;
 use allocator_api2::alloc::{AllocError, Allocator, Global, Layout};
 use libdd_profiling::profiles::FallibleStringWriter;
 use std::borrow::Cow;
-use std::ffi::{c_char, CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::fmt::Display;
 use std::mem::ManuallyDrop;
-use std::ptr::{null, NonNull};
+use std::ptr::{NonNull, null};
 
 /// ProfileStatus uses `err` being null to encode OK, so we only need
 /// one bit in flags to distinguish between STATIC and ALLOCATED errors.
@@ -232,9 +232,9 @@ impl ProfileStatus {
                 // the correct amount of memory, but it will be removed below.
                 Err(
                     if write!(
-                    writer,
-                    "expected empty flag bits for ProfileStatus with no error, saw {flags:#x}\0"
-                )
+                        writer,
+                        "expected empty flag bits for ProfileStatus with no error, saw {flags:#x}\0"
+                    )
                     .is_err()
                     {
                         // We couldn't allocate or format for some reason, so just
@@ -274,7 +274,7 @@ impl ProfileStatus {
 /// # Safety
 ///
 /// The pointer should point at a valid Status object, if it's not null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
     if status.is_null() {
         return;

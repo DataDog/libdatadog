@@ -7,9 +7,9 @@
 use std::alloc::System;
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use libdd_common::bench_utils::{
-    memory_allocated_criterion, AllocatedBytesMeasurement, ReportingAllocator,
+    AllocatedBytesMeasurement, ReportingAllocator, memory_allocated_criterion,
 };
 use libdd_sampling::glob_matcher::GlobMatcher;
 

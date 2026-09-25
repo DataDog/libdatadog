@@ -22,7 +22,7 @@
 //!
 //! ```no_run
 //! use libdd_profiling_heap_allocator::{
-//!     is_profiler_attached, set_default_sampling_distance, SampledAllocator,
+//!     SampledAllocator, is_profiler_attached, set_default_sampling_distance,
 //! };
 //! use std::alloc::System;
 //!

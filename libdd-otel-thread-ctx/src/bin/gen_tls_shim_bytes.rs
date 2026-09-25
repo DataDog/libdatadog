@@ -41,7 +41,7 @@
 
 use std::{path::Path, process::Command};
 
-use libdd_otel_thread_ctx::test_utils::tls_shim_window::{windows_in_object_file, Arch};
+use libdd_otel_thread_ctx::test_utils::tls_shim_window::{Arch, windows_in_object_file};
 
 /// The reference C translation unit: a public `otel_thread_ctx_v1` TLS symbol compiled as a shared
 /// object plus an `accessor, so the compiler emits exactly one TLSDESC access sequence. It is

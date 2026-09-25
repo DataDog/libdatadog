@@ -105,7 +105,7 @@ pub fn clear_error(err: &mut Error) {
 /// # Safety
 ///
 /// Only pass null or a pointer to a valid, mutable `ddog_Error`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
     if let Some(err) = error {
         clear_error(err);
@@ -116,7 +116,7 @@ pub unsafe extern "C" fn ddog_Error_drop(error: Option<&mut Error>) {
 /// is dropped.
 /// # Safety
 /// Only pass null or a valid reference to a `ddog_Error`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<'_> {
     match error {
         None => CharSlice::empty(),
@@ -136,5 +136,5 @@ pub unsafe extern "C" fn ddog_Error_message(error: Option<&Error>) -> CharSlice<
 
 pub type MaybeError = crate::Option<Error>;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_MaybeError_drop(_: MaybeError) {}

@@ -4,28 +4,28 @@
 use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{tag::Tag, MutexExt};
-use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_common::{MutexExt, tag::Tag};
+use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use libdd_ipc::rate_limiter::ShmLimiter;
 use libdd_live_debugger::LiveDebuggingData;
-use libdd_remote_config::config::dynamic::{parse_json, Configs};
+use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
 use libdd_remote_config::{
-    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
-    Target,
+    ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
+    default_registry,
 };
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
@@ -59,19 +59,21 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 ///
 /// # Safety
 /// Pointers should be valid and non-null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn debug_dump_inv_tar(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
 ) {
-    let id = &*id;
-    let target = &*target;
-    debug!("ConfigInvariants: {:#?}", id);
-    debug!("Target: {:#?}", target);
-    debug!(
-        "Shared memory path: {:?}",
-        path_for_remote_config(id, target)
-    );
+    unsafe {
+        let id = &*id;
+        let target = &*target;
+        debug!("ConfigInvariants: {:#?}", id);
+        debug!("Target: {:#?}", target);
+        debug!(
+            "Shared memory path: {:?}",
+            path_for_remote_config(id, target)
+        );
+    }
 }
 
 type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
@@ -80,9 +82,11 @@ static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
 /// # Safety
 /// This function modifies a global without synchronization.
 /// It is designed to be called by the main thread before other threads are spawned.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
-    IN_PROC_NOTIFY_FUN = notify_fn;
+    unsafe {
+        IN_PROC_NOTIFY_FUN = notify_fn;
+    }
 }
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
@@ -275,11 +279,17 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            #[allow(clippy::unwrap_used)]
-            // SAFETY: no concurrent unlink() on this handle.
-            serialized.extend_from_slice(unsafe {
-                file.handle.lock_or_panic().as_ref().unwrap().get_path()
-            });
+            {
+                // Scope the guard so it is released before the `ApmTracing` branch
+                // below re-locks the same handle. Edition 2024 drops the temporary
+                // at the end of the statement (before the borrowed path slice is
+                // used), so bind it explicitly within this block instead.
+                let handle = file.handle.lock_or_panic();
+                // SAFETY: no concurrent unlink() on this handle.
+                #[allow(clippy::unwrap_used)]
+                let path = unsafe { handle.as_ref().unwrap().get_path() };
+                serialized.extend_from_slice(path);
+            }
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -795,7 +805,7 @@ impl RemoteConfigManager {
 mod tests {
     use super::*;
     use libdd_remote_config::config::dynamic::{
-        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
+        Configs, DynamicConfigFile, tests::dummy_dynamic_config,
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
     use manual_future::ManualFuture;
@@ -905,21 +915,24 @@ mod tests {
 
         receiver.recv().await;
 
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
-            assert_eq!(value.path.source(), PATH_FIRST.source());
-            assert_eq!(value.path.name(), PATH_FIRST.name());
-            let parsed = value.data.as_ref().expect("dynamic config must parse");
-            if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
-                assert!(matches!(
-                    <Vec<Configs>>::from(cfg.lib_config.clone())[0],
-                    Configs::TracingEnabled(true)
-                ));
-            } else {
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+                assert_eq!(value.path.source(), PATH_FIRST.source());
+                assert_eq!(value.path.name(), PATH_FIRST.name());
+                let parsed = value.data.as_ref().expect("dynamic config must parse");
+                if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
+                    assert!(matches!(
+                        <Vec<Configs>>::from(cfg.lib_config.clone())[0],
+                        Configs::TracingEnabled(true)
+                    ));
+                } else {
+                    unreachable!();
+                }
+            }
+            _ => {
                 unreachable!();
             }
-        } else {
-            unreachable!();
         }
 
         // just one update
@@ -927,10 +940,13 @@ mod tests {
 
         manager.unload_configs(&[PATH_FIRST.product()]);
 
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
-        } else {
-            unreachable!();
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+            }
+            _ => {
+                unreachable!();
+            }
         }
 
         // just one update
@@ -967,22 +983,28 @@ mod tests {
         }
 
         // then the adds
-        let was_second = if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            value.path.config_id() == PATH_SECOND.config_id()
-        } else {
-            unreachable!();
+        let was_second = match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                value.path.config_id() == PATH_SECOND.config_id()
+            }
+            _ => {
+                unreachable!();
+            }
         };
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(
-                value.path.config_id(),
-                if was_second {
-                    PATH_FIRST.config_id()
-                } else {
-                    PATH_SECOND.config_id()
-                }
-            );
-        } else {
-            unreachable!();
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                assert_eq!(
+                    value.path.config_id(),
+                    if was_second {
+                        PATH_FIRST.config_id()
+                    } else {
+                        PATH_SECOND.config_id()
+                    }
+                );
+            }
+            _ => {
+                unreachable!();
+            }
         };
 
         // And done
@@ -992,25 +1014,29 @@ mod tests {
         manager.reset_target();
 
         // and start to remove
-        let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            update == *PATH_SECOND
-        } else {
-            unreachable!();
+        let was_second = match manager.fetch_update() {
+            RemoteConfigUpdate::Remove(update) => update == *PATH_SECOND,
+            _ => {
+                unreachable!();
+            }
         };
 
         manager.track_target(&DUMMY_TARGET);
         // If we re-track it's added again immediately
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(
-                value.path.config_id(),
-                if was_second {
-                    PATH_SECOND.config_id()
-                } else {
-                    PATH_FIRST.config_id()
-                }
-            );
-        } else {
-            unreachable!();
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                assert_eq!(
+                    value.path.config_id(),
+                    if was_second {
+                        PATH_SECOND.config_id()
+                    } else {
+                        PATH_FIRST.config_id()
+                    }
+                );
+            }
+            _ => {
+                unreachable!();
+            }
         };
 
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
@@ -1021,22 +1047,26 @@ mod tests {
         on_dead.await;
 
         // After proper shutdown it must be like all configs were removed
-        let was_second = if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            update == *PATH_SECOND
-        } else {
-            unreachable!();
+        let was_second = match manager.fetch_update() {
+            RemoteConfigUpdate::Remove(update) => update == *PATH_SECOND,
+            _ => {
+                unreachable!();
+            }
         };
-        if let RemoteConfigUpdate::Remove(update) = manager.fetch_update() {
-            assert_eq!(
-                &update,
-                if was_second {
-                    &*PATH_FIRST
-                } else {
-                    &*PATH_SECOND
-                }
-            );
-        } else {
-            unreachable!();
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Remove(update) => {
+                assert_eq!(
+                    &update,
+                    if was_second {
+                        &*PATH_FIRST
+                    } else {
+                        &*PATH_SECOND
+                    }
+                );
+            }
+            _ => {
+                unreachable!();
+            }
         };
 
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
@@ -1094,23 +1124,26 @@ mod tests {
 
         receiver.recv().await;
 
-        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.path.config_id(), PATH_LIVE_DEBUGGER.config_id());
-            assert_eq!(
-                value.path.product(),
-                RemoteConfigProduct::LiveDebugging,
-                "must be parsed as LiveDebugger, not skipped"
-            );
-            let data = value.data.as_ref().expect("LiveDebugger must parse");
-            let parsed = data
-                .downcast::<LiveDebuggingData>()
-                .expect("downcast to LiveDebuggingData should succeed");
-            match parsed {
-                LiveDebuggingData::ServiceConfiguration(sc) => assert_eq!(sc.id, "ld-1"),
-                LiveDebuggingData::Probe(_) => unreachable!("expected ServiceConfiguration"),
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add { value, .. } => {
+                assert_eq!(value.path.config_id(), PATH_LIVE_DEBUGGER.config_id());
+                assert_eq!(
+                    value.path.product(),
+                    RemoteConfigProduct::LiveDebugging,
+                    "must be parsed as LiveDebugger, not skipped"
+                );
+                let data = value.data.as_ref().expect("LiveDebugger must parse");
+                let parsed = data
+                    .downcast::<LiveDebuggingData>()
+                    .expect("downcast to LiveDebuggingData should succeed");
+                match parsed {
+                    LiveDebuggingData::ServiceConfiguration(sc) => assert_eq!(sc.id, "ld-1"),
+                    LiveDebuggingData::Probe(_) => unreachable!("expected ServiceConfiguration"),
+                }
             }
-        } else {
-            unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
+            _ => {
+                unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
+            }
         }
     }
 }

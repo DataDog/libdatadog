@@ -1,11 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profile_status::{string_try_shrink_to_fit, ProfileStatus};
+use crate::profile_status::{ProfileStatus, string_try_shrink_to_fit};
 use libdd_common::error::FfiSafeErrorMessage;
 use libdd_common_ffi::slice::SliceConversionError;
-use libdd_profiling::profiles::collections::{ArcOverflow, SetError};
 use libdd_profiling::profiles::FallibleStringWriter;
+use libdd_profiling::profiles::collections::{ArcOverflow, SetError};
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -188,10 +188,11 @@ mod tests {
     fn test_alloc_error() {
         let err = ProfileError::AllocError;
         let cow: Cow<'static, CStr> = err.into();
-        assert!(cow
-            .to_str()
-            .unwrap()
-            .contains("memory allocator returned an error"));
+        assert!(
+            cow.to_str()
+                .unwrap()
+                .contains("memory allocator returned an error")
+        );
     }
 
     #[test]

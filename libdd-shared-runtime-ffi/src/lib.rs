@@ -10,7 +10,7 @@ mod shared_runtime;
 
 #[cfg(all(feature = "catch_panic", panic = "unwind"))]
 macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
+    ($f:expr_2021, $err:expr_2021) => {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| $f)) {
             Ok(ret) => ret,
             Err(info) => {

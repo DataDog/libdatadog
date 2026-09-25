@@ -3,30 +3,29 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
-use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
+use crate::otlp::config::{DEFAULT_OTLP_TIMEOUT, OtlpProtocol};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::otlp::{build_grpc_transport, OtlpGrpcTraceConfig};
+use crate::otlp::{OtlpGrpcTraceConfig, build_grpc_transport};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TelemetryClientBuilder;
-use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-use crate::trace_exporter::error::BuilderErrorKind;
-use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryInstrumentationSessions;
 use crate::trace_exporter::TraceExporterWorkers;
+use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
+use crate::trace_exporter::error::BuilderErrorKind;
+use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 use crate::trace_exporter::{
-    add_path, OtlpExportMode, StatsComputationStatus, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer, TracerMetadata,
-    INFO_ENDPOINT,
+    INFO_ENDPOINT, OtlpExportMode, StatsComputationStatus, TraceExporter, TraceExporterError,
+    TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer, TracerMetadata, add_path,
 };
 use arc_swap::ArcSwap;
 #[cfg(feature = "telemetry")]
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::{parse_uri, tag, Endpoint};
+use libdd_common::{Endpoint, parse_uri, tag};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -961,7 +960,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             self.stats_bucket_size,
         ) {
             use libdd_trace_stats::stats_exporter::{
-                create_agentless_concentrator, SharedStatsExporter, StatsExporter, StatsMetadata,
+                SharedStatsExporter, StatsExporter, StatsMetadata, create_agentless_concentrator,
             };
             use std::sync::Mutex;
 
@@ -1703,9 +1702,11 @@ mod tests {
             exporter.output_format,
             TraceExporterOutputFormat::V1
         ));
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
         assert_eq!(
             exporter
                 .effective_output_format()

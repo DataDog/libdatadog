@@ -3,7 +3,7 @@
 use datadog_sidecar_ffi::*;
 
 macro_rules! assert_maybe_no_error {
-    ($maybe_erroring:expr) => {
+    ($maybe_erroring:expr_2021) => {
         match $maybe_erroring {
             libdd_common_ffi::Option::Some(err) => panic!("{}", err.to_string()),
             libdd_common_ffi::Option::None => {}
@@ -23,7 +23,8 @@ use std::{
 };
 
 fn set_sidecar_per_process() {
-    std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process") }
 }
 
 #[test]

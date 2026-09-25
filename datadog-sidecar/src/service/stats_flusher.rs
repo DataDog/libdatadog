@@ -10,14 +10,14 @@
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
 use crate::service::RuntimeMetadata;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use futures::{future::join_all, TryFutureExt};
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::shm_stats::{
-    ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
+    DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
 use libdd_telemetry::config::Config;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
@@ -299,11 +299,10 @@ pub(crate) fn get_or_create_concentrator(
                     session_config_closure,
                     process_tags,
                 );
-                let worker = telemetry_mutex
+                telemetry_mutex
                     .lock_or_panic()
                     .as_ref()
-                    .map(|c| c.worker.clone());
-                worker
+                    .map(|c| c.worker.clone())
             };
 
             let state = Arc::new(SpanConcentratorState {
@@ -322,7 +321,9 @@ pub(crate) fn get_or_create_concentrator(
             Some(state)
         }
         Err(e) => {
-            error!("Failed to create SHM span stats concentrator for env={env} version={version} service={service_name}: {e}");
+            error!(
+                "Failed to create SHM span stats concentrator for env={env} version={version} service={service_name}: {e}"
+            );
             None
         }
     }

@@ -157,7 +157,7 @@ impl Limiter for LocalLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{now, Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
+    use crate::rate_limiter::{Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND, now};
     use core::sync::atomic::Ordering;
 
     fn set_mock_time(nanos: u64) {

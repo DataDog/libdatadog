@@ -5,16 +5,16 @@
 // a V1 msgpack span into a [`crate::span::v1::Span`].
 
 use super::{
-    read_interned_string, skip_unknown_value, span_event_key, span_key, span_link_key, StringTable,
     ANY_VALUE_KEY_ARRAY, ANY_VALUE_KEY_BOOL, ANY_VALUE_KEY_BYTES, ANY_VALUE_KEY_DOUBLE,
     ANY_VALUE_KEY_INT64, ANY_VALUE_KEY_KEY_VALUE_LIST, ANY_VALUE_KEY_STRING, FLAT_ATTR_STRIDE,
-    TYPED_VALUE_STRIDE,
+    StringTable, TYPED_VALUE_STRIDE, read_interned_string, skip_unknown_value, span_event_key,
+    span_key, span_link_key,
 };
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::span::DeserializableTraceData;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, ThinVec};
 use crate::span::vec_map::VecMap;
-use crate::span::DeserializableTraceData;
 use rmp::decode;
 use std::borrow::Borrow;
 

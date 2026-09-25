@@ -18,14 +18,14 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::agentless::exporter::send_agentless_traces_with_observer;
 use crate::agentless::AgentlessTraceConfig;
+use crate::agentless::exporter::send_agentless_traces_with_observer;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
-use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
-use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::exporter::{OTLP_MAX_RETRIES, send_otlp_http_with_observer};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::otlp::{send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport};
+use crate::otlp::{GrpcExportError, OtlpGrpcTransport, send_otlp_traces_grpc};
+use crate::otlp::{OtlpResourceInfo, OtlpTraceConfig, map_traces_to_otlp};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -43,12 +43,12 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use futures::stream::{FuturesUnordered, StreamExt};
+use http::Uri;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
-use http::Uri;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
@@ -57,10 +57,10 @@ use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::{v04::Span, TraceData};
+use libdd_trace_utils::span::{TraceData, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -310,9 +310,9 @@ pub struct TraceExporter<
 }
 
 impl<
-        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
-        R: SharedRuntime,
-    > TraceExporter<C, R>
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> TraceExporter<C, R>
 {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
@@ -1315,8 +1315,8 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
@@ -1493,9 +1493,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1521,9 +1523,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1546,9 +1550,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     fn read(socket: &net::UdpSocket) -> String {
@@ -2666,8 +2672,8 @@ mod tests {
 mod telemetry_metrics_tests {
     use super::*;
     use crate::trace_exporter::tests::build_test_exporter;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;

@@ -114,7 +114,7 @@ impl Drop for LogProbe<'_> {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_drop_log_probe_capture_expressions(_: LogProbe) {}
 
 #[repr(C)]
@@ -167,7 +167,7 @@ impl<'a> From<&'a libdd_live_debugger::SpanDecorationProbe> for SpanDecorationPr
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_drop_span_decoration_probe(_: SpanDecorationProbe) {}
 
 impl Drop for SpanDecorationProbe<'_> {
@@ -355,7 +355,7 @@ impl<'a> From<&'a libdd_live_debugger::LiveDebuggingData> for LiveDebuggingData<
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_capture_defaults() -> CaptureConfiguration {
     CaptureConfiguration::default()
 }

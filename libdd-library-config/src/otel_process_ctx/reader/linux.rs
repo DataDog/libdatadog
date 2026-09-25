@@ -84,7 +84,7 @@ mod tests {
 
         use super::super::io;
         use crate::otel_process_ctx::ProcessContextSelfReader;
-        use crate::otel_process_ctx::{writer::MappingHeader, UNPUBLISHED_OR_UPDATING};
+        use crate::otel_process_ctx::{UNPUBLISHED_OR_UPDATING, writer::MappingHeader};
 
         #[test]
         #[cfg_attr(miri, ignore)]

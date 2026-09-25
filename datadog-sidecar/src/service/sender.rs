@@ -12,11 +12,11 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -369,8 +369,7 @@ impl SidecarSender {
             if self.enqueue_actions_counter != 0 {
                 trace!(
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
-                    outstanding,
-                    self.max_outstanding,
+                    outstanding, self.max_outstanding,
                 );
                 return;
             }

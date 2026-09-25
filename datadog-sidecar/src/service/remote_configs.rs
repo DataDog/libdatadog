@@ -3,7 +3,7 @@
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::{MutexExt, tag::Tag};
 use libdd_remote_config::fetch::{
     ConfigInvariants, ConfigOptions, MultiTargetStats, NotifyTarget, ProductCapabilities,
 };

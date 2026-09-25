@@ -198,7 +198,7 @@ fn last_error(context: &'static str) -> io::Error {
 mod tests {
     use core::ptr;
 
-    use super::{io, retry_on_eintr, CopyPipe, ProcessMemoryCopy};
+    use super::{CopyPipe, ProcessMemoryCopy, io, retry_on_eintr};
 
     #[test]
     #[cfg_attr(miri, ignore)]

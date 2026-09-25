@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::tag::Tag;
-use libdd_common_ffi::{slice::AsBytes, CharSlice};
+use libdd_common_ffi::{CharSlice, slice::AsBytes};
 
 #[repr(C)]
 pub struct Metadata<'a> {

@@ -169,7 +169,10 @@ impl EvErr {
                         first_entries.join(", ")
                     )
                 } else {
-                    format!("Could not fetch index {dim} (evaluated to {index}) on {source} (evaluated to [{}])", first_entries.join(", "))
+                    format!(
+                        "Could not fetch index {dim} (evaluated to {index}) on {source} (evaluated to [{}])",
+                        first_entries.join(", ")
+                    )
                 }
             }
             InvalidFetch::Nested(e, source, prop, base, nested) => {
@@ -183,7 +186,12 @@ impl EvErr {
                         eval.iref_string(base)
                     )
                 } else {
-                    format!("Could not {} property {prop} (evaluated to {}) on {source} (evaluated to {})", fetch_mode(e), eval.get_string(nested), eval.iref_string(base))
+                    format!(
+                        "Could not {} property {prop} (evaluated to {}) on {source} (evaluated to {})",
+                        fetch_mode(e),
+                        eval.get_string(nested),
+                        eval.iref_string(base)
+                    )
                 }
             }
         })
@@ -344,11 +352,11 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
             Reference::IteratorVariable => self.it.ok_or(InvalidFetch::NoIterator),
             Reference::IteratorKey => self.it_key.ok_or(InvalidFetch::NoIterator),
             Reference::IteratorValue => self.it_value.ok_or(InvalidFetch::NoIterator),
-            Reference::Base(ref identifier) => self
+            Reference::Base(identifier) => self
                 .eval
                 .fetch_identifier(identifier.as_str())
                 .map_err(|e| InvalidFetch::Identifier(e, identifier)),
-            Reference::Index(ref boxed) => {
+            Reference::Index(boxed) => {
                 let (source, dimension) = &**boxed;
                 let dimension_val = self.value(dimension)?.try_use(self)?;
                 match source {
@@ -366,7 +374,7 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                             ))
                         }
                     }
-                    CollectionSource::Reference(ref reference) => {
+                    CollectionSource::Reference(reference) => {
                         self.reference(reference)?.0.and_then(|reference_val| {
                             self.eval
                                 .fetch_index(reference_val, dimension_val.clone())
@@ -383,7 +391,7 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                     }
                 }
             }
-            Reference::Nested(ref boxed) => {
+            Reference::Nested(boxed) => {
                 let (source, member) = &**boxed;
                 let member_val = self.value(member)?.try_use(self)?;
                 self.reference(source)?.0.and_then(|source_val| {
@@ -402,8 +410,8 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
         collection: &'e CollectionSource,
     ) -> EvalResult<Vec<(&'e I, &'e I)>> {
         Ok(match collection {
-            CollectionSource::Reference(ref reference) => self.reference_collection(reference)?,
-            CollectionSource::FilterOperator(ref boxed) => {
+            CollectionSource::Reference(reference) => self.reference_collection(reference)?,
+            CollectionSource::FilterOperator(boxed) => {
                 let (source, condition) = &**boxed;
                 let mut values = vec![];
                 let (it, it_key, it_value) = (self.it, self.it_key, self.it_value);
@@ -459,7 +467,7 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                     StringComparison::Matches => {
                         return Regex::new(needle.as_str())
                             .map_err(|e| EvErr::str(format!("{needle} is an invalid regex: {e}")))
-                            .map(|r| r.is_match(&haystack))
+                            .map(|r| r.is_match(&haystack));
                     }
                 }
             }
@@ -655,8 +663,8 @@ mod tests {
         Reference, StringComparison, StringSource,
     };
     use crate::{
-        eval_condition, eval_intermediate_to_string, eval_string, eval_value, DslString, Evaluator,
-        IntermediateValue, ProbeCondition, ProbeValue, ResultError, ResultValue,
+        DslString, Evaluator, IntermediateValue, ProbeCondition, ProbeValue, ResultError,
+        ResultValue, eval_condition, eval_intermediate_to_string, eval_string, eval_value,
     };
     use std::borrow::Cow;
     use std::cmp::Ordering;
@@ -851,7 +859,7 @@ mod tests {
     }
 
     macro_rules! assert_cond_err {
-        ($vars:expr, $expr:expr, $err:expr) => {
+        ($vars:expr_2021, $expr:expr_2021, $err:expr_2021) => {
             let cond = ProbeCondition($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             match eval_condition(&mut ctx, &cond) {
@@ -861,14 +869,14 @@ mod tests {
         };
     }
     macro_rules! assert_cond_true {
-        ($vars:expr, $expr:expr) => {
+        ($vars:expr_2021, $expr:expr_2021) => {
             let cond = ProbeCondition($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             assert!(eval_condition(&mut ctx, &cond).unwrap());
         };
     }
     macro_rules! assert_cond_false {
-        ($vars:expr, $expr:expr) => {
+        ($vars:expr_2021, $expr:expr_2021) => {
             let cond = ProbeCondition($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             assert!(!eval_condition(&mut ctx, &cond).unwrap());
@@ -876,7 +884,7 @@ mod tests {
     }
 
     macro_rules! assert_val_err {
-        ($vars:expr, $expr:expr, $err:expr) => {
+        ($vars:expr_2021, $expr:expr_2021, $err:expr_2021) => {
             let val = ProbeValue($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             match eval_value(&mut ctx, &val) {
@@ -886,7 +894,7 @@ mod tests {
         };
     }
     macro_rules! assert_val_eq {
-        ($vars:expr, $expr:expr, $eq:expr) => {
+        ($vars:expr_2021, $expr:expr_2021, $eq:expr_2021) => {
             let val = ProbeValue($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             let value = eval_value(&mut ctx, &val).unwrap();
@@ -895,7 +903,7 @@ mod tests {
     }
 
     macro_rules! assert_dsl_eq {
-        ($vars:expr, $expr:expr, $eq:expr) => {
+        ($vars:expr_2021, $expr:expr_2021, $eq:expr_2021) => {
             let dsl = &DslString($expr);
             let mut ctx = EvalCtx { variables: &$vars };
             let (result, errors) = eval_string(&mut ctx, dsl);
