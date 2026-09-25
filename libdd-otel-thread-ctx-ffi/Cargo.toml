@@ -22,6 +22,16 @@ libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
+# Autoclean contexts on thread exit, forwarding the same feature from
+# `libdd-otel-thread-ctx`: any context left attached when the thread exits is freed by Rust's
+# TLS destructor mechanism, with nothing required from the host. See that crate's README
+# ("Context records lifecycle" section).
+thread-exit-autoclean = ["libdd-otel-thread-ctx/thread-exit-autoclean"]
+
+[[test]]
+name = "thread_exit_autoclean"
+required-features = ["thread-exit-autoclean"]
+harness = false
 
 [dev-dependencies]
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = [

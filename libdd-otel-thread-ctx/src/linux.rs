@@ -372,9 +372,21 @@ impl ThreadContext {
 
 /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the address
 /// of the slot itself). Shared by the tests of both ownership modes.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 fn read_tls_context_ptr() -> *const ThreadContextRecord {
     with_tls_slot(|slot| slot.load(Ordering::Relaxed))
+}
+
+/// Untyped view of [`read_tls_context_ptr`]: same pointer, returned as a raw `u8` pointer so that
+/// integration tests can identify the record's address without naming the crate-private
+/// `ThreadContextRecord`.
+///
+/// Exposed under the `test-utils` feature, which carries no stability guarantee. Do not
+/// dereference the returned pointer: the record is owned by the library, and may be freed by the
+/// autocleaner as soon as the calling thread detaches it or exits.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn read_tls_pointer_untyped() -> *const u8 {
+    read_tls_context_ptr().cast()
 }
 
 #[cfg(test)]

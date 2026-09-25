@@ -11,6 +11,55 @@ use std::{
 
 use super::{with_tls_slot, ThreadContext, ThreadContextRecord};
 
+#[cfg(feature = "thread-exit-autoclean")]
+/// Dummy TLS variable whose sole purpose is to hook on thread exit, to drop any context still
+/// attached via [Drop].
+mod autoclean {
+    use std::thread_local;
+
+    struct TlsCleaner;
+
+    thread_local! {
+        static CLEANER: TlsCleaner = const { TlsCleaner };
+    }
+
+    impl Drop for TlsCleaner {
+        fn drop(&mut self) {
+            drop(super::OwnedThreadContext::detach());
+        }
+    }
+
+    /// To be called at least once to ensure the cleaner is initialized.
+    ///
+    /// Despite the `const` definition of [CLEANER], since Rust TLS initialization is lazy, it's not
+    /// guaranteed that [CLEANER] is properly initialized if we don't fetch it at least once. If the
+    /// TLS slot is not initialized, its `Drop` implementation will not be called at exit, which
+    /// defeats the whole purpose of the cleaner.
+    pub(super) fn init() {
+        let _ = CLEANER.try_with(|_| ());
+    }
+}
+
+/// When the feature `thread-exit-autoclean` is enabled, initialize the cleaner on the current
+/// thread, which will reclaim any attached context on thread exit to avoid leaks.
+fn init_autoclean() {
+    #[cfg(feature = "thread-exit-autoclean")]
+    autoclean::init();
+}
+
+/// When the feature `thread-exit-autoclean` is enabled and the previous attached context `prev` is
+/// null, initialize the cleaner on the current thread, which will reclaim any attached context on
+/// thread exit to avoid leaks.
+///
+/// If the feature isn't enabled, there is no branch at all and the whole function call should be
+/// entirely eliminated.
+fn init_autoclean_if_null<T>(prev: *mut T) {
+    #[cfg(feature = "thread-exit-autoclean")]
+    if prev.is_null() {
+        init_autoclean();
+    }
+}
+
 impl ThreadContextRecord {
     /// Update the record in-place. Sets `valid=0` before the update and `valid=1` after, so a
     /// reader that fires between the two writes sees an inconsistent record and skips it. Compiler
@@ -50,8 +99,8 @@ impl ThreadContextRecord {
 pub struct OwnedThreadContext(NonNull<ThreadContextRecord>);
 
 impl OwnedThreadContext {
-    /// Create a new thread context with the given trace/span IDs, W3C trace-flags byte, and
-    /// encoded attributes.
+    /// Create a new thread context with the given trace/span IDs, W3C trace-flags byte, and encoded
+    /// attributes.
     #[inline]
     pub fn new(
         trace_id: [u8; 16],
@@ -82,8 +131,7 @@ impl OwnedThreadContext {
     /// properly dropped, or the record will leak.
     #[inline]
     pub fn into_opaque_ptr(self) -> NonNull<ThreadContext> {
-        let mdrop = mem::ManuallyDrop::new(self);
-        mdrop.0.cast()
+        mem::ManuallyDrop::new(self).0.cast()
     }
 
     /// Reconstruct an [`OwnedThreadContext`] from a pointer that comes from
@@ -119,11 +167,17 @@ impl OwnedThreadContext {
     /// Publish a new (or previously detached) thread context record by writing its pointer
     /// into the TLS slot. Returns the previously attached context, if any.
     ///
+    /// If the feature thread-exit-autoclean is enabled, we make sure the auto cleaner is installed
+    /// on this thread on the first attach (no-op if the feature is disabled). For SDKs using the
+    /// update-in-place approach, `attach` is expected to be called at most once per thread, so this
+    /// stays negligible.
+    ///
     /// `valid` is already `1` since construction, so any reader that observes the new pointer
     /// also observes `valid = 1`.
     #[inline]
     pub fn attach(self) -> Option<OwnedThreadContext> {
         let prev = ThreadContextRecord::attach_raw(self.into_ptr().as_ptr());
+        init_autoclean_if_null(prev);
         // Safety: a non-null value in the slot came from a prior `into_ptr` call.
         NonNull::new(prev).map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
     }
@@ -170,6 +224,12 @@ impl OwnedThreadContext {
             } else {
                 compiler_fence(Ordering::Release);
                 let prev = slot.swap(target.as_ptr(), Ordering::Relaxed);
+
+                // This path is another yet another possibility to perform the first attach, so we
+                // init the auto cleaner. Despite it being unlikely that `update`-based consumer
+                // would use `update_and_attach`.
+                init_autoclean_if_null(prev);
+
                 // Safety: a non-null value in the slot came from a prior `into_ptr` call.
                 NonNull::new(prev).map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
             }
@@ -198,6 +258,10 @@ impl OwnedThreadContext {
             if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
                 current.update_in_place(trace_id, span_id, trace_flags, local_root_span_id, attrs);
             } else {
+                // This  deliberately bypasses `attach` to avoid resolving the TLS slot again,
+                // so we make sure the cleaner is initialized.
+                init_autoclean();
+
                 let ctxt = OwnedThreadContext::new(
                     trace_id,
                     span_id,

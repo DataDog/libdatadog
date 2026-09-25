@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Test utilities used by this crate's own tests and `gen_tls_shim_bytes` dev tool, and by
-//! `libdd-otel-thread-ctx-ffi`'s `elf_properties` integration test.
+//! `libdd-otel-thread-ctx-ffi`'s integration tests.
+
+// The raw TLS accessor only exists on the platforms where the `linux` module (and its inline-asm
+// TLSDESC access) is compiled.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64"),
+))]
+pub use crate::linux::read_tls_pointer_untyped;
 
 pub mod artifacts;
 pub mod tls_shim_window;
