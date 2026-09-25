@@ -11,7 +11,7 @@
 //! the raw HTTP requests to a file by using a `file://` URL:
 //!
 //! ```no_run
-//! use libdd_profiling::exporter::{config, ProfileExporter};
+//! use libdd_profiling::exporter::{ProfileExporter, config};
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! let endpoint = config::file("/tmp/profile_dump.http")?;
@@ -27,7 +27,7 @@
 use super::errors::SendError;
 use anyhow::Context;
 use libdd_common::tag::Tag;
-use libdd_common::{azure_app_services, tag, Endpoint};
+use libdd_common::{Endpoint, azure_app_services, tag};
 use reqwest::RequestBuilder;
 use serde_json::json;
 use std::io::Write;

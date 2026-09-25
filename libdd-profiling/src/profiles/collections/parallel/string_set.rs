@@ -101,8 +101,8 @@ impl ParallelStringSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profiles::collections::parallel::slice_set::N_SHARDS;
     use crate::profiles::collections::SetHasher as Hasher;
+    use crate::profiles::collections::parallel::slice_set::N_SHARDS;
     use std::hash::BuildHasher;
 
     #[test]

@@ -437,7 +437,9 @@ fn assert_samples_eq(
         } else {
             let key: (&[Location], &[Label]) = (&owned_locations, &owned_labels);
             let Some(expected_values) = samples_without_timestamps.get(&key) else {
-                panic!("Value not found for an aggregated sample key {key:#?} in {original_samples:#?}")
+                panic!(
+                    "Value not found for an aggregated sample key {key:#?} in {original_samples:#?}"
+                )
             };
             assert_eq!(&sample.values, expected_values);
         }

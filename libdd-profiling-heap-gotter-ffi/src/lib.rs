@@ -15,7 +15,7 @@
 
 // `wrap_with_void_ffi_result!` uses `function_name!()` below.
 use function_name::named;
-use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
+use libdd_common_ffi::{VoidResult, wrap_with_void_ffi_result};
 
 // `libdd_profiling_heap_gotter` exposes the same public surface on every target.
 // On non-Linux the underlying functions are no-ops, so callers that

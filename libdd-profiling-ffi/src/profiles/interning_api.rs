@@ -3,19 +3,18 @@
 
 use std::num::NonZeroI64;
 
-use super::datatypes::{profile_ptr_to_inner, Profile};
+use super::datatypes::{Profile, profile_ptr_to_inner};
 use function_name::named;
 use libdd_common_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
-    Slice, VoidResult,
+    CharSlice, MutSlice, Result, Slice, VoidResult, slice::AsBytes, wrap_with_ffi_result,
+    wrap_with_void_ffi_result,
 };
 use libdd_profiling::{
     api::ManagedStringId,
     collections::identifiable::StringId,
     internal::{
-        self,
+        self, FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
         interning_api::{Generation, GenerationalId},
-        FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
 };
 

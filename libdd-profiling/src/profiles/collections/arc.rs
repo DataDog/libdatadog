@@ -5,7 +5,7 @@
 
 use allocator_api2::alloc::{AllocError, Allocator, Global};
 use allocator_api2::boxed::Box;
-use core::sync::atomic::{fence, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering, fence};
 use core::{alloc::Layout, fmt, mem::ManuallyDrop, ptr};
 use core::{marker::PhantomData, ops::Deref, ptr::NonNull};
 use crossbeam_utils::CachePadded;

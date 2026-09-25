@@ -23,8 +23,8 @@
 //! Only available on Linux (USDT/SystemTap notes are Linux-only) and only when
 //! the `sanity-check` feature is enabled.
 
-use anyhow::{bail, Context};
-use elf::{endian::AnyEndian, ElfBytes};
+use anyhow::{Context, bail};
+use elf::{ElfBytes, endian::AnyEndian};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

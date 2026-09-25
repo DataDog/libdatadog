@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
-use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatus};
+use crate::string_storage::{ManagedStringStorage, get_inner_string_storage};
+use crate::{ArcHandle, ProfileError, ProfileStatus, ensure_non_null_out_parameter};
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
+use libdd_common_ffi::{Error, Handle, Timespec, ToInner, wrap_with_ffi_result};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};

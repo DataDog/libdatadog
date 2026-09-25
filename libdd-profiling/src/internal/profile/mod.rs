@@ -22,7 +22,7 @@ use crate::profiles::{Compressor, DefaultProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
 use interning_api::Generation;
-use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
+use libdd_profiling_protobuf::{self as protobuf, NO_OPT_ZERO, OPT_ZERO, Record, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
@@ -964,8 +964,10 @@ impl Profile {
                 std::mem::transmute::<i64, u64>(*num)
             }
         } else {
-            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
-            label));
+            return Err(anyhow::format_err!(
+                "the local root span id label value must be sent as a number, not a string, given {:?}",
+                label
+            ));
         };
 
         Ok(self
@@ -2836,24 +2838,96 @@ mod api_tests {
         // Ruby stack trace (leaf-to-root order)
         // Taken from a Ruby app, everything here is source-available
         let frames = [
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway/middleware.rb", line_number: 18, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", line_number: 37, function_name: "push" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", line_number: 41, function_name: "push" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", line_number: 85, function_name: "catch" },
-            Frame { file_name: "/usr/local/lib/libruby.so.3.3", line_number: 0, function_name: "catch" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", line_number: 82, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", line_number: 70, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/trace_proxy_middleware.rb", line_number: 17, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", line_number: 474, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/railties-7.0.8.7/lib/rails/engine.rb", line_number: 530, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/configuration.rb", line_number: 272, function_name: "call" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", line_number: 100, function_name: "handle_request" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", line_number: 378, function_name: "with_force_shutdown" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", line_number: 99, function_name: "handle_request" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", line_number: 464, function_name: "process_client" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", line_number: 245, function_name: "run" },
-            Frame { file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", line_number: 155, function_name: "spawn_thread" },
-            Frame { file_name: "/usr/local/bundle/gems/logging-2.4.0/lib/logging/diagnostic_context.rb", line_number: 474, function_name: "create_with_logging_context" },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway/middleware.rb",
+                line_number: 18,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb",
+                line_number: 37,
+                function_name: "push",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb",
+                line_number: 41,
+                function_name: "push",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb",
+                line_number: 85,
+                function_name: "catch",
+            },
+            Frame {
+                file_name: "/usr/local/lib/libruby.so.3.3",
+                line_number: 0,
+                function_name: "catch",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb",
+                line_number: 82,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb",
+                line_number: 70,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/trace_proxy_middleware.rb",
+                line_number: 17,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb",
+                line_number: 474,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/railties-7.0.8.7/lib/rails/engine.rb",
+                line_number: 530,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/configuration.rb",
+                line_number: 272,
+                function_name: "call",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb",
+                line_number: 100,
+                function_name: "handle_request",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb",
+                line_number: 378,
+                function_name: "with_force_shutdown",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb",
+                line_number: 99,
+                function_name: "handle_request",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb",
+                line_number: 464,
+                function_name: "process_client",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb",
+                line_number: 245,
+                function_name: "run",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb",
+                line_number: 155,
+                function_name: "spawn_thread",
+            },
+            Frame {
+                file_name: "/usr/local/bundle/gems/logging-2.4.0/lib/logging/diagnostic_context.rb",
+                line_number: 474,
+                function_name: "create_with_logging_context",
+            },
         ];
 
         // Create a fake mapping to exercise the code path (Ruby doesn't currently use mappings)
@@ -3058,14 +3132,18 @@ mod api_tests {
         let pprof_first_profile =
             roundtrip_to_pprof(profile.reset_and_return_previous().unwrap()).unwrap();
 
-        assert!(pprof_first_profile
-            .string_table
-            .iter()
-            .any(|s| s == "hello"));
-        assert!(pprof_first_profile
-            .string_table
-            .iter()
-            .any(|s| s == "world"));
+        assert!(
+            pprof_first_profile
+                .string_table
+                .iter()
+                .any(|s| s == "hello")
+        );
+        assert!(
+            pprof_first_profile
+                .string_table
+                .iter()
+                .any(|s| s == "world")
+        );
 
         // If the cache invalidation on the managed string table is working correctly, these strings
         // get correctly re-added to the profile's string table
@@ -3074,14 +3152,18 @@ mod api_tests {
         profile.add_string_id_sample(sample.clone(), None).unwrap();
         let pprof_second_profile = roundtrip_to_pprof(profile).unwrap();
 
-        assert!(pprof_second_profile
-            .string_table
-            .iter()
-            .any(|s| s == "hello"));
-        assert!(pprof_second_profile
-            .string_table
-            .iter()
-            .any(|s| s == "world"));
+        assert!(
+            pprof_second_profile
+                .string_table
+                .iter()
+                .any(|s| s == "hello")
+        );
+        assert!(
+            pprof_second_profile
+                .string_table
+                .iter()
+                .any(|s| s == "world")
+        );
     }
 
     #[test]

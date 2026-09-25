@@ -12,8 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub use libdd_gotter::lookup_symbol;
 use libdd_gotter::{
-    dlpi_name, elf64_r_sym, elf64_r_type, is_rela_got_pointer_reloc, is_vdso_or_dynamic_linker,
-    iterate_libraries, DynamicInfo, PageProtGuard,
+    DynamicInfo, PageProtGuard, dlpi_name, elf64_r_sym, elf64_r_type, is_rela_got_pointer_reloc,
+    is_vdso_or_dynamic_linker, iterate_libraries,
 };
 
 /// Per-library bookkeeping for the GOT re-scan. We never un-patch (see

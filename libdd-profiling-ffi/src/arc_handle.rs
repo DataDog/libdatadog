@@ -1,10 +1,10 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profile_error::ProfileError;
 use crate::EmptyHandleError;
+use crate::profile_error::ProfileError;
 use libdd_profiling::profiles::collections::Arc;
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 
 /// Opaque FFI handle to an `Arc<T>`'s inner `T`.
 ///

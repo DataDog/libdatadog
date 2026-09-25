@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Record, StringOffset, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
+use super::{NO_OPT_ZERO, OPT_ZERO, Record, StringOffset, Value, WireType};
 use std::io::{self, Write};
 
 /// Represents a function in a profile. Omits the start line because it's not
