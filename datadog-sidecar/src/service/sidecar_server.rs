@@ -478,11 +478,12 @@ impl SidecarServer {
 
     pub async fn compute_stats(&self) -> SidecarStats {
         let (futures, metric_counts, active_telemetry_clients): (Vec<_>, Vec<_>, u32) = {
-            let clients = self.telemetry_clients.snapshot();
+            let clients = self.telemetry_clients.inner.lock_or_panic();
             let futures = clients
-                .iter()
+                .values()
                 .filter_map(|client| {
                     client
+                        .client
                         .lock_or_panic()
                         .as_ref()
                         .and_then(|c| c.worker.stats().ok())
@@ -490,9 +491,10 @@ impl SidecarServer {
                 .collect::<Vec<_>>();
 
             let metric_counts = clients
-                .iter()
+                .values()
                 .map(|client| {
                     client
+                        .client
                         .lock_or_panic()
                         .as_ref()
                         .map_or(0, |c| c.telemetry_metrics.len() as u32)
@@ -672,7 +674,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
             let process_tags = session.process_tags_with_svc_source();
 
-            // Pre-compute session config so both the primary and retry get_or_create calls
+            // Pre-compute session config so the initial and retry get_or_create calls
             // can use it without re-locking the session.
             let session_config = session
                 .session_config
@@ -684,10 +686,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     Config::default()
                 });
 
-            // Get or create the telemetry client.  If we observe None under the lock it means
-            // another thread called take() (Stop) in the narrow window between get_or_create
-            // returning and us acquiring the lock — retry once to get a fresh client.
-            let telemetry_mutex = self.server.telemetry_clients.get_or_create(
+            // A client can retire between lookup and locking it. Retry while retaining the
+            // guard used to check for Some, so Stop cannot slip between checking and enqueueing.
+            let mut telemetry_mutex = self.server.telemetry_clients.get_or_create(
                 service,
                 env,
                 &instance_id,
@@ -695,22 +696,20 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 || session_config.clone(),
                 process_tags.clone(),
             );
-            let telemetry_mutex = if telemetry_mutex.lock_or_panic().is_none() {
-                self.server.telemetry_clients.get_or_create(
+            let mut telemetry_guard = telemetry_mutex.lock_or_panic();
+            while telemetry_guard.is_none() {
+                drop(telemetry_guard);
+                telemetry_mutex = self.server.telemetry_clients.get_or_create(
                     service,
                     env,
                     &instance_id,
                     &runtime_metadata,
-                    || session_config,
-                    process_tags,
-                )
-            } else {
-                telemetry_mutex
-            };
-            let mut telemetry_guard = telemetry_mutex.lock_or_panic();
+                    || session_config.clone(),
+                    process_tags.clone(),
+                );
+                telemetry_guard = telemetry_mutex.lock_or_panic();
+            }
             let Some(telemetry) = telemetry_guard.as_mut() else {
-                // Extremely rare: the client was stopped between the two get_or_create calls.
-                warn!("enqueue_actions: telemetry client stopped during retry for instance {instance_id:?}; dropping actions");
                 return;
             };
 
@@ -774,29 +773,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 telemetry.write_shm_file();
             }
 
-            // take() must happen INSIDE the spawned task, after process_actions completes,
-            // so that a Config batch spawned before a Stop batch still finds Some when it
-            // runs (the last_handle chain guarantees Stop runs after Config).
-            let do_take = remove_client;
-
             if !actions_to_process.is_empty() {
-                let telemetry_mutex_clone = telemetry_mutex.clone();
+                // Queued sends only retain worker handles, so Stop can retire the cached
+                // client without discarding earlier batches that have yet to run.
+                let processed = telemetry.process_actions(actions_to_process);
                 let worker = telemetry.worker.clone();
                 let last_handle = telemetry.handle.take();
                 telemetry.handle = Some(tokio::spawn(async move {
                     if let Some(last_handle) = last_handle {
                         last_handle.await.ok();
-                    };
-                    let processed = {
-                        let mut guard = telemetry_mutex_clone.lock_or_panic();
-                        let processed = guard
-                            .as_mut()
-                            .map(|t| t.process_actions(actions_to_process))
-                            .unwrap_or_default();
-                        if do_take {
-                            guard.take(); // drop client after Stop action is processed
-                        }
-                        processed
                     };
                     debug!("Sending Processed Actions :{processed:?}");
                     worker.send_msgs(processed).await.ok();
@@ -818,15 +803,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 }));
             }
 
-            // telemetry borrow ends after the last use of telemetry.handle above.
-            // Remove from the map synchronously so new get_or_create calls get a fresh entry;
-            // take() is deferred to the spawned task to avoid racing with in-flight tasks.
+            // Mark the client retired before unlocking it, so another batch cannot be
+            // queued behind Stop while this client is still in the cache.
+            let retired_client = if remove_client {
+                telemetry_guard.take()
+            } else {
+                None
+            };
+
+            // Stats and flush lock the cache before individual clients. Release the client
+            // guard before acquiring the cache to preserve that lock order.
+            drop(telemetry_guard);
+
             if remove_client {
                 self.server.telemetry_clients.remove_telemetry_client(
                     service,
                     env,
                     &telemetry_mutex,
                 );
+                drop(retired_client);
                 info!("Removing telemetry client for instance {instance_id:?}");
             }
         } else {
@@ -1369,10 +1364,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
         if options.telemetry {
             let workers: Vec<_> = {
-                let clients = self.server.telemetry_clients.snapshot();
+                let clients = self.server.telemetry_clients.inner.lock_or_panic();
                 clients
-                    .iter()
-                    .filter_map(|client| client.lock_or_panic().as_ref().map(|c| c.worker.clone()))
+                    .values()
+                    .filter_map(|entry| {
+                        entry
+                            .client
+                            .lock_or_panic()
+                            .as_ref()
+                            .map(|c| c.worker.clone())
+                    })
                     .collect()
             };
             futures::future::join_all(workers.into_iter().map(|worker| async move {
@@ -1556,6 +1557,164 @@ mod tests {
         drop(peer);
         let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
         ConnectionSidecarHandler::new(server, conn)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)]
+    async fn stop_releases_client_before_cache_removal() {
+        use libdd_telemetry::data::{Configuration, ConfigurationOrigin};
+        use std::time::Instant;
+
+        let server = SidecarServer::default();
+        let handler = test_handler(server.clone());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+        server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default();
+
+        // This batch stays queued on the current-thread runtime until the final await.
+        // Both actions must still be delivered after Stop retires the cached client.
+        let (stats_tx, stats_rx) = futures::channel::oneshot::channel();
+        handler
+            .enqueue_actions(
+                instance_id.clone(),
+                queue_id,
+                vec![
+                    SidecarAction::Telemetry(TelemetryActions::AddConfig(Configuration {
+                        name: "pending-config".to_owned(),
+                        value: Some("value".to_owned()),
+                        origin: ConfigurationOrigin::Code,
+                        config_id: None,
+                        seq_id: None,
+                    })),
+                    SidecarAction::Telemetry(TelemetryActions::CollectStats(stats_tx)),
+                ],
+            )
+            .await;
+
+        let key = ("unknown-service".to_owned(), "none".to_owned());
+        let client = server.telemetry_clients.inner.lock_or_panic()[&key]
+            .client
+            .clone();
+        let retired_entry = {
+            let client_guard = client.lock_or_panic();
+            let references_before_stop = Arc::strong_count(&client);
+            let runtime = tokio::runtime::Handle::current();
+            let stop = std::thread::spawn(move || {
+                runtime.block_on(handler.enqueue_actions(
+                    instance_id,
+                    queue_id,
+                    vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                        LifecycleAction::Stop,
+                    ))],
+                ));
+            });
+
+            // Wait until Stop has looked up the client, then hold the cache as stats/flush do.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Arc::strong_count(&client) == references_before_stop && Instant::now() < deadline
+            {
+                std::thread::yield_now();
+            }
+            let stop_started = Arc::strong_count(&client) > references_before_stop;
+            let mut cache_guard = server.telemetry_clients.inner.lock_or_panic();
+            drop(client_guard);
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let retired_before_removal = loop {
+                if let Ok(guard) = client.try_lock() {
+                    if guard.is_none() {
+                        break true;
+                    }
+                }
+                if Instant::now() >= deadline {
+                    break false;
+                }
+                std::thread::yield_now();
+            };
+
+            let retired_entry = cache_guard.remove(&key).unwrap();
+            // Release the contended lock before asserting, so regressions fail without deadlocking.
+            drop(cache_guard);
+            stop.join().unwrap();
+            assert!(stop_started, "Stop never looked up the cached client");
+            assert!(
+                retired_before_removal,
+                "Stop left the client locked or usable while waiting for the cache"
+            );
+            assert!(!server
+                .telemetry_clients
+                .inner
+                .lock_or_panic()
+                .contains_key(&key));
+
+            retired_entry
+        };
+        assert!(client.lock_or_panic().is_none());
+
+        // Restore the empty cache entry to deterministically exercise a lookup between
+        // retirement and cache removal, before letting the delayed removal run again.
+        server
+            .telemetry_clients
+            .inner
+            .lock_or_panic()
+            .insert(key.clone(), retired_entry);
+        let next_instance = InstanceId::new("session", "next-runtime");
+        let replacement = server.telemetry_clients.get_or_create(
+            &key.0,
+            &key.1,
+            &next_instance,
+            &RuntimeMetadata::new("php", "8.3", "1.0"),
+            Config::default,
+            Vec::new(),
+        );
+        assert!(!Arc::ptr_eq(&client, &replacement));
+        assert!(replacement.lock_or_panic().is_some());
+        server
+            .telemetry_clients
+            .remove_telemetry_client(&key.0, &key.1, &client);
+        assert!(Arc::ptr_eq(
+            &server.telemetry_clients.inner.lock_or_panic()[&key].client,
+            &replacement,
+        ));
+
+        let next_handler = test_handler(server.clone());
+        server
+            .get_runtime(&next_instance)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default();
+        let (next_stats_tx, next_stats_rx) = futures::channel::oneshot::channel();
+        next_handler
+            .enqueue_actions(
+                next_instance,
+                queue_id,
+                vec![
+                    SidecarAction::Telemetry(TelemetryActions::AddConfig(Configuration {
+                        name: "replacement-config".to_owned(),
+                        value: Some("value".to_owned()),
+                        origin: ConfigurationOrigin::Code,
+                        config_id: None,
+                        seq_id: None,
+                    })),
+                    SidecarAction::Telemetry(TelemetryActions::CollectStats(next_stats_tx)),
+                ],
+            )
+            .await;
+
+        let stats = tokio::time::timeout(Duration::from_secs(5), stats_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stats.configurations_stored, 1);
+        let next_stats = tokio::time::timeout(Duration::from_secs(5), next_stats_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next_stats.configurations_stored, 1);
     }
 
     fn ffe_context() -> FfeTelemetryContext {
