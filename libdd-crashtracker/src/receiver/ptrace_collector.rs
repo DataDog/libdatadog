@@ -44,6 +44,7 @@ use libdd_libunwind_sys::{
     UptInfo, UNW_REG_IP, UNW_REG_SP,
 };
 
+use super::parse_hex_address;
 use crate::crash_info::{StackFrame, StackTrace, Ucontext};
 
 /// Maximum number of stack frames to capture per thread
@@ -90,8 +91,7 @@ impl std::fmt::Display for PtraceError {
 }
 
 fn parse_register(context: &Ucontext, name: &str) -> Option<u64> {
-    let value = context.registers.get(name)?;
-    u64::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16).ok()
+    parse_hex_address(context.registers.get(name)?)
 }
 
 /// Temporarily replace a stopped thread's general registers with the

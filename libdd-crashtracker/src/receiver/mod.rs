@@ -14,6 +14,11 @@ pub use entry_points::{
 mod ptrace_collector;
 mod receive_report;
 
+#[cfg(target_os = "linux")]
+fn parse_hex_address(value: &str) -> Option<u64> {
+    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+}
+
 #[cfg(feature = "benchmarking")]
 pub mod benchmark;
 

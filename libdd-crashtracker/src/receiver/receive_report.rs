@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(target_os = "linux")]
+use super::parse_hex_address;
+#[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
 use crate::{
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
@@ -619,11 +621,6 @@ fn crash_site_registers(ucontext: &Ucontext) -> Option<(u64, u64)> {
     let ip = parse_hex_address(ucontext.registers.get(ip_name)?)?;
     let sp = parse_hex_address(ucontext.registers.get(sp_name)?)?;
     Some((ip, sp))
-}
-
-#[cfg(target_os = "linux")]
-fn parse_hex_address(value: &str) -> Option<u64> {
-    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
 }
 
 /// Drop the crashtracker's own frames from the top of the crashing thread's stack.
