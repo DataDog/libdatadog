@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules_based::{ufc::VariationType, FlagType, Str};
+use crate::rules_based::{FlagType, Str, ufc::VariationType};
 
 /// Reason for assignment evaluation result.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

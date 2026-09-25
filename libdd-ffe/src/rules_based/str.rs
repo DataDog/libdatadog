@@ -118,7 +118,7 @@ mod pyo3_impl {
 
     use super::*;
 
-    use pyo3::{prelude::*, types::PyString, Borrowed};
+    use pyo3::{Borrowed, prelude::*, types::PyString};
 
     impl<'a, 'py> FromPyObject<'a, 'py> for Str {
         type Error = PyErr;

@@ -1,10 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{encode_flag_evaluation_payloads, FfeFlagEvaluationBatch};
+use super::{FfeFlagEvaluationBatch, encode_flag_evaluation_payloads};
+use http::Method;
 use http::header::HeaderValue;
 use http::uri::PathAndQuery;
-use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use std::time::Duration;
@@ -207,7 +207,7 @@ mod tests {
 
     use super::super::{
         AllocationKey, ContextDD, EvalError, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
-        TargetingRuleKey, VariantKey, MAX_EVENTS_PER_POST,
+        MAX_EVENTS_PER_POST, TargetingRuleKey, VariantKey,
     };
 
     #[derive(Clone)]

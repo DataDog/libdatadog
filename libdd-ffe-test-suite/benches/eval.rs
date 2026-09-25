@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, Bencher, Criterion, Throughput,
-};
-use libdd_ffe::telemetry::flagevaluation::{
-    encode_flag_evaluation_payloads, AllocationKey, ContextDD, FfeFlagEvaluationBatch,
-    FfeFlagEvaluationEvent, FlagEvalEventContext, FlagEvaluationEvpCoalescer, FlagKey, VariantKey,
-    EVP_PAYLOAD_SIZE_LIMIT,
+    BatchSize, Bencher, Criterion, Throughput, black_box, criterion_group, criterion_main,
 };
 use libdd_ffe::telemetry::FfeTelemetryContext;
+use libdd_ffe::telemetry::flagevaluation::{
+    AllocationKey, ContextDD, EVP_PAYLOAD_SIZE_LIMIT, FfeFlagEvaluationBatch,
+    FfeFlagEvaluationEvent, FlagEvalEventContext, FlagEvaluationEvpCoalescer, FlagKey, VariantKey,
+    encode_flag_evaluation_payloads,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -18,8 +18,8 @@ use std::{
 };
 
 use libdd_ffe::rules_based::{
-    get_assignment, Attribute, Configuration, EvaluationContext, ExpectedFlagType, FlagType, Str,
-    UniversalFlagConfig,
+    Attribute, Configuration, EvaluationContext, ExpectedFlagType, FlagType, Str,
+    UniversalFlagConfig, get_assignment,
 };
 
 const UFC_CONFIG_PATH: &str = concat!(

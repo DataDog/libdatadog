@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::rules_based::{error::EvaluationError, sharder::PreSaltedSharder, Str, Timestamp};
+use crate::rules_based::{Str, Timestamp, error::EvaluationError, sharder::PreSaltedSharder};
 
 use super::{
     AllocationWire, AssignmentValue, Environment, FlagWire, RuleWire, ShardRange, ShardWire,
