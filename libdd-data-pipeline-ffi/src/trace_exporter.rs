@@ -21,6 +21,7 @@ use libdd_data_pipeline::OtlpProtocol;
 // directly.
 pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
@@ -103,6 +104,8 @@ pub struct TraceExporterConfig {
     agentless_timeout_ms: Option<u64>,
     /// Span obfuscation config for the agentless export path
     obfuscation_config: Option<libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig>,
+    /// Shared, updatable metadata handle.
+    mutable_metadata: Option<MutableMetadataHandle>,
 }
 
 #[no_mangle]
@@ -399,6 +402,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
     catch_panic!(
         if let Option::Some(config) = config {
             config.client_computed_stats = client_computed_stats;
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Shares a mutable metadata handle with the exporter config.
+///
+/// When set, this supersedes the `process_tags` configured via
+/// `ddog_trace_exporter_config_set_process_tags`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_mutable_metadata(
+    config: Option<&mut TraceExporterConfig>,
+    metadata: Option<&MutableMetadataHandle>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let (Option::Some(config), Option::Some(metadata)) = (config, metadata) {
+            config.mutable_metadata = Some(metadata.clone());
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -811,6 +834,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             if let Some(cfg) = &config.telemetry_cfg {
                 builder.enable_telemetry(cfg.clone());
             }
+
+            if let Some(handle) = &config.mutable_metadata {
+                builder.set_mutable_metadata(handle.clone());
+            }
             builder.set_telemetry_instrumentation_sessions(
                 config.telemetry_instrumentation_sessions.clone(),
             );
@@ -1191,6 +1218,50 @@ mod tests {
 
             let cfg = config.unwrap();
             assert_eq!(cfg.process_tags.as_ref().unwrap(), "key1:val1,key2:val2");
+        }
+    }
+
+    #[test]
+    fn config_mutable_metadata_test() {
+        use libdd_common_ffi::mutable_metadata::{
+            ddog_mutable_metadata_free, ddog_mutable_metadata_new,
+            ddog_mutable_metadata_set_runtime_id,
+        };
+
+        unsafe {
+            // Create a handle through the common FFI bindings.
+            let mut metadata: MaybeUninit<Box<MutableMetadataHandle>> = MaybeUninit::uninit();
+            ddog_mutable_metadata_new(NonNull::new_unchecked(&mut metadata).cast());
+            let metadata = metadata.assume_init();
+
+            // Wiring the handle into the config shares the same ArcSwap: updates
+            // made through the SDK's handle are observed through the config.
+            let mut config = Some(TraceExporterConfig::default());
+            assert_eq!(
+                ddog_trace_exporter_config_set_mutable_metadata(
+                    config.as_mut(),
+                    Some(metadata.as_ref()),
+                ),
+                None
+            );
+            assert!(matches!(
+                ddog_mutable_metadata_set_runtime_id(
+                    Some(metadata.as_ref()),
+                    CharSlice::from("rt-3"),
+                ),
+                libdd_common_ffi::VoidResult::Ok
+            ));
+            let cfg = config.unwrap();
+            let handle = cfg.mutable_metadata.as_ref().unwrap();
+            assert_eq!(handle.load().runtime_id, "rt-3");
+
+            // A null config argument is an error.
+            let error =
+                ddog_trace_exporter_config_set_mutable_metadata(None, Some(metadata.as_ref()));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            ddog_mutable_metadata_free(metadata);
         }
     }
 

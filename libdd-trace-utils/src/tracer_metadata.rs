@@ -3,13 +3,14 @@
 
 use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use http::HeaderMap;
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 
 #[derive(Clone, Default, Debug)]
 pub struct TracerMetadata {
     pub hostname: String,
     pub env: String,
     pub app_version: String,
-    pub runtime_id: String,
+    pub mutable_metadata: MutableMetadataHandle,
     pub service: String,
     pub tracer_version: String,
     pub language: String,
@@ -18,7 +19,6 @@ pub struct TracerMetadata {
     pub language_interpreter_vendor: String,
     pub container_id: String,
     pub git_commit_sha: String,
-    pub process_tags: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }

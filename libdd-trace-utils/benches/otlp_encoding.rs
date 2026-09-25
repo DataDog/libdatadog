@@ -64,7 +64,8 @@ fn resource_info() -> OtlpResourceInfo {
     info.app_version = "1.2.3".to_string();
     info.language = "rust".to_string();
     info.tracer_version = "9.9.9".to_string();
-    info.runtime_id = "11111111-2222-3333-4444-555555555555".to_string();
+    info.mutable_metadata
+        .set_runtime_id("11111111-2222-3333-4444-555555555555".into());
     info
 }
 
