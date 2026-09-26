@@ -47,6 +47,8 @@ impl ThreadContextRecord {
 /// Since an owned context can be modified in place, it is not thread safe: it is `!Send` and
 /// `!Sync`. Readers rely on the fact that there can't be any concurrent writer while they interrupt
 /// the current thread.
+///
+/// ID arguments follow [ID representation](crate#id-representation).
 pub struct OwnedThreadContext(NonNull<ThreadContextRecord>);
 
 impl OwnedThreadContext {

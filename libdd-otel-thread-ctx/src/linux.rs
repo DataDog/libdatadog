@@ -250,12 +250,8 @@ impl ThreadContextRecord {
         let mut fully_encoded = true;
 
         const { assert!(MAX_ATTRS_DATA_SIZE >= 18) }
-        // The local root span id is provided as raw bytes (can be seen as a big-endian u64),
-        // but readers will expect a string hex representation. We convert it to a fixed
-        // 16-characters string in the usual lowercase hex format.
-        //
-        // There's currently no easy way to use Rust format capabilities to write directly in a
-        // fixed-size array. Since the conversion is simple, we do it manually.
+        // Encode `local_root_span_id` directly as a 16-character lowercase hexadecimal attribute,
+        // avoiding `format!`'s intermediate `String` and `write!`'s fallible result.
         const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
         self.attrs_data[0] = ROOT_SPAN_KEY_INDEX;
         self.attrs_data[1] = 16;
@@ -351,7 +347,8 @@ impl Default for ThreadContextRecord {
 pub struct ThreadContext(ThreadContextRecord);
 
 impl ThreadContext {
-    /// Create a new thread context with the given trace/span IDs and encoded attributes.
+    /// Create a new thread context with encoded attributes and IDs that follow
+    /// [ID representation](crate#id-representation).
     #[inline]
     pub fn new(
         trace_id: [u8; 16],
