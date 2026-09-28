@@ -3,15 +3,12 @@
 
 //! Scaffolding for memory usage benchmarks.
 //!
-//! See the `ReportingAllocator` type and `memory_allocated_measurement` for usage.
+//! See the `ReportingAllocator` type and `memory_allocated_criterion` for usage.
 
 #![allow(missing_docs)]
 
-use std::{
-    alloc::{GlobalAlloc, System},
-    cell::Cell,
-    time::Duration,
-};
+use core::{alloc::GlobalAlloc, cell::Cell, time::Duration};
+use std::alloc::System;
 
 use criterion::{Criterion, Throughput};
 
@@ -25,11 +22,17 @@ impl MeasurementName for criterion::measurement::WallTime {
     }
 }
 
-pub fn memory_allocated_measurement(
+/// `Criterion` for the allocation benchmarks. Sampling is deliberately small: allocation is
+/// deterministic, so extra samples cannot refine a constant.
+///
+/// Not usable as `criterion_group!`'s `config =` -- that macro appends `.configure_from_args()`,
+/// which would let command-line flags replace the settings below.
+pub fn memory_allocated_criterion(
     global_alloc: &'static ReportingAllocator<System>,
 ) -> Criterion<AllocatedBytesMeasurement<System>> {
     Criterion::default()
         .with_measurement(AllocatedBytesMeasurement(Cell::new(false), global_alloc))
+        .configure_from_args()
         .measurement_time(Duration::from_millis(1))
         .warm_up_time(Duration::from_millis(1))
         .without_plots()
@@ -46,16 +49,16 @@ struct AllocStats {
 
 pub struct ReportingAllocator<T: GlobalAlloc> {
     alloc: T,
-    allocated_bytes: std::sync::atomic::AtomicUsize,
-    allocations: std::sync::atomic::AtomicUsize,
+    allocated_bytes: core::sync::atomic::AtomicUsize,
+    allocations: core::sync::atomic::AtomicUsize,
 }
 
 impl<T: GlobalAlloc> ReportingAllocator<T> {
     pub const fn new(alloc: T) -> Self {
         Self {
             alloc,
-            allocated_bytes: std::sync::atomic::AtomicUsize::new(0),
-            allocations: std::sync::atomic::AtomicUsize::new(0),
+            allocated_bytes: core::sync::atomic::AtomicUsize::new(0),
+            allocations: core::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -63,22 +66,22 @@ impl<T: GlobalAlloc> ReportingAllocator<T> {
         AllocStats {
             allocated_bytes: self
                 .allocated_bytes
-                .load(std::sync::atomic::Ordering::Relaxed),
-            allocations: self.allocations.load(std::sync::atomic::Ordering::Relaxed),
+                .load(core::sync::atomic::Ordering::Relaxed),
+            allocations: self.allocations.load(core::sync::atomic::Ordering::Relaxed),
         }
     }
 }
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
-    unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
         self.allocated_bytes
-            .fetch_add(layout.size(), std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
         self.allocations
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.alloc.alloc(layout)
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
         self.alloc.dealloc(ptr, layout);
     }
 }
@@ -169,8 +172,9 @@ impl criterion::measurement::ValueFormatter for AllocationFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::alloc::{GlobalAlloc, Layout};
     use criterion::measurement::{Measurement, ValueFormatter};
-    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::alloc::System;
 
     static SHARED: ReportingAllocator<System> = ReportingAllocator::new(System);
 

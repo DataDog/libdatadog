@@ -1,8 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::hint::black_box;
-use std::time::Duration;
+use core::hint::black_box;
+use core::time::Duration;
 
 use criterion::Throughput::Elements;
 use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
@@ -16,7 +16,6 @@ fn is_card_number_no_luhn_bench(c: &mut Criterion) {
     bench_is_card_number(c, "is_card_number_no_luhn", false);
 }
 
-#[inline(always)]
 fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: bool) {
     let mut group = c.benchmark_group("credit_card");
     // Measure over a number of calls to minimize impact of OS noise
@@ -36,17 +35,17 @@ fn bench_is_card_number(c: &mut Criterion, function_name: &str, validate_luhn: b
         "x371413321323331",        // invalid characters
         "",
     ];
-    for c in ccs.iter() {
+    for c in &ccs {
         group.bench_with_input(BenchmarkId::new(function_name, c), c, |b, i| {
             b.iter_batched(
                 || {},
-                |_| {
+                |()| {
                     for _ in 0..elements {
                         black_box(is_card_number_uninlined(i, validate_luhn));
                     }
                 },
                 BatchSize::SmallInput,
-            )
+            );
         });
     }
 }

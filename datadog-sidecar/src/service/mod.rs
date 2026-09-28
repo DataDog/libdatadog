@@ -3,9 +3,17 @@
 
 // imports for structs defined in this file
 use crate::config;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
+pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
+pub use libdd_ffe::telemetry::flagevaluation::{
+    AllocationKey, ContextDD, EvalError, FfeFlagEvaluationBatch, FfeFlagEvaluationEvent,
+    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
+};
+pub use libdd_ffe::telemetry::FfeTelemetryContext;
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -27,7 +35,12 @@ pub(crate) use sidecar_interface::SidecarInterface;
 pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
+pub(crate) mod evp_proxy;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_evp_proxy;
+pub(crate) mod ffe_exposures_flusher;
+pub(crate) mod ffe_flagevaluation_flusher;
+pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
@@ -61,6 +74,7 @@ pub struct SessionConfig {
     pub telemetry_extended_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
+    pub retry_interval: Duration,
     pub log_level: String,
     pub log_file: config::LogMethod,
     pub remote_config_products: Vec<RemoteConfigProduct>,
@@ -75,6 +89,8 @@ pub struct SessionConfig {
     pub root_service: String,
     pub root_session_id: Option<String>,
     pub parent_session_id: Option<String>,
+    /// Optional OTLP metrics intake endpoint.
+    pub otlp_metrics_endpoint: Option<Endpoint>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -82,4 +98,22 @@ pub enum SidecarAction {
     Telemetry(TelemetryActions),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
+    /// Structured FFE exposures. The sidecar owns JSON serialization,
+    /// cross-request deduplication, and EVP delivery.
+    FfeExposureBatch(FfeExposureBatch),
+    /// Structured FFE evaluation metrics. The sidecar owns OTLP/protobuf
+    /// aggregation, serialization, and delivery. This action must be sent only
+    /// by SDKs that explicitly opted into native FFE metric ownership.
+    FfeEvaluationMetrics {
+        context: FfeTelemetryContext,
+        metrics: Vec<FfeEvaluationMetric>,
+    },
+    /// Structured FFE flag evaluation batch for the EVP flagevaluation track.
+    /// The sidecar serializes and POSTs the batch to
+    /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget).
+    ///
+    /// Keep this appended after pre-existing variants: this enum crosses the
+    /// bincode sidecar IPC boundary, so inserting a variant before existing
+    /// variants changes their wire ordinals.
+    FfeFlagEvaluationBatch(FfeFlagEvaluationBatch),
 }

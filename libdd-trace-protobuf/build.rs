@@ -10,6 +10,7 @@ use {
 
 // to re-generate protobuf structs, run cargo build --features generate-protobuf
 fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "generate-protobuf")]
     {
         // protoc is required to compile proto files. This uses protobuf_src to compile protoc
@@ -18,10 +19,6 @@ fn main() -> Result<()> {
 
         // compiles the .proto files into rust structs
         generate_protobuf();
-    }
-    #[cfg(not(feature = "generate-protobuf"))]
-    {
-        println!("cargo:rerun-if-changed=build.rs");
     }
 
     Ok(())
@@ -35,6 +32,12 @@ fn generate_protobuf() {
     let output_path = current_working_dir_path.join(Path::new("src"));
 
     config.out_dir(output_path.clone());
+
+    // The vendored OpenTelemetry proto doc comments are kept (generated onto the prost structs).
+    // The one comment with an indented example block (`Span.attributes` in trace.proto) is fenced
+    // as a ```text block in the vendored `.proto`, so rustdoc renders it as text rather than
+    // compiling it as a Rust doctest. Keep new vendored comments doctest-safe (fence example
+    // blocks) rather than re-adding a blanket `disable_comments`.
 
     // The following prost_build config changes modify the protobuf generated structs in
     // in the following ways:
@@ -50,6 +53,24 @@ fn generate_protobuf() {
     //   intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(
+        ".pb.TracerPayload.containerDebug",
+        "#[serde(skip_serializing_if = \"Option::is_none\")]",
+    );
+    config.type_attribute(
+        "ContainerDebug",
+        "#[derive(Deserialize, Serialize, PartialOrd, Ord)]",
+    );
+    config.field_attribute("ContainerDebug.error", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.errorRef", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.latencyMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.wasBuffered", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferEvictionReason", "#[serde(default)]");
+    config.field_attribute(
+        "ContainerDebug.bufferEvictionReasonRef",
+        "#[serde(default)]",
+    );
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
@@ -62,9 +83,14 @@ fn generate_protobuf() {
     config.field_attribute(".pb.SpanLink.tracestate", "#[serde(default)]");
     config.field_attribute(".pb.SpanLink.flags", "#[serde(default)]");
 
-    config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("pb.Span", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
-        "Span",
+        "pb.Span",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
+    config.type_attribute("pb.idx.Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.Span",
         r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
     );
     config.field_attribute(
@@ -205,6 +231,10 @@ fn generate_protobuf() {
         "ClientGroupedStats.span_derived_primary_tags",
         "#[serde(default)]",
     );
+    config.field_attribute(
+        "ClientGroupedStats.additional_metric_tags",
+        "#[serde(default)]",
+    );
 
     config.field_attribute(
         "ClientGroupedStats.okSummary",
@@ -239,6 +269,8 @@ fn generate_protobuf() {
         "ClientGroupedStats.service_source",
         "#[serde(rename = \"srv_src\")]",
     );
+
+    config.type_attribute("Trilean", "#[derive(Deserialize, Serialize)]");
 
     // idx module type attributes
     config.type_attribute("pb.idx.AnyValue", "#[derive(Deserialize, Serialize)]");
@@ -307,9 +339,19 @@ fn generate_protobuf() {
         "ClientGetConfigsResponse.client_configs",
         "#[serde(default)]",
     );
+    config.field_attribute(
+        "ClientGetConfigsResponse.config_status",
+        "#[serde(default)]",
+    );
+
+    config.type_attribute("ClientUpdater", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageStateTask", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TaskError", "#[derive(Deserialize, Serialize)]");
 
     config.include_file("_includes.rs");
 
+    println!("cargo:rerun-if-changed=src/pb");
     config
         .compile_protos(
             &[
@@ -319,6 +361,8 @@ fn generate_protobuf() {
                 "src/pb/stats.proto",
                 "src/pb/remoteconfig.proto",
                 "src/pb/opentelemetry/proto/common/v1/process_context.proto",
+                "src/pb/opentelemetry/proto/trace/v1/trace.proto",
+                "src/pb/opentelemetry/proto/collector/trace/v1/trace_service.proto",
                 "src/pb/idx/tracer_payload.proto",
                 "src/pb/idx/span.proto",
             ],
@@ -362,6 +406,14 @@ fn generate_protobuf() {
     prepend_to_file(
         otel_license,
         &output_path.join("opentelemetry.proto.common.v1.rs"),
+    );
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.trace.v1.rs"),
+    );
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.collector.trace.v1.rs"),
     );
 }
 

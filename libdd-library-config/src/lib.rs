@@ -6,7 +6,13 @@ extern crate alloc;
 mod config_read;
 pub use config_read::*;
 
+#[cfg(all(
+    feature = "std",
+    target_os = "linux",
+    any(feature = "process-context-reader", feature = "process-context-writer")
+))]
 pub mod otel_process_ctx;
+#[cfg(feature = "std")]
 pub mod tracer_metadata;
 
 use alloc::borrow::Cow;

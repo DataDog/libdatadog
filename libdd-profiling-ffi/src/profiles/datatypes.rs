@@ -481,7 +481,10 @@ unsafe fn profile_new(
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types = sample_types.into_slice();
+    let types = match sample_types.try_as_slice() {
+        Ok(s) => s,
+        Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
+    };
     let period = period.copied();
 
     let result = match string_storage {
@@ -503,6 +506,39 @@ unsafe fn profile_new(
         }
         Err(err) => ProfileNewResult::Err(err.into()),
     }
+}
+
+/// Configure one of the custom sample type slots (`Custom1` through `Custom5`)
+/// with its concrete `(type, unit)` string pair.
+///
+/// Use this after creating a profile with a custom slot in its `sample_types`
+/// or `period`. The strings are copied during this call. A profile that uses a
+/// custom slot must configure it before serialization.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. The `type_str` and `unit` slices must point to valid UTF-8 memory for
+/// the duration of this call.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
+    profile: *mut Profile,
+    slot: SampleType,
+    type_str: CharSlice,
+    unit: CharSlice,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let type_str = type_str
+            .try_to_utf8()
+            .context("invalid UTF-8 in custom profile type")?;
+        let unit = unit
+            .try_to_utf8()
+            .context("invalid UTF-8 in custom profile unit")?;
+        profile.set_custom_sample_type(slot, api::ValueType::new(type_str, unit))
+    })()
+    .context("ddog_prof_Profile_set_custom_sample_type failed")
+    .into()
 }
 
 /// # Safety
@@ -598,13 +634,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
         let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
             Ok(api2::Label {
                 key: label.key,
-                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                str: core::str::from_utf8(label.str.try_as_bytes()?)?.into(),
                 num: label.num,
-                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?.into(),
             })
         });
         profile
-            .try_add_sample2(locations, values, labels_iter, timestamp)
+            .try_add_sample2(locations.iter().copied(), values, labels_iter, timestamp)
             .context("ddog_prof_Profile_add failed")
     })())
 }
@@ -676,6 +712,33 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
         profile.add_endpoint_count(endpoint, value)
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
+    .into()
+}
+
+/// Set whether "local root span id" labels should be omitted when serializing.
+///
+/// This is an experimental setting and defaults to false.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile being configured.
+/// * `omit` - true to omit the label from serialized pprof samples.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_serializing(
+    profile: *mut Profile,
+    omit: bool,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        profile.set_omit_local_root_span_id_when_serializing(omit);
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_Profile_set_omit_local_root_span_id_when_serializing failed")
     .into()
 }
 
@@ -898,7 +961,32 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
 
 #[cfg(test)]
 mod tests {
+    use super::super::profiles_dictionary::{
+        ddog_prof_ProfilesDictionary_drop, ddog_prof_ProfilesDictionary_insert_function,
+        ddog_prof_ProfilesDictionary_insert_mapping, ddog_prof_ProfilesDictionary_insert_str,
+        ddog_prof_ProfilesDictionary_new,
+    };
+    use super::super::utf8::Utf8Option;
     use super::*;
+    use libdd_profiling::profiles::datatypes::{
+        Function2 as DictionaryFunction2, FunctionId2, Mapping2 as DictionaryMapping2, MappingId2,
+    };
+
+    fn insert_dictionary_string(dict: Option<&ProfilesDictionary>, value: &str) -> StringId2 {
+        let mut id = StringId2::default();
+        // SAFETY: id is a valid out parameter, dict is provided by the live
+        // dictionary handle in the caller, and value is valid for this call.
+        unsafe {
+            Result::from(ddog_prof_ProfilesDictionary_insert_str(
+                &mut id,
+                dict,
+                CharSlice::from(value),
+                Utf8Option::Validate,
+            ))
+        }
+        .unwrap();
+        id
+    }
 
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
@@ -908,6 +996,94 @@ mod tests {
                 Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    /// Invalid FFI `sample_types` must not panic: `try_as_slice` fails and we return `Err`.
+    #[test]
+    fn profile_new_invalid_sample_types_slice_returns_err() {
+        unsafe {
+            let bad_slice: Slice<'_, SampleType> = Slice::from_raw_parts(std::ptr::null(), 1);
+            let result = ddog_prof_Profile_new(bad_slice, None);
+            assert!(
+                matches!(result, ProfileNewResult::Err(_)),
+                "expected Err for null pointer with non-zero length (SliceConversionError::NullPointer)"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_set_custom_sample_type_accepts_slot() -> Result<(), Error> {
+        unsafe {
+            let sample_type = SampleType::Custom1;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+
+            Result::from(ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::Custom1,
+                "memory-breakdown".into(),
+                "bytes".into(),
+            ))?;
+
+            let values = [4096_i64];
+            let sample = Sample {
+                locations: Slice::empty(),
+                values: Slice::from(&values[..]),
+                labels: Slice::empty(),
+            };
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn profile_set_custom_sample_type_rejects_non_custom_slot() -> Result<(), Error> {
+        unsafe {
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+            let result = ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::CpuSamples,
+                "memory-breakdown".into(),
+                "bytes".into(),
+            );
+            assert!(
+                matches!(result, ProfileResult::Err(_)),
+                "expected Err when configuring a non-custom slot"
+            );
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn profile_set_custom_sample_type_invalid_utf8_returns_err() -> Result<(), Error> {
+        unsafe {
+            let sample_type = SampleType::Custom1;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+            let invalid = [0xff_u8 as std::ffi::c_char];
+            let result = ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::Custom1,
+                Slice::from_raw_parts(invalid.as_ptr(), invalid.len()),
+                "bytes".into(),
+            );
+            assert!(
+                matches!(result, ProfileResult::Err(_)),
+                "expected Err for invalid UTF-8 in custom profile type"
+            );
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
         }
@@ -935,6 +1111,108 @@ mod tests {
             result.unwrap_err();
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
+        }
+    }
+
+    #[test]
+    fn add2_with_dictionary() {
+        unsafe {
+            let mut dictionary_handle = ArcHandle::default();
+            Result::from(ddog_prof_ProfilesDictionary_new(&mut dictionary_handle)).unwrap();
+            let dictionary = dictionary_handle.as_inner().ok();
+
+            let mapping_filename = insert_dictionary_string(dictionary, "example.so");
+            let build_id = insert_dictionary_string(dictionary, "build-id");
+            let function_name = insert_dictionary_string(dictionary, "function");
+            let system_name = insert_dictionary_string(dictionary, "system_function");
+            let file_name = insert_dictionary_string(dictionary, "example.py");
+            let label_key = insert_dictionary_string(dictionary, "pid");
+
+            let mapping = DictionaryMapping2 {
+                memory_start: 1,
+                memory_limit: 2,
+                file_offset: 3,
+                filename: mapping_filename,
+                build_id,
+            };
+            let mut mapping_id = MappingId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_mapping(
+                &mut mapping_id,
+                dictionary,
+                &mapping,
+            ))
+            .unwrap();
+
+            let function = DictionaryFunction2 {
+                name: function_name,
+                system_name,
+                file_name,
+            };
+            let mut function_id = FunctionId2::default();
+            Result::from(ddog_prof_ProfilesDictionary_insert_function(
+                &mut function_id,
+                dictionary,
+                &function,
+            ))
+            .unwrap();
+
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = std::mem::MaybeUninit::uninit();
+            Result::from(ddog_prof_Profile_with_dictionary(
+                profile.as_mut_ptr(),
+                &dictionary_handle,
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))
+            .unwrap();
+            let mut profile = profile.assume_init();
+
+            let locations = [api2::Location2 {
+                mapping: mapping_id,
+                function: function_id,
+                address: 42,
+                line: 7,
+            }];
+            let values = [1_i64];
+            let labels = [Label2 {
+                key: label_key,
+                str: CharSlice::empty(),
+                num: 101,
+                num_unit: CharSlice::empty(),
+            }];
+            let sample = Sample2 {
+                locations: Slice::from(&locations[..]),
+                values: Slice::from(&values[..]),
+                labels: Slice::from(&labels[..]),
+            };
+
+            Result::from(ddog_prof_Profile_add2(
+                &mut profile,
+                sample,
+                std::num::NonZeroI64::new(42),
+            ))
+            .unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_timestamped_samples(),
+                1
+            );
+
+            Result::from(ddog_prof_Profile_add2(&mut profile, sample, None)).unwrap();
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            ddog_prof_ProfilesDictionary_drop(&mut dictionary_handle);
         }
     }
 

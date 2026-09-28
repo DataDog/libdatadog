@@ -13,12 +13,28 @@ data.
 
 Linux only for now.
 
+## Ownership modes
+
+The crate provides exactly one of two context ownership flavours, selected by
+two mutually exclusive features:
+
+- `owned-context` (default): `OwnedThreadContext`, a record owned by a single
+  thread, which can be updated in place without reallocating. This is the one
+  used by the FFI.
+- `shared-context`: `SharedThreadContext`, an `Arc`-backed immutable record
+  that can be cloned and attached on several threads. To be consumed by another
+  Rust crate, currently dd-trace-rs.
+
+They are exclusive because the thread-local slot is untyped: interleaving owned
+and shared contexts would misinterpret the pointer and cause UB. If both features
+are enabled, `owned-context` wins and the build script emits a warning.
+
 ## TLS
 
-The C shim (`src/tls_shim.c`) is required because `rustc` does not yet support
-the TLSDESC TLS dialect required by the spec to export `otel_thread_ctx_v1`.
-Since the reader and the writer must agree on the TLS dialect/model, we rely on
-the C compiler to emit the right access pattern.
+The TLS symbol `otel_thread_ctx_v1` and its TLSDESC accessor are defined
+directly in Rust using `global_asm!` and `asm!` (both stable since Rust 1.65 /
+1.59). This avoids a C build dependency while guaranteeing the TLSDESC dialect
+on both x86-64 and aarch64 as required by the spec.
 
 ## Usage
 

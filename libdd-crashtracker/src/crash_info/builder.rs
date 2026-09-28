@@ -30,7 +30,7 @@ impl ErrorDataBuilder {
         let thread_name = self.thread_name;
         let source_type = SourceType::Crashtracking;
         let stack = self.stack.unwrap_or_else(StackTrace::missing);
-        let threads = self.threads.unwrap_or_default();
+        let threads = self.threads;
         Ok((
             ErrorData {
                 is_crash,
@@ -95,7 +95,15 @@ impl ErrorDataBuilder {
     }
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+        if threads.is_empty() {
+            return Ok(());
+        }
         self.threads = Some(threads);
+        Ok(())
+    }
+
+    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
+        self.threads.get_or_insert_with(Vec::new).push(thread);
         Ok(())
     }
 }
@@ -183,8 +191,16 @@ impl CrashInfoBuilder {
         })
     }
 
+    /// True if the builder received anything at all. The `uuid` is generated
+    /// when the builder is created, so it is excluded: comparing the whole struct
+    /// against `Self::default()` would always differ on it and always report data
     pub fn has_data(&self) -> bool {
-        *self != Self::default()
+        let blank = Self {
+            uuid: self.uuid,
+            ..Self::default()
+        };
+
+        self != &blank
     }
 
     pub fn new() -> Self {
@@ -360,12 +376,7 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
-        if let Some(ref mut threads) = &mut self.error.threads {
-            threads.push(thread);
-        } else {
-            self.error.threads = Some(vec![thread]);
-        }
-        Ok(())
+        self.error.with_thread(thread)
     }
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
@@ -472,6 +483,28 @@ mod tests {
 
         let crash_ping = builder.build_crash_ping().unwrap();
         assert!(crash_ping.message().contains(&test_message));
+    }
+
+    #[test]
+    fn test_has_data_empty() {
+        // A fresh builder has a freshly generated uuid, which must not count as
+        // received data.
+        assert!(!CrashInfoBuilder::new().has_data());
+    }
+
+    #[test]
+    fn test_has_data_after_setting() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::Panic).unwrap();
+        assert!(builder.has_data());
+
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_metadata(Metadata::test_instance(1)).unwrap();
+        assert!(builder.has_data());
+
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_incomplete(false).unwrap();
+        assert!(builder.has_data());
     }
 
     #[test]

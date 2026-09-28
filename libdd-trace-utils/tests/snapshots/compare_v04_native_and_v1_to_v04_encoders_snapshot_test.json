@@ -1,0 +1,38 @@
+[[
+  {
+    "name": "op",
+    "service": "svc",
+    "resource": "res",
+    "trace_id": 0,
+    "span_id": 1,
+    "parent_id": 0,
+    "meta": {
+      "env": "test-env",
+      "http.method": "GET",
+      "span.kind": "server"
+    },
+    "metrics": {
+      "http.duration_ms": 12.5
+    },
+    "duration": 5000,
+    "start": 1000000
+  }],
+[
+  {
+    "name": "op",
+    "service": "svc",
+    "resource": "res",
+    "trace_id": 1,
+    "span_id": 1,
+    "parent_id": 0,
+    "meta": {
+      "env": "test-env",
+      "http.method": "GET",
+      "span.kind": "server"
+    },
+    "metrics": {
+      "http.duration_ms": 12.5
+    },
+    "duration": 5000,
+    "start": 1000000
+  }]]

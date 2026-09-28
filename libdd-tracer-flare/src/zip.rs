@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use bytes::Bytes;
-use datadog_remote_config::config::agent_task::AgentTaskFile;
 use http::Method;
 use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_remote_config::config::agent_task::AgentTaskFile;
 use std::{
     collections::HashMap,
     fs::File,
@@ -238,7 +238,7 @@ impl TracerFlareManager {
     ///
     /// ```rust no_run
     /// use libdd_tracer_flare::{TracerFlareManager, FlareAction};
-    /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
+    /// use libdd_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -319,7 +319,7 @@ impl TracerFlareManager {
     ///
     /// ```rust no_run
     /// use libdd_tracer_flare::{TracerFlareManager, FlareAction};
-    /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
+    /// use libdd_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
     ///
     /// let tracer_flare = TracerFlareManager::default();
     ///
@@ -640,7 +640,7 @@ mod tests {
     async fn test_send_invalid_url_returns_error() {
         let manager = TracerFlareManager::new("http://[::1", "rust");
         let agent_task = AgentTaskFile {
-            args: datadog_remote_config::config::agent_task::AgentTask {
+            args: libdd_remote_config::config::agent_task::AgentTask {
                 case_id: "123".to_string(),
                 hostname: "test-host".to_string(),
                 user_handle: "test@example.com".to_string(),

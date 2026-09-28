@@ -2,6 +2,125 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v6.0.0..libdd-common-v7.0.0) - 2026-09-24
+
+### Changed
+
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Enforce workspace-level dependency declarations ([#2514](https://github.com/datadog/libdatadog/issues/2514)) - ([a5e7164](https://github.com/datadog/libdatadog/commit/a5e71645f6805c5e21c9881506ba065986a89bdc))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Benchmark was doing many samples for deterministic heap usage ([#2465](https://github.com/datadog/libdatadog/issues/2465)) - ([441cdcf](https://github.com/datadog/libdatadog/commit/441cdcf2fa14ac2b0a75df3f901a219eda2cc705))
+
+
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.2.0..libdd-common-v6.0.0) - 2026-09-08
+
+### Added
+
+- Add HTTPS_PROXY support for hyper_backend ([#2421](https://github.com/datadog/libdatadog/issues/2421)) - ([a0f2872](https://github.com/datadog/libdatadog/commit/a0f2872d0802a509927a758ea3fa6f8fd64f6b52))
+- Add agentless stats export ([#2309](https://github.com/datadog/libdatadog/issues/2309)) - ([8c3d06b](https://github.com/datadog/libdatadog/commit/8c3d06ba9ff2a61f656782d59b1be00f09138e26))
+- Add runtime-independent agentless sending ([#2389](https://github.com/datadog/libdatadog/issues/2389)) - ([4cfd390](https://github.com/datadog/libdatadog/commit/4cfd390c26275689456a8bd7db26d37601d232d7))
+- Do not entirely disable connection pooling for periodic connections ([#2440](https://github.com/datadog/libdatadog/issues/2440)) - ([a4df07e](https://github.com/datadog/libdatadog/commit/a4df07ed442e88e70d9e6248c79a1ab1319d2182))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+
+
+## [5.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.1..libdd-common-v5.2.0) - 2026-08-17
+
+### Added
+
+- Allocation-free tag validation and parsing ([#2329](https://github.com/datadog/libdatadog/issues/2329)) - ([acec90d](https://github.com/datadog/libdatadog/commit/acec90d515ddd2dd1b669cec1b04ef45d7c82b92))
+- Agentless RC fetcher ([#2112](https://github.com/datadog/libdatadog/issues/2112)) - ([20a3f4d](https://github.com/datadog/libdatadog/commit/20a3f4d67bba02004554be4c4e32a27ebe574fa7))
+
+
+
+## [5.1.1](https://github.com/datadog/libdatadog/compare/libdd-common-v5.1.0..libdd-common-v5.1.1) - 2026-08-07
+
+### Added
+
+- Add Installation signature and AppProduct changes payloads ([#2213](https://github.com/datadog/libdatadog/issues/2213)) - ([f3d3d80](https://github.com/datadog/libdatadog/commit/f3d3d80b807b82d2a49d57df99a0eb02a800a978))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+- Stabilize flaky tests ([#2256](https://github.com/datadog/libdatadog/issues/2256)) - ([054402d](https://github.com/datadog/libdatadog/commit/054402d28cb03f0b99df938e5ac0b419da18423b))
+
+### Fixed
+
+- Don't double-encode file:// telemetry endpoints ([#2230](https://github.com/datadog/libdatadog/issues/2230)) - ([20c267e](https://github.com/datadog/libdatadog/commit/20c267e23caac58839a9ebe660601ee381117d22))
+- Last new clippy lint ([#2221](https://github.com/datadog/libdatadog/issues/2221)) - ([a41a0f4](https://github.com/datadog/libdatadog/commit/a41a0f480b265e57fd7d70d998c5ccd3e7690248))
+
+
+
+## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.0.0..libdd-common-v5.1.0) - 2026-07-07
+
+### Added
+
+- Add helpers in ddcommon to fetch the machine UUID l… ([#2163](https://github.com/datadog/libdatadog/issues/2163)) - ([e646931](https://github.com/datadog/libdatadog/commit/e6469314304c3eaae9a0b76ad48ff859e8bb8657))
+
+### Fixed
+
+- Update rustls-webpki to 0.103.13 ([#2187](https://github.com/datadog/libdatadog/issues/2187)) - ([3ba5431](https://github.com/datadog/libdatadog/commit/3ba543127039a0b785ede64d8eec2d367e49cb1a))
+- Update anyhow for unsoundness ([#2186](https://github.com/datadog/libdatadog/issues/2186)) - ([f8b9cc1](https://github.com/datadog/libdatadog/commit/f8b9cc1d8db5cf69a070588fa6b728a75842653a))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.2.0..libdd-common-v5.0.0) - 2026-06-19
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+
+### Changed
+
+- Replace native-certs with platform-verifier ([#2078](https://github.com/datadog/libdatadog/issues/2078)) - ([59db709](https://github.com/datadog/libdatadog/commit/59db7092373d33acc833c4ccfc13bbb486554e98))
+- Use SECURITY_ANONYMOUS when connecting to named pipe server ([#2134](https://github.com/datadog/libdatadog/issues/2134)) - ([b10b1d4](https://github.com/datadog/libdatadog/commit/b10b1d46577e95e057bd2b310641f965e6167d58))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Add fallback logic for resolving Azure Functions instance name [SVLS-8931] ([#2077](https://github.com/datadog/libdatadog/issues/2077)) - ([a820699](https://github.com/datadog/libdatadog/commit/a820699426f28cbabb3a74d87c7309d030b52e7c))
+- Fix http PathAndQuery Uri Parsing ([#2122](https://github.com/datadog/libdatadog/issues/2122)) - ([e746d26](https://github.com/datadog/libdatadog/commit/e746d26c489c518db9dc61e112dd8e2db97d0656))
+
+
+
+## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
+
+### Added
+
+- Recognize PCF Garden container IDs ([#2025](https://github.com/datadog/libdatadog/issues/2025)) - ([be94f69](https://github.com/datadog/libdatadog/commit/be94f6964a286bcc2bec9b0a9b80422c77e06d20))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.0.0..libdd-common-v4.1.0) - 2026-05-15
+
+### Added
+
+- Added regex-lite feature ([#1939](https://github.com/datadog/libdatadog/issues/1939)) - ([58b86d5](https://github.com/datadog/libdatadog/commit/58b86d5a1b2dc43be98eb9568ec734c259a430a7))
+
+### Changed
+
+- Move the sampling logic from dd-trace-rs [APMSP-2946] ([#1927](https://github.com/datadog/libdatadog/issues/1927)) - ([040260c](https://github.com/datadog/libdatadog/commit/040260c5d72ec011a36934cb77d203688990609e))
+
+### Fixed
+
+- Crashes caused by `getenv` while retrieving AAS env vars ([#1930](https://github.com/datadog/libdatadog/issues/1930)) - ([43c0973](https://github.com/datadog/libdatadog/commit/43c0973da14911168b7283283be901e4ed41ab31))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.2..libdd-common-v4.0.0) - 2026-04-27
 
 ### Added

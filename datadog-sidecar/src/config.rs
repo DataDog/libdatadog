@@ -30,9 +30,6 @@ const ENV_SIDECAR_WATCHDOG_MAX_MEMORY: &str = "_DD_SIDECAR_WATCHDOG_MAX_MEMORY";
 
 const ENV_SIDECAR_CRASHTRACKER_ENDPOINT: &str = "_DD_SIDECAR_CRASHTRACKER_ENDPOINT";
 
-const ENV_SIDECAR_APPSEC_SHARED_LIB_PATH: &str = "_DD_SIDECAR_APPSEC_SHARED_LIB_PATH";
-const ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_SOCKET_FILE_PATH";
-const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
@@ -89,13 +86,12 @@ pub struct Config {
     /// Socket/pipe buffer size for IPC connections (bytes).
     /// 0 means use the platform default.
     pub pipe_buffer_size: usize,
+    #[cfg(target_os = "linux")]
+    pub spawn_without_trampoline: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct AppSecConfig {
-    pub shared_lib_path: std::ffi::OsString,
-    pub socket_file_path: std::ffi::OsString,
-    pub lock_file_path: std::ffi::OsString,
     pub log_file_path: std::ffi::OsString,
     pub log_level: String,
 }
@@ -146,18 +142,6 @@ impl AppSecConfig {
     pub fn to_env(&self) -> HashMap<&'static str, std::ffi::OsString> {
         HashMap::from([
             (
-                ENV_SIDECAR_APPSEC_SHARED_LIB_PATH,
-                self.shared_lib_path.to_owned(),
-            ),
-            (
-                ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH,
-                self.socket_file_path.to_owned(),
-            ),
-            (
-                ENV_SIDECAR_APPSEC_LOCK_FILE_PATH,
-                self.lock_file_path.to_owned(),
-            ),
-            (
                 ENV_SIDECAR_APPSEC_LOG_FILE_PATH,
                 self.log_file_path.to_owned(),
             ),
@@ -172,7 +156,7 @@ impl AppSecConfig {
 pub struct FromEnv {}
 
 impl FromEnv {
-    fn ipc_mode() -> IpcMode {
+    pub fn ipc_mode() -> IpcMode {
         let mode = std::env::var(ENV_SIDECAR_IPC_MODE).unwrap_or_default();
 
         match mode.as_str() {
@@ -259,20 +243,16 @@ impl FromEnv {
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
             pipe_buffer_size: Self::pipe_buffer_size(),
+            #[cfg(target_os = "linux")]
+            spawn_without_trampoline: false,
         }
     }
 
     fn appsec_config() -> Option<AppSecConfig> {
-        let shared_lib_path = std::env::var_os(ENV_SIDECAR_APPSEC_SHARED_LIB_PATH)?;
-        let socket_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_SOCKET_FILE_PATH)?;
-        let lock_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_LOCK_FILE_PATH)?;
         let log_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_LOG_FILE_PATH)?;
         let log_level = std::env::var(ENV_SIDECAR_APPSEC_LOG_LEVEL).ok()?;
 
         Some(AppSecConfig {
-            shared_lib_path,
-            socket_file_path,
-            lock_file_path,
             log_file_path,
             log_level,
         })

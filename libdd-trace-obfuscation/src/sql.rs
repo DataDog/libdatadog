@@ -1,78 +1,17 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
+use crate::obfuscation_config::{DbmsKind, SqlConfig, SqlObfuscationMode};
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum DbmsKind {
-    #[default]
-    Generic,
-    Mssql,
-    Mysql,
-    Postgresql,
-    Oracle,
-}
-
-/// See `DbmsKind` for the list of supported DBMS.
-pub struct UnknownDBMSError;
-
-impl TryFrom<&str> for DbmsKind {
-    type Error = UnknownDBMSError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let res = match value.to_lowercase().as_str() {
-            "" => Self::Generic,
-            "mssql" => Self::Mssql,
-            "mysql" => Self::Mysql,
-            "postgresql" => Self::Postgresql,
-            "oracle" => Self::Oracle,
-            _ => return Err(UnknownDBMSError),
-        };
-        Ok(res)
-    }
-}
-
-#[allow(deprecated)]
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[non_exhaustive]
-pub enum SqlObfuscationMode {
-    #[default]
-    #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
-    Unspecified,
-    NormalizeOnly,
-    ObfuscateOnly,
-    ObfuscateAndNormalize,
-}
-
-/// Configuration for SQL obfuscation
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct SqlObfuscateConfig {
-    pub replace_digits: bool,
-    pub keep_sql_alias: bool,
-    pub dollar_quoted_func: bool,
-    pub keep_null: bool,
-    pub keep_boolean: bool,
-    pub keep_positional_parameter: bool,
-    pub keep_trailing_semicolon: bool,
-    pub keep_identifier_quotation: bool,
-    pub replace_bind_parameter: bool,
-    pub remove_space_between_parentheses: bool,
-    pub keep_json_path: bool,
-    pub obfuscation_mode: SqlObfuscationMode,
-}
-
-fn is_whitespace(b: u8) -> bool {
+const fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
 }
 
-fn is_ident_start(b: u8) -> bool {
+const fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_' || b > 127
 }
 
-fn is_ident_char(b: u8) -> bool {
+const fn is_ident_char(b: u8) -> bool {
     // Go's scanIdentifier includes '.*$' as continuation chars in addition to alnum/_.
     // '@' is in Go's isLetter (isLeadingLetter) so it continues identifiers too.
     // '.' is handled separately (qualifier), but '*', '$', '@' are included here.
@@ -86,7 +25,7 @@ fn is_ident_char(b: u8) -> bool {
 }
 
 /// Replace trailing digit sequences in identifier with `?`
-/// e.g., sales_2019_07_01 → sales_?_?_?
+/// e.g., `sales_2019_07_01` → sales_?_?_?
 ///       item1001 → item?
 ///       ddh19 → ddh?
 fn apply_replace_digits(ident: &str) -> String {
@@ -169,7 +108,7 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Find the end of a dollar-quoted string $tag$...$tag$
-/// Returns (inner_start, inner_end, outer_end) or None if not a valid dollar quote
+/// Returns (`inner_start`, `inner_end`, `outer_end`) or None if not a valid dollar quote
 fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
@@ -201,13 +140,18 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, us
     None
 }
 
+/// Maximum recursion depth for nested dollar-quoted strings (`$tag$...$tag$`).
+const MAX_DOLLAR_QUOTE_DEPTH: usize = 64;
+
 struct Tokenizer<'a> {
     s: &'a str,
     bytes: &'a [u8],
     pos: usize,
     result: String,
     dbms: DbmsKind,
-    config: &'a SqlObfuscateConfig,
+    config: &'a SqlConfig,
+    // Nesting depth of dollar-quote recursion; see MAX_DOLLAR_QUOTE_DEPTH.
+    dollar_recursion_depth: usize,
     // For alias stripping: length of result before we emitted the most recent ' AS' segment
     before_as_len: Option<usize>,
     // After SAVEPOINT keyword, next token should become ?
@@ -223,7 +167,12 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(s: &'a str, config: &'a SqlObfuscateConfig, dbms: DbmsKind) -> Self {
+    fn new(
+        s: &'a str,
+        config: &'a SqlConfig,
+        dbms: DbmsKind,
+        dollar_recursion_depth: usize,
+    ) -> Self {
         Self {
             s,
             bytes: s.as_bytes(),
@@ -231,6 +180,7 @@ impl<'a> Tokenizer<'a> {
             result: String::with_capacity(s.len()),
             dbms,
             config,
+            dollar_recursion_depth,
             before_as_len: None,
             pending_savepoint: false,
             last_was_placeholder: false,
@@ -243,18 +193,18 @@ impl<'a> Tokenizer<'a> {
         self.bytes.get(self.pos + offset).copied()
     }
 
-    fn at_end(&self) -> bool {
+    const fn at_end(&self) -> bool {
         self.pos >= self.bytes.len()
     }
 
-    fn is_normalize_only(&self) -> bool {
+    const fn is_normalize_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::NormalizeOnly
         )
     }
 
-    fn is_obfuscate_only(&self) -> bool {
+    const fn is_obfuscate_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::ObfuscateOnly
@@ -262,14 +212,14 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[allow(deprecated)]
-    fn is_unspecified_obfuscate_mode(&self) -> bool {
+    const fn is_unspecified_obfuscate_mode(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::Unspecified
         )
     }
 
-    fn last_char(&self) -> Option<u8> {
+    const fn last_char(&self) -> Option<u8> {
         self.result.as_bytes().last().copied()
     }
 
@@ -284,8 +234,8 @@ impl<'a> Tokenizer<'a> {
 
     /// Push a space if result doesn't already end with one (and result is non-empty).
     /// Does NOT add space after `.` (qualifier separator).
-    /// When actually pushing a space, resets last_was_placeholder — equivalent to Go's
-    /// groupingFilter.Reset() on any non-comma, non-paren, non-FilteredGroupable token.
+    /// When actually pushing a space, resets `last_was_placeholder` — equivalent to Go's
+    /// `groupingFilter.Reset()` on any non-comma, non-paren, non-FilteredGroupable token.
     fn space(&mut self) {
         if !self.result.is_empty()
             && self.last_char() != Some(b' ')
@@ -318,7 +268,7 @@ impl<'a> Tokenizer<'a> {
             }
             self.result.push(' ');
         } else if self.last_char() == Some(b' ')
-            && !matches!(self.last_nonspace_char(), Some(b'?') | Some(b'('))
+            && !matches!(self.last_nonspace_char(), Some(b'?' | b'('))
         {
             // Result already ends in space (e.g. after an operator like '!') and we still need
             // to reset placeholder state. Do NOT reset after '(' — Go's groupingFilter lets
@@ -344,8 +294,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Emit a literal-replacement '?' with consecutive-duplicate suppression.
-    /// In legacy mode, Go's groupingFilter suppresses consecutive FilteredGroupable tokens
-    /// (groupFilter > 1). If last_was_placeholder is already true, suppress this one.
+    /// In legacy mode, Go's groupingFilter suppresses consecutive `FilteredGroupable` tokens
+    /// (groupFilter > 1). If `last_was_placeholder` is already true, suppress this one.
     fn emit_placeholder(&mut self) {
         if self.is_unspecified_obfuscate_mode() && self.last_was_placeholder {
             // Suppress consecutive placeholder (Go groupFilter > 1 rule)
@@ -374,13 +324,13 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn skip_line_comment(&mut self) {
+    const fn skip_line_comment(&mut self) {
         while !self.at_end() && self.bytes[self.pos] != b'\n' {
             self.pos += 1;
         }
     }
 
-    fn skip_block_comment(&mut self) {
+    const fn skip_block_comment(&mut self) {
         // We've already consumed '/*', now find '*/'
         while self.pos + 1 < self.bytes.len() {
             if self.bytes[self.pos] == b'*' && self.bytes[self.pos + 1] == b'/' {
@@ -556,7 +506,7 @@ impl<'a> Tokenizer<'a> {
                 return;
             }
             match next {
-                Some(b'`') | Some(b'"') | Some(b'[') => {
+                Some(b'`' | b'"' | b'[') => {
                     self.result.push_str(" . ");
                     self.pos += 1; // skip '.'
                 }
@@ -582,20 +532,19 @@ impl<'a> Tokenizer<'a> {
             let next = self.bytes.get(self.pos + 1).copied();
             if next == Some(b'[') {
                 self.result.push_str(" . ");
-                self.pos += 1; // skip '.'
             } else {
                 self.result.push('.');
-                self.pos += 1;
             }
+            self.pos += 1;
         }
     }
 
     /// Consume and emit the rest of a numeric literal starting at current pos.
-    fn consume_number(&mut self) {
+    const fn consume_number(&mut self) {
         self.consume_number_inner(false);
     }
 
-    fn consume_number_inner(&mut self, seen_dot: bool) {
+    const fn consume_number_inner(&mut self, seen_dot: bool) {
         // Consume digits, '.', 'e'/'E', optional sign after 'e', suffix letters.
         // `seen_dot`: true when caller already consumed the leading '.', so don't allow another.
         // This mirrors Go's scanNumber(seenDecimalPoint) which goes straight to `exponent`
@@ -628,6 +577,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
     fn process(&mut self) {
         while !self.at_end() {
             let b = self.bytes[self.pos];
@@ -778,7 +728,7 @@ impl<'a> Tokenizer<'a> {
                     };
                     if add_close_space {
                         // Add space before ) if needed (not after '(' or already spaced)
-                        if !matches!(self.last_char(), Some(b'(') | Some(b' ') | None) {
+                        if !matches!(self.last_char(), Some(b'(' | b' ') | None) {
                             self.result.push(' ');
                         }
                     }
@@ -888,7 +838,7 @@ impl<'a> Tokenizer<'a> {
                     let is_string_value = self.last_was_assign;
                     // If pending SAVEPOINT or empty/whitespace content, treat as literal → ?
                     if self.pending_savepoint
-                        || (!ident.is_empty() && ident.chars().all(|c| c.is_whitespace()))
+                        || (!ident.is_empty() && ident.chars().all(char::is_whitespace))
                         || (!self.is_normalize_only() && is_string_value)
                     {
                         self.pending_savepoint = false;
@@ -980,7 +930,7 @@ impl<'a> Tokenizer<'a> {
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
-                    if !matches!(self.last_char(), Some(b'[') | Some(b' ') | None) {
+                    if !matches!(self.last_char(), Some(b'[' | b' ') | None) {
                         self.space();
                     }
                     self.result.push(']');
@@ -1051,19 +1001,34 @@ impl<'a> Tokenizer<'a> {
                                     let tag_str = &self.s[start..inner_start];
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
-                                    let normalized_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                    let normalized_inner = obfuscate_sql_at_depth(
+                                        inner,
+                                        self.config,
+                                        self.dbms,
+                                        self.dollar_recursion_depth + 1,
+                                    );
                                     self.space();
                                     self.result.push_str(tag_str);
                                     self.result.push_str(&normalized_inner);
                                     self.result.push_str(close_tag);
                                 } else if self.config.dollar_quoted_func {
-                                    // Obfuscate the content inside dollar quotes
+                                    // Obfuscate the content inside dollar quotes.
+                                    // Past MAX_DOLLAR_QUOTE_DEPTH, use a placeholder directly
+                                    // rather than recursing, so the nested literal can't leak.
                                     let tag_str = &self.s[start..inner_start];
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
-                                    let obfuscated_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                    if self.dollar_recursion_depth + 1 >= MAX_DOLLAR_QUOTE_DEPTH {
+                                        self.emit_placeholder();
+                                        self.pos = outer_end;
+                                        continue;
+                                    }
+                                    let obfuscated_inner = obfuscate_sql_at_depth(
+                                        inner,
+                                        self.config,
+                                        self.dbms,
+                                        self.dollar_recursion_depth + 1,
+                                    );
                                     // If inner collapses to just '?' (trivial content), emit ?
                                     // directly
                                     if obfuscated_inner.trim() == "?" {
@@ -1118,7 +1083,7 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 // Hex literal: 0x...
-                b'0' if matches!(self.peek(1), Some(b'x') | Some(b'X')) => {
+                b'0' if matches!(self.peek(1), Some(b'x' | b'X')) => {
                     self.pos += 2; // skip '0x'
                     while !self.at_end() && self.bytes[self.pos].is_ascii_hexdigit() {
                         self.pos += 1;
@@ -1655,10 +1620,8 @@ impl<'a> Tokenizer<'a> {
                             // Handle the off-leak: the char at pos was advanced past by Go's peek.
                             // It becomes the first byte of the next token in Go's model.
                             if !self.at_end() {
-                                let c_len = self.s[self.pos..]
-                                    .chars()
-                                    .next()
-                                    .map_or(1, |c| c.len_utf8());
+                                let c_len =
+                                    self.s[self.pos..].chars().next().map_or(1, char::len_utf8);
                                 let after_c = self.pos + c_len;
                                 if after_c < self.bytes.len()
                                     && self.bytes[after_c].is_ascii_digit()
@@ -1776,33 +1739,29 @@ impl<'a> Tokenizer<'a> {
                             if matches!(self.dbms, DbmsKind::Postgresql) || !next2_is_ident {
                                 self.emit("<@");
                                 self.pos += 2;
-                                self.result.push(' ');
                             } else {
                                 // Non-PG dbms with <@name → emit < then @name handled separately
                                 self.space();
                                 self.result.push('<');
                                 self.pos += 1;
-                                self.result.push(' ');
                             }
                         }
                         Some(b'>') => {
                             self.emit("<>");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         Some(b'=') => {
                             self.emit("<=");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         _ => {
                             self.space();
                             self.result.push('<');
                             self.pos += 1;
                             self.last_was_placeholder = false;
-                            self.result.push(' ');
                         }
                     }
+                    self.result.push(' ');
                 }
 
                 // > and >= operators
@@ -1833,7 +1792,6 @@ impl<'a> Tokenizer<'a> {
                     self.last_was_placeholder = false;
                     self.result.push(' ');
                     self.last_was_assign = true;
-                    continue; // skip emit() clearing last_was_assign
                 }
 
                 // ! and !=, !~, !~*
@@ -1844,7 +1802,6 @@ impl<'a> Tokenizer<'a> {
                     if self.peek(1) == Some(b'=') {
                         self.emit("!=");
                         self.pos += 2;
-                        self.result.push(' ');
                     } else if self.peek(1) == Some(b'~') {
                         if self.peek(2) == Some(b'*') {
                             self.emit("!~*");
@@ -1853,14 +1810,13 @@ impl<'a> Tokenizer<'a> {
                             self.emit("!~");
                             self.pos += 2;
                         }
-                        self.result.push(' ');
                     } else {
                         self.space();
                         self.result.push('!');
                         self.pos += 1;
                         self.last_was_placeholder = false;
-                        self.result.push(' ');
                     }
+                    self.result.push(' ');
                 }
 
                 // | and ||
@@ -1944,7 +1900,7 @@ impl<'a> Tokenizer<'a> {
                     && self.s[self.pos..]
                         .chars()
                         .next()
-                        .is_some_and(|c| c.is_whitespace()) =>
+                        .is_some_and(char::is_whitespace) =>
                 {
                     let c = self.s[self.pos..].chars().next().unwrap_or(' ');
                     self.pos += c.len_utf8();
@@ -1964,10 +1920,10 @@ impl<'a> Tokenizer<'a> {
                             // Non-ASCII: check if this char is Unicode whitespace — if so, stop.
                             // Go's scanIdentifier stops at unicode.IsSpace chars.
                             let c = self.s[self.pos..].chars().next();
-                            if c.is_some_and(|c| c.is_whitespace()) {
+                            if c.is_some_and(char::is_whitespace) {
                                 break;
                             }
-                            self.pos += c.map_or(1, |c| c.len_utf8());
+                            self.pos += c.map_or(1, char::len_utf8);
                         } else if is_ident_char(b) || b == b'.' {
                             self.pos += 1;
                         } else {
@@ -2008,7 +1964,7 @@ impl<'a> Tokenizer<'a> {
 
 /// Try to match a `( ?, ?, ..., ? )` or `[ ?, ?, ..., ? ]` pattern starting at `i`.
 /// Returns Some(k) where k is the index after the closing bracket if matched, else None.
-fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
+const fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
     let n = bytes.len();
     if i >= n || bytes[i] != open {
         return None;
@@ -2118,8 +2074,8 @@ fn collapse_multi_values(s: &str) -> String {
 
         if matches_values_pattern {
             // Preceding context: must be start or space/'(' or '\n'
-            let prev_ok = result.is_empty()
-                || matches!(result.chars().last(), Some(' ') | Some('(') | Some('\n'));
+            let prev_ok =
+                result.is_empty() || matches!(result.chars().last(), Some(' ' | '(' | '\n'));
 
             if prev_ok {
                 // Keep the original casing as it appeared in `remaining`
@@ -2150,6 +2106,8 @@ fn collapse_multi_values(s: &str) -> String {
 
 /// Collapse `LIMIT ?, ?` → `LIMIT ?`
 fn collapse_limit_two_args(s: &str) -> String {
+    const PREFIX: &[u8] = b"LIMIT ?";
+
     // Scan for "LIMIT ?, ?" pattern (all ASCII keywords, UTF-8 safe via char iteration)
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
@@ -2158,7 +2116,6 @@ fn collapse_limit_two_args(s: &str) -> String {
         // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
         if remaining.len() >= 9 {
             let rb = remaining.as_bytes();
-            const PREFIX: &[u8] = b"LIMIT ?";
             if rb[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
                 // Check " ?, ?" or " ? ?"
                 let skip =
@@ -2172,10 +2129,7 @@ fn collapse_limit_two_args(s: &str) -> String {
                 if let Some(skip_len) = skip {
                     // Word boundary: previous char in result should be space or start
                     let prev_ok = result.is_empty()
-                        || matches!(
-                            result.as_bytes().last(),
-                            Some(b' ') | Some(b'(') | Some(b'\n')
-                        );
+                        || matches!(result.as_bytes().last(), Some(b' ' | b'(' | b'\n'));
                     if prev_ok {
                         result.push_str(&remaining[..7]); // "LIMIT ?"
                         remaining = &remaining[skip_len..];
@@ -2191,12 +2145,62 @@ fn collapse_limit_two_args(s: &str) -> String {
     result
 }
 
+/// What we substitute for a SQL value when we fail to obfuscate it *inside a JSON document*, such
+/// as a database query plan.
+pub const SQL_OBFUSCATION_FAILURE_REPLACEMENT: &str = "Failed to obfuscate SQL string.";
+
+/// What we write in place of a SQL span resource, `sql.query` tag, or stats group resource we
+/// failed to obfuscate.
+pub const SQL_NON_PARSABLE_REPLACEMENT: &str = "Non-parsable SQL query";
+
+/// Why a SQL string could not be obfuscated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum SqlObfuscationError {
+    /// Obfuscation produced nothing, so there is no query to report.
+    #[error("obfuscation result is empty")]
+    EmptyResult,
+}
+
 /// Obfuscates a SQL string using a proper tokenizer.
-pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
+///
+/// # Errors
+///
+/// Returns [`SqlObfuscationError::EmptyResult`] when obfuscation leaves nothing behind. A failed
+/// query must never be forwarded as sent: callers replace it with a marker for their context,
+/// either [`SQL_NON_PARSABLE_REPLACEMENT`] for a span or stats resource (see
+/// [`obfuscate_sql_resource`]) or [`SQL_OBFUSCATION_FAILURE_REPLACEMENT`] for a value inside a JSON
+/// document.
+pub fn obfuscate_sql(
+    s: &str,
+    config: &SqlConfig,
+    dbms: DbmsKind,
+) -> Result<String, SqlObfuscationError> {
+    let obfuscated = obfuscate_sql_at_depth(s, config, dbms, 0);
+    if obfuscated.is_empty() {
+        return Err(SqlObfuscationError::EmptyResult);
+    }
+    Ok(obfuscated)
+}
+
+/// Same as `obfuscate_sql`, tracking recursion depth for nested dollar-quoted strings.
+/// Once `MAX_DOLLAR_QUOTE_DEPTH` is reached, this returns the content unmodified rather than
+/// recursing further, so pathologically nested input can't overflow the stack. The
+/// `dollar_quoted_func` obfuscate branch guards against this itself (see its call site) so it
+/// never leaks a literal this way; only the `NormalizeOnly` caller relies on this fallback.
+fn obfuscate_sql_at_depth(
+    s: &str,
+    config: &SqlConfig,
+    dbms: DbmsKind,
+    dollar_recursion_depth: usize,
+) -> String {
     if s.is_empty() {
         return String::new();
     }
-    let mut tokenizer = Tokenizer::new(s, config, dbms);
+    if dollar_recursion_depth >= MAX_DOLLAR_QUOTE_DEPTH {
+        return s.to_string();
+    }
+    let mut tokenizer = Tokenizer::new(s, config, dbms, dollar_recursion_depth);
     tokenizer.process();
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
@@ -2213,18 +2217,39 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> St
     }
 }
 
+/// Obfuscates a non-empty SQL span or stats-group resource, applying our failure policy.
+///
+/// Always returns something safe to publish: the obfuscated query on success, and
+/// [`SQL_NON_PARSABLE_REPLACEMENT`] when obfuscation fails, so input that tokenizes to nothing
+/// (whitespace, a lone comment) is discarded instead of reaching the backend as sent. Callers that
+/// want to report the failure instead call [`obfuscate_sql`] directly.
+///
+/// Callers are expected to skip an exactly empty resource, which we leave untouched.
+#[must_use]
+pub fn obfuscate_sql_resource(s: &str, config: &SqlConfig, dbms: DbmsKind) -> String {
+    obfuscate_sql(s, config, dbms).unwrap_or_else(|_| SQL_NON_PARSABLE_REPLACEMENT.to_owned())
+}
+
 /// Obfuscates a SQL string with default configuration.
-pub fn obfuscate_sql_string(s: &str) -> String {
-    obfuscate_sql(s, &SqlObfuscateConfig::default(), DbmsKind::Generic)
+///
+/// # Errors
+///
+/// See [`obfuscate_sql`].
+pub fn obfuscate_sql_string(s: &str) -> Result<String, SqlObfuscationError> {
+    obfuscate_sql(s, &SqlConfig::default(), DbmsKind::Generic)
 }
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
-/// Applies obfuscate_sql_string then additional normalizations for JSON plan SQL.
+/// Applies `obfuscate_sql_string` then additional normalizations for JSON plan SQL.
+///
+/// # Errors
+///
+/// See [`obfuscate_sql`].
 // FIXME: remove these tiny wrappers they provide no value, keep the public api 1 function which
 // takes a config
-pub fn obfuscate_sql_string_normalized(s: &str) -> String {
-    let obfuscated = obfuscate_sql_string(s);
-    normalize_plan_sql(&obfuscated)
+pub fn obfuscate_sql_string_normalized(s: &str) -> Result<String, SqlObfuscationError> {
+    let obfuscated = obfuscate_sql_string(s)?;
+    Ok(normalize_plan_sql(&obfuscated))
 }
 
 fn normalize_plan_sql(s: &str) -> String {
@@ -2278,7 +2303,156 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
+    use super::{
+        obfuscate_sql, obfuscate_sql_string, obfuscate_sql_string_normalized, DbmsKind, SqlConfig,
+        SqlObfuscationError, SqlObfuscationMode,
+    };
+    use core::fmt::Write;
+
+    /// Non-ASCII identifiers must survive obfuscation; restricting identifier characters to ASCII
+    /// would turn these queries into failures.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn test_non_ascii_identifiers_are_not_a_failure() {
+        for query in [
+            "select * from café",
+            "select élève from école where id = 1",
+            "select * from 中文表",
+        ] {
+            let got = super::obfuscate_sql(query, &SqlConfig::default(), DbmsKind::Generic)
+                .unwrap_or_else(|err| panic!("{query:?} failed to obfuscate: {err}"));
+            assert!(!got.is_empty(), "{query:?} obfuscated to nothing: {got:?}");
+        }
+
+        // A literal that only differs by a value is obfuscated, identifier untouched.
+        assert_eq!(
+            super::obfuscate_sql_string("select * from café where nom = 'José'"),
+            Ok("select * from café where nom = ?".to_owned())
+        );
+    }
+
+    /// The Agent fails on an empty obfuscation result rather than reporting an empty query.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn test_empty_obfuscation_result_is_a_failure() {
+        let config = SqlConfig::default();
+        for input in [
+            "",
+            " ",
+            "   ",
+            "         ",
+            "\t",
+            "\n  \r\n",
+            "-- comment",
+            "---",
+            "-- password=hunter2",
+            "/* password=hunter2 */",
+        ] {
+            assert_eq!(
+                super::obfuscate_sql(input, &config, DbmsKind::Generic),
+                Err(super::SqlObfuscationError::EmptyResult),
+                "input: {input:?}"
+            );
+            assert_eq!(
+                super::obfuscate_sql_string(input),
+                Err(super::SqlObfuscationError::EmptyResult),
+                "input: {input:?}"
+            );
+            assert_eq!(
+                obfuscate_sql_string_normalized(input),
+                Err(SqlObfuscationError::EmptyResult),
+                "input: {input:?}"
+            );
+        }
+        assert_eq!(
+            super::SqlObfuscationError::EmptyResult.to_string(),
+            "obfuscation result is empty"
+        );
+    }
+
+    /// A resource that cannot be obfuscated is replaced by the Agent's marker, never forwarded as
+    /// sent: comment-only SQL would otherwise carry the comment text through untouched.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn test_unobfuscatable_resource_becomes_non_parsable_marker() {
+        let config = SqlConfig::default();
+        for input in [
+            " ",
+            "\t",
+            "\n  \r\n",
+            "-- password=hunter2",
+            "/* password=hunter2 */",
+            "#  password=hunter2",
+        ] {
+            assert_eq!(
+                super::obfuscate_sql_resource(input, &config, DbmsKind::Generic),
+                super::SQL_NON_PARSABLE_REPLACEMENT,
+                "input: {input:?}"
+            );
+        }
+        assert_eq!(
+            super::obfuscate_sql_resource(
+                "SELECT * FROM users WHERE id = 42",
+                &config,
+                DbmsKind::Generic
+            ),
+            "SELECT * FROM users WHERE id = ?"
+        );
+        assert_eq!(
+            super::SQL_NON_PARSABLE_REPLACEMENT,
+            "Non-parsable SQL query"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)] // huge nested input, prohibitively slow under Miri
+    #[test]
+    fn test_dollar_quote_nesting_does_not_overflow_stack() {
+        const NESTING: usize = 20_000;
+        let mut sql = String::new();
+        for i in 0..NESTING {
+            let _ = write!(sql, "$a{i}$");
+        }
+        sql.push_str("SELECT 1");
+        for i in (0..NESTING).rev() {
+            let _ = write!(sql, "$a{i}$");
+        }
+
+        let config = SqlConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let _ = obfuscate_sql(&sql, &config, DbmsKind::Postgresql);
+
+        let normalize_config = SqlConfig {
+            obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
+            ..Default::default()
+        };
+        let _ = obfuscate_sql(&sql, &normalize_config, DbmsKind::Postgresql);
+    }
+
+    #[test]
+    fn test_dollar_quote_nesting_past_depth_limit_does_not_leak_literal() {
+        const NESTING: usize = 100; // comfortably past MAX_DOLLAR_QUOTE_DEPTH (64)
+        let secret = "'123-45-6789'";
+        let mut sql = String::new();
+        for i in 0..NESTING {
+            let _ = write!(sql, "$a{i}$");
+        }
+        sql.push_str(secret);
+        for i in (0..NESTING).rev() {
+            let _ = write!(sql, "$a{i}$");
+        }
+
+        let config = SqlConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let got = obfuscate_sql(&sql, &config, DbmsKind::Postgresql).unwrap();
+        assert!(
+            !got.contains(secret),
+            "obfuscated SQL must not contain the nested literal: {got:?}"
+        );
+    }
 
     #[test]
     fn test_sql_obfuscation() {
@@ -2304,7 +2478,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2313,7 +2487,7 @@ mod tests {
     }
 
     fn test_sql_obfuscation_case(input: &str, output: &str) -> anyhow::Result<()> {
-        let got = super::obfuscate_sql_string(input);
+        let got = obfuscate_sql_string(input)?;
         if output != got {
             anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
@@ -2345,7 +2519,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2354,7 +2528,7 @@ mod tests {
     }
 
     fn test_sql_obfuscation_normalized_case(input: &str, output: &str) -> anyhow::Result<()> {
-        let got = super::obfuscate_sql_string_normalized(input);
+        let got = obfuscate_sql_string_normalized(input)?;
         if output != got {
             anyhow::bail!("expected {output:?}\n\tgot:      {got:?}")
         }
@@ -2363,27 +2537,31 @@ mod tests {
 
     #[test]
     fn test_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_identifier_quotation: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#,
             &config,
             DbmsKind::Generic,
         );
         // In old tokenizer mode, keep_identifier_quotation is ignored (Go does too).
         let expected = "SELECT * FROM users WHERE id = ? AND name = ?";
-        assert_eq!(got, expected, "keep_identifier_quotation: got {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "keep_identifier_quotation: got {got:?}"
+        );
     }
 
     #[test]
     fn test_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             remove_space_between_parentheses: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT * FROM users WHERE id = ? AND (name = 'test' OR name = 'test2')",
             &config,
             DbmsKind::Generic,
@@ -2391,7 +2569,8 @@ mod tests {
         // In old-tokenizer mode, Go ignores remove_space_between_parentheses and always adds spaces
         let expected = "SELECT * FROM users WHERE id = ? AND ( name = ? OR name = ? )";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "remove_space_between_parentheses: got {got:?}"
         );
     }
@@ -2399,11 +2578,11 @@ mod tests {
     #[test]
     fn test_keep_positional_parameter() {
         // When keep_positional_parameter=true, $1/$2 should be kept as-is
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_positional_parameter: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT * FROM users WHERE id = ? AND name = $1 and id = $2",
             &config,
             DbmsKind::Generic,
@@ -2412,7 +2591,8 @@ mod tests {
         // regardless of keep_positional_parameter (matches Go's old tokenizer behavior).
         let expected = "SELECT * FROM users WHERE id = ? AND name = ? and id = ?";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "keep_positional_parameter: got {got:?}, expected {expected:?}"
         );
     }
@@ -2445,15 +2625,10 @@ mod tests {
     ];
 
     const CASES: &[(&str, &str)] = &[
-        ("", ""),
-        ("   ", ""),
-        ("         ", ""),
         ("罿", "罿"),
         ("罿潯", "罿潯"),
         ("罿潯罿潯罿潯罿潯罿潯", "罿潯罿潯罿潯罿潯罿潯"),
         ("'abc1287681964'", "?"),
-        ("-- comment", ""),
-        ("---", ""),
         ("1 - 2", "? - ?"),
         (
             "SELECT * FROM TABLE WHERE userId = 'abc1287681964'",
@@ -2738,7 +2913,7 @@ mod tests {
 
     #[test]
     fn test_normalize_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -2777,45 +2952,51 @@ mod tests {
             ),
         ];
         for (input, expected) in cases {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "normalize_only input={input:?}");
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "normalize_only input={input:?}"
+            );
         }
     }
 
     #[test]
     fn test_normalize_only_keep_trailing_semi() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_trailing_semicolon: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT * FROM users WHERE id = 1 AND name = 'test';",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT * FROM users WHERE id = 1 AND name = 'test';";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "normalize_only+keep_trailing_semicolon: {got:?}"
         );
     }
 
     #[test]
     fn test_normalize_only_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_identifier_quotation: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#,
             &config,
             DbmsKind::Generic,
         );
         let expected = r#"SELECT * FROM "users" WHERE id = 1 AND name = 'test'"#;
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "normalize_only+keep_identifier_quotation: {got:?}"
         );
     }
@@ -2823,7 +3004,7 @@ mod tests {
     #[test]
     fn test_with_cte_stripping() {
         // In legacy mode (obfuscation_mode=""), WITH T1 AS (SELECT...) → WITH T1 SELECT...
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases = &[
             // Single CTE - strip AS and opening paren, keep closing )
             (
@@ -2837,15 +3018,19 @@ mod tests {
             ),
         ];
         for (input, expected) in cases {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "with_cte_stripping input={input:?}");
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "with_cte_stripping input={input:?}"
+            );
         }
     }
 
     #[test]
     fn test_double_quoted_string_value_quantize() {
         // Double-quoted strings in value context (after =) should be quantized
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases = &[
             // After = in SET clause
             (
@@ -2860,47 +3045,56 @@ mod tests {
             // Table identifier (after FROM) — keep
             (
                 r#"SELECT * FROM "users" WHERE id = 1"#,
-                r#"SELECT * FROM users WHERE id = ?"#,
+                r"SELECT * FROM users WHERE id = ?",
             ),
         ];
         for (input, expected) in cases {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            assert_eq!(got, *expected, "double_quoted_value input={input:?}");
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            assert_eq!(
+                got.as_deref(),
+                Ok(*expected),
+                "double_quoted_value input={input:?}"
+            );
         }
     }
 
     #[test]
     fn test_normalize_only_dollar_func() {
         // In normalize_only mode, dollar-quoted strings are normalized (not quantized)
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT $func$INSERT INTO table VALUES ( 'a', 1, 2 )$func$ FROM users";
-        assert_eq!(got, expected, "normalize_only dollar_func: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "normalize_only dollar_func: {got:?}"
+        );
     }
 
     #[test]
     fn test_dollar_quoted_func_trivial_collapse() {
         // When dollar_quoted_func=true and inner content obfuscates to a single ?, collapse to ?
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             dollar_quoted_func: true,
             replace_digits: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT * FROM users123 WHERE id = $tag$1$tag$",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT * FROM users? WHERE id = ?";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "dollar_quoted_func trivial collapse: {got:?}"
         );
     }
@@ -2908,67 +3102,76 @@ mod tests {
     #[test]
     fn test_obfuscate_only_keeps_quotes_and_semi() {
         // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             r#"SELECT "table"."field" FROM "table" WHERE "table"."otherfield" = $? AND "table"."thirdfield" = $?;"#,
             &config,
             DbmsKind::Generic,
         );
         let expected = r#"SELECT "table"."field" FROM "table" WHERE "table"."otherfield" = $? AND "table"."thirdfield" = $?;"#;
-        assert_eq!(got, expected, "obfuscate_only keeps quotes/$/semi: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "obfuscate_only keeps quotes/$/semi: {got:?}"
+        );
     }
 
     #[test]
     fn test_obfuscate_only_dollar_quoted_func_no_collapse() {
         // In obfuscate_only+dollar_quoted_func: VALUES inside func are NOT collapsed
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "SELECT $func$INSERT INTO table VALUES ('a', 1, 2)$func$ FROM users",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT $func$INSERT INTO table VALUES (?, ?, ?)$func$ FROM users";
         assert_eq!(
-            got, expected,
+            got.as_deref(),
+            Ok(expected),
             "obfuscate_only dollar_quoted_func no collapse: {got:?}"
         );
     }
 
     #[test]
     fn test_normalize_only_procedure() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END",
             &config,
             DbmsKind::Generic,
         );
         let expected =
             "CREATE PROCEDURE TestProc AS BEGIN UPDATE users SET name = 'test' WHERE id = 1 END";
-        assert_eq!(got, expected, "normalize_only+procedure: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "normalize_only+procedure: {got:?}"
+        );
     }
 
     #[test]
     fn test_q41() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
-        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic);
+        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic, 0);
         tok.process();
         let raw = tok.finalize();
         eprintln!("RAW: {raw:?}");
-        let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
+        let got = obfuscate_sql(input, &config, DbmsKind::Generic);
         let expected = "SELECT * FROM public.table ( array [ ROW ( array [ ?";
-        assert_eq!(got, expected, "q41: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "q41: {got:?}");
     }
 
     // --- Integration test cases added for faster iteration ---
@@ -2976,48 +3179,52 @@ mod tests {
     #[test]
     fn test_pg_json_operators_7() {
         // JSONB ? operator followed by string literal — both should be kept as ?
-        let got = super::obfuscate_sql(
+        let got = obfuscate_sql(
             "select * from users where user.custom ? 'foo'",
-            &SqlObfuscateConfig::default(),
+            &SqlConfig::default(),
             DbmsKind::Postgresql,
         );
         let expected = "select * from users where user.custom ? ?";
-        assert_eq!(got, expected, "pg_json_7: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "pg_json_7: {got:?}");
     }
 
     #[test]
     fn test_quantizer_90() {
         // Inline comment /*!obfuscation*/ should be stripped; consecutive literals after = reset
-        let config = SqlObfuscateConfig::default();
-        let got = super::obfuscate_sql(
+        let config = SqlConfig::default();
+        let got = obfuscate_sql(
             "SELECT * FROM dbo.Items WHERE id = 1 or /*!obfuscation*/ 1 = 1",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT * FROM dbo.Items WHERE id = ? or ? = ?";
-        assert_eq!(got, expected, "q90: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "q90: {got:?}");
     }
 
     #[test]
     fn test_cassandra_nested_dates() {
         // Consecutive ? placeholders inside nested function calls should be suppressed
-        let config = SqlObfuscateConfig::default();
-        let got = super::obfuscate_sql(
+        let config = SqlConfig::default();
+        let got = obfuscate_sql(
             "SELECT TO_DATE(TO_CHAR(TO_DATE(bar.h,?),?),?) FROM t",
             &config,
             DbmsKind::Generic,
         );
         let expected = "SELECT TO_DATE ( TO_CHAR ( TO_DATE ( bar.h, ? ) ) ) FROM t";
-        assert_eq!(got, expected, "cassandra_nested_dates: {got:?}");
+        assert_eq!(
+            got.as_deref(),
+            Ok(expected),
+            "cassandra_nested_dates: {got:?}"
+        );
     }
 
     #[test]
     fn test_cassandra_pipe_concat() {
         // || concatenation — Go tokenizes as two separate | tokens with spaces
-        let config = SqlObfuscateConfig::default();
-        let got = super::obfuscate_sql("SELECT a ||?|| b FROM t", &config, DbmsKind::Generic);
+        let config = SqlConfig::default();
+        let got = obfuscate_sql("SELECT a ||?|| b FROM t", &config, DbmsKind::Generic);
         let expected = "SELECT a | | ? | | b FROM t";
-        assert_eq!(got, expected, "cassandra_pipe: {got:?}");
+        assert_eq!(got.as_deref(), Ok(expected), "cassandra_pipe: {got:?}");
     }
 
     // Test cases from the agent repo
@@ -3304,27 +3511,27 @@ mod tests {
         ("-012345678", "?"),
     ];
 
+    #[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
     #[test]
     fn test_sql_obfuscation_suite() {
         let mut errors = String::new();
         for (i, (input, expected)) in SUITE_CASES.iter().enumerate() {
-            let got = super::obfuscate_sql_string(input);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql_string(input);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True}
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             ..Default::default()
         };
@@ -3337,23 +3544,22 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dollar_quoted_func': True}
     #[test]
     #[allow(deprecated)]
     fn test_suite_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             dollar_quoted_func: true,
             ..Default::default()
         };
@@ -3366,23 +3572,22 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True}
     #[test]
     #[allow(deprecated)]
     fn test_suite_keep_sql_alias_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             dollar_quoted_func: true,
             ..Default::default()
@@ -3393,23 +3598,22 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'replace_digits': True}
     #[test]
     #[allow(deprecated)]
     fn test_suite_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             replace_digits: true,
             ..Default::default()
         };
@@ -3487,16 +3691,15 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True, 'keep_null': True, 'keep_boolean': True,
@@ -3506,7 +3709,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_suite_all_flags() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             keep_sql_alias: true,
             dollar_quoted_func: true,
             keep_null: true,
@@ -3542,23 +3745,22 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'mssql'}
     #[test]
     #[allow(deprecated)]
     fn test_suite_mssql() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases: &[(&str, &str)] = &[
             // sql_single_dollar_identifier_merge
             ("\n\tMERGE INTO Employees AS target\n\tUSING EmployeeUpdates AS source\n\tON (target.EmployeeID = source.EmployeeID)\n\tWHEN MATCHED THEN\n\t\tUPDATE SET\n\t\t\ttarget.Name = source.Name\n\tWHEN NOT MATCHED BY TARGET THEN\n\t\tINSERT (EmployeeID, Name)\n\t\tVALUES (source.EmployeeID, source.Name)\n\tWHEN NOT MATCHED BY SOURCE THEN\n\t\tDELETE\n\tOUTPUT $action, inserted.*, deleted.*;\n\t", "MERGE INTO Employees USING EmployeeUpdates ON ( target.EmployeeID = source.EmployeeID ) WHEN MATCHED THEN UPDATE SET target.Name = source.Name WHEN NOT MATCHED BY TARGET THEN INSERT ( EmployeeID, Name ) VALUES ( source.EmployeeID, source.Name ) WHEN NOT MATCHED BY SOURCE THEN DELETE OUTPUT $action, inserted.*, deleted.*"),
@@ -3571,23 +3773,22 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Mssql);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Mssql);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'postgresql'}
     #[test]
     #[allow(deprecated)]
     fn test_suite_postgresql() {
-        let config = SqlObfuscateConfig::default();
+        let config = SqlConfig::default();
         let cases: &[(&str, &str)] = &[
             // sql_pg_json_operators_0
             (
@@ -3642,22 +3843,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Postgresql);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Postgresql);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only'}
     #[test]
     fn test_suite_normalize_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             ..Default::default()
         };
@@ -3677,22 +3877,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
     #[test]
     fn test_suite_normalize_only_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_sql_alias: true,
             ..Default::default()
@@ -3703,22 +3902,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
     #[test]
     fn test_suite_normalize_only_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             remove_space_between_parentheses: true,
             ..Default::default()
@@ -3732,22 +3930,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
     #[test]
     fn test_suite_normalize_only_keep_trailing_semicolon() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_trailing_semicolon: true,
             ..Default::default()
@@ -3761,22 +3958,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
     #[test]
     fn test_suite_normalize_only_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::NormalizeOnly,
             keep_identifier_quotation: true,
             ..Default::default()
@@ -3790,22 +3986,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize'}
     #[test]
     fn test_suite_obfuscate_and_normalize() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             ..Default::default()
         };
@@ -3833,22 +4028,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             replace_digits: true,
             ..Default::default()
@@ -3862,22 +4056,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_sql_alias() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_sql_alias: true,
             ..Default::default()
@@ -3888,22 +4081,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             dollar_quoted_func: true,
             ..Default::default()
@@ -3917,22 +4109,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_dollar_quoted_func_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             dollar_quoted_func: true,
             replace_digits: true,
@@ -3947,22 +4138,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_remove_space_between_parentheses() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             remove_space_between_parentheses: true,
             ..Default::default()
@@ -3976,22 +4166,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_null() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_null: true,
             ..Default::default()
@@ -4005,22 +4194,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_boolean() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_boolean: true,
             ..Default::default()
@@ -4034,22 +4222,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_positional_parameter() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_positional_parameter: true,
             ..Default::default()
@@ -4063,22 +4250,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_trailing_semicolon() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_trailing_semicolon: true,
             ..Default::default()
@@ -4092,22 +4278,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_identifier_quotation() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_identifier_quotation: true,
             ..Default::default()
@@ -4121,22 +4306,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_replace_bind_parameter() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             replace_bind_parameter: true,
             ..Default::default()
@@ -4150,22 +4334,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
     #[test]
     fn test_suite_obfuscate_and_normalize_keep_json_path() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateAndNormalize,
             keep_json_path: true,
             ..Default::default()
@@ -4184,22 +4367,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only'}
     #[test]
     fn test_suite_obfuscate_only() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             ..Default::default()
         };
@@ -4215,22 +4397,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_only_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             replace_digits: true,
             ..Default::default()
@@ -4244,22 +4425,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             ..Default::default()
@@ -4273,22 +4453,21 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
     #[test]
     fn test_suite_obfuscate_only_dollar_quoted_func_replace_digits() {
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::ObfuscateOnly,
             dollar_quoted_func: true,
             replace_digits: true,
@@ -4303,16 +4482,15 @@ mod tests {
         ];
         let mut errors = String::new();
         for (i, (input, expected)) in cases.iter().enumerate() {
-            let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
-            if got != *expected {
-                errors.push_str(&format!(
+            let got = obfuscate_sql(input, &config, DbmsKind::Generic);
+            if got.as_deref() != Ok(*expected) {
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.
@@ -4321,21 +4499,21 @@ mod tests {
     #[test]
     fn test_collapse_limit_case_insensitive() {
         #[allow(deprecated)]
-        let config = SqlObfuscateConfig {
+        let config = SqlConfig {
             obfuscation_mode: SqlObfuscationMode::Unspecified,
             ..Default::default()
         };
-        let got_upper =
-            super::obfuscate_sql("SELECT * FROM t LIMIT 5, 10", &config, DbmsKind::Generic);
+        let got_upper = obfuscate_sql("SELECT * FROM t LIMIT 5, 10", &config, DbmsKind::Generic);
         assert_eq!(
-            got_upper, "SELECT * FROM t LIMIT ?",
+            got_upper.as_deref(),
+            Ok("SELECT * FROM t LIMIT ?"),
             "uppercase LIMIT should be collapsed: {got_upper:?}"
         );
         // eq_ignore_ascii_case fix: lowercase limit must also be collapsed.
-        let got_lower =
-            super::obfuscate_sql("SELECT * FROM t limit 5, 10", &config, DbmsKind::Generic);
+        let got_lower = obfuscate_sql("SELECT * FROM t limit 5, 10", &config, DbmsKind::Generic);
         assert_eq!(
-            got_lower, "SELECT * FROM t limit ?",
+            got_lower.as_deref(),
+            Ok("SELECT * FROM t limit ?"),
             "lowercase limit should also be collapsed: {got_lower:?}"
         );
     }

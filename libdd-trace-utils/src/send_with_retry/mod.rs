@@ -7,17 +7,23 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
+pub(crate) mod compression;
+pub use compression::CompressionStrategy;
+
 use bytes::Bytes;
+use futures::future::{select, Either};
 use http::HeaderMap;
-use libdd_capabilities::{HttpClientTrait, HttpError};
+use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use tracing::{debug, error};
 
 pub type Attempts = u32;
 
 pub type SendWithRetryResult = Result<(http::Response<Bytes>, Attempts), SendWithRetryError>;
+
+/// User-agent sent by the trace exporter.
+pub const TRACE_EXPORTER_USER_AGENT: &str = concat!("Tracer/", env!("CARGO_PKG_VERSION"));
 
 /// All errors contain the number of attempts after which the final error was returned
 #[derive(Debug)]
@@ -69,7 +75,7 @@ impl std::error::Error for SendWithRetryError {}
 ///
 /// ```rust, no_run
 /// # use libdd_common::Endpoint;
-/// # use libdd_capabilities::HttpClientTrait;
+/// # use libdd_capabilities::{HttpClientCapability, SleepCapability};
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
@@ -83,19 +89,50 @@ impl std::error::Error for SendWithRetryError {}
 ///     http::HeaderValue::from_static("application/msgpack"),
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-/// let client = libdd_capabilities_impl::NativeCapabilities::new_client();
-/// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
+/// let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
+/// send_with_retry(
+///     &capabilities,
+///     &target,
+///     payload,
+///     &headers,
+///     &retry_strategy,
+///     CompressionStrategy::None,
+/// )
+/// .await
 /// # }
 /// ```
-pub async fn send_with_retry<H: HttpClientTrait>(
-    client: &H,
+#[allow(clippy::result_large_err)]
+pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
     target: &Endpoint,
     payload: Vec<u8>,
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
 ) -> SendWithRetryResult {
+    send_with_retry_and_size(
+        capabilities,
+        target,
+        payload,
+        headers,
+        retry_strategy,
+        compression_strategy,
+    )
+    .await
+    .0
+}
+
+/// Send a payload with retries and return its post-compression size.
+#[allow(clippy::result_large_err)]
+pub async fn send_with_retry_and_size<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
+    target: &Endpoint,
+    payload: Vec<u8>,
+    headers: &HeaderMap,
+    retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
+) -> (SendWithRetryResult, usize) {
     let mut request_attempt = 0;
-    #[cfg(not(target_arch = "wasm32"))]
     let timeout = Duration::from_millis(target.timeout_ms);
 
     debug!(
@@ -105,11 +142,15 @@ pub async fn send_with_retry<H: HttpClientTrait>(
         "Sending with retry"
     );
 
-    let payload = Bytes::from(payload);
-    loop {
+    let (compressed, compression_strategy) = compression::compress(payload, compression_strategy);
+    let payload = Bytes::from(compressed);
+    let payload_size = payload.len();
+
+    let result = loop {
         request_attempt += 1;
 
         debug!(
+            url = %target.url,
             attempt = request_attempt,
             max_retries = retry_strategy.max_retries(),
             "Attempting request"
@@ -118,27 +159,33 @@ pub async fn send_with_retry<H: HttpClientTrait>(
         let mut builder = http::Request::builder()
             .method(http::Method::POST)
             .uri(target.url.clone());
-        builder =
-            target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
+        builder = target.set_standard_headers(builder, TRACE_EXPORTER_USER_AGENT);
         for (key, value) in headers {
             builder = builder.header(key, value);
+        }
+        if let Some(headers) = builder.headers_mut() {
+            compression::add_headers(headers, compression_strategy);
         }
         let req = match builder.body(payload.clone()) {
             Ok(r) => r,
             Err(_) => {
-                return Err(SendWithRetryError::Build(request_attempt));
+                break Err(SendWithRetryError::Build(request_attempt));
             }
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let result = tokio::time::timeout(timeout, client.request(req)).await;
-        #[cfg(target_arch = "wasm32")]
-        let result: Result<Result<_, _>, std::convert::Infallible> = Ok(client.request(req).await);
+        let request = capabilities.request(req);
+        let timeout = capabilities.sleep(timeout);
+        futures::pin_mut!(request, timeout);
+        let result = match select(request, timeout).await {
+            Either::Left((response, _)) => Ok(response),
+            Either::Right(((), _)) => Err(()),
+        };
 
         match result {
             Ok(Ok(response)) => {
                 let status = response.status();
                 debug!(
+                    url = %target.url,
                     status = status.as_u16(),
                     attempt = request_attempt,
                     "Received response"
@@ -152,13 +199,13 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                         "Received error status code"
                     );
 
-                    if request_attempt < retry_strategy.max_retries() {
+                    if request_attempt <= retry_strategy.max_retries() {
                         debug!(
                             attempt = request_attempt,
-                            remaining_retries = retry_strategy.max_retries() - request_attempt,
+                            remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                             "Retrying after error status code"
                         );
-                        retry_strategy.delay(request_attempt).await;
+                        retry_strategy.delay(request_attempt, capabilities).await;
                         continue;
                     } else {
                         error!(
@@ -166,7 +213,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                             attempts = request_attempt,
                             "Max retries exceeded, returning HTTP error"
                         );
-                        return Err(SendWithRetryError::Http(response, request_attempt));
+                        break Err(SendWithRetryError::Http(response, request_attempt));
                     }
                 } else {
                     debug!(
@@ -174,24 +221,25 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                         attempts = request_attempt,
                         "Request succeeded"
                     );
-                    return Ok((response, request_attempt));
+                    break Ok((response, request_attempt));
                 }
             }
             Ok(Err(e)) => {
                 debug!(
+                    url = %target.url,
                     error = ?e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request failed with error"
                 );
 
-                if request_attempt < retry_strategy.max_retries() {
+                if request_attempt <= retry_strategy.max_retries() {
                     debug!(
                         attempt = request_attempt,
-                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                         "Retrying after request error"
                     );
-                    retry_strategy.delay(request_attempt).await;
+                    retry_strategy.delay(request_attempt, capabilities).await;
                     continue;
                 } else {
                     let classified_error = match e {
@@ -207,34 +255,36 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                         attempts = request_attempt,
                         "Max retries exceeded, returning request error"
                     );
-                    return Err(classified_error);
+                    break Err(classified_error);
                 }
             }
             Err(_) => {
                 debug!(
+                    url = %target.url,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request timed out"
                 );
 
-                if request_attempt < retry_strategy.max_retries() {
+                if request_attempt <= retry_strategy.max_retries() {
                     debug!(
                         attempt = request_attempt,
-                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                         "Retrying after timeout"
                     );
-                    retry_strategy.delay(request_attempt).await;
+                    retry_strategy.delay(request_attempt, capabilities).await;
                     continue;
                 } else {
                     error!(
                         attempts = request_attempt,
                         "Max retries exceeded, returning timeout error"
                     );
-                    return Err(SendWithRetryError::Timeout(request_attempt));
+                    break Err(SendWithRetryError::Timeout(request_attempt));
                 }
             }
         }
-    }
+    };
+    (result, payload_size)
 }
 
 #[cfg(test)]
@@ -242,7 +292,7 @@ mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
     use httpmock::MockServer;
-    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
 
     #[cfg_attr(miri, ignore)]
@@ -273,15 +323,16 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(result.is_err(), "Expected an error result");
@@ -322,15 +373,16 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
@@ -350,7 +402,8 @@ mod tests {
     #[tokio::test]
     async fn test_retry_logic_max_errors() {
         let server = MockServer::start();
-        let expected_retry_attempts = 3;
+        let max_retries = 3;
+        let expected_total_attempts = max_retries + 1;
         let mut mock_503 = server
             .mock_async(|_when, then| {
                 then.status(503)
@@ -365,25 +418,21 @@ mod tests {
             ..Default::default()
         };
 
-        let strategy = RetryStrategy::new(
-            expected_retry_attempts,
-            10,
-            RetryBackoffType::Constant,
-            None,
-        );
-        let client = NativeCapabilities::new_client();
+        let strategy = RetryStrategy::new(max_retries, 10, RetryBackoffType::Constant, None);
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
-                matches!(result.unwrap_err(), SendWithRetryError::Http(_, attempts) if attempts == expected_retry_attempts),
+                matches!(result.unwrap_err(), SendWithRetryError::Http(_, attempts) if attempts == expected_total_attempts),
                 "Expected an error result after max retry attempts"
             );
         });
@@ -393,7 +442,7 @@ mod tests {
                 &mut mock_503,
                 10,
                 100,
-                expected_retry_attempts as usize,
+                expected_total_attempts as usize,
                 true
             )
             .await,
@@ -420,15 +469,16 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(

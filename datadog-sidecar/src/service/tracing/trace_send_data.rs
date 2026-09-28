@@ -4,8 +4,8 @@
 use futures::future::Map;
 use futures::FutureExt;
 use libdd_trace_utils::trace_utils::SendData;
-use manual_future::ManualFutureCompleter;
 use tokio::sync::mpsc::Sender;
+use tokio::sync::oneshot;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::debug;
 
@@ -13,7 +13,7 @@ use tracing::debug;
 pub(crate) struct TraceSendData {
     pub send_data: Vec<SendData>,
     pub send_data_size: usize,
-    pub force_flush: Option<ManualFutureCompleter<Option<Sender<()>>>>,
+    pub force_flush: Option<oneshot::Sender<Option<Sender<()>>>>,
 }
 
 impl TraceSendData {
@@ -41,7 +41,7 @@ impl TraceSendData {
                 "Emitted flush for traces with {} bytes in send_data buffer",
                 self.send_data_size
             );
-            tokio::spawn(force_flush.complete(sender));
+            let _ = force_flush.send(sender);
         }
     }
 }

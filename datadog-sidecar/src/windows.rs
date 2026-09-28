@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use datadog_ipc::{AsyncConn, SeqpacketListener};
+use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
 use libdd_common::Endpoint;
@@ -42,7 +42,7 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     // so subsequent try_accept calls use the same buffer size.
     let buf_size = crate::config::Config::get().pipe_buffer_size;
     if buf_size > 0 {
-        datadog_ipc::platform::set_pipe_buffer_size(buf_size);
+        libdd_ipc::platform::set_pipe_buffer_size(buf_size);
     }
 
     let now = Instant::now();

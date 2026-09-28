@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_cstr() {
-        let s = std::ffi::CString::new("hello").unwrap();
+        let s = alloc::ffi::CString::new("hello").unwrap();
         let cstr = CStr::from_std(&s);
         assert_eq!(cstr.into_std().to_str().unwrap(), "hello");
     }

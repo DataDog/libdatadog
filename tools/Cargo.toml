@@ -15,14 +15,17 @@ publish = false
 bench = false
 
 [dependencies]
-anyhow = "1.0"
-cargo_metadata = "0.18"
-clap = { version = "4.0", features = ["derive"] }
-colored = "2"
-quick-xml = "0.37"
-regex = "1"
-toml = "0.8"
-wait-timeout = "0.2"
+anyhow.workspace = true
+cargo_metadata.workspace = true
+clap = { workspace = true, default-features = true, features = ["derive"] }
+colored.workspace = true
+quick-xml.workspace = true
+libdd-common = { path = "../libdd-common", default-features = false }
+toml = { workspace = true, features = ["parse"] }
+wait-timeout.workspace = true
+
+[features]
+regex-lite = ["libdd-common/regex-lite"]
 
 [[bin]]
 name = "dedup_headers"

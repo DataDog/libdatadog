@@ -2,34 +2,14 @@ name: Release - Open a release proposal PR
 on:
   workflow_dispatch:
     inputs:
-      crate:
-        description: Crate to release
+      crates:
+        description: >
+          Crate(s) to release, comma-separated (e.g. "libdd-common" or "libdd-common, libdd-telemetry"). Trailing and repeated commas are ignored.
+          Each selected crate is released along with its workspace dependencies (other libdd-* crates it depends on).
+          Hotfix releases (main_start_ref matching hotfix/<crate>/<N>.x.x) accept a single crate only.
         required: true
-        type: choice
-        options:
-          - libdd-alloc
-          - libdd-capabilities
-          - libdd-capabilities-impl
-          - libdd-common
-          - libdd-crashtracker
-          - libdd-data-pipeline
-          - libdd-ddsketch
-          - libdd-dogstatsd-client
-          - libdd-http-client
-          - libdd-library-config
-          - libdd-log
-          - libdd-otel-thread-ctx
-          - libdd-profiling
-          - libdd-profiling-protobuf
-          - libdd-shared-runtime
-          - libdd-telemetry
-          - libdd-tinybytes
-          - libdd-trace-normalization
-          - libdd-trace-obfuscation
-          - libdd-trace-protobuf
-          - libdd-trace-stats
-          - libdd-trace-utils
-          - libdd-tracer-flare
+        type: string
+        default: ''
       main_start_ref:
         description: >
           Optional git ref to cut the release from: commit SHA (short or full), branch name,
@@ -45,6 +25,14 @@ on:
         required: false
         type: boolean
         default: false
+      level_overrides:
+        description: >
+          Force the bump level of specific crates instead of computing it, as
+          comma-separated CRATE=LEVEL (e.g. "libdd-capabilities=minor, libdd-ipc=major").
+          Every crate named must be part of the release.
+        required: false
+        type: string
+        default: ''
 
 concurrency:
   group: release-proposal-dispatch-group
@@ -54,10 +42,113 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-testing' || 'release' }}
   PROPOSAL_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-proposal-testing' || 'release-proposal' }}
+  HOTFIX_REF_PATTERN: '^hotfix/[^/]+/[0-9]+\.x\.x$'
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      crates: ${{ steps.normalize.outputs.crates }}
+      crates_display: ${{ steps.normalize.outputs.crates_display }}
+      crates_branch: ${{ steps.normalize.outputs.crates_branch }}
+      count: ${{ steps.normalize.outputs.count }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+
+      - name: Get Datadog credentials via dd-sts
+        id: dd-sts
+        continue-on-error: true
+        uses: DataDog/dd-sts-action@639d841c72f15e4e77747bd726ef8105ce971da2 # v1.0.5
+        with:
+          policy: public-datadog-libdatadog
+
+      - name: Exclude from Green CI
+        continue-on-error: true
+        env:
+          DATADOG_SITE: datadoghq.com
+          DD_API_KEY: ${{ steps.dd-sts.outputs.api_key }}
+        run: ./scripts/exclude-from-green-ci.sh
+
+      - name: Normalize and validate crate list
+        id: normalize
+        env:
+          RAW_CRATES: ${{ inputs.crates }}
+          RAW_MAIN_START_REF: ${{ inputs.main_start_ref }}
+          HOTFIX_REF_PATTERN: ${{ env.HOTFIX_REF_PATTERN }}
+        run: |
+          set -euo pipefail
+
+          # Comma-separated list; strip per-element whitespace, drop empties (handles
+          # trailing/repeated commas), dedupe, sort for stable downstream order. Crate names
+          # have no internal whitespace, so per-line whitespace removal is safe.
+          # Use command substitution (not process substitution) so set -e/pipefail catches failures.
+          NORMALIZED=$(printf '%s\n' "$RAW_CRATES" | tr ',' '\n' | sed 's/[[:space:]]//g; /^$/d' | sort -u)
+          mapfile -t CRATES <<< "$NORMALIZED"
+          # An empty NORMALIZED produces a single empty-string element via <<<; drop it.
+          if [ "${#CRATES[@]}" -eq 1 ] && [ -z "${CRATES[0]}" ]; then
+            CRATES=()
+          fi
+
+          if [ "${#CRATES[@]}" -eq 0 ]; then
+            echo "Error: 'crates' input is empty after normalization." >&2
+            exit 1
+          fi
+
+          METADATA=$(cargo metadata --no-deps --format-version=1)
+          AVAILABLE_LIST=$(jq -r '
+            .packages[]
+            | select(.publish == null or (.publish | type == "array" and length > 0))
+            | .name
+          ' <<< "$METADATA" | sort -u)
+          mapfile -t AVAILABLE <<< "$AVAILABLE_LIST"
+
+          UNKNOWN=()
+          for c in "${CRATES[@]}"; do
+            if ! printf '%s\n' "${AVAILABLE[@]}" | grep -qxF "$c"; then
+              UNKNOWN+=("$c")
+            fi
+          done
+          if [ "${#UNKNOWN[@]}" -gt 0 ]; then
+            echo "Error: unknown or unpublishable crate(s): ${UNKNOWN[*]}" >&2
+            echo "Available crates:" >&2
+            printf '  - %s\n' "${AVAILABLE[@]}" >&2
+            exit 1
+          fi
+
+          REF="$(echo "$RAW_MAIN_START_REF" | tr -d '[:space:]')"
+          if [[ -n "$REF" && "$REF" =~ $HOTFIX_REF_PATTERN ]] && [ "${#CRATES[@]}" -gt 1 ]; then
+            echo "Error: hotfix releases (main_start_ref=$REF) accept only a single crate; got ${#CRATES[@]}: ${CRATES[*]}" >&2
+            exit 1
+          fi
+
+          CRATES_SPACE="${CRATES[*]}"
+          CRATES_DISPLAY=$(IFS=,; echo "${CRATES[*]}")
+          CRATES_DISPLAY=${CRATES_DISPLAY//,/, }
+          # Branch segment: keep the path concise when many crates are bundled.
+          if [ "${#CRATES[@]}" -eq 1 ]; then
+            CRATES_BRANCH="${CRATES[0]}"
+          else
+            CRATES_BRANCH="${CRATES[0]}-$(( ${#CRATES[@]} - 1 ))-more"
+          fi
+
+          echo "Normalized crates: $CRATES_SPACE"
+          echo "Display:           $CRATES_DISPLAY"
+          echo "Branch segment:    $CRATES_BRANCH"
+          echo "Count:             ${#CRATES[@]}"
+
+          {
+            echo "crates=$CRATES_SPACE"
+            echo "crates_display=$CRATES_DISPLAY"
+            echo "crates_branch=$CRATES_BRANCH"
+            echo "count=${#CRATES[@]}"
+          } >> "$GITHUB_OUTPUT"
+
   check-proposal-ongoing:
     runs-on: ubuntu-latest
+    needs: validate-inputs
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -80,6 +171,7 @@ jobs:
           fi
 
   check-membership:
+    if: ${{ !inputs.bypass_standard_checks }}
     permissions:
       id-token: write # Enable OIDC
     runs-on: ubuntu-latest
@@ -109,51 +201,64 @@ jobs:
           fi
 
   cargo-release:
+    # Run only when the upstream guards actually passed. check-membership is skipped on bypass runs
+    # (its own `if`), so accept a skipped membership ONLY when bypassing. A membership skipped for
+    # any other reason (e.g. check-proposal-ongoing failing) must NOT let the release through, so we
+    # also require check-proposal-ongoing to have succeeded.
+    if: ${{ !cancelled() && needs.validate-inputs.result == 'success' && needs.check-proposal-ongoing.result == 'success' && (needs.check-membership.result == 'success' || (inputs.bypass_standard_checks && needs.check-membership.result == 'skipped')) }}
     permissions:
       id-token: write # Enable OIDC
       pull-requests: write
       contents: write
-    needs: check-membership
+    needs: [check-proposal-ongoing, check-membership, validate-inputs]
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           ref: ${{ env.MAIN_BRANCH }}
           fetch-depth: 0
           fetch-tags: true
-      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
           cache-targets: true
-      - uses: dtolnay/rust-toolchain@nightly
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb #nightly
         with:
-          toolchain: nightly-2026-02-08
+          toolchain: ${{ steps.nightly-version.outputs.version }}
       - name: Link nightly toolchain for cargo-public-api
-        run: ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
-      - uses: dtolnay/rust-toolchain@stable
+        run: ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c #stable
         with:
-          toolchain: 1.92.0
-      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+      
+      - name: Install dependencies
+        run: |
+          sudo apt update && sudo apt install -y libssl-dev  # cargo-public-api dependency
+
+      - name: Install cargo tools
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.50.2
-      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
-        with:
-          tool: cargo-release
-      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
-        with:
-          tool: git-cliff
-      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
-        with:
-          tool: cargo-semver-checks@0.45.0
+          tool: cargo-public-api@0.52.0, cargo-release@1.1.5, git-cliff@2.14.1, cargo-semver-checks@0.48.0
       
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
-          policy: self.write.pr    
+          policy: self.write.pr
 
       - name: Configure Git for signing
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
@@ -241,10 +346,36 @@ jobs:
               echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
               exit 1
             fi
+
+            # Reject pull-request refs outright: they can be pushed by anyone with a fork.
+            case "$REF" in
+              refs/pull/*|pull/*)
+                echo "Error: refs/pull/* refs are not allowed as main_start_ref." >&2
+                exit 1
+                ;;
+            esac
+
+            # Verify the resolved commit is reachable from a trusted ref before checking it out.
+            # Trusted: origin/${{ env.MAIN_BRANCH }}, or the matching origin/hotfix/<crate>/N.x.x branch.
+            TRUSTED=false
+            if git merge-base --is-ancestor "$COMMIT" "origin/${{ env.MAIN_BRANCH }}" 2>/dev/null; then
+              TRUSTED=true
+            elif [[ "$REF" =~ $HOTFIX_REF_PATTERN ]] \
+                 && git rev-parse -q --verify "origin/${REF}^{commit}" >/dev/null 2>&1 \
+                 && git merge-base --is-ancestor "$COMMIT" "origin/${REF}" 2>/dev/null; then
+              TRUSTED=true
+            fi
+
+            if [ "$TRUSTED" != "true" ]; then
+              echo "Error: resolved commit ${COMMIT} is not reachable from origin/${{ env.MAIN_BRANCH }} or a recognised origin/hotfix/<crate>/N.x.x branch." >&2
+              echo "main_start_ref must point at a commit on a trusted branch." >&2
+              exit 1
+            fi
+
             # Hotfix releases use the hotfix branch itself as the ephemeral branch.
             # If a hotfix branch name was provided and exists on origin, check it out as a branch
             # (not a detached commit) so later steps can use it as a PR base.
-            if [[ "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+            if [[ "$REF" =~ $HOTFIX_REF_PATTERN ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
               git checkout -B "$REF" "origin/$REF"
               echo "Release cut from hotfix branch '$REF' -> $(git rev-parse --short HEAD) ($(git log -1 --oneline))"
             else
@@ -256,15 +387,37 @@ jobs:
             git reset --hard "origin/${{ env.MAIN_BRANCH }}"
             echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip ($(git rev-parse --short HEAD))."
           fi
-      
+
+      - name: Reject untrusted cargo-release configuration
+        run: |
+          set -euo pipefail
+          # cargo-release supports pre-release-hook (arbitrary command execution) and
+          # pre-release-replacements (arbitrary file rewriting). Neither is used by this repo,
+          # so reject any tree that mentions them. This stops a malicious main_start_ref from
+          # executing code with the job's OIDC mint capability via the cargo-release step.
+          #
+          # The match is intentionally broad: it catches every TOML key form cargo-release
+          # accepts — bare `pre-release-hook = ...`, dotted `package.metadata.release.pre-release-hook = ...`,
+          # quoted `"pre-release-hook" = ...`, inline-table `{ pre-release-hook = ... }`, and
+          # array-of-table `[[package.metadata.release.pre-release-replacements]]`. `^[^#]*`
+          # excludes the substring when it only appears after a `#` comment marker.
+          FORBIDDEN=$(grep -rEn '^[^#]*(pre-release-hook|pre-release-replacements)' \
+            --include='Cargo.toml' --include='release.toml' . || true)
+          if [ -n "$FORBIDDEN" ]; then
+            echo "Error: forbidden cargo-release configuration detected in the checked-out tree:" >&2
+            echo "$FORBIDDEN" >&2
+            exit 1
+          fi
+
       - name: Create ephemeral release branch
         id: ephemeral-branch
+        env:
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          MAIN_START_REF="${{ inputs.main_start_ref }}"
           REF="$(echo "${MAIN_START_REF:-}" | tr -d '[:space:]')"
 
-          if [[ -n "$REF" && "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]]; then
+          if [[ -n "$REF" && "$REF" =~ $HOTFIX_REF_PATTERN ]]; then
             # Hotfix: use the hotfix branch itself as the ephemeral branch (no new branch created).
             if ! git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
               echo "Error: hotfix branch does not exist on origin: $REF" >&2
@@ -275,7 +428,7 @@ jobs:
             echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
             echo "is_hotfix=true" >> "$GITHUB_OUTPUT"
           else
-            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ needs.validate-inputs.outputs.crates_branch }}/$TIMESTAMP"
             git checkout -b "$EPHEMERAL_BRANCH"
             git push origin "$EPHEMERAL_BRANCH"
             echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
@@ -285,11 +438,14 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Get publication order for crate and dependencies
+        env:
+          CRATES: ${{ needs.validate-inputs.outputs.crates }}
         run: |
-          echo "Getting publication order for ${{ inputs.crate }}..."
-          
-          # Get the publication order as JSON and save to file
-          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          echo "Getting publication order for ${{ needs.validate-inputs.outputs.crates_display }}..."
+
+          # CRATES is a space-separated list validated upstream; word-splitting is intentional.
+          # shellcheck disable=SC2086
+          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json $CRATES > /tmp/crates.json
           echo "Publication order:"
           cat /tmp/crates.json
       
@@ -299,8 +455,10 @@ jobs:
           # Get commits since release for each crate and save to file
           "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
-          # Capture ephemeral release branch tip now. Use this in Release version bumps
-          # so tag/merge-base resolution uses the same ref the script used.
+          # Capture the ephemeral release branch tip now: later steps run from the proposal
+          # branch, whose HEAD has moved on. commits-since-release.sh already ends every
+          # crate's `range` at this same commit; this is for the steps that need the tip on
+          # its own (the commit list handed to the verified push).
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
           echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
@@ -324,7 +482,7 @@ jobs:
 
           git checkout "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
           TIMESTAMP="${{ steps.ephemeral-branch.outputs.timestamp }}"
-          BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+          BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ needs.validate-inputs.outputs.crates_branch }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
           git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ steps.ephemeral-branch.outputs.ephemeral_branch }} branch"
@@ -332,8 +490,14 @@ jobs:
           
       - name: Release version bumps
         id: release-version-bumps
+        env:
+          PROPOSAL_BRANCH: ${{ steps.proposal-branch.outputs.branch_name }}
+          EPHEMERAL_BRANCH: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
+          IS_HOTFIX: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
+          BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
+          LEVEL_OVERRIDES: ${{ inputs.level_overrides }}
         run: |
-          echo "Release version bumps..."
+          set -euo pipefail
 
           # TODO: check if this is really necessary, we should have the full history from
           # previous steps.
@@ -342,293 +506,52 @@ jobs:
             git fetch --unshallow
           fi
 
-          # Initialize results array
-          echo "[]" > /tmp/api-changes.json
+          ARGS=()
+          if [ "$IS_HOTFIX" = "true" ]; then ARGS+=(--hotfix); fi
+          if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then ARGS+=(--bypass-standard-checks); fi
+          if [ -n "$LEVEL_OVERRIDES" ]; then ARGS+=(--level-overrides "$LEVEL_OVERRIDES"); fi
 
-          # Use release branch tip from when we ran commits-since-release (same ref the script used).
-          # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
-          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
-          echo "ORIGINAL_HEAD: $ORIGINAL_HEAD"
+          "${WORKFLOW_SCRIPTS_ROOT}/release-version-bumps.sh" \
+            --commits-by-crate /tmp/commits-by-crate.json \
+            --out /tmp/api-changes.json \
+            --branch "$PROPOSAL_BRANCH" \
+            "${ARGS[@]}"
 
-          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
-
-          # iterate over the commits and execute cargo release for each crate
-          jq -c '.[]' /tmp/commits-by-crate.json | while read -r crate; do
-            NAME=$(echo "$crate" | jq -r '.name')
-            TAG=$(echo "$crate" | jq -r '.tag')
-            TAG_PREFIX="$NAME-v"
-            CRATE_PATH=$(echo "$crate" | jq -r '.path')
-            TAG_EXISTS=$(echo "$crate" | jq -r '.tag_exists')
-            COMMITS=$(echo "$crate" | jq -r '.commits')
-            INITIAL_RELEASE=false
-
-            # if there are no commits and there is an existing tag, skip the release                                                                                      
-            # (new crates with no previous tag proceed to the initial release path)
-            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then                                                                                                  
-              echo "No commits since last release for $NAME, skipping release"
-              continue
-            fi
-
-            if [ "$TAG_EXISTS" = "true" ]; then
-              # Explicitly dereference annotated tags to their underlying commit.
-              # Several git commands do not consistently dereference annotated tag objects
-              # across all git versions.
-              TAG_COMMIT=$(git rev-parse "${TAG}^{}" 2>/dev/null || echo "")
-              if [ -z "$TAG_COMMIT" ]; then
-                echo "ERROR: Could not dereference tag $TAG to a commit" >&2
-                exit 1
-              fi
-
-              RANGE="$TAG_COMMIT..$ORIGINAL_HEAD"
-              echo "Using $RANGE as range (tag: $TAG)"
-
-              if git merge-base --is-ancestor "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null; then
-                echo "  Tag $TAG is ancestor of HEAD"
-              else
-                MERGE_BASE=$(git merge-base "$TAG_COMMIT" "$ORIGINAL_HEAD" 2>/dev/null || echo "")
-                if [ -n "$MERGE_BASE" ]; then
-                    RANGE="$MERGE_BASE..$ORIGINAL_HEAD"
-                    echo "  Tag $TAG is NOT ancestor of HEAD, using merge-base: $RANGE"
-                else
-                    # No common ancestor, tag is on unrelated history. Derive the range start from
-                    # the parent of the oldest commit found by commits-since-release.sh. That way
-                    # git can compute TREESAME correctly and the path filter won't include unrelated commits.
-                    OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
-                    OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
-                    if [ -n "$OLDEST_PARENT" ]; then
-                        RANGE="$OLDEST_PARENT..$ORIGINAL_HEAD"
-                        echo "  No common ancestor with tag $TAG: using parent of oldest commit as range start: $RANGE"
-                    else
-                        echo "  WARNING: Could not find merge-base for tag $TAG, using $RANGE"
-                    fi
-                fi
-              fi
-
-              BRANCHES=$(git branch --contains "$TAG_COMMIT" 2>/dev/null || echo "")
-              if [ -n "$BRANCHES" ]; then
-                echo "Tag $TAG is in branches: $BRANCHES"
-              else
-                echo "Tag $TAG (commit $TAG_COMMIT) is not in any local branch (normal for squash-merged releases)"
-              fi
-
-              # if there is a tag more recent than $TAG, continue the loop
-              LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
-              if [ "$LATEST_TAG" != "$TAG" ]; then
-                echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-
-                # do not skip the release for hotfix branches
-                if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
-                  echo "Continuing with the release for $NAME because it is a hotfix"
-                else
-                  if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
-                    echo "Skipping release for $NAME"
-                    continue
-                  else
-                    echo "Continuing with the release for $NAME because bypass_standard_checks is true"
-                  fi
-                fi
-              fi
-
-              echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$("${WORKFLOW_SCRIPTS_ROOT}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1)
-              echo "Semver level: $SEMVER_LEVEL"
-
-              LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
-              
-              echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
-              cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
-
+          # Check if there are commits to push or pending
+          if git diff --quiet "$EPHEMERAL_BRANCH"; then
+            PENDING_COUNT=$(jq '[.[] | select(.pending_release == "true")] | length' /tmp/api-changes.json)
+            if [ "$PENDING_COUNT" -gt 0 ]; then
+              echo "No direct version bumps yet, but $PENDING_COUNT crate(s) are pending libdd-* major-bump evaluation; continuing."
             else
-              echo "No previous release tag for $NAME, preparing initial release..."
-
-              # Use the version from the crate metadata
-              VERSION=$(echo "$crate" | jq -r '.version')
-              LEVEL="major"
-              TAG=""
-              RANGE=""
-              
-              # fail when the version is not an initial release
-              if [ "$VERSION" != "0.1.0" ]; then
-                echo "Error: $NAME is not a 0.1.0 release" >&2
-                exit 1
-              fi
-
-              INITIAL_RELEASE=true
-
-              echo "Executing cargo release for $NAME with level $LEVEL..."
-              cargo release version -p "$NAME" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
+              echo "No changes to push. Cancelling the workflow."
+              exit 1
             fi
-            
-            # Commit the changes
-            cargo release commit --no-confirm -x
-            
-            NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-            NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
-
-            # Add to results array
-            jq --arg name "$NAME" \
-            --arg level "$LEVEL" \
-            --arg tag "$NEXT_TAG" \
-            --arg prev_tag "$TAG" \
-            --arg version "$NEXT_VERSION" \
-            --arg range "$RANGE" \
-            --argjson commits "$COMMITS" \
-            --arg path "$CRATE_PATH" \
-            --arg initial_release "$INITIAL_RELEASE" \
-            '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]' \
-              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
-          done
-
-          # Check if there are commits to push
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
-            echo "No changes to push. Cancelling the workflow."
-            exit 1
           fi
-
-          # Output the results
-          echo "API changes summary:"
-          jq . /tmp/api-changes.json
 
       - name: Update version for crates with libdd-* direct dependency major bumps since last release
+        env:
+          PROPOSAL_BRANCH: ${{ steps.proposal-branch.outputs.branch_name }}
         run: |
           set -euo pipefail
-          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
-          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
-          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
-          WF_SHA="${{ github.sha }}"
+          "${WORKFLOW_SCRIPTS_ROOT}/release-version-major-bumps.sh" \
+            --api-changes /tmp/api-changes.json \
+            --out /tmp/api-changes-with-major-bumps.json \
+            --branch "$PROPOSAL_BRANCH"
 
-          git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
-          set +e
-          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
-            > /tmp/api-changes-with-major-bumps-pre-commit.json
-          MB_RC=$?
-          git worktree remove --force "$MAJOR_BUMPS_WT" || true
-          set -e
-          if [[ "$MB_RC" -ne 0 ]]; then
-            echo "Major bumps level script failed with code $MB_RC"
-            echo "Major bumps level script output:"
-            cat /tmp/api-changes-with-major-bumps-pre-commit.json
-            exit "$MB_RC"
-          fi
-
-          # Full same crate list as api-changes.json; rows updated in place when a major bump is applied.
-          cp /tmp/api-changes-with-major-bumps-pre-commit.json /tmp/api-changes-with-major-bumps.json
-
-          # iterate over the major bumps and check the major bumps and update the version
-          jq -c '.[]' /tmp/api-changes-with-major-bumps-pre-commit.json | while read -r bump; do
-            NAME=$(echo "$bump" | jq -r '.name')
-            PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
-            TAG=$(echo "$bump" | jq -r '.tag')
-            VERSION=$(echo "$bump" | jq -r '.version')
-            MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
-
-            if [ "$MAJOR_BUMPS" != "[]" ]; then
-              echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
-              cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
-              
-              git commit -am "chore(release): update version for $NAME with major bumps"
-
-              NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-              NEXT_TAG="$NAME-v$NEXT_VERSION"
-
-              echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
-
-              jq --arg name "$NAME" \
-                --arg nl "major" \
-                --arg version "$NEXT_VERSION" \
-                --arg tag "$NEXT_TAG" \
-                'map(if .name == $name then . + {level: $nl, version: $version, tag: $tag} else . end)' \
-                /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
-                && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
-            fi
-          done
-
-          # Output the results
-          echo "API changes with major bumps summary:"
-          jq . /tmp/api-changes-with-major-bumps.json
-      
       - name: Generate CHANGELOGS
         id: generate-changelogs
+        env:
+          EPHEMERAL_BRANCH: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
         run: |
           set -euo pipefail
           ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
 
-          echo "Generating CHANGELOGS"
-
-          jq -c '.[]' /tmp/api-changes-with-major-bumps.json | while read -r bump; do
-            COMMITS=$(echo "$bump" | jq -r '.commits')
-            RANGE=$(echo "$bump" | jq -r '.range')
-            NAME=$(echo "$bump" | jq -r '.name')
-            TAG=$(echo "$bump" | jq -r '.prev_tag')
-            NEXT_TAG=$(echo "$bump" | jq -r '.tag')
-            VERSION=$(echo "$bump" | jq -r '.version')
-            CRATE_PATH=$(echo "$bump" | jq -r '.path')
-            INITIAL_RELEASE=$(echo "$bump" | jq -r '.initial_release')
-
-            if [ "$INITIAL_RELEASE" = "true" ]; then
-              echo "Initial release for $NAME"
-
-              # Use the existing CHANGELOG.md if present, otherwise create a minimal one
-              if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
-                echo "Creating CHANGELOG.md for $NAME..."
-                RELEASE_DATE=$(date +%Y-%m-%d)
-                printf '# Changelog\n\n\n## %s - %s\n\nInitial release.\n' "$VERSION" "$RELEASE_DATE" > "$CRATE_PATH/CHANGELOG.md"
-                
-                git add "$CRATE_PATH/CHANGELOG.md"
-                git commit -m "chore(release): update CHANGELOG.md for $NAME"
-              else
-                echo "Using existing CHANGELOG.md for $NAME..."
-              fi
-              continue
-            fi
-
-            # FIXME: $COMMITS could be empty if there are no commits since last release
-            if [ "$COMMITS" = "[]" ]; then
-              echo "No commits since last release for $NAME, skipping CHANGELOG generation"
-              continue
-            fi
-
-            # Build a tight range from commits already found by commits-since-release.sh.
-            # This will save some time analising unnecessary commits and prevent unrelated commits
-            # go through git-cliff filtering process.
-            NEWEST_COMMIT=$(echo "$COMMITS" | jq -r '.[0].hash // empty')
-            OLDEST_COMMIT=$(echo "$COMMITS" | jq -r '.[-1].hash // empty')
-            OLDEST_PARENT=$(git rev-parse "${OLDEST_COMMIT}^" 2>/dev/null || echo "")
-            if [ -n "$OLDEST_PARENT" ] && [ -n "$NEWEST_COMMIT" ]; then
-              COMMITS_RANGE="$OLDEST_PARENT..$NEWEST_COMMIT"
-            else
-              COMMITS_RANGE="$RANGE"
-            fi
-            echo "Executing git cliff for $NAME since $COMMITS_RANGE (oldest: $OLDEST_COMMIT, newest: $NEWEST_COMMIT), next tag: $NEXT_TAG..."
-
-            # git-cliff's --include-path uses cumulative tree diffs rather than per-commit
-            # diffs. This causes commits that don't touch the crate to pass the filter if an
-            # earlier commit in the range does touch it. In order to avoid that a first pass
-            # will generate the context inside the commit range and then a second step will
-            # filter the the commits according to the previously computed range stored in COMMITS.
-            CLIFF_CONTEXT_FILE=$(mktemp /tmp/git-cliff-context-XXXXXX.json)
-            CLIFF_HASHES_FILE=$(mktemp /tmp/git-cliff-hashes-XXXXXX.json)
-            CLIFF_FILTERED_FILE=$(mktemp /tmp/git-cliff-filtered-XXXXXX.json)
-
-            git cliff --context --tag "$NEXT_TAG" --ignore-tags ".*" -v "$COMMITS_RANGE" > "$CLIFF_CONTEXT_FILE"
-            echo "$COMMITS" | jq '[.[].hash]' > "$CLIFF_HASHES_FILE"
-            jq --slurpfile hashes "$CLIFF_HASHES_FILE" \
-               --arg prev_tag "$TAG" \
-               'map(. + {
-                 commits: [.commits[] | select(.id | IN($hashes[0][]))],
-                 previous: (.previous + {"version": $prev_tag})
-               })' \
-               "$CLIFF_CONTEXT_FILE" > "$CLIFF_FILTERED_FILE"
-            git cliff --from-context "$CLIFF_FILTERED_FILE" -u -v --prepend "$CRATE_PATH/CHANGELOG.md"
-            rm -f "$CLIFF_CONTEXT_FILE" "$CLIFF_HASHES_FILE" "$CLIFF_FILTERED_FILE"
-
-            git add "$CRATE_PATH/CHANGELOG.md"
-            git commit -m "chore(release): update CHANGELOG.md for $NAME"
-          done
+          "${WORKFLOW_SCRIPTS_ROOT}/release-generate-changelogs.sh" \
+            --api-changes /tmp/api-changes-with-major-bumps.json
 
           # Check if there are commits to push
-          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
+          if git diff --quiet "$EPHEMERAL_BRANCH"; then
             echo "No changes to push. Cancelling the workflow."
             exit 1
           fi
@@ -638,13 +561,32 @@ jobs:
           COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
-      - name: Push commits
+      - name: Hint crates left out of the proposal affected by its major bumps
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          "${WORKFLOW_SCRIPTS_ROOT}/release-excluded-crates-hints.sh" \
+            --api-changes /tmp/api-changes-with-major-bumps.json \
+            --out-markdown /tmp/excluded-crates-hints.md
+
+          # Empty when nothing is affected; the PR body and this summary then stay unchanged.
+          if [ -s /tmp/excluded-crates-hints.md ]; then
+            cat /tmp/excluded-crates-hints.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Push commits (verified)
+        if: ${{ !inputs.bypass_standard_checks }}
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
           head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
           command: push
           commits: "${{ steps.generate-changelogs.outputs.commits }}"
+
+      - name: Push commits (plain, testing only)
+        if: ${{ inputs.bypass_standard_checks }}
+        run: git push origin "HEAD:refs/heads/${{ steps.proposal-branch.outputs.branch_name }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -654,6 +596,7 @@ jobs:
             /tmp/commits-by-crate.json
             /tmp/api-changes.json
             /tmp/api-changes-with-major-bumps.json
+            /tmp/excluded-crates-hints.md
           retention-days: 1
 
       - name: Cleanup on failure
@@ -680,7 +623,10 @@ jobs:
       is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
           
   create-pr:
-    needs: cargo-release
+    # Without an explicit condition, the skipped check-membership job (on bypass runs) propagates
+    # its "skipped" status transitively through cargo-release to here. Gate on the direct needs instead.
+    if: ${{ !cancelled() && needs.cargo-release.result == 'success' && needs.validate-inputs.result == 'success' }}
+    needs: [cargo-release, validate-inputs]
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Enable OIDC
@@ -699,18 +645,22 @@ jobs:
 
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
           policy: self.write.pr
 
       - name: Create a PR
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           MAIN_START_REF: ${{ inputs.main_start_ref }}
           MAIN_BRANCH: ${{ env.MAIN_BRANCH }}
           BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
           PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
           RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
+          CRATES_COUNT: ${{ needs.validate-inputs.outputs.count }}
+          CRATES_DISPLAY: ${{ needs.validate-inputs.outputs.crates_display }}
+          LEVEL_OVERRIDES: ${{ inputs.level_overrides }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
           EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
@@ -731,7 +681,14 @@ jobs:
             NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
           fi
 
-          # PR body from api-changes-with-major-bumps.json (same crates as api-changes.json; tags/versions updated after libdd major bumps).
+          HINTS_NOTE=""
+          if [ -s /tmp/excluded-crates-hints.md ]; then
+            HINTS_NOTE=$'\n'"$(cat /tmp/excluded-crates-hints.md)"$'\n\n'
+          fi
+
+          # PR body from api-changes-with-major-bumps.json: the crates actually being released,
+          # i.e. api-changes.json minus the pending candidates that did not earn a major bump,
+          # with tags/versions updated for those that did.
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
           [ $api[0][]
@@ -740,6 +697,9 @@ jobs:
                 "",
                 (if .version then "**Next version:** `\(.version)`" else null end),
                 "**Semver bump:** `\(.level)`",
+                (if (.level_override // "") != "" then
+                  "**Level set by hand:** `\(.level_override)` was requested via the level_overrides input instead of being computed"
+                else null end),
                 (if .tag then "**Tag:** `\(.tag)`\n" else null end),
                 (if (.major_bumps // [] | length) > 0 then
                   "### :warning: major bump forced due to:\n\n"
@@ -759,26 +719,83 @@ jobs:
 
           COMMITS_AND_API_BODY=$(jq -nr --slurpfile api /tmp/api-changes-with-major-bumps.json "$JQ_FILTER")
 
-          PR_BODY="# Release proposal for ${{ inputs.crate }} and its dependencies
+          if [ "$CRATES_COUNT" -gt 1 ]; then
+            POSSESSIVE="their"
+          else
+            POSSESSIVE="its"
+          fi
+
+          # A machine-readable record of the inputs this proposal was generated from.
+          # Built with jq so operator-supplied values are JSON-escaped rather than pasted
+          # into markdown. A `-->` inside any value would close the comment early and
+          # truncate what a reader parses back; `>` only occurs inside JSON strings here
+          # and \u003e decodes to the same character, so escaping it keeps the payload
+          # intact.
+          BYPASS_JSON=false
+          if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then BYPASS_JSON=true; fi
+          PROPOSAL_INPUTS=$(jq -nc \
+            --arg crates "$CRATES_DISPLAY" \
+            --arg main_start_ref "$MAIN_START_REF" \
+            --arg level_overrides "$LEVEL_OVERRIDES" \
+            --argjson bypass_standard_checks "$BYPASS_JSON" \
+            '{crates: $crates, main_start_ref: $main_start_ref,
+              level_overrides: $level_overrides,
+              bypass_standard_checks: $bypass_standard_checks}')
+          INPUTS_NOTE="<!-- release-proposal-inputs: ${PROPOSAL_INPUTS//>/\\u003e} -->"$'\n\n'
+
+          PR_BODY="${INPUTS_NOTE}# Release proposal for ${{ needs.validate-inputs.outputs.crates_display }} and $POSSESSIVE dependencies
 
           This PR contains version bumps based on public API changes and commits since last release.
 
-          ${HOTFIX_NOTE}${NON_DEFAULT}${COMMITS_AND_API_BODY}"
-          
+          ${HOTFIX_NOTE}${NON_DEFAULT}${HINTS_NOTE}${COMMITS_AND_API_BODY}"
+
           echo "$PR_BODY" > /tmp/pr-body.md
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
 
-          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
-          gh pr create \
-            --head "$BRANCH_NAME" \
-            --title "chore(release): proposal for ${{ inputs.crate }}" \
-            --body-file /tmp/pr-body.md \
-            --label "release-proposal" \
-            --label "skip-metadata-check" \
-            --label "skip-changelog-check" \
-            --label "skip-pr-title-semver-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
-            --draft
+          # NOTE: the PR title must start with 'chore(release): proposal for'. Downstream tooling matches on that prefix.
+          PR_TITLE="chore(release): proposal for ${{ needs.validate-inputs.outputs.crates_display }}"
+          if [ "${#PR_TITLE}" -gt 100 ]; then
+            PR_TITLE="${PR_TITLE:0:97}..."
+          fi
+          if gh pr create \
+              --head "$BRANCH_NAME" \
+              --title "$PR_TITLE" \
+              --body-file /tmp/pr-body.md \
+              --label "release-proposal" \
+              --label "skip-metadata-check" \
+              --label "skip-changelog-check" \
+              --label "skip-pr-title-semver-check" \
+              --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+              --draft; then
+            echo "Pull request created."
+          elif [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
+            # Bypass/testing runs use the default GITHUB_TOKEN, which often cannot create PRs (org
+            # disables "Allow GitHub Actions to create and approve pull requests"). Don't fail the
+            # run for that; print a manual-open link instead. Standard runs fall through and fail.
+            COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ needs.cargo-release.outputs.ephemeral_branch }}...${BRANCH_NAME}?expand=1"
+            echo "::warning::Automatic PR creation failed on a bypass run; open the PR manually: $COMPARE_URL"
+            {
+              echo "## Release proposal branch pushed"
+              echo ""
+              echo "Automatic PR creation failed (the token may not be permitted to create PRs). Open it manually:"
+              echo ""
+              echo "- **Head:** \`$BRANCH_NAME\`"
+              echo "- **Base:** \`${{ needs.cargo-release.outputs.ephemeral_branch }}\`"
+              echo "- **Suggested title:** \`$PR_TITLE\`"
+              echo "- [Open the PR creation form]($COMPARE_URL)"
+              echo ""
+              echo "<details><summary>Suggested PR body</summary>"
+              echo ""
+              cat /tmp/pr-body.md
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Standard run: PR creation must succeed. Fail so the cleanup-on-failure step removes the
+            # pushed branches and the failure stays visible for retry.
+            echo "::error::Failed to create the release proposal PR." >&2
+            exit 1
+          fi
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')

@@ -9,6 +9,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+pub use super::vec_map::VecMap;
+
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
     Service,
@@ -70,7 +72,8 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 ///     let _ = span.meta.get("foo");
 /// }
 /// ```
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, Serialize)]
+#[cfg_attr(any(test, feature = "test-utils"), derive(PartialEq))]
 pub struct Span<T: TraceData> {
     pub service: T::Text,
     pub name: T::Text,
@@ -86,12 +89,12 @@ pub struct Span<T: TraceData> {
     pub duration: i64,
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<T::Text, T::Text>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<T::Text, f64>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T::Text, T::Bytes>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta: VecMap<T::Text, T::Text>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub metrics: VecMap<T::Text, f64>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta_struct: VecMap<T::Text, T::Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -303,6 +306,15 @@ impl<T: TraceData> From<&AttributeArrayValue<T>> for u8 {
     }
 }
 
+impl<T: TraceData> Span<T> {
+    /// Deduplicate the [VecMap] parts of this span. See [VecMap::dedup].
+    pub fn dedup(&mut self) {
+        self.meta.dedup();
+        self.metrics.dedup();
+        self.meta_struct.dedup();
+    }
+}
+
 fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }
@@ -327,6 +339,7 @@ mod tests {
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::SliceData;
+    use std::borrow::Cow;
     use std::collections::HashMap;
 
     #[test]
@@ -340,42 +353,50 @@ mod tests {
     #[test]
     fn serialize_deserialize_test() {
         let span: Span<SliceData<'_>> = Span {
-            name: "tracing.operation",
-            resource: "MyEndpoint",
+            name: Cow::Borrowed("tracing.operation"),
+            resource: Cow::Borrowed("MyEndpoint"),
             span_links: vec![SpanLink {
                 trace_id: 42,
-                attributes: HashMap::from([("span", "link")]),
-                tracestate: "running",
+                attributes: HashMap::from([(Cow::Borrowed("span"), Cow::Borrowed("link"))]),
+                tracestate: Cow::Borrowed("running"),
                 ..Default::default()
             }],
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "exception",
+                name: Cow::Borrowed("exception"),
                 attributes: HashMap::from([
                     (
-                        "exception.message",
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                        Cow::Borrowed("exception.message"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
                             "Cannot divide by zero",
-                        )),
+                        ))),
                     ),
                     (
-                        "exception.type",
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
+                        Cow::Borrowed("exception.type"),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(Cow::Borrowed(
+                            "RuntimeError",
+                        ))),
                     ),
                     (
-                        "exception.escaped",
+                        Cow::Borrowed("exception.escaped"),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
                     ),
                     (
-                        "exception.count",
+                        Cow::Borrowed("exception.count"),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
                     ),
                     (
-                        "exception.lines",
+                        Cow::Borrowed("exception.lines"),
                         AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
-                            AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in <module>",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in divide",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "RuntimeError: Cannot divide by zero",
+                            )),
                         ]),
                     ),
                 ]),
@@ -416,9 +437,9 @@ mod tests {
         let span: Span<SliceData<'_>> = Span {
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "test",
+                name: Cow::Borrowed("test"),
                 attributes: HashMap::from([(
-                    "test.event",
+                    Cow::Borrowed("test.event"),
                     AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.2)),
                 )]),
             }],

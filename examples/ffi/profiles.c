@@ -38,6 +38,15 @@ int main(void) {
     exit(EXIT_FAILURE);
   }
 
+  ddog_prof_Profile_Result omit_result =
+      ddog_prof_Profile_set_omit_local_root_span_id_when_serializing(&profile, true);
+  if (omit_result.tag != DDOG_PROF_PROFILE_RESULT_OK) {
+    ddog_CharSlice message = ddog_Error_message(&omit_result.err);
+    fprintf(stderr, "%.*s", (int)message.len, message.ptr);
+    ddog_Error_drop(&omit_result.err);
+    goto cleanup;
+  }
+
   // Original API sample
   ddog_prof_Location root_location = {
       // yes, a zero-initialized mapping is valid

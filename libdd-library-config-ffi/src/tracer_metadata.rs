@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(feature = "std")]
 
+use core::ffi::CStr;
 use libdd_common_ffi::Result;
 #[cfg(target_os = "linux")]
 use libdd_library_config::tracer_metadata::AnonymousFileHandle;
 use libdd_library_config::tracer_metadata::{self, TracerMetadata};
-use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 
 /// C-compatible representation of an anonymous file handle

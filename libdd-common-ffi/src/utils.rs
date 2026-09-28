@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(feature = "std")]
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use core::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 
 /// Wraps a C-FFI function in standard form
 /// Expects the function to return a result type that implements into and to be decorated with
@@ -10,7 +11,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 #[macro_export]
 macro_rules! wrap_with_ffi_result {
     ($body:block) => {{
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use core::panic::AssertUnwindSafe;
+        use std::panic::catch_unwind;
 
         catch_unwind(AssertUnwindSafe(|| {
             $crate::wrap_with_ffi_result_no_catch!({ $body })
@@ -39,7 +41,8 @@ macro_rules! wrap_with_ffi_result_no_catch {
 #[macro_export]
 macro_rules! wrap_with_void_ffi_result {
     ($body:block) => {{
-        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use core::panic::AssertUnwindSafe;
+        use std::panic::catch_unwind;
 
         catch_unwind(AssertUnwindSafe(|| {
             $crate::wrap_with_void_ffi_result_no_catch!({ $body })
@@ -81,7 +84,7 @@ impl ToHexStr for usize {
 /// being unable to allocate, this helper handles failures to allocate as well, turning them into a
 /// fallback error.
 pub fn handle_panic_error(
-    error: Box<dyn std::any::Any + Send + 'static>,
+    error: Box<dyn core::any::Any + Send + 'static>,
     function_name: &str,
 ) -> crate::Error {
     catch_unwind(AssertUnwindSafe(|| {
@@ -113,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_handle_panic_error_fallback_does_not_allocate() {
-        let mut error_result_buffer: [std::os::raw::c_char; 100] = [0; 100];
+        let mut error_result_buffer: [core::ffi::c_char; 100] = [0; 100];
 
         assert_no_alloc(|| {
             // Simulate fallback code path of handle_panic_error + ddog_Error_message
@@ -126,7 +129,7 @@ mod tests {
         });
 
         unsafe {
-            let c_str = std::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
+            let c_str = core::ffi::CStr::from_ptr(error_result_buffer.as_ptr());
             assert_eq!(
                 c_str.to_str().unwrap(),
                 "libdatadog failed: (panic) Cannot allocate error message"

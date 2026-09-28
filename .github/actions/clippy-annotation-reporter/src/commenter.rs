@@ -50,6 +50,37 @@ pub async fn post_comment(
     Ok(())
 }
 
+/// Delete the bot's comment on a PR if one exists.
+///
+/// Used when a PR no longer has any tracked annotation changes, so a stale
+/// report left over from an earlier revision does not linger.
+pub async fn delete_comment_if_exists(
+    octocrab: &Octocrab,
+    owner: &str,
+    repo: &str,
+    pr_number: u64,
+    signature: Option<&str>,
+) -> Result<()> {
+    let signature = signature.unwrap_or("<!-- clippy-annotation-reporter-comment -->");
+
+    info!("Checking for stale comment to delete on PR #{}", pr_number);
+    match find_existing_comment(octocrab, owner, repo, pr_number, signature).await? {
+        Some(comment_id) => {
+            info!("Deleting stale comment #{}", comment_id);
+            octocrab
+                .issues(owner, repo)
+                .delete_comment(comment_id.into())
+                .await
+                .context("Failed to delete stale comment")?;
+        }
+        None => {
+            info!("No existing comment to delete on PR #{}", pr_number);
+        }
+    }
+
+    Ok(())
+}
+
 /// Find existing comment by the bot on a PR
 async fn find_existing_comment(
     octocrab: &Octocrab,
@@ -511,5 +542,88 @@ mod tests {
         assert!(result.is_err());
         list_comments_mock.assert();
         update_comment_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_delete_comment_if_exists_deletes() {
+        let server = MockServer::start();
+
+        // An existing bot comment is present.
+        let list_comments_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/test-owner/test-repo/issues/123/comments")
+                .query_param("per_page", "100");
+
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([create_comment_json(
+                    456,
+                    "Old report\n\n<!-- test-signature -->"
+                )]));
+        });
+
+        let delete_comment_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/test-owner/test-repo/issues/comments/456");
+
+            then.status(204);
+        });
+
+        let octocrab = create_test_octocrab(&server);
+
+        let result = delete_comment_if_exists(
+            &octocrab,
+            "test-owner",
+            "test-repo",
+            123,
+            Some("<!-- test-signature -->"),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        list_comments_mock.assert();
+        delete_comment_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_delete_comment_if_exists_no_comment() {
+        let server = MockServer::start();
+
+        // No comments on the PR.
+        let list_comments_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/test-owner/test-repo/issues/123/comments")
+                .query_param("per_page", "100");
+
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!([]));
+        });
+
+        let delete_comment_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/test-owner/test-repo/issues/comments/456");
+
+            then.status(204);
+        });
+
+        let octocrab = create_test_octocrab(&server);
+
+        let result = delete_comment_if_exists(
+            &octocrab,
+            "test-owner",
+            "test-repo",
+            123,
+            Some("<!-- test-signature -->"),
+        )
+        .await;
+
+        assert!(result.is_ok());
+        list_comments_mock.assert();
+        assert_eq!(
+            delete_comment_mock.hits(),
+            0,
+            "Delete must not be called when no comment exists"
+        );
     }
 }

@@ -106,6 +106,7 @@ mod unix {
             .demangle_names(true)
             .endpoint_url(output_url)
             .resolve_frames(stacktrace_collection)
+            .unwind_from_ucontext(env::var_os("DD_TEST_UNWIND_FROM_UCONTEXT").is_some())
             .signals(crashtracker::default_signals())
             .timeout(TEST_COLLECTOR_TIMEOUT)
             .unix_socket_path("".to_string())
@@ -158,15 +159,22 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            #[cfg(target_os = "linux")]
+            "assert_fail" => {
+                extern "C" {
+                    fn trigger_c_assert() -> !;
+                }
+                // SAFETY: trigger_c_assert calls the real C assert() macro,
+                // which expands to __assert_fail and never returns.
+                unsafe { trigger_c_assert() }
+            }
             "unhandled_exception" => {
                 let mut stacktrace = StackTrace::new_incomplete();
                 let mut stackframe1 = StackFrame::new();
-                stackframe1.with_ip(1234);
                 stackframe1.with_function("test_function1".to_string());
                 stackframe1.with_file("test_file1".to_string());
 
                 let mut stackframe2 = StackFrame::new();
-                stackframe2.with_ip(5678);
                 stackframe2.with_function("test_function2".to_string());
                 stackframe2.with_file("test_file2".to_string());
 

@@ -4,8 +4,8 @@
 //! Types used when calling [`super::send_with_retry`] to configure the retry logic.
 
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::time::sleep;
+
+use libdd_capabilities::sleep::SleepCapability;
 
 /// Enum representing the type of backoff to use for the delay between retries.
 #[derive(Debug, Clone)]
@@ -17,12 +17,6 @@ pub enum RetryBackoffType {
     Constant,
     /// The delay is doubled for each attempt.
     Exponential,
-    /// No delay between retries. Intended for wasm where `tokio::time::sleep` is unavailable.
-    /// Should be paired with `max_retries: 0` to avoid spamming the target.
-    ///
-    /// Temporary workaround: a proper solution would introduce a `SleepTrait` capability so that
-    /// wasm can delegate to a JS-side timer (e.g. `setTimeout`).
-    Disabled,
 }
 
 /// Struct representing the retry strategy for sending data.
@@ -45,23 +39,11 @@ pub struct RetryStrategy {
 
 impl Default for RetryStrategy {
     fn default() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            RetryStrategy {
-                max_retries: 5,
-                delay_ms: Duration::from_millis(100),
-                backoff_type: RetryBackoffType::Exponential,
-                jitter: None,
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            RetryStrategy {
-                max_retries: 0,
-                delay_ms: Duration::ZERO,
-                backoff_type: RetryBackoffType::Disabled,
-                jitter: None,
-            }
+        RetryStrategy {
+            max_retries: 5,
+            delay_ms: Duration::from_millis(100),
+            backoff_type: RetryBackoffType::Exponential,
+            jitter: None,
         }
     }
 }
@@ -98,7 +80,9 @@ impl RetryStrategy {
             max_retries,
             delay_ms: Duration::from_millis(delay_ms),
             backoff_type,
-            jitter: jitter.map(Duration::from_millis),
+            jitter: jitter
+                .filter(|jitter_ms| *jitter_ms != 0)
+                .map(Duration::from_millis),
         }
     }
     /// Delays the next request attempt based on the retry strategy.
@@ -109,30 +93,29 @@ impl RetryStrategy {
     /// # Arguments
     ///
     /// * `attempt`: The number of the current attempt (1-indexed).
-    pub(crate) async fn delay(&self, attempt: u32) {
-        if matches!(self.backoff_type, RetryBackoffType::Disabled) {
-            return;
-        }
+    /// * `capabilities`: Provides the sleep capability for the delay.
+    pub(crate) async fn delay<C: SleepCapability>(&self, attempt: u32, capabilities: &C) {
+        capabilities.sleep(self.delay_for_attempt(attempt)).await;
+    }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let delay = match self.backoff_type {
-                RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
-                RetryBackoffType::Constant => self.delay_ms,
-                RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
-                RetryBackoffType::Disabled => unreachable!(),
-            };
+    fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let retry_index = attempt.saturating_sub(1);
+        let multiplier = match self.backoff_type {
+            RetryBackoffType::Exponential => 2u32.checked_pow(retry_index).unwrap_or(u32::MAX),
+            RetryBackoffType::Constant => 1,
+            RetryBackoffType::Linear => retry_index.saturating_add(1),
+        };
+        let delay = self
+            .delay_ms
+            .checked_mul(multiplier)
+            .unwrap_or(Duration::MAX);
 
-            if let Some(jitter) = self.jitter {
-                let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-                sleep(delay + Duration::from_millis(jitter)).await;
-            } else {
-                sleep(delay).await;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let _ = attempt;
+        if let Some(jitter) = self.jitter {
+            let jitter_ms = u64::try_from(jitter.as_millis()).unwrap_or(u64::MAX);
+            let randomized_ms = rand::random::<u64>() % jitter_ms;
+            delay.saturating_add(Duration::from_millis(randomized_ms))
+        } else {
+            delay
         }
     }
 
@@ -146,6 +129,7 @@ impl RetryStrategy {
 // For tests RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
+    use libdd_capabilities_impl::NativeSleepCapability;
     use tokio::time::Instant;
 
     // This tolerance is on the higher side to account for github's runners not having consistent
@@ -154,7 +138,10 @@ mod tests {
     const RETRY_STRATEGY_TIME_TOLERANCE_MS: u64 = 100;
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
+    // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
+    // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
+    // with "multi-thread".
+    #[tokio::test(start_paused = true)]
     async fn test_retry_strategy_constant() {
         let retry_strategy = RetryStrategy {
             max_retries: 5,
@@ -162,9 +149,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -177,7 +165,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(2).await;
+        retry_strategy.delay(2, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -191,7 +179,10 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
+    // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
+    // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
+    // with "multi-thread".
+    #[tokio::test(start_paused = true)]
     async fn test_retry_strategy_linear() {
         let retry_strategy = RetryStrategy {
             max_retries: 5,
@@ -199,9 +190,10 @@ mod tests {
             backoff_type: RetryBackoffType::Linear,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -214,7 +206,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
 
         // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
@@ -231,7 +223,10 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
+    // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
+    // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
+    // with "multi-thread".
+    #[tokio::test(start_paused = true)]
     async fn test_retry_strategy_exponential() {
         let retry_strategy = RetryStrategy {
             max_retries: 5,
@@ -239,9 +234,10 @@ mod tests {
             backoff_type: RetryBackoffType::Exponential,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -254,7 +250,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
         // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
         // = delay_ms * 4.
@@ -269,7 +265,10 @@ mod tests {
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
+    // Enabling "paused" tokio mode so the tokio's inner clock is auto-advanced to the nearest
+    // pending deadline. Warning: this only works in current-thread runtime, it can't be combined
+    // with "multi-thread".
+    #[tokio::test(start_paused = true)]
     async fn test_retry_strategy_jitter() {
         let retry_strategy = RetryStrategy {
             max_retries: 5,
@@ -277,9 +276,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: Some(Duration::from_millis(50)),
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         // The delay should be between delay_ms and delay_ms + jitter
@@ -308,6 +308,35 @@ mod tests {
             retry_strategy.max_retries(),
             17,
             "Max retries did not match expected value"
+        );
+    }
+
+    #[test]
+    fn test_retry_delays() {
+        let retry_strategy = RetryStrategy::new(3, 100, RetryBackoffType::Exponential, None);
+
+        assert_eq!(
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            retry_strategy.delay_for_attempt(2),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            retry_strategy.delay_for_attempt(3),
+            Duration::from_millis(400)
+        );
+    }
+
+    #[test]
+    fn test_zero_jitter_is_supported() {
+        let retry_strategy = RetryStrategy::new(1, 100, RetryBackoffType::Constant, Some(0));
+
+        assert_eq!(retry_strategy.jitter, None);
+        assert_eq!(
+            retry_strategy.delay_for_attempt(1),
+            Duration::from_millis(100)
         );
     }
 }

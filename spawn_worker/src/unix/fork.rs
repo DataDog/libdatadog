@@ -29,6 +29,21 @@ pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
     }
 }
 
+/// Forks, skipping pthread_atfork() handlers
+#[cfg(target_os = "linux")]
+pub(crate) unsafe fn fork_skip_atfork_handlers() -> Result<Fork, std::io::Error> {
+    // libc::_Fork doesn't exist not is it a thing in newer glibc versions
+    let res = unsafe {
+        let null = std::ptr::null::<libc::c_void>();
+        libc::syscall(libc::SYS_clone, libc::SIGCHLD, null, null, null, null)
+    } as libc::pid_t;
+    match res {
+        -1 => Err(std::io::Error::last_os_error()),
+        0 => Ok(Fork::Child),
+        res => Ok(Fork::Parent(res)),
+    }
+}
+
 /// Runs supplied closure in separate process via fork(2)
 ///
 /// # Safety

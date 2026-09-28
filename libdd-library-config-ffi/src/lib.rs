@@ -130,7 +130,9 @@ mod std_api {
     use libdd_common_ffi::{CString, Error};
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use core::panic::AssertUnwindSafe;
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    use std::panic::catch_unwind;
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     macro_rules! catch_panic {
@@ -283,7 +285,7 @@ mod std_api {
         ($path:expr) => {
             ffi::CStr::from_std(unsafe {
                 let path: &'static str = constcat::concat!($path, "\0");
-                std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+                core::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
             })
         };
     }

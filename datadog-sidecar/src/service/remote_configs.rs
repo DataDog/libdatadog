@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::service::DynamicInstrumentationConfigState;
+use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::shm_remote_config::{ShmRemoteConfigs, ShmRemoteConfigsGuard};
-use datadog_remote_config::fetch::{
+use libdd_common::{tag::Tag, MutexExt};
+use libdd_remote_config::fetch::{
     ConfigInvariants, ConfigOptions, MultiTargetStats, NotifyTarget, ProductCapabilities,
 };
-use libdd_common::{tag::Tag, MutexExt};
 use std::collections::hash_map::Entry;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
@@ -103,7 +103,8 @@ impl RemoteConfigs {
         &self,
         options: ConfigOptions,
         poll_interval: Duration,
-        runtime_id: String,
+        instance_id: InstanceId,
+        remote_config_generation: u64,
         notify_target: RemoteConfigNotifyTarget,
         env: String,
         service: String,
@@ -138,7 +139,8 @@ impl RemoteConfigs {
             }
         }
         .add_runtime(
-            runtime_id,
+            instance_id,
+            remote_config_generation,
             notify_target,
             env,
             service,

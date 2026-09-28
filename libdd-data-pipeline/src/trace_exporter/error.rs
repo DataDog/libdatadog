@@ -5,6 +5,7 @@
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
 use http::StatusCode;
+#[cfg(not(target_arch = "wasm32"))]
 use libdd_common::http_common;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
@@ -104,6 +105,7 @@ impl Error for NetworkError {
 }
 
 impl NetworkError {
+    #[cfg(not(target_arch = "wasm32"))]
     fn new<E: Into<anyhow::Error>>(kind: NetworkErrorKind, source: E) -> Self {
         Self {
             kind,
@@ -229,6 +231,7 @@ impl From<http::uri::InvalidUri> for TraceExporterError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<http_common::Error> for TraceExporterError {
     fn from(err: http_common::Error) -> Self {
         match err {
@@ -242,6 +245,7 @@ impl From<http_common::Error> for TraceExporterError {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<http_common::ClientError> for TraceExporterError {
     fn from(err: http_common::ClientError) -> Self {
         use http_common::ErrorKind;

@@ -72,10 +72,10 @@ fn obfuscate_redis_string_benchmark(c: &mut Criterion) {
         "ZADD key XX INCR score member score member",
         "ZADD key XX INCR score member",
         "ZADD key XX INCR score",
-        r#"
+        r"
 CONFIG command
 SET k v
-                    "#,
+                    ",
         "",
         "SET key value",
         "GET k",
@@ -105,7 +105,7 @@ SET k v
                 }
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
 }
 

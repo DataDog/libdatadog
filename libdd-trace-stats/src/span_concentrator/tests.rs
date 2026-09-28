@@ -1,11 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span_concentrator::aggregation::OwnedAggregationKey;
+use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_VALUE};
 
 use super::*;
+use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
+use std::borrow::Cow;
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -44,11 +46,11 @@ fn get_test_span<'a>(
         parent_id,
         duration,
         start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, offset) as i64 - duration,
-        service,
-        name: "query",
-        resource,
+        service: Cow::Borrowed(service),
+        name: Cow::Borrowed("query"),
+        resource: Cow::Borrowed(resource),
         error,
-        r#type: "db",
+        r#type: Cow::Borrowed("db"),
         ..Default::default()
     }
 }
@@ -70,11 +72,11 @@ fn get_test_span_with_meta<'a>(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
     for (k, v) in meta {
-        span.meta.insert(*k, *v);
+        span.meta.insert(Cow::Borrowed(*k), Cow::Borrowed(*v));
     }
-    span.metrics = HashMap::new();
+    span.metrics = VecMap::new();
     for (k, v) in metrics {
-        span.metrics.insert(*k, *v);
+        span.metrics.insert(Cow::Borrowed(*k), *v);
     }
     span
 }
@@ -99,8 +101,16 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -118,12 +128,12 @@ fn test_concentrator_oldest_timestamp_cold() {
 
     // Assert we didn't insert spans in older buckets
     for _ in 0..concentrator.buffer_len {
-        let stats = concentrator.flush(flushtime, false);
+        let stats = concentrator.flush(flushtime, false).all_buckets();
         assert_eq!(stats.len(), 0, "We should get 0 time buckets");
         flushtime += Duration::from_nanos(concentrator.bucket_size);
     }
 
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
 
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
@@ -149,8 +159,16 @@ fn test_concentrator_oldest_timestamp_cold() {
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -173,12 +191,12 @@ fn test_concentrator_oldest_timestamp_hot() {
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
-        let stats = concentrator.flush(flushtime, false);
+        let stats = concentrator.flush(flushtime, false).all_buckets();
         assert!(stats.is_empty(), "We should get 0 time buckets");
         flushtime += Duration::from_nanos(concentrator.bucket_size);
     }
 
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
     // First oldest bucket aggregates, it should have it all except the
@@ -198,7 +216,7 @@ fn test_concentrator_oldest_timestamp_hot() {
     assert_counts_equal(expected, stats.first().unwrap().stats.clone());
 
     flushtime += Duration::from_nanos(concentrator.bucket_size);
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
     // Stats of the last four spans.
@@ -222,8 +240,16 @@ fn test_concentrator_oldest_timestamp_hot() {
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -256,7 +282,7 @@ fn test_concentrator_stats_totals() {
     let mut flushtime = now;
 
     for _ in 0..=concentrator.buffer_len {
-        let stats = concentrator.flush(flushtime, false);
+        let stats = concentrator.flush(flushtime, false).all_buckets();
         if stats.is_empty() {
             continue;
         }
@@ -282,8 +308,16 @@ fn test_concentrator_stats_totals() {
 /// buckets.
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -499,7 +533,7 @@ fn test_concentrator_stats_counts() {
     let mut flushtime = now;
 
     for _ in 0..=concentrator.buffer_len + 2 {
-        let stats = concentrator.flush(flushtime, false);
+        let stats = concentrator.flush(flushtime, false).all_buckets();
         let expected_flushed_timestamps = align_timestamp(
             system_time_to_unix_duration(flushtime).as_nanos() as u64,
             concentrator.bucket_size,
@@ -524,7 +558,7 @@ fn test_concentrator_stats_counts() {
             stats.first().unwrap().stats.clone(),
         );
 
-        let stats = concentrator.flush(flushtime, false);
+        let stats = concentrator.flush(flushtime, false).all_buckets();
         assert_eq!(
             stats.len(),
             0,
@@ -578,6 +612,10 @@ fn test_span_should_be_included_in_stats() {
         now,
         get_span_kinds(),
         vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -626,10 +664,12 @@ fn test_span_should_be_included_in_stats() {
         },
     ];
 
-    let stats = concentrator.flush(
-        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
-        false,
-    );
+    let stats = concentrator
+        .flush(
+            now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
+            false,
+        )
+        .all_buckets();
     assert_counts_equal(
         expected,
         stats
@@ -649,22 +689,28 @@ fn test_ignore_partial_spans() {
         .get_mut(0)
         .unwrap()
         .metrics
-        .insert("_dd.partial_version", 830604.0);
+        .insert(Cow::Borrowed("_dd.partial_version"), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
     }
 
-    let stats = concentrator.flush(
-        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
-        false,
-    );
+    let stats = concentrator
+        .flush(
+            now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
+            false,
+        )
+        .all_buckets();
     assert_eq!(0, stats.len());
 }
 
@@ -679,6 +725,10 @@ fn test_force_flush() {
         now,
         get_span_kinds(),
         vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -689,10 +739,10 @@ fn test_force_flush() {
     let flushtime = now - Duration::from_secs(3600);
 
     // Bucket should not be flushed without force flush
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
     assert_eq!(0, stats.len());
 
-    let stats = concentrator.flush(flushtime, true);
+    let stats = concentrator.flush(flushtime, true).all_buckets();
     assert_eq!(1, stats.len());
 }
 
@@ -760,12 +810,20 @@ fn test_peer_tags_aggregation() {
         now,
         get_span_kinds(),
         vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_without_peer_tags.add_span(span);
@@ -856,7 +914,9 @@ fn test_peer_tags_aggregation() {
         },
     ];
 
-    let stats_with_peer_tags = concentrator_with_peer_tags.flush(flushtime, false);
+    let stats_with_peer_tags = concentrator_with_peer_tags
+        .flush(flushtime, false)
+        .all_buckets();
     assert_counts_equal(
         expected_with_peer_tags,
         stats_with_peer_tags
@@ -866,10 +926,128 @@ fn test_peer_tags_aggregation() {
             .clone(),
     );
 
-    let stats_without_peer_tags = concentrator_without_peer_tags.flush(flushtime, false);
+    let stats_without_peer_tags = concentrator_without_peer_tags
+        .flush(flushtime, false)
+        .all_buckets();
     assert_counts_equal(
         expected_without_peer_tags,
         stats_without_peer_tags
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test that spans differing only by peer-tag IPs aggregate after IP quantization
+#[test]
+fn test_peer_tags_quantization_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            2,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.3"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.4"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            4,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    let mut concentrator_with_peer_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![
+            "db.instance".to_string(),
+            "db.system".to_string(),
+            "peer.hostname".to_string(),
+        ],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &spans {
+        concentrator_with_peer_tags.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_peer_tags.bucket_size * concentrator_with_peer_tags.buffer_len as u64,
+        );
+
+    let expected_with_peer_tags = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "SELECT user_id from users WHERE user_name = ?".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 225,
+        hits: 3,
+        top_level_hits: 3,
+        errors: 0,
+        is_trace_root: pb::Trilean::False.into(),
+        span_kind: "client".to_string(),
+        peer_tags: vec![
+            "db.instance:i-1234".to_string(),
+            "db.system:postgres".to_string(),
+            "peer.hostname:blocked-ip-address".to_string(),
+        ],
+        ..Default::default()
+    }];
+
+    let stats_with_peer_tags = concentrator_with_peer_tags
+        .flush(flushtime, false)
+        .all_buckets();
+    assert_counts_equal(
+        expected_with_peer_tags,
+        stats_with_peer_tags
             .first()
             .expect("There should be at least one time bucket")
             .stats
@@ -961,6 +1139,10 @@ fn test_base_service_peer_tag() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
 
     for span in &spans {
@@ -1033,7 +1215,7 @@ fn test_base_service_peer_tag() {
         },
     ];
 
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
     assert_counts_equal(
         expected,
         stats
@@ -1049,119 +1231,119 @@ fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "server")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("server"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "consumer")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("consumer"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "client")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("client"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "producer")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("producer"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "internal")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("internal"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SERVER")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("SERVER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CONSUMER")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CONSUMER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLIENT")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CLIENT"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PRODUCER")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("PRODUCER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INTERNAL")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("INTERNAL"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SerVER")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("SerVER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "ConSUMeR")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("ConSUMeR"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLiENT")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("CLiENT"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PROducER")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("PROducER"))].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INtERNAL")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed("INtERNAL"))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "")]),
+                meta: vec![(Cow::Borrowed("span.kind"), Cow::Borrowed(""))].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([]),
+                meta: vec![].into(),
                 ..Default::default()
             },
             false,
@@ -1181,6 +1363,10 @@ fn test_pb_span() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        None,
+        vec!["custom.primary".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
@@ -1298,6 +1484,32 @@ fn test_pb_span() {
                 span_events: vec![],
             }
         },
+        // Span with measured flag and additional metric tags
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("custom.primary".to_string(), "val".to_string());
+
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("_dd.measured".to_string(), 1.0);
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "database_query".to_string(),
+                trace_id: 1,
+                span_id: 6,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 40) as i64,
+                duration: 150,
+                error: 1,
+                r#type: "db".to_string(),
+                meta,
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
         // Grpc span
         {
             let mut meta = std::collections::HashMap::new();
@@ -1334,7 +1546,7 @@ fn test_pb_span() {
     // Flush and get stats
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
-    let stats = concentrator.flush(flushtime, false);
+    let stats = concentrator.flush(flushtime, false).all_buckets();
 
     assert_eq!(stats.len(), 1, "Should get exactly one time bucket");
     let bucket = &stats[0];
@@ -1400,6 +1612,20 @@ fn test_pb_span() {
             is_trace_root: pb::Trilean::False.into(),
             ..Default::default()
         },
+        // Measured span with additional metric tags
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "database_query".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            additional_metric_tags: vec!["custom.primary:val".to_string()],
+            ..Default::default()
+        },
         pb::ClientGroupedStats {
             service: "service1".to_string(),
             name: "rpc.grpc".to_string(),
@@ -1417,4 +1643,1372 @@ fn test_pb_span() {
     ];
 
     assert_counts_equal(expected_stats, bucket.stats.clone());
+}
+
+/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
+/// independently and that ok_duration + error_duration matches the combined group duration
+/// (which the agent /v0.6/stats path uses).
+#[test]
+fn test_flush_with_otlp_exact_per_cell_scalars() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    // 3 ok spans (200, 300, 100 ns) and 2 error spans (700, 500 ns), all same agg key.
+    let mut spans = vec![
+        get_test_span(now, 1, 0, 200, 0, "svc", "res", 0),
+        get_test_span(now, 2, 0, 300, 0, "svc", "res", 0),
+        get_test_span(now, 3, 0, 100, 0, "svc", "res", 0),
+        get_test_span(now, 4, 0, 700, 0, "svc", "res", 1),
+        get_test_span(now, 5, 0, 500, 0, "svc", "res", 1),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    for s in &spans {
+        concentrator.add_span(s);
+    }
+
+    let flushed = concentrator.flush_with_otlp_exact(now, true);
+    assert_eq!(flushed.len(), 1);
+    let b = &flushed[0];
+    assert_eq!(b.exact.len(), 1);
+    let exact = &b.exact[0];
+
+    assert_eq!(exact.ok.count, 3);
+    assert_eq!(exact.ok.duration_ns, 600);
+    assert_eq!(exact.ok.min_ns, 100);
+    assert_eq!(exact.ok.max_ns, 300);
+
+    assert_eq!(exact.error.count, 2);
+    assert_eq!(exact.error.duration_ns, 1200);
+    assert_eq!(exact.error.min_ns, 500);
+    assert_eq!(exact.error.max_ns, 700);
+
+    // ok_duration + error_duration equals the combined group.duration (agent path field).
+    let group = &b.bucket.stats[0];
+    assert_eq!(
+        group.duration,
+        exact.ok.duration_ns + exact.error.duration_ns
+    );
+    assert_eq!(group.hits, 5);
+    assert_eq!(group.errors, 2);
+}
+
+/// Build a minimal concentrator with a tiny `max_entries_per_bucket` for cardinality tests.
+fn make_cardinality_concentrator(cardinality_limits: CardinalityLimitConfig) -> SpanConcentrator {
+    let now = SystemTime::now();
+    SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["peer.hostname".to_owned()],
+        Some(cardinality_limits),
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    )
+}
+
+/// When the limit is 3 and we insert 5 distinct-resource spans, only 3 normal keys plus one
+/// overflow key must appear in the flushed stats. Total hits must equal 5.
+#[test]
+fn test_whole_key_cardinality_limit_collapse() {
+    let now = SystemTime::now();
+    let limit: usize = 3;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct-resource root spans all in the same time bucket.
+    let resources: Vec<String> = (0..limit + 2).map(|i| format!("resource-{i}")).collect();
+    for (i, resource) in resources.iter().enumerate() {
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            resource,
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly limit normal keys + 1 overflow key.
+    assert_eq!(
+        stats.len(),
+        limit + 1,
+        "expected {limit} normal groups + 1 overflow group, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits,
+        (limit + 2) as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // Exactly one overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        1,
+        "expected exactly one overflow group"
+    );
+}
+
+/// When the `http_endpoint` cardinality limit is 3 and we insert 5 distinct spans differing only on
+/// their `http_endpoint`, only 3 normal keys plus one overflow key must appear in the flushed
+/// stats.
+///
+/// But then inserting spans differing on another field, it should not be collapsed.
+/// So total hits must equal 6.
+#[test]
+fn test_per_key_cardinality_limit_collapse_http_endpoint() {
+    let now = SystemTime::now();
+    let limit: usize = 3;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        http_endpoint_limit: limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `http_endpoint` root spans all in the same time bucket.
+    let http_endpoints: Vec<String> = (0..limit + 2).map(|i| format!("endpoint-{i}")).collect();
+    for (i, http_endpoint) in http_endpoints.iter().enumerate() {
+        let meta = [("http.endpoint", http_endpoint.as_str())];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+    // Insert a distinct `resource` root span, this one won't get collapsed
+    {
+        let meta = [("http.endpoint", "endpoint-0")];
+        let span = get_test_span_with_meta(
+            now,
+            limit as u64 + 3,
+            0,
+            100,
+            2,
+            "svc",
+            "different-resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly limit normal keys + 1 overflow key + the distinct `resource` span
+    assert_eq!(
+        stats.len(),
+        limit + 2,
+        "expected {limit} normal groups + 1 overflow key + 1 for the distinct `resource` span, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits,
+        (limit + 3) as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group, given whole key cardinality limit was not reached"
+    );
+    let http_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.http_endpoint == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        http_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the http_endpoint field"
+    );
+}
+
+/// When whole-key cardinality limit is reached, check that per-key fields are collapsed before
+/// falling back to whole-key
+#[test]
+fn test_per_key_cardinality_limit_collapse_before_whole_key() {
+    let now = SystemTime::now();
+    let peer_tags_limit = 3;
+    let whole_key_limit = peer_tags_limit + 1;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit,
+        peer_tags_limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `peer.hostname` root spans all in the same time bucket.
+    let inserted_spans = peer_tags_limit + 2;
+    let peer_tag_values: Vec<String> = (0..inserted_spans).map(|i| format!("peer-{i}")).collect();
+    for (i, peer_tag_value) in peer_tag_values.iter().enumerate() {
+        let meta = [
+            ("peer.hostname", peer_tag_value.as_str()),
+            ("span.kind", "client"),
+        ];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly peer_tags_limit normal keys + 1 overflow key
+    assert_eq!(
+        stats.len(),
+        peer_tags_limit + 1,
+        "expected {peer_tags_limit} normal groups + 1 overflow key, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits, inserted_spans as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group: whole key cardinality limit was not reached because per-field cardinality limit collapsed keys before overflowing whole key"
+    );
+    let peer_tag_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.peer_tags == [TRACER_BLOCKED_VALUE])
+        .collect();
+    assert_eq!(
+        peer_tag_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the peer_tags field"
+    );
+}
+
+/// The overflow bucket must correctly aggregate the hits from overflow spans.
+#[test]
+fn test_overflow_bucket_counts() {
+    let now = SystemTime::now();
+    let limit: usize = 1;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
+
+    // First span fills the sole slot; the next 4 spans all have distinct keys → all overflow.
+    for i in 0..5usize {
+        let resource = format!("resource-{i}");
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            10 * (i as i64 + 1),
+            2,
+            "svc",
+            &resource,
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty());
+    let stats = &buckets[0].stats;
+
+    // There must be exactly 2 groups: 1 normal + 1 overflow.
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected exactly 1 normal + 1 overflow group"
+    );
+
+    let overflow = stats
+        .iter()
+        .find(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+
+    // 4 spans overflowed, total duration = 20 + 30 + 40 + 50 = 140.
+    assert_eq!(overflow.hits, 4, "all 4 overflow spans must be merged");
+    assert_eq!(
+        overflow.duration, 140,
+        "overflow durations must sum correctly"
+    );
+}
+
+/// When the number of distinct spans is within the limit, no overflow bucket should appear.
+#[test]
+fn test_no_collapse_within_limit() {
+    let now = SystemTime::now();
+    let limit: usize = 10;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
+
+    // Insert exactly `limit` distinct-resource spans — no overflow expected.
+    for i in 0..limit {
+        let resource = format!("resource-{i}");
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            50,
+            2,
+            "svc",
+            &resource,
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty());
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        limit,
+        "expected exactly {limit} groups with no overflow"
+    );
+    assert!(
+        stats.iter().all(|g| g.resource != TRACER_BLOCKED_VALUE),
+        "no overflow group should be present within the limit"
+    );
+}
+
+/// The overflow `ClientGroupedStats` row must carry `tracer_blocked_value` on all sentinel
+/// string fields as specified by the RFC.
+#[test]
+fn test_overflow_bucket_key_sentinel_values() {
+    let now = SystemTime::now();
+    let limit: usize = 1;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
+
+    // First span occupies the only slot; second one overflows.
+    let first = get_test_span_with_meta(
+        now,
+        1,
+        0,
+        50,
+        2,
+        "my-service",
+        "my-resource",
+        0,
+        &[],
+        &[("_dd.measured", 1.0)],
+    );
+    let second = get_test_span_with_meta(
+        now,
+        2,
+        0,
+        75,
+        2,
+        "other-service",
+        "other-resource",
+        0,
+        &[],
+        &[("_dd.measured", 1.0)],
+    );
+
+    concentrator.add_span(&first);
+    concentrator.add_span(&second);
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty());
+    let stats = &buckets[0].stats;
+
+    let overflow = stats
+        .iter()
+        .find(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+
+    // Every string dimension must be the sentinel.
+    assert_eq!(
+        overflow.service, TRACER_BLOCKED_VALUE,
+        "service must be sentinel"
+    );
+    assert_eq!(overflow.name, TRACER_BLOCKED_VALUE, "name must be sentinel");
+    assert_eq!(
+        overflow.resource, TRACER_BLOCKED_VALUE,
+        "resource must be sentinel"
+    );
+    assert_eq!(
+        overflow.r#type, TRACER_BLOCKED_VALUE,
+        "type must be sentinel"
+    );
+    assert_eq!(
+        overflow.span_kind, TRACER_BLOCKED_VALUE,
+        "span_kind must be sentinel"
+    );
+    assert_eq!(
+        overflow.http_method, TRACER_BLOCKED_VALUE,
+        "http_method must be sentinel"
+    );
+    assert_eq!(
+        overflow.http_endpoint, TRACER_BLOCKED_VALUE,
+        "http_endpoint must be sentinel"
+    );
+    assert_eq!(
+        overflow.service_source, TRACER_BLOCKED_VALUE,
+        "service_source must be sentinel"
+    );
+    // Numeric and boolean fields must be zero/false (NOT_SET per RFC).
+    assert_eq!(overflow.http_status_code, 0, "http_status_code must be 0");
+    assert_eq!(
+        overflow.grpc_status_code, "",
+        "grpc_status_code must be empty"
+    );
+    assert!(!overflow.synthetics, "synthetics must be false");
+    // is_trace_root uses Trilean; NOT_SET maps to 0.
+    assert_eq!(
+        overflow.is_trace_root, 0,
+        "is_trace_root must be NOT_SET (0)"
+    );
+    assert_eq!(overflow.peer_tags, [TRACER_BLOCKED_VALUE]);
+
+    // The normal group must be unaffected.
+    let normal = stats
+        .iter()
+        .find(|g| g.resource != TRACER_BLOCKED_VALUE)
+        .expect("normal group must exist");
+    assert_eq!(normal.service, "my-service");
+    assert_eq!(normal.resource, "my-resource");
+}
+
+#[test]
+fn test_additional_metric_tags_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "a")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "b")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator_without_additional_metric_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut concentrator_with_additional_metric_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["custom.primary".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &spans {
+        concentrator_without_additional_metric_tags.add_span(span);
+        concentrator_with_additional_metric_tags.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_additional_metric_tags.bucket_size
+                * concentrator_with_additional_metric_tags.buffer_len as u64,
+        );
+
+    let expected_without_additional_metric_tags = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "GET /objects".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 200,
+        hits: 2,
+        top_level_hits: 2,
+        errors: 0,
+        is_trace_root: pb::Trilean::True.into(),
+        ..Default::default()
+    }];
+
+    let expected_with_additional_metric_tags = vec![
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            additional_metric_tags: vec!["custom.primary:a".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            additional_metric_tags: vec!["custom.primary:b".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    assert_counts_equal(
+        expected_without_additional_metric_tags,
+        concentrator_without_additional_metric_tags
+            .flush(flushtime, false)
+            .all_buckets()
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+    assert_counts_equal(
+        expected_with_additional_metric_tags,
+        concentrator_with_additional_metric_tags
+            .flush(flushtime, false)
+            .all_buckets()
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+#[test]
+fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
+    let now = SystemTime::now();
+    let long_value = "x".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &["region:tracer_blocked_value"]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_at_length_cap_passes_through() {
+    let now = SystemTime::now();
+    let ok_value = "x".repeat(200);
+    let meta = [("region", ok_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &[format!("region:{ok_value}")]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
+    // 101 two byte characters: 202 bytes but only 101 chars, well under the 200 character cap.
+    let now = SystemTime::now();
+    let ok_value = "é".repeat(101);
+    let meta = [("region", ok_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &[format!("region:{ok_value}")]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocked_value() {
+    let now = SystemTime::now();
+    let long_value = "é".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &["region:tracer_blocked_value"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_sort() {
+    let keys = vec![
+        "region".to_string(),
+        "env".to_string(),
+        "tenant".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["env", "region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_dedup() {
+    let keys = vec![
+        "region".to_string(),
+        "region".to_string(),
+        "tenant".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_limit() {
+    let keys = vec![
+        "aaa".to_string(),
+        "bbb".to_string(),
+        "ccc".to_string(),
+        "ddd".to_string(),
+        "eee".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["aaa", "bbb", "ccc", "ddd"]);
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
+    // With a cap of 1, the first distinct tag value is admitted; the second gets masked.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let mut tags: Vec<&str> = buckets[0]
+        .stats
+        .iter()
+        .flat_map(|s| s.additional_metric_tags.iter().map(String::as_str))
+        .collect();
+    tags.sort_unstable();
+    assert_eq!(tags, vec!["region:us-east-1", "tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
+    // A key admitted before the cap is hit continues merging after the cap is exceeded.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    // Three spans: first two fill and exceed a cap of 1, third re-hits the admitted key.
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let admitted = buckets[0]
+        .stats
+        .iter()
+        .find(|s| s.additional_metric_tags == vec!["region:us-east-1"])
+        .expect("admitted entry should exist");
+    // spans 1 and 3 both have region:us-east-1 and the same agg key, so hits == 2.
+    assert_eq!(admitted.hits, 2);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_resets_on_flush() {
+    // After flushing, a new bucket starts with a fresh cap budget.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+
+    // First bucket: cap of 1 means only us-east-1 is admitted unmasked.
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+    let flush1_time =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let _first_buckets = concentrator.flush(flush1_time, true);
+
+    // Second bucket: cap resets; eu-west-1 can now be admitted unmasked.
+    let later = flush1_time + Duration::from_nanos(BUCKET_SIZE);
+    let meta_b2 = [("region", "eu-west-1")];
+    let mut spans2 = vec![get_test_span_with_meta(
+        later,
+        4,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /b",
+        0,
+        &meta_b2,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans2.as_mut_slice());
+    concentrator.add_span(&spans2[0]);
+
+    let flush2_time =
+        later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let second_buckets = concentrator.flush(flush2_time, true).all_buckets();
+    let tags: Vec<&str> = second_buckets
+        .iter()
+        .flat_map(|b| b.stats.iter())
+        .flat_map(|s| s.additional_metric_tags.iter().map(String::as_str))
+        .collect();
+    assert!(
+        tags.contains(&"region:eu-west-1"),
+        "eu-west-1 should be admitted unmasked in a fresh bucket, got: {tags:?}"
+    );
+}
+
+#[test]
+fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() {
+    // An untagged span already fills the bucket's max_entries. A new tagged span, even though
+    // it's under the additional_metric_tags_max_entries budget, must go straight to overflow
+    // instead of being masked.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        Some(CardinalityLimitConfig {
+            whole_key_limit: 1,
+            ..Default::default()
+        }),
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 5;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected the untagged entry plus one overflow group, got {stats:?}"
+    );
+    let overflow = stats
+        .iter()
+        .find(|s| s.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+    assert_eq!(overflow.hits, 1);
+    assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
+    // A span exceeds the additional_metric_tags_max_entries budget, so its tag values get
+    // masked. But the bucket's max_entries is also already full, so that masked key must also
+    // collapse into the overflow sentinel instead of becoming its own distinct entry.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "eu-west-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        Some(CardinalityLimitConfig {
+            whole_key_limit: 1,
+            ..Default::default()
+        }),
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected the admitted entry plus one overflow group, no separate masked group, got {stats:?}"
+    );
+    let overflow = stats
+        .iter()
+        .find(|s| s.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+    assert_eq!(overflow.hits, 1);
+    assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_multiple_masked_entries_merge() {
+    // Two distinct source keys that both get masked to the same resource/tag combination must
+    // merge into a single masked entry rather than producing duplicate masked rows.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "eu-west-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "ap-south-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected one admitted entry and one merged masked entry, got {stats:?}"
+    );
+    let masked = stats
+        .iter()
+        .find(|s| s.additional_metric_tags == vec!["tracer_blocked_value:".to_string()])
+        .unwrap_or_else(|| panic!("masked entry should exist. Got {stats:?}"));
+    assert_eq!(
+        masked.hits, 2,
+        "both GET /b spans should merge into the same masked entry"
+    );
+}
+
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: bool) {
+    use arc_swap::ArcSwap;
+    use std::sync::Arc;
+
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        Some(Arc::new(ArcSwap::from_pointee(
+            StatsComputationObfuscationConfig {
+                enabled: obfuscation,
+                ..Default::default()
+            },
+        ))),
+    );
+    concentrator.set_big_resource(big_resource);
+    let aligned_now = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        BUCKET_SIZE,
+    );
+    let duration = 50;
+    let span = SpanSlice {
+        span_id: 1,
+        parent_id: 0,
+        duration,
+        start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, 5) as i64 - duration,
+        error: 0,
+        name: Cow::Owned("query".repeat(20_000)),
+        resource: Cow::Owned("🤠".repeat(20_000)),
+        service: Cow::Owned("A".repeat(20_000)),
+        r#type: Cow::Owned("🫵".repeat(20_000)),
+        ..Default::default()
+    };
+
+    let mut spans = vec![span];
+    compute_top_level_span(spans.as_mut_slice());
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let stats = concentrator.flush(SystemTime::now(), true).all_buckets();
+
+    let bucket = stats.first().unwrap().stats.first().unwrap();
+
+    if obfuscation {
+        let expected_resource_len = if big_resource { 15_000 } else { 5_000 };
+        assert_eq!(
+            bucket.resource.len(),
+            expected_resource_len,
+            "Stats bucket resource got truncated to {expected_resource_len} bytes"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            100,
+            "Stats bucket service got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            100,
+            "Stats bucket type got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100,
+            "Stats bucket name (operation) got truncated to 100 bytes"
+        );
+    } else {
+        assert_eq!(
+            bucket.resource.len(),
+            80_000,
+            "Stats bucket resource did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            20_000,
+            "Stats bucket service did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            80_000,
+            "Stats bucket type did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100_000,
+            "Stats bucket name (operation) did not get truncated because obfuscation is disabled"
+        );
+    }
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_default() {
+    test_concentrator_truncate_fields_helper(false, true);
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_with_big_resource() {
+    test_concentrator_truncate_fields_helper(true, true);
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_obfuscation_disabled() {
+    test_concentrator_truncate_fields_helper(false, false);
 }

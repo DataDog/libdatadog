@@ -82,6 +82,22 @@ impl FunctionId2 {
         self.0.is_null()
     }
 
+    #[cfg(feature = "cxx")]
+    pub(crate) fn into_raw_ptr(self) -> *mut Function2 {
+        self.0
+    }
+
+    /// Reconstructs a FunctionId2 from its opaque CXX carrier.
+    ///
+    /// # Safety
+    /// raw must be null/default or a FunctionId2 handle produced by libdatadog.
+    /// Null/default handles represent the default/unknown function. Non-null
+    /// handles require their originating ProfilesDictionary to still be alive.
+    #[cfg(feature = "cxx")]
+    pub(crate) unsafe fn from_raw_ptr(raw: *mut Function2) -> Self {
+        Self(raw)
+    }
+
     /// Converts the `FunctionId2` into an `Option<Function2>` where an empty
     /// `FunctionId2` converts to a `None`.
     ///

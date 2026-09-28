@@ -1,0 +1,26 @@
+[package]
+name = "libdd-ipc-macros"
+version = "1.0.1"
+description = "IPC macros for libdatadog"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ipc-macros"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+proc-macro = true
+bench = false
+
+[dependencies]
+proc-macro2 = { workspace = true, default-features = true }
+quote = { workspace = true, default-features = true }
+# Needs full (ItemTrait, Pat), parsing, printing, clone-impls, proc-macro; derive not used.
+syn = { workspace = true, features = [
+    "full",
+    "parsing",
+    "printing",
+    "clone-impls",
+    "proc-macro",
+] }
+heck.workspace = true

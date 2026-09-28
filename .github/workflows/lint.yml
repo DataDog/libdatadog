@@ -15,10 +15,18 @@ jobs:
       crates-count: ${{ steps.set-packages.outputs.crates-count }}
       fmt-packages: ${{ steps.set-packages.outputs.fmt-packages }}
       clippy-packages: ${{ steps.set-packages.outputs.clippy-packages }}
+      rust-version: ${{ steps.rust-version.outputs.version }}
+      nightly-version: ${{ steps.nightly-version.outputs.version }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
         fetch-depth: 0
+    - name: Read Rust version from rust-toolchain.toml
+      id: rust-version
+      run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+    - name: Read nightly version from nightly-toolchain.toml
+      id: nightly-version
+      run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
     - name: Get crate report
       id: changed-crates
       uses: ./.github/actions/crates-reporter
@@ -62,6 +70,33 @@ jobs:
         uses: devops-actions/actionlint@c6744a34774e4e1c1df0ff66bdb07ec7ee480ca0 # 0.1.9
         with:
           shellcheck_opts: '-e SC2086'
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      codeowners: ${{ steps.filter.outputs.codeowners }}
+      licensecheck: ${{ steps.filter.outputs.licensecheck }}
+      license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
+      manifests: ${{ steps.filter.outputs.manifests }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            codeowners:
+              - '.github/CODEOWNERS'
+              - added|deleted: '**'
+            licensecheck:
+              - '**/*.rs'
+              - '**/*.c'
+              - '**/*.sh'
+            license_3rdparty:
+              - 'Cargo.lock'
+              - '**/Cargo.toml'
+            manifests:
+              - '**/Cargo.toml'
+
   rustfmt:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
@@ -74,16 +109,26 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
-      - name: Install nightly-2026-02-08 toolchain and rustfmt
-        run: rustup set profile minimal && rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
+      - name: Install ${{ needs.setup.outputs.nightly-version }} toolchain and rustfmt
+        run: |
+          rustup set profile minimal
+          rustup install ${{ needs.setup.outputs.nightly-version }}
+          rustup component add rustfmt --toolchain ${{ needs.setup.outputs.nightly-version }}
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
+          # Override rust-toolchain.toml so rustfmt runs on nightly (required by
+          # the unstable_features in rustfmt.toml) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ needs.setup.outputs.nightly-version }}
         run: |
           if [[ -z "$FMT_PACKAGES" ]]; then
             cargo fmt --all -- --check
@@ -99,7 +144,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["1.84.1", "stable", "nightly-2026-02-08"]
+        rust_version: ["msrv", "stable", "nightly"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -107,32 +152,79 @@ jobs:
         with:
           submodules: recursive
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
-        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+        id: install-toolchain
+        shell: bash
+        run: |
+          VERSION="${{ matrix.rust_version }}"
+          if [ "$VERSION" = "msrv" ]; then
+            VERSION="${{ needs.setup.outputs.rust-version }}"
+          elif [ "$VERSION" = "nightly" ]; then
+            VERSION="${{ needs.setup.outputs.nightly-version }}"
+          fi
+          rustup set profile minimal
+          rustup install "$VERSION"
+          rustup component add clippy --toolchain "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: clippy-${{ matrix.rust_version }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         env:
           CLIPPY_PACKAGES: ${{ needs.setup.outputs.clippy-packages }}
+          # Override rust-toolchain.toml so each matrix entry actually runs on
+          # its chosen toolchain instead of falling back to the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
+            git config --global core.longpaths true
           fi
-          EXTRA_CLIPPY_FLAG=$([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            # shellcheck disable=SC2086
-            cargo clippy --workspace --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
+            cargo clippy --workspace --all-targets --all-features --keep-going -- -D warnings
           else
             # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
           fi
 
+  workspace-deps:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    name: "Workspace dependency declarations"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          workspaces: .github/actions
+          cache-targets: true # cache build artifacts
+          shared-key: workspace-deps-lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      # The helper crates under .github/actions pin their own stable toolchain.
+      - name: Build the dependency linter
+        working-directory: .github/actions
+        run: cargo build --release -p workspace-deps-lint
+      - name: Check dependency declarations
+        # The linter shells out to `cargo metadata` to enumerate the workspace
+        # members. Keep that on the runner's preinstalled stable toolchain
+        # instead of downloading the workspace MSRV just to read a manifest.
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: .github/actions/target/release/workspace-deps-lint --manifest-path Cargo.toml
+
   licensecheck:
-    needs: setup
-    if: needs.setup.outputs.crates-count != '0'
+    needs: [setup, changes]
+    if: needs.setup.outputs.crates-count != '0' && (github.event_name != 'pull_request' || needs.changes.outputs.licensecheck == 'true')
     runs-on: ubuntu-latest
     name: "Presence of licence headers"
     steps:
@@ -142,11 +234,11 @@ jobs:
         run: sudo apt-get install -y licensecheck
       - name: Check licenses
         # Exclude symbolizer-ffi from the checks (mostly imported code)
-        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
+        run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -not -path "./vendor/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
   license-3rdparty:
-    needs: setup
-    if: needs.setup.outputs.crates-count != '0'
+    needs: [setup, changes]
+    if: needs.setup.outputs.crates-count != '0' && (github.event_name != 'pull_request' || needs.changes.outputs.license_3rdparty == 'true')
     runs-on: ubuntu-latest
     name: "Valid LICENSE-3rdparty.csv"
     steps:
@@ -186,6 +278,8 @@ jobs:
           overwrite: true
 
   codeowners-validator:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.codeowners == 'true'
     runs-on: ubuntu-latest
     name: "Validate CODEOWNERS"
     steps:

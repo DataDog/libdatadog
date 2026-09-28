@@ -9,7 +9,6 @@ on:
     - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.84.1
 
 jobs:
   setup:
@@ -55,7 +54,7 @@ jobs:
         } >> $GITHUB_OUTPUT
 
   ffi:
-    name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "FFI #${{ matrix.platform }}"
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     runs-on: ${{ matrix.platform }}
@@ -65,19 +64,21 @@ jobs:
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
-        rust_version: [""]
         include:
           - platform: "ubuntu-latest"
-            rust_version: "${RUST_VERSION}"
-          - platform: "ubuntu-latest"
             flags: "-C relocation-model=pic"
+            profile: "release-ci"
           - platform: "macos-15"
             flags: "-C relocation-model=pic"
+            profile: "release"
           - platform: "windows-latest"
             flags: "-C target-feature=+crt-static"
+            profile: "release-ci"
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Setup output dir
         shell: bash
         run: |
@@ -97,13 +98,10 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: true
-      - name: Install Rust ${{ matrix.rust_version }}
-        if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
-
       - id: rust-version
-        # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+        # rustup auto-installs the version pinned in rust-toolchain.toml on first invocation.
+        # On Windows run happens in a PowerShell, so start bash explicitly.
+        run: bash -c 'echo "version=$(rustc --version | cut -d" " -f2)" >> $GITHUB_OUTPUT'
 
       - name: Install Go (macOS)
         if: runner.os == 'macOS'
@@ -113,22 +111,28 @@ jobs:
           cache: false
 
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
       - name: "Generate profiling FFI"
         shell: bash
         env:
           RUSTFLAGS: "${{ matrix.flags }}"
         run: |
-          cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+              git config --global core.longpaths true
+          fi
+          cargo run --bin release --profile ${{ matrix.profile }} -- --profile ${{ matrix.profile }} --out $LIBDD_OUTPUT_FOLDER
       - name: 'Publish libdatadog'
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
-        # Only upload the artifacts built with the default Rust version
-        if: (success() || failure()) && matrix.rust_version == ''
+        if: success() || failure()
         with:
           if-no-files-found: error
           name: libdatadog.${{ matrix.platform }}
@@ -176,6 +180,8 @@ jobs:
       - name: "(Windows) Run FFI examples"
         shell: bash
         if: matrix.platform == 'windows-latest'
+        env:
+          RUSTFLAGS: "${{ matrix.flags }}"
         run: |
           cargo ffi-test
       - name: "Test building CXX bindings - Crashinfo (Unix)"
@@ -192,6 +198,13 @@ jobs:
           set -e
           cd examples/cxx
           ./build-profiling.sh
+      - name: "Test building CXX bindings - Profiling Dictionary (Unix)"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          cd examples/cxx
+          ./build-profiling-dictionary.sh
       - name: "Setup MSVC (Windows)"
         if: matrix.platform == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
@@ -207,33 +220,9 @@ jobs:
         run: |
           cd examples/cxx
           .\build-profiling.ps1
-
-  ffi_bake:
-    strategy:
-      matrix:
-        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
-    name: "FFI ${{ matrix.target }} via docker bake"
-    needs: setup
-    if: needs.setup.outputs.packages-count != '0'
-    concurrency:
-      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-${{ matrix.target }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on:
-      labels: ubuntu-latest-16-cores
-      group: APM Larger Runners
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
-        with:
-          buildkitd-config: .github/buildkitd-16-cores.toml
-      - name: Build and Generate FFI
-        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
-        with:
-          targets: ${{ matrix.target }}
-          # Caching is useful, when it works. We are routinely hanging, maybe this:
-          # https://github.com/docker/buildx/issues/537
-          #set: |
-          #  *.cache-from=type=gha,scope=${{ matrix.target }}
-          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+      - name: "Test building CXX bindings - Profiling Dictionary (Windows)"
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd examples/cxx
+          .\build-profiling-dictionary.ps1

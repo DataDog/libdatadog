@@ -139,7 +139,8 @@ impl StringTable {
     ///
     /// Fails if an allocator fails, or if the number of strings would exceed
     /// [`u32::MAX`].
-    pub fn try_intern(&mut self, str: &str) -> Result<StringId, Error> {
+    pub fn try_intern(&mut self, str: impl AsRef<str>) -> Result<StringId, Error> {
+        let str = str.as_ref();
         let set = &mut self.strings;
         match set.get_index_of(str) {
             // SAFETY: if it already exists, it must fit in the range.

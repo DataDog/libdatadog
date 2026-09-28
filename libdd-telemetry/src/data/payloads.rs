@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::hash::Hasher;
 
 use crate::data::metrics;
@@ -11,6 +12,34 @@ use serde::{Deserialize, Serialize};
 pub struct Dependency {
     pub name: String,
     pub version: Option<String>,
+    pub hash: Option<String>,
+    pub metadata: Option<Vec<DependencyMetadata>>,
+}
+
+/// SCA metadata may be attached to a dependency after it was first reported; keying the store
+/// by this instead of the full struct means that update refreshes the existing entry instead of
+/// being stored (and re-sent) as a second entry for the same package/version.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DependencyKey {
+    name: String,
+    version: Option<String>,
+    hash: Option<String>,
+}
+
+impl crate::worker::store::Keyed<DependencyKey> for Dependency {
+    fn key(&self) -> DependencyKey {
+        DependencyKey {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            hash: self.hash.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct DependencyMetadata {
+    pub r#type: String,
+    pub value: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
@@ -20,20 +49,35 @@ pub struct Integration {
     pub version: Option<String>,
     pub compatible: Option<bool>,
     pub auto_enabled: Option<bool>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Configuration {
     pub name: String,
-    pub value: String,
+    pub value: Option<String>, // distinguish `null` from ""
     pub origin: ConfigurationOrigin,
     pub config_id: Option<String>,
     pub seq_id: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 #[repr(C)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ConfigurationOrigin {
     EnvVar,
     Code,
@@ -43,16 +87,52 @@ pub enum ConfigurationOrigin {
     LocalStableConfig,
     FleetStableConfig,
     Calculated,
+    OtelEnvVar,
+    Ini,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+pub struct Error {
+    pub code: Option<i64>,
+    pub message: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
     pub configuration: Vec<Configuration>,
+    pub dependencies: Vec<Dependency>,
+    pub integrations: Vec<Integration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_signature: Option<InstallSignature>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub products: HashMap<String, ProductState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<Error>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct InstallSignature {
+    pub install_id: Option<String>,
+    pub install_type: Option<String>,
+    pub install_time: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
 pub struct AppDependenciesLoaded {
     pub dependencies: Vec<Dependency>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+pub struct ProductState {
+    pub enabled: bool,
+    pub version: Option<String>,
+    pub error: Option<Error>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct AppProductChange {
+    pub products: HashMap<String, ProductState>,
 }
 
 #[derive(Serialize, Debug)]
@@ -97,8 +177,22 @@ pub struct Log {
     pub is_crash: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Clone,
+    Copy,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+    // IntoStaticStr: required by the pre-9488 `ConvertToPyO3Enum` macro; see metrics.rs.
+    strum_macros::IntoStaticStr,
+)]
 #[serde(rename_all = "UPPERCASE")]
+#[strum(serialize_all = "UPPERCASE")]
 #[repr(C)]
 pub enum LogLevel {
     Error,
@@ -124,7 +218,11 @@ pub enum Method {
     Options = 6,
     Trace = 7,
     Connect = 8,
-    Other = 9, //This is specified as "*" in the OpenAPI spec
+    // The OpenAPI spec uses "*" for this variant. Whether "Other" accurately
+    // describes the "*" concept (any method) or whether it should be a
+    // catch-all for unknown methods is unclear.
+    #[serde(rename = "*")]
+    Other = 9,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -135,6 +233,12 @@ pub struct Endpoint {
     pub path: Option<String>,
     pub operation_name: String,
     pub resource_name: String,
+    #[serde(default)]
+    pub request_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_body_type: Option<Vec<String>>,
+    #[serde(default)]
+    pub response_code: Option<Vec<u32>>,
 }
 
 impl PartialEq for Endpoint {

@@ -97,9 +97,9 @@ impl<const N: usize> Drop for SaGuard<N> {
 #[cfg(test)]
 mod single_threaded_tests {
     use super::*;
+    use core::sync::atomic::{AtomicBool, Ordering};
     use nix::sys::signal::{self, Signal};
     use nix::unistd::Pid;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     #[cfg_attr(miri, ignore)]

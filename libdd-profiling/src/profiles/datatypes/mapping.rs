@@ -86,6 +86,22 @@ impl MappingId2 {
         self.0.is_null()
     }
 
+    #[cfg(feature = "cxx")]
+    pub(crate) fn into_raw_ptr(self) -> *mut Mapping2 {
+        self.0
+    }
+
+    /// Reconstructs a MappingId2 from its opaque CXX carrier.
+    ///
+    /// # Safety
+    /// raw must be null/default or a MappingId2 handle produced by libdatadog.
+    /// Null/default handles represent an unknown/no mapping. Non-null handles
+    /// require their originating ProfilesDictionary to still be alive.
+    #[cfg(feature = "cxx")]
+    pub(crate) unsafe fn from_raw_ptr(raw: *mut Mapping2) -> Self {
+        Self(raw)
+    }
+
     /// Converts the `MappingId2` into an `Option<Mapping2>` where an empty
     /// `MappingId2` converts to a `None`.
     ///

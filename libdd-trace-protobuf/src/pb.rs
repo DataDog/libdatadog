@@ -327,7 +327,10 @@ pub struct Span {
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
-    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
+    /// Entries can legitimately be much larger than other span fields, so this
+    /// field overrides the package-wide messagepack allocation limit with a 10MiB
+    /// cap (see the //msgp:limit directives in pkg/proto/pbgo/trace).
+    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty,limit=10485760"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
@@ -426,6 +429,41 @@ pub struct TracerPayload {
     /// @gotags: json:"app_version" msg:"app_version"
     #[prost(string, tag = "10")]
     pub app_version: ::prost::alloc::string::String,
+    /// containerDebug holds debug information about the container tags resolution.
+    /// @gotags: json:"container_debug,omitempty" msg:"container_debug,omitempty"
+    #[prost(message, optional, tag = "11")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_debug: ::core::option::Option<ContainerDebug>,
+}
+/// ContainerDebug holds debug information about the container tags resolution process.
+#[derive(Deserialize, Serialize, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ContainerDebug {
+    /// error specifies any error that occurred during container tag resolution.
+    /// @gotags: json:"error,omitempty" msg:"error,omitempty"
+    #[prost(string, tag = "1")]
+    #[serde(default)]
+    pub error: ::prost::alloc::string::String,
+    /// latencyMs specifies the latency in milliseconds of the container tag resolution.
+    /// @gotags: json:"latency_ms,omitempty" msg:"latency_ms,omitempty"
+    #[prost(int64, tag = "2")]
+    #[serde(default)]
+    pub latency_ms: i64,
+    /// wasBuffered specifies whether the payload was buffered while waiting for container tags.
+    /// @gotags: json:"was_buffered,omitempty" msg:"was_buffered,omitempty"
+    #[prost(bool, tag = "3")]
+    #[serde(default)]
+    pub was_buffered: bool,
+    /// bufferMs specifies how long the payload was buffered in milliseconds.
+    /// @gotags: json:"buffer_ms,omitempty" msg:"buffer_ms,omitempty"
+    #[prost(int64, tag = "4")]
+    #[serde(default)]
+    pub buffer_ms: i64,
+    /// bufferEvictionReason specifies why the payload was evicted from the buffer.
+    /// @gotags: json:"buffer_eviction_reason,omitempty" msg:"buffer_eviction_reason,omitempty"
+    #[prost(string, tag = "5")]
+    #[serde(default)]
+    pub buffer_eviction_reason: ::prost::alloc::string::String,
 }
 /// AgentPayload represents payload the agent sends to the intake.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -659,15 +697,19 @@ pub struct ClientGroupedStats {
     #[serde(rename = "srv_src")]
     pub service_source: ::prost::alloc::string::String,
     /// used to identify service override origin
-    /// span_derived_primary_tags are user-configured tags that are extracted from spans and used for stats aggregation
-    /// E.g., `aws.s3.bucket`, `http.url`, or any custom tag
+    /// Deprecated: use additional_metric_tags (field 23) instead.
     #[prost(string, repeated, tag = "22")]
     #[serde(default)]
     pub span_derived_primary_tags: ::prost::alloc::vec::Vec<
         ::prost::alloc::string::String,
     >,
+    /// additional_metric_tags are tags sent by tracers to be used as additional dimensions for stats aggregation
+    #[prost(string, repeated, tag = "23")]
+    #[serde(default)]
+    pub additional_metric_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
+#[derive(Deserialize, Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Trilean {

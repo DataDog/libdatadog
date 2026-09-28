@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::fmt;
 use std::error;
-use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -10,7 +10,6 @@ pub enum Error {
     OperationTimedOut,
     UnixSocketUnsupported,
     CannotEstablishTlsConnection,
-    NoValidCertifacteRootsFound,
     WindowsNamedPipeUnsupported,
 }
 
@@ -22,9 +21,6 @@ impl fmt::Display for Error {
             Self::UnixSocketUnsupported => "unix sockets unsuported on windows",
             Self::CannotEstablishTlsConnection => {
                 "cannot establish requested secure TLS connection"
-            }
-            Self::NoValidCertifacteRootsFound => {
-                "missing or not valid system HTTPS/TLS certificate roots"
             }
             Self::WindowsNamedPipeUnsupported => "windows named pipes unsupported",
         })

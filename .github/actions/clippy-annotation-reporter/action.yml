@@ -23,10 +23,8 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Set up Rust
-      shell: bash
-      run: rustup set profile minimal && rustup install stable && rustup default stable
-
+    # Rust is auto-installed by rustup from the workspace's rust-toolchain.toml
+    # on first cargo invocation; no explicit setup needed.
     - name: Fetch all branches
       shell: bash
       run: |
