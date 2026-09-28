@@ -38,7 +38,7 @@ pub enum AttributeValue {
 /// - `targeting_key` must be a valid C string or NULL.
 /// - `attributes` must point to a valid array of valid `AttributePair` structs (can be null if
 ///   `attributes_count` is 0)
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
     targeting_key: *const c_char,
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn ddog_ffe_evaluation_context_new(
 ///
 /// # Safety
 /// `context` must be a valid EvaluationContext handle created by `ddog_ffe_evaluation_context_new`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_evaluation_context_drop(context: *mut Handle<EvaluationContext>) {
     // SAFETY: the caller must ensure that context is a valid handle.
     unsafe { Handle::free(context) };

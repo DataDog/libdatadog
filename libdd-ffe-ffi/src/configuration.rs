@@ -19,7 +19,7 @@ use crate::{BorrowedStr, Handle};
 /// # Safety
 ///
 /// - `json_bytes` must point to valid memory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[named]
 #[must_use]
 pub unsafe extern "C" fn ddog_ffe_configuration_new(
@@ -43,7 +43,7 @@ pub unsafe extern "C" fn ddog_ffe_configuration_new(
 /// # Safety
 ///
 /// `config` must be a valid Configuration handle created by `ddog_ffe_configuration_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_configuration_drop(config: *mut Handle<Configuration>) {
     // SAFETY: the caller must ensure that config is a valid handle
     unsafe { Handle::free(config) };
@@ -57,7 +57,7 @@ pub unsafe extern "C" fn ddog_ffe_configuration_drop(config: *mut Handle<Configu
 /// # Safety
 ///
 /// `config` must be a valid `Configuration` handle created by `ddog_ffe_configuration_new`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_configuration_get_observe_full_evaluation_data(
     config: Handle<Configuration>,
 ) -> bool {
