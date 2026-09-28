@@ -345,12 +345,8 @@ impl<'a> BorrowedAggregationKey<'a> {
         let http_method = get_http_method(span);
 
         let http_endpoint = span
-            .get_meta("http.route")
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                span.get_meta("http.endpoint")
-                    .filter(|value| !value.is_empty())
-            })
+            .get_meta("http.endpoint")
+            .or_else(|| span.get_meta("http.route"))
             .unwrap_or_default();
 
         let status_code = get_http_status_code(span);
@@ -1422,7 +1418,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // The canonical OTel route takes precedence over the Datadog-only endpoint.
+            // Span with http.method and http.endpoint (http.endpoint takes precedence)
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1433,34 +1429,6 @@ mod tests {
                     meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
-                        ("http.endpoint".into(), "/users/create2".into()),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
-                FixedAggregationKey {
-                    service_name: "service".into(),
-                    operation_name: "op".into(),
-                    resource_name: "POST /users/create".into(),
-                    http_method: "POST".into(),
-                    http_endpoint: "/users/create".into(),
-                    is_synthetics_request: false,
-                    is_trace_root: pb::Trilean::True,
-                    ..Default::default()
-                }
-                .into_key(),
-            ),
-            // An empty route falls back to the retained Datadog endpoint.
-            (
-                SpanBytes {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "POST /users/create".into(),
-                    span_id: 1,
-                    parent_id: 0,
-                    meta: vec![
-                        ("http.method".into(), "POST".into()),
-                        ("http.route".into(), "".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
                     ]
                     .into(),
