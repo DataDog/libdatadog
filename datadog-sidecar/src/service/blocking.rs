@@ -186,10 +186,7 @@ impl SidecarTransport {
     /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
         match self.inner.lock() {
-            Ok(mut c) => c
-                .channel
-                .0
-                .send_blocking(&mut vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
+            Ok(mut c) => c.channel.0.send_blocking(vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
             Err(e) => Err(io::Error::other(e.to_string())),
         }
     }

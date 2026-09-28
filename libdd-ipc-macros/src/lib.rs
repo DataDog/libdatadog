@@ -367,8 +367,18 @@ fn gen_serve_fn(
                         __pending_acks = 0;
                     }
                     let result = handler.#name(#(#field_names),*).await;
-                    let __resp_data = libdd_ipc::codec::encode(&result);
-                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
+                    #[cfg(windows)]
+                    let __suffix_size = 4;
+                    #[cfg(not(windows))]
+                    let __suffix_size = 0;
+                    let __resp_data = libdd_ipc::codec::encode_with_reserve(
+                        &result,
+                        __suffix_size,
+                    );
+                    libdd_ipc::send_raw_async(
+                        handler.connection().async_conn(),
+                        __resp_data,
+                    ).await.ok();
                 }
             } else {
                 // On Linux, buffer up to 20 acks and flush in a single
@@ -384,8 +394,19 @@ fn gen_serve_fn(
                         }
                     }
                     #[cfg(not(target_os = "linux"))]
-                    // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
-                    libdd_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
+                    {
+                        // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
+                        #[cfg(windows)]
+                        let __suffix_size = 4;
+                        #[cfg(not(windows))]
+                        let __suffix_size = 0;
+                        let mut __ack = ::std::vec::Vec::with_capacity(1 + __suffix_size);
+                        __ack.push(0u8);
+                        libdd_ipc::send_raw_async(
+                            handler.connection().async_conn(),
+                            __ack,
+                        ).await.ok();
+                    }
                 }
             };
 
@@ -497,8 +518,15 @@ fn gen_channel(
                 libdd_ipc::handles::TransferHandles::copy_handles(
                     &__req, &mut __sink
                 ).ok();
-                let mut __data = libdd_ipc::codec::encode(&__req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(
+                    &__req,
+                    __suffix_size,
+                );
                 {
                     let __max = libdd_ipc::max_message_size();
                     if __data.len() > __max {
@@ -512,7 +540,7 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(&mut __data, &__fds)
+                        self.0.try_send(__data, &__fds)
                     }
                 }
             } else if m.return_type.is_none() {
@@ -520,7 +548,7 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
                         #build_req_and_fds
-                        self.0.call(&mut __data, &__fds)?;
+                        self.0.call(__data, &__fds)?;
                         Ok(())
                     }
                 }
@@ -530,7 +558,7 @@ fn gen_channel(
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
                         #build_req_and_fds
-                        let (__resp, _) = self.0.call(&mut __data, &__fds)
+                        let (__resp, _) = self.0.call(__data, &__fds)
                             .map_err(libdd_ipc::codec::DecodeError::Io)?;
                         libdd_ipc::codec::decode::<#ret_ty>(&__resp)
                     }
@@ -553,13 +581,17 @@ fn gen_channel(
             pub fn try_send_request(&mut self, req: &#enum_name) -> bool {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.try_send(&mut __data, &__fds)
+                self.0.try_send(__data, &__fds)
             }
 
             /// Generic blocking send (used by SidecarSender outbox drain).
@@ -569,13 +601,17 @@ fn gen_channel(
             ) -> ::std::io::Result<()> {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.send_blocking(&mut __data, &__fds)
+                self.0.send_blocking(__data, &__fds)
             }
 
             /// Generic blocking request/response call that retains ownership of the request.
@@ -601,13 +637,17 @@ fn gen_channel(
             {
                 let mut __sink = libdd_ipc::handles::FdSink::new();
                 libdd_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
-                let mut __data = libdd_ipc::codec::encode(req);
                 let __fds = __sink.into_fds();
+                #[cfg(windows)]
+                let __suffix_size = 4 + 8 * __fds.len();
+                #[cfg(not(windows))]
+                let __suffix_size = 0;
+                let __data = libdd_ipc::codec::encode_with_reserve(req, __suffix_size);
                 let __max = libdd_ipc::max_message_size();
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                let (__resp, _) = self.0.call(&mut __data, &__fds)
+                let (__resp, _) = self.0.call(__data, &__fds)
                     .map_err(libdd_ipc::codec::DecodeError::Io)?;
                 libdd_ipc::codec::decode::<__Response>(&__resp)
             }

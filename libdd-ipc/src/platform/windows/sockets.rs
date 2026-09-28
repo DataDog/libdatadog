@@ -22,6 +22,9 @@
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
 //! bytes beyond the maximum expected payload size.
 
+mod writer;
+use writer::PipeWriter;
+
 use crate::platform::message::MAX_FDS;
 use std::task::{Context, Poll};
 use std::{
@@ -34,7 +37,7 @@ use std::{
     ptr::{null, null_mut},
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
 
@@ -99,8 +102,7 @@ pub struct PeerCredentials {
 
 /// Append `handles` (duplicated into `peer_pid`) followed by the 4-byte count to `data`.
 ///
-/// The returned guard owns the duplicates until the write succeeds. On error all duplicates
-/// are closed; the caller must also truncate `data` back to its pre-call length.
+/// The returned guard rolls duplicates back only before their values can reach the peer.
 fn append_handle_suffix(
     data: &mut Vec<u8>,
     handles: &[RawHandle],
@@ -112,6 +114,7 @@ fn append_handle_suffix(
     let mut pending = PendingHandleTransfers {
         peer: None,
         handles: Vec::with_capacity(count),
+        exposed: false,
     };
 
     if count > 0 {
@@ -145,27 +148,32 @@ fn append_handle_suffix(
     Ok(pending)
 }
 
-/// Duplicates that the peer has not yet received in a successfully written message.
+/// Tracks handles duplicated into the peer so they can be rolled back until
+/// their numeric values may have been transmitted.
 struct PendingHandleTransfers {
     peer: Option<OwnedHandle>,
     handles: Vec<HANDLE>,
+    exposed: bool,
 }
 
 impl PendingHandleTransfers {
-    fn commit(mut self) {
-        self.handles.clear();
+    fn expose(&mut self) {
+        self.exposed = true;
     }
 }
 
 impl Drop for PendingHandleTransfers {
     fn drop(&mut self) {
+        if self.exposed {
+            return;
+        }
         let Some(peer) = &self.peer else {
             return;
         };
         for handle in self.handles.drain(..) {
             let mut local = null_mut();
-            // Failed writes never exposed the duplicate to the peer. Close that remote handle
-            // by moving it back here; the peer may already have exited, which is harmless.
+            // No write has exposed these values. Roll preparation back by moving each
+            // duplicate here; the retained process handle identifies the original peer.
             let ok = unsafe {
                 DuplicateHandle(
                     peer.as_raw_handle().cast(),
@@ -238,59 +246,34 @@ fn pipe_read(
 
     let len = u32::try_from(buf.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC buffer is too large"))?;
-    let read = pipe_io(h, blocking, |overlapped| unsafe {
-        ReadFile(h, buf.as_mut_ptr() as _, len, null_mut(), overlapped)
-    })?;
-    parse_message(buf, read as usize)
-}
-
-fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
-    let len = u32::try_from(data.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC message is too large"))?;
-    let written = pipe_io(h, blocking, |overlapped| unsafe {
-        WriteFile(h, data.as_ptr() as _, len, null_mut(), overlapped)
-    })?;
-    if written != len {
-        return Err(io::ErrorKind::WriteZero.into());
-    }
-    Ok(())
-}
-
-/// Execute one operation on a pipe opened with `FILE_FLAG_OVERLAPPED`.
-///
-/// `operation` is called once with a fresh `OVERLAPPED` to start an I/O request. The pipe mode is
-/// left unchanged. Blocking calls wait for the request to complete. A nonblocking call cannot
-/// leave the request pending because its stack-allocated `OVERLAPPED` and borrowed buffers cease
-/// to be valid when the function returns. It therefore requests cancellation and waits only for
-/// the request to reach a terminal state. Success returns the transferred byte count, including
-/// when completion wins a race with cancellation. `WouldBlock` is returned only when Windows
-/// confirms cancellation with `ERROR_OPERATION_ABORTED`; other failures are returned unchanged.
-///
-/// On every return, the I/O request has reached a terminal state, so Windows no longer accesses
-/// the supplied `OVERLAPPED` or any buffers referenced by the request.
-fn pipe_io(
-    h: SysHANDLE,
-    blocking: bool,
-    operation: impl FnOnce(*mut OVERLAPPED) -> i32,
-) -> io::Result<u32> {
     let event = unsafe { CreateEventA(null(), 1, 0, null()) };
     if event == 0 {
         return Err(io::Error::last_os_error());
     }
     let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
-    let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE);
-    if operation(&mut overlapped) == 0 {
+    // The low event bit suppresses IOCP notifications. Reads do not reserve a
+    // TP_IO callback, even after the writer registers this handle.
+    let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
+    if unsafe { ReadFile(h, buf.as_mut_ptr() as _, len, null_mut(), &mut overlapped) } == 0 {
         let error = io::Error::last_os_error();
         if error.raw_os_error() != Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32) {
             return Err(error);
         }
         if !blocking {
+            // The Named Pipe File System (NPFS) stages incoming bytes, then atomically
+            // claims the read's I/O Request Packet (IRP) by clearing its cancel routine.
+            // Only the winning read decrements the writer's BytesNotWritten count,
+            // committing consumption. If cancellation owns the IRP, NPFS frees the
+            // staged copy and leaves the message for the next read; if the read owns it,
+            // completion reports success. After waiting for terminal completion below,
+            // ERROR_OPERATION_ABORTED is therefore a rollback-safe WouldBlock result.
+            // Writes have the reverse ordering; see PipeWriter.
             unsafe { CancelIoEx(h, &overlapped) };
         }
     }
 
-    let mut transferred = 0;
-    if unsafe { GetOverlappedResult(h, &overlapped, &mut transferred, 1) } == 0 {
+    let mut read = 0;
+    if unsafe { GetOverlappedResult(h, &overlapped, &mut read, 1) } == 0 {
         let error = io::Error::last_os_error();
         if !blocking
             && error.raw_os_error()
@@ -300,7 +283,36 @@ fn pipe_io(
         }
         return Err(error);
     }
-    Ok(transferred)
+    parse_message(buf, read as usize)
+}
+
+// PID handshakes precede writer registration and always wait for completion.
+fn pipe_write_blocking(h: SysHANDLE, data: &[u8]) -> io::Result<()> {
+    let len = u32::try_from(data.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC message is too large"))?;
+    let event = unsafe { CreateEventA(null(), 1, 0, null()) };
+    if event == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
+    // The low event bit suppresses IOCP notifications. This handshake precedes
+    // writer registration and does not reserve a TP_IO callback.
+    let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
+    if unsafe { WriteFile(h, data.as_ptr() as _, len, null_mut(), &mut overlapped) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32) {
+            return Err(error);
+        }
+    }
+
+    let mut written = 0;
+    if unsafe { GetOverlappedResult(h, &overlapped, &mut written, 1) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if written != len {
+        return Err(io::ErrorKind::WriteZero.into());
+    }
+    Ok(())
 }
 
 fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHandle> {
@@ -482,9 +494,10 @@ impl SeqpacketListener {
         // before sending any handles.
         let my_pid = unsafe { GetCurrentProcessId() };
         let pid_bytes = my_pid.to_le_bytes();
-        pipe_write(conn_handle.as_raw_handle() as SysHANDLE, &pid_bytes, true)?;
+        pipe_write_blocking(conn_handle.as_raw_handle() as SysHANDLE, &pid_bytes)?;
 
         Ok(SeqpacketConn {
+            writer: OnceLock::new(),
             handle: conn_handle,
             peer_pid: client_pid,
             read_timeout: None,
@@ -517,6 +530,8 @@ impl IntoRawHandle for SeqpacketListener {
 
 /// A connected named pipe providing message-boundary-preserving IPC.
 pub struct SeqpacketConn {
+    // Fields drop in declaration order: quiesce writer callbacks before closing pipe.
+    writer: OnceLock<Result<PipeWriter, i32>>,
     handle: OwnedHandle,
     peer_pid: u32,
     read_timeout: Option<std::time::Duration>,
@@ -567,15 +582,38 @@ impl SeqpacketConn {
         // returns PHP's own PID.  Using that for DuplicateHandle silently duplicates handles back
         // into PHP rather than into the sidecar, causing ERROR_INVALID_HANDLE on the sidecar side.
         let mut pid_buf = [0u8; 4];
-        let pid_read = pipe_io(h as SysHANDLE, true, |overlapped| unsafe {
-            ReadFile(
-                h as SysHANDLE,
-                pid_buf.as_mut_ptr() as _,
-                4,
-                null_mut(),
-                overlapped,
-            )
-        });
+        let pid_read = (|| -> io::Result<u32> {
+            let event = unsafe { CreateEventA(null(), 1, 0, null()) };
+            if event == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
+            // Suppress IOCP notification: the writer has not been registered yet.
+            let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
+            if unsafe {
+                ReadFile(
+                    h as SysHANDLE,
+                    pid_buf.as_mut_ptr() as _,
+                    4,
+                    null_mut(),
+                    &mut overlapped,
+                )
+            } == 0
+            {
+                let error = io::Error::last_os_error();
+                if error.raw_os_error()
+                    != Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32)
+                {
+                    return Err(error);
+                }
+            }
+
+            let mut read = 0;
+            if unsafe { GetOverlappedResult(h as SysHANDLE, &overlapped, &mut read, 1) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(read)
+        })();
         let server_pid: ULONG = if matches!(pid_read, Ok(4)) {
             u32::from_le_bytes(pid_buf)
         } else {
@@ -587,6 +625,7 @@ impl SeqpacketConn {
         };
 
         Ok(Self {
+            writer: OnceLock::new(),
             handle,
             peer_pid: server_pid,
             read_timeout: None,
@@ -626,13 +665,14 @@ impl SeqpacketConn {
 
         // Write PID handshake to unblock the client thread's ReadFile in connect().
         let pid_bytes = pid.to_le_bytes();
-        pipe_write(srv_raw, &pid_bytes, true)?;
+        pipe_write_blocking(srv_raw, &pid_bytes)?;
 
         let client = client_thread
             .join()
             .map_err(|_| io::Error::from(io::ErrorKind::Other))??;
 
         let server = Self {
+            writer: OnceLock::new(),
             handle: server_handle,
             peer_pid: pid,
             read_timeout: None,
@@ -645,6 +685,7 @@ impl SeqpacketConn {
     /// The handle must have been opened with `FILE_FLAG_OVERLAPPED` and use `PIPE_WAIT`.
     pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> Self {
         Self {
+            writer: OnceLock::new(),
             handle,
             peer_pid: client_pid,
             read_timeout: None,
@@ -666,36 +707,27 @@ impl SeqpacketConn {
 
     /// Non-blocking send.
     ///
-    /// Appends the handle suffix to `data` in-place, writes the message, then truncates `data`
-    /// back to its original length - whether the write succeeded or failed.  On `WouldBlock`
-    /// the caller can retry without re-encoding `data`.
-    pub fn try_send_raw(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
-        let orig_len = data.len();
-        let result = append_handle_suffix(data, handles, self.peer_pid).and_then(|pending| {
-            pipe_write(self.raw_handle(), data, false)?;
-            pending.commit();
-            Ok(())
-        });
-        data.truncate(orig_len);
-        result
+    /// Takes ownership of `data`. Success means the transport accepted the message;
+    /// its write may still be pending. `WouldBlock` rejects before duplicating
+    /// handles or submitting any bytes, but still consumes `data`. Later write
+    /// failures are reported by subsequent send/receive calls.
+    pub fn try_send_raw(&self, data: Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
+        self.writer()?.send(data, handles, self.peer_pid, false)
     }
 
-    /// Blocking send.
-    pub fn send_raw_blocking(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
-        let orig_len = data.len();
-        let result = append_handle_suffix(data, handles, self.peer_pid).and_then(|pending| {
-            pipe_write(self.raw_handle(), data, true)?;
-            pending.commit();
-            Ok(())
-        });
-        data.truncate(orig_len);
-        result
+    /// Wait for earlier accepted writes and this message's terminal write result.
+    ///
+    /// This does not wait for a server ACK or drain replies. An error after
+    /// submission cannot establish whether the peer received the message.
+    pub fn send_raw_blocking(&self, data: Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
+        self.writer()?.send(data, handles, self.peer_pid, true)
     }
 
     /// Non-blocking receive. Returns `Err(WouldBlock)` when no message is available.
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
+        self.check_write_error()?;
         pipe_read(self.raw_handle(), buf, false)
     }
 
@@ -705,6 +737,7 @@ impl SeqpacketConn {
     /// handles; the buffer is sized for the wire format: 1 payload byte + the 4-byte
     /// handle-count suffix = `1 + HANDLE_SUFFIX_SIZE`.
     pub fn drain_acks_nonblocking(&self, max: usize) -> io::Result<usize> {
+        self.check_write_error()?;
         let mut buf = [0u8; 1 + HANDLE_SUFFIX_SIZE];
         let mut total = 0usize;
         loop {
@@ -723,9 +756,13 @@ impl SeqpacketConn {
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
+        self.check_write_error()?;
         pipe_read(self.raw_handle(), buf, true)
     }
 
+    /// Borrow the pipe handle. The connection owns its I/O and completion-port
+    /// association; callers must not register it with another driver or submit
+    /// competing writes/unreserved completion-port operations.
     pub fn as_raw_handle(&self) -> RawHandle {
         self.raw_handle() as RawHandle
     }
@@ -749,6 +786,21 @@ impl SeqpacketConn {
     pub fn set_sndbuf_size(&self, size: usize) -> io::Result<()> {
         set_pipe_buffer_size(size);
         Ok(())
+    }
+
+    fn writer(&self) -> io::Result<&PipeWriter> {
+        self.writer
+            .get_or_init(|| PipeWriter::new(self.raw_handle()))
+            .as_ref()
+            .map_err(|error| io::Error::from_raw_os_error(*error))
+    }
+
+    fn check_write_error(&self) -> io::Result<()> {
+        match self.writer.get() {
+            Some(Ok(writer)) => writer.check_error(),
+            Some(Err(error)) => Err(io::Error::from_raw_os_error(*error)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -899,7 +951,7 @@ impl SeqpacketListener {
                     GetNamedPipeClientProcessId(conn_raw as HANDLE, &mut client_pid);
                 }
                 let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
-                pipe_write(conn_raw, &pid_bytes, true)?;
+                pipe_write_blocking(conn_raw, &pid_bytes)?;
                 Ok(SeqpacketConn::from_server_handle(conn_handle, client_pid))
             });
 
@@ -936,6 +988,7 @@ where
     }
     let raw = conn.as_raw_handle() as SysHANDLE;
     tokio::task::block_in_place(|| {
+        conn.check_write_error()?;
         RECV_BUF.with_borrow_mut(|buf| {
             let size = max_message_size() + HANDLE_SUFFIX_SIZE;
             if buf.len() < size {
@@ -952,47 +1005,9 @@ where
 /// Async send on a Windows named pipe IPC connection.
 ///
 /// Server responses never carry handles; a zero-handle-count suffix is
-/// appended.  Uses `block_in_place` + raw `WriteFile` to bypass mio.
-pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
-    let raw = conn.as_raw_handle() as SysHANDLE;
-    let mut buf = data.to_vec();
-    buf.extend_from_slice(&0u32.to_le_bytes()); // zero handle count
-    tokio::task::block_in_place(move || pipe_write(raw, &buf, true))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::mpsc;
-    use std::time::Duration;
-
-    #[test]
-    fn full_pipe_try_send_does_not_block() {
-        let (sender, receiver) = SeqpacketConn::socketpair().unwrap();
-        let (result_tx, result_rx) = mpsc::sync_channel(1);
-        let writer = std::thread::spawn(move || {
-            let mut data = vec![0; max_message_size()];
-            for sent in 0..16 {
-                if let Err(error) = sender.try_send_raw(&mut data, &[]) {
-                    let _ = result_tx.send(Some((sent, error.kind())));
-                    return;
-                }
-            }
-            let _ = result_tx.send(None);
-        });
-
-        let result = result_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("try_send_raw blocked when the pipe became full");
-        writer.join().unwrap();
-        drop(receiver);
-
-        let (sent, error) = result.expect("the pipe did not become full after 16 messages");
-        assert!(sent > 0, "the empty pipe rejected the first message");
-        assert_eq!(
-            error,
-            io::ErrorKind::WouldBlock,
-            "the full pipe returned an unexpected error"
-        );
-    }
+/// appended. Takes ownership of `data` so the same ordered writer used by
+/// synchronous callers can retain its allocation, inside `block_in_place` to
+/// bypass mio.
+pub async fn send_raw_async(conn: &AsyncConn, data: Vec<u8>) -> io::Result<()> {
+    tokio::task::block_in_place(|| conn.writer()?.send(data, &[], conn.peer_pid, true))
 }
