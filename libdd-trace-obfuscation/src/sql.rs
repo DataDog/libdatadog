@@ -3612,6 +3612,10 @@ mod tests {
     // {'replace_digits': True}
     #[test]
     #[allow(deprecated)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "large data-driven test table; 2024-style formatting expands the cases across more lines"
+    )]
     fn test_suite_replace_digits() {
         let config = SqlConfig {
             replace_digits: true,
