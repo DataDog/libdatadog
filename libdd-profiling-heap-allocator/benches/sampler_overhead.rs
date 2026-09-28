@@ -14,13 +14,12 @@ criterion::criterion_main!(linux_bench::benches);
 #[cfg(target_os = "linux")]
 mod linux_bench {
     use criterion::{criterion_group, BenchmarkId, Criterion};
+    use libdd_common::bench_utils::ThreadCpuTime;
     use libdd_profiling_heap_allocator::SampledAllocator;
     use libdd_profiling_heap_sampler::{dd_test_set_profiler_active, dd_tl_state_get_or_init};
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::hint::black_box;
-    use std::mem::MaybeUninit;
     use std::ptr;
-    use std::time::Duration;
 
     const SIZES: &[usize] = &[16, 64, 256, 4096, 65_536];
     const ALIGN: usize = 8;
@@ -29,30 +28,6 @@ mod linux_bench {
     struct AlignedBuffer([u8; 128 * 1024]);
 
     static mut NOOP_BUFFER: AlignedBuffer = AlignedBuffer([0; 128 * 1024]);
-
-    // Do not attribute time when this benchmark thread is descheduled to the sampler.
-    fn thread_cpu_time() -> Duration {
-        let mut time = MaybeUninit::<libc::timespec>::uninit();
-        let result =
-            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) };
-        assert_eq!(
-            result,
-            0,
-            "read thread CPU time: {}",
-            std::io::Error::last_os_error()
-        );
-        let time = unsafe { time.assume_init() };
-        Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
-    }
-
-    #[inline(always)]
-    fn measure_thread_cpu_time(iterations: u64, mut routine: impl FnMut()) -> Duration {
-        let start = thread_cpu_time();
-        for _ in 0..iterations {
-            routine();
-        }
-        thread_cpu_time() - start
-    }
 
     struct NoopAllocator;
 
@@ -116,17 +91,15 @@ mod linux_bench {
     // ── Baseline ───────────────────────────────────────────────────────────
     // Pure system allocator cost with no sampler in the picture.
 
-    fn bench_system_alloc_free(c: &mut Criterion) {
+    fn bench_system_alloc_free(c: &mut Criterion<ThreadCpuTime>) {
         let mut group = c.benchmark_group("thread_cpu/alloc_free/system");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        let ptr = System.alloc(layout);
-                        black_box(ptr);
-                        System.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    let ptr = System.alloc(layout);
+                    black_box(ptr);
+                    System.dealloc(ptr, layout);
                 });
             });
         }
@@ -145,7 +118,7 @@ mod linux_bench {
     // every iteration. The USDT probe fires (into a NOP since no real
     // consumer is attached to the uprobe).
 
-    fn bench_fast_path_system(c: &mut Criterion) {
+    fn bench_fast_path_system(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(System);
         let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_system");
         unsafe { dd_test_set_profiler_active(true) };
@@ -153,12 +126,10 @@ mod linux_bench {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        let ptr = alloc.alloc(layout);
-                        black_box(ptr);
-                        alloc.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
                 });
             });
         }
@@ -166,7 +137,7 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_fast_path_noop(c: &mut Criterion) {
+    fn bench_fast_path_noop(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(NoopAllocator);
         let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_noop");
         unsafe { dd_test_set_profiler_active(true) };
@@ -174,12 +145,10 @@ mod linux_bench {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        let ptr = alloc.alloc(layout);
-                        black_box(ptr);
-                        alloc.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
                 });
             });
         }
@@ -187,20 +156,18 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_slow_path_system(c: &mut Criterion) {
+    fn bench_slow_path_system(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(System);
         let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_system");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        force_next_allocation_to_sample();
-                        let ptr = alloc.alloc(layout);
-                        black_box(ptr);
-                        alloc.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    force_next_allocation_to_sample();
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
                 });
             });
         }
@@ -208,20 +175,18 @@ mod linux_bench {
         unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_slow_path_noop(c: &mut Criterion) {
+    fn bench_slow_path_noop(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(NoopAllocator);
         let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_noop");
         unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        force_next_allocation_to_sample();
-                        let ptr = alloc.alloc(layout);
-                        black_box(ptr);
-                        alloc.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    force_next_allocation_to_sample();
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
                 });
             });
         }
@@ -234,32 +199,32 @@ mod linux_bench {
     // The no-op allocator keeps the system allocator from obscuring the
     // semaphore check this benchmark is intended to validate.
 
-    fn bench_short_circuit(c: &mut Criterion) {
+    fn bench_short_circuit(c: &mut Criterion<ThreadCpuTime>) {
         let alloc = SampledAllocator::new(NoopAllocator);
         let mut group = c.benchmark_group("thread_cpu/no_profiler/short_circuit_noop");
         // Semaphore is off by default - don't flip it on.
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter_custom(|iterations| {
-                    measure_thread_cpu_time(iterations, || unsafe {
-                        let ptr = alloc.alloc(layout);
-                        black_box(ptr);
-                        alloc.dealloc(ptr, layout);
-                    })
+                b.iter(|| unsafe {
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
                 });
             });
         }
         group.finish();
     }
 
-    criterion_group!(
-        benches,
-        bench_system_alloc_free,
-        bench_fast_path_system,
-        bench_fast_path_noop,
-        bench_slow_path_system,
-        bench_slow_path_noop,
-        bench_short_circuit,
-    );
+    criterion_group! {
+        name = benches;
+        config = Criterion::default().with_measurement(ThreadCpuTime);
+        targets =
+            bench_system_alloc_free,
+            bench_fast_path_system,
+            bench_fast_path_noop,
+            bench_slow_path_system,
+            bench_slow_path_noop,
+            bench_short_circuit,
+    }
 } // mod linux_bench

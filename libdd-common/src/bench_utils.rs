@@ -1,16 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Scaffolding for memory usage benchmarks.
+//! Scaffolding for allocation and Linux thread CPU benchmarks.
 //!
-//! See the `ReportingAllocator` type and `memory_allocated_criterion` for usage.
+//! See `ReportingAllocator`, `memory_allocated_criterion`, and `ThreadCpuTime` for usage.
 
 #![allow(missing_docs)]
 
 use core::{alloc::GlobalAlloc, cell::Cell, time::Duration};
 use std::alloc::System;
 
-use criterion::{Criterion, Throughput};
+use criterion::{measurement::Measurement, Criterion, Throughput};
 
 pub trait MeasurementName {
     fn name() -> &'static str;
@@ -19,6 +19,76 @@ pub trait MeasurementName {
 impl MeasurementName for criterion::measurement::WallTime {
     fn name() -> &'static str {
         "wall_time"
+    }
+}
+
+/// Criterion measurement using CPU time consumed by the current thread.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ThreadCpuTime;
+
+#[cfg(target_os = "linux")]
+impl MeasurementName for ThreadCpuTime {
+    fn name() -> &'static str {
+        "thread_cpu"
+    }
+}
+
+#[cfg(target_os = "linux")]
+const WALL_TIME: criterion::measurement::WallTime = criterion::measurement::WallTime;
+
+#[cfg(target_os = "linux")]
+#[allow(
+    clippy::panic,
+    reason = "Criterion measurements cannot return clock errors"
+)]
+fn thread_cpu_time() -> Duration {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `time` is initialized and its mutable pointer remains valid for the call.
+    let result = unsafe {
+        libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, core::ptr::addr_of_mut!(time))
+    };
+    assert_eq!(
+        result,
+        0,
+        "read thread CPU time: {}",
+        std::io::Error::last_os_error()
+    );
+
+    // A successful `clock_gettime` returns non-negative seconds and nanoseconds.
+    Duration::from_secs(time.tv_sec as u64) + Duration::from_nanos(time.tv_nsec as u64)
+}
+
+#[cfg(target_os = "linux")]
+impl Measurement for ThreadCpuTime {
+    type Intermediate = Duration;
+    type Value = Duration;
+
+    fn start(&self) -> Self::Intermediate {
+        thread_cpu_time()
+    }
+
+    fn end(&self, start: Self::Intermediate) -> Self::Value {
+        thread_cpu_time() - start
+    }
+
+    fn add(&self, v1: &Self::Value, v2: &Self::Value) -> Self::Value {
+        WALL_TIME.add(v1, v2)
+    }
+
+    fn zero(&self) -> Self::Value {
+        WALL_TIME.zero()
+    }
+
+    fn to_f64(&self, value: &Self::Value) -> f64 {
+        WALL_TIME.to_f64(value)
+    }
+
+    fn formatter(&self) -> &dyn criterion::measurement::ValueFormatter {
+        WALL_TIME.formatter()
     }
 }
 
@@ -97,7 +167,7 @@ impl<T: GlobalAlloc> MeasurementName for AllocatedBytesMeasurement<T> {
     }
 }
 
-impl<T: GlobalAlloc> criterion::measurement::Measurement for AllocatedBytesMeasurement<T> {
+impl<T: GlobalAlloc> Measurement for AllocatedBytesMeasurement<T> {
     type Intermediate = usize;
 
     type Value = usize;
@@ -261,6 +331,29 @@ mod tests {
         assert_eq!(
             AllocatedBytesMeasurement::<System>::name(),
             "allocated_bytes"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)] // Miri does not support CLOCK_THREAD_CPUTIME_ID.
+    #[test]
+    fn thread_cpu_measurement() {
+        let measurement = ThreadCpuTime;
+        let start = measurement.start();
+        let _elapsed = measurement.end(start);
+
+        assert_eq!(ThreadCpuTime::name(), "thread_cpu");
+        assert_eq!(measurement.zero(), Duration::ZERO);
+        assert_eq!(
+            measurement.add(&Duration::from_nanos(2), &Duration::from_nanos(3)),
+            Duration::from_nanos(5)
+        );
+        assert_eq!(measurement.to_f64(&Duration::from_micros(2)), 2_000.0);
+
+        let mut values = [2_000.0];
+        assert_eq!(
+            measurement.formatter().scale_for_machines(&mut values),
+            "ns"
         );
     }
 
