@@ -126,9 +126,9 @@ pub trait AsBytes<'a> {
     #[inline]
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
-    unsafe fn assume_utf8(&self) -> &'a str {
+    unsafe fn assume_utf8(&self) -> &'a str { unsafe {
         core::str::from_utf8_unchecked(self.as_bytes())
-    }
+    }}
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {

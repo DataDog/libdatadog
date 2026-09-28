@@ -73,17 +73,17 @@ impl<T: GlobalAlloc> ReportingAllocator<T> {
 }
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
-    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 { unsafe {
         self.allocated_bytes
             .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
         self.allocations
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.alloc.alloc(layout)
-    }
+    }}
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) { unsafe {
         self.alloc.dealloc(ptr, layout);
-    }
+    }}
 }
 
 pub struct AllocatedBytesMeasurement<T: GlobalAlloc + 'static>(

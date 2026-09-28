@@ -29,23 +29,23 @@ pub trait ToInner<T> {
 }
 
 impl<T> ToInner<T> for *mut Handle<T> {
-    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
+    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> { unsafe {
         self.as_mut().context("Null pointer")?.to_inner_mut()
-    }
+    }}
 
-    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
+    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> { unsafe {
         self.as_mut().context("Null pointer")?.take()
-    }
+    }}
 }
 
 impl<T> ToInner<T> for Handle<T> {
-    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> {
+    unsafe fn to_inner_mut(&mut self) -> anyhow::Result<&mut T> { unsafe {
         self.inner
             .as_mut()
             .context("inner pointer was null, indicates use after free")
-    }
+    }}
 
-    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> {
+    unsafe fn take(&mut self) -> anyhow::Result<Box<T>> { unsafe {
         // Leaving a null will help with double-free issues that can arise in C.
         // Of course, it's best to never get there in the first place!
         let raw = core::mem::replace(&mut self.inner, core::ptr::null_mut());
@@ -54,7 +54,7 @@ impl<T> ToInner<T> for Handle<T> {
             "inner pointer was null, indicates use after free"
         );
         Ok(Box::from_raw(raw))
-    }
+    }}
 }
 
 impl<T> From<T> for Handle<T> {

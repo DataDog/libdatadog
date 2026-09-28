@@ -25,13 +25,16 @@ use crate::{wrap_with_void_ffi_result, Error, VoidResult};
 ///
 /// `out_handle` must point to valid, writable (uninitialized) memory for a
 /// `ddog_MutableMetadataHandle *`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_mutable_metadata_new(
     out_handle: NonNull<Box<MutableMetadataHandle>>,
 ) {
-    out_handle
-        .as_ptr()
-        .write(Box::new(MutableMetadataHandle::default()));
+    // SAFETY: `out_handle` points to valid, writable memory per this function's safety contract.
+    unsafe {
+        out_handle
+            .as_ptr()
+            .write(Box::new(MutableMetadataHandle::default()));
+    }
 }
 
 /// Frees a `ddog_MutableMetadataHandle` handle.
@@ -42,7 +45,7 @@ pub unsafe extern "C" fn ddog_mutable_metadata_new(
 /// # Safety
 ///
 /// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_mutable_metadata_free(handle: Box<MutableMetadataHandle>) {
     drop(handle);
 }
@@ -54,7 +57,7 @@ pub unsafe extern "C" fn ddog_mutable_metadata_free(handle: Box<MutableMetadataH
 /// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
 #[named]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
     handle: Option<&MutableMetadataHandle>,
     runtime_id: CharSlice,
@@ -73,7 +76,7 @@ pub unsafe extern "C" fn ddog_mutable_metadata_set_runtime_id(
 /// `handle` must be a valid mutable metadata handle obtained through [`ddog_mutable_metadata_new`]
 #[must_use]
 #[named]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_mutable_metadata_set_process_tags(
     handle: Option<&MutableMetadataHandle>,
     process_tags: CharSlice,

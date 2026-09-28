@@ -48,7 +48,7 @@ impl From<&str> for StringWrapper {
 /// # Safety
 ///
 /// Only pass null or a pointer to a valid, mutable `ddog_StringWrapper`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_StringWrapper_drop(s: Option<&mut StringWrapper>) {
     if let Some(s) = s {
         // Replacing the contents will drop the old string, freeing its
@@ -64,7 +64,7 @@ pub unsafe extern "C" fn ddog_StringWrapper_drop(s: Option<&mut StringWrapper>) 
 ///
 /// Only pass null or a valid reference to a `ddog_StringWrapper`.
 /// The string should not be mutated nor dropped while the CharSlice is alive.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_StringWrapper_message(s: Option<&StringWrapper>) -> CharSlice<'_> {
     match s {
         None => CharSlice::empty(),
