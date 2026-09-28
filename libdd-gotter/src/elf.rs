@@ -52,13 +52,13 @@ const fn u32_to_usize(v: u32) -> usize {
 /// If `ptr` is non-null and `len > 0`, the pointer must be valid for
 /// `len * size_of::<T>()` bytes, properly aligned, and not mutated for
 /// lifetime `'a`.
-unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] { unsafe {
     if ptr.is_null() || len == 0 {
         &[]
     } else {
         slice::from_raw_parts(ptr, len)
     }
-}
+}}
 
 use libc::{
     dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
@@ -128,10 +128,10 @@ impl<'a> DynamicInfo<'a> {
     /// - The ELF object described by `info` must remain mapped for lifetime `'a`. This is
     ///   guaranteed when called from within a `dl_iterate_phdr` callback (loader lock held) or
     ///   while a `dlopen` handle is live.
-    pub unsafe fn from_phdr(info: &'a dl_phdr_info) -> Option<Self> {
+    pub unsafe fn from_phdr(info: &'a dl_phdr_info) -> Option<Self> { unsafe {
         // SAFETY: caller guarantees info is a valid dl_phdr_info for a
         // mapped ELF object. dlpi_phnum is u16 so the conversion is lossless.
-        let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum)) };
+        let phdrs = slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum));
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
         // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
         let base = u64_to_usize(info.dlpi_addr);
@@ -304,7 +304,7 @@ impl<'a> DynamicInfo<'a> {
             jmprels: jmprels_slice,
             base_address: base,
         })
-    }
+    }}
 
     /// Look up the symbol entry and its name at index `idx`.
     /// Returns the `Elf64_Sym` and its name from the string table,
@@ -365,7 +365,7 @@ unsafe fn sym_count_fallback(
     symtab: *const Elf64_Sym,
     strtab: *const c_char,
     sysv_hash: *const u32,
-) -> u32 {
+) -> u32 { unsafe {
     // DT_HASH (sysv): header is [nbucket, nchain]. nchain == dynsym count.
     if !sysv_hash.is_null() {
         let nchain = *sysv_hash.add(1);
@@ -388,7 +388,7 @@ unsafe fn sym_count_fallback(
         // checking in sym_name to catch bad accesses.
         u32::MAX
     }
-}
+}}
 
 /// Compute the ELF sysv hash used by `DT_HASH` tables.
 /// From <https://refspecs.linuxfoundation.org/elf/elf.pdf>
@@ -425,7 +425,7 @@ pub fn sysv_hash(name: &[u8]) -> u32 {
 /// # Safety
 /// `info` must have been produced by [`DynamicInfo::from_phdr`] for a
 /// currently-loaded ELF object.
-pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
+pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> { unsafe {
     let hashtab = info.sysv_hash;
     if hashtab.is_null() || info.sysv_hash_words < 2 {
         return None;
@@ -472,7 +472,7 @@ pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_
         steps += 1;
     }
     None
-}
+}}
 
 /// Compute the GNU symbol hash used by `DT_GNU_HASH` tables.
 /// See <https://flapenguin.me/elf-dt-gnu-hash>.
@@ -496,7 +496,7 @@ pub fn gnu_hash(name: &[u8]) -> u32 {
 /// # Safety
 /// `hashtab` must point to a valid `.gnu.hash` section of at least
 /// `hashtab_words` u32 entries in mapped memory.
-pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -> Option<u32> {
+pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -> Option<u32> { unsafe {
     if hashtab_words < 4 {
         return None;
     }
@@ -538,7 +538,7 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
         }
         idx = idx.checked_add(1)?;
     }
-}
+}}
 
 /// Look up a symbol by name in an object's `.gnu.hash` table.
 ///
@@ -548,7 +548,7 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
 /// # Safety
 /// `info` must have been produced by [`DynamicInfo::from_phdr`] for a
 /// currently-loaded ELF object.
-pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
+pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> { unsafe {
     let hashtab = info.gnu_hash;
     if hashtab.is_null() || info.gnu_hash_words < 4 {
         return None;
@@ -616,7 +616,7 @@ pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_S
         symidx = symidx.checked_add(1)?;
     }
     None
-}
+}}
 
 /// Return whether this is a defining function/object/notype symbol.
 pub fn check_sym(sym: &Elf64_Sym) -> bool {
@@ -650,14 +650,14 @@ fn find_containing_load_segment(
 ///
 /// # Safety
 /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
-unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
+unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool { unsafe {
     // SAFETY: caller guarantees `info` is a valid `dl_phdr_info` for a
     // currently-loaded ELF object. `dlpi_phnum` is u16, so the
     // conversion to usize is lossless.
     let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
     let base = u64_to_usize(info.dlpi_addr);
     find_containing_load_segment(phdrs, base, addr).is_some()
-}
+}}
 
 /// Whether a `dl_iterate_phdr` entry is a pseudo-object that has no
 /// backing file and isn't relocated by ld.so the way a normal shared
@@ -685,7 +685,7 @@ pub fn is_vdso_or_dynamic_linker(lib_name: Option<&str>, is_exe: bool) -> bool {
 /// # Safety
 /// `ptr` must be null or point to a valid NUL-terminated C string, valid
 /// for the lifetime `'a` the caller assigns to the result.
-pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, str>> {
+pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, str>> { unsafe {
     if ptr.is_null() {
         return None;
     }
@@ -694,7 +694,7 @@ pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, s
         return None;
     }
     Some(cstr.to_string_lossy())
-}
+}}
 
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
@@ -713,7 +713,7 @@ pub fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) 
         info: *mut dl_phdr_info,
         _size: libc::size_t,
         data: *mut c_void,
-    ) -> c_int {
+    ) -> c_int { unsafe {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let ctx = &mut *(data as *mut Ctx);
             let is_exe = ctx.is_first;
@@ -724,7 +724,7 @@ pub fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) 
         // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
         // Treat patching as best-effort and stop iteration on panic.
         result.map(i32::from).unwrap_or(1)
-    }
+    }}
 
     // SAFETY: `trampoline` has the correct signature for dl_iterate_phdr.
     // `ctx` is live for the duration of the call; the trampoline casts
@@ -823,7 +823,7 @@ impl PageProtGuard {
     ///
     /// # Safety
     /// `addr` must point to a valid GOT slot in mapped memory.
-    pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
+    pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool { unsafe {
         let aligned = addr & !(self.page_size - 1);
         if !self.touched.contains_key(&aligned) {
             // If /proc/self/maps isn't available (or the page isn't in
@@ -843,7 +843,7 @@ impl PageProtGuard {
         }
         core::ptr::write_unaligned(addr as *mut usize, new_value);
         true
-    }
+    }}
 }
 
 impl Default for PageProtGuard {
@@ -1060,9 +1060,9 @@ pub enum HookError {
 ///
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
-pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> {
+pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> { unsafe {
     hook_symbol_impl(symbol_name, hook_fn, None)
-}
+}}
 
 /// Like [`hook_symbol`], but skips the library that contains `hook_fn`.
 ///
@@ -1082,9 +1082,9 @@ pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResu
 pub unsafe fn hook_symbol_excluding_self(
     symbol_name: &CStr,
     hook_fn: usize,
-) -> Result<HookResult, HookError> {
+) -> Result<HookResult, HookError> { unsafe {
     hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn))
-}
+}}
 
 /// `skip_addr`: if `Some(addr)`, skip the library whose PT_LOAD segments
 /// contain `addr`. Used by `hook_symbol_excluding_self` to identify the
@@ -1094,7 +1094,7 @@ unsafe fn hook_symbol_impl(
     symbol_name: &CStr,
     hook_fn: usize,
     skip_addr: Option<usize>,
-) -> Result<HookResult, HookError> {
+) -> Result<HookResult, HookError> { unsafe {
     let symbol_name_bytes = symbol_name.to_bytes();
     let name_str = symbol_name
         .to_str()
@@ -1121,7 +1121,7 @@ unsafe fn hook_symbol_impl(
     iterate_libraries(|info, is_exe| {
         // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
         // NUL-terminated C string for the callback's duration.
-        let lib_name = unsafe { dlpi_name(info.dlpi_name) };
+        let lib_name = dlpi_name(info.dlpi_name);
         if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
             return false;
         }
@@ -1135,23 +1135,21 @@ unsafe fn hook_symbol_impl(
 
         // SAFETY: `info` points to a valid `dl_phdr_info` provided by
         // `dl_iterate_phdr`
-        let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
+        let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
         };
         // SAFETY: dyn_info was just produced from a currently-loaded
         // library. guard_ptr/patched_ptr/failed_ptr are valid for the
         // duration of iterate_libraries (they point to locals in the
         // enclosing fn).
-        unsafe {
-            patch_got_entries(
-                &dyn_info,
-                symbol_name_bytes,
-                hook_fn,
-                &mut *guard_ptr,
-                &mut *patched_ptr,
-                &mut *failed_ptr,
-            );
-        }
+        patch_got_entries(
+            &dyn_info,
+            symbol_name_bytes,
+            hook_fn,
+            &mut *guard_ptr,
+            &mut *patched_ptr,
+            &mut *failed_ptr,
+        );
         false
     });
 
@@ -1160,7 +1158,7 @@ unsafe fn hook_symbol_impl(
         entries_patched,
         entries_failed,
     })
-}
+}}
 
 /// Patch GOT entries in one library for the target symbol.
 ///
@@ -1182,7 +1180,7 @@ unsafe fn patch_got_entries(
     guard: &mut PageProtGuard,
     patched: &mut usize,
     failed: &mut usize,
-) {
+) { unsafe {
     // The AMD64 SysV ABI states on page 73: "The AMD64 LP64 ABI architecture uses only
     // Elf64_Rela relocation entries with explicit addends":
     // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
@@ -1205,7 +1203,7 @@ unsafe fn patch_got_entries(
             }
         }
     }
-}
+}}
 
 #[cfg(test)]
 mod tests {
