@@ -252,7 +252,7 @@ mod tests {
 
             let client: SeqpacketConn = liaison.connect_to_server().unwrap();
             let srv: SeqpacketConn = listener.try_accept().unwrap();
-            client.send_raw_blocking(&mut vec![255], &[]).unwrap();
+            client.send_raw_blocking(vec![255], &[]).unwrap();
             let mut buf = [0u8; 4];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
