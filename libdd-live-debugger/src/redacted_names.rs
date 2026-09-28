@@ -133,7 +133,7 @@ static REDACTED_TYPES_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_name is forbidden.
-pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
+pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) { unsafe {
     assert!(!REDACTED_NAMES_INITIALIZED.load(Ordering::Relaxed));
     // I really don't want to Mutex this often checked value.
     // Hence, unsafe, and caller has to ensure safety.
@@ -143,18 +143,18 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
 
     let redacted_names = &mut (*(&*REDACTED_NAMES as *const HashSet<&'static [u8]>).cast_mut());
     redacted_names.insert(&added_names[added_names.len() - 1]);
-}
+}}
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_excluded_name is forbidden.
-pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) {
+pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) { unsafe {
     assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
     let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
     excluded_names.insert(name.into());
-}
+}}
 
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
-pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
+pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) { unsafe {
     assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
     let name = name.as_ref();
 
@@ -173,7 +173,7 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
         let redacted_types = &mut (*(&*REDACTED_TYPES as *const HashSet<&'static [u8]>).cast_mut());
         redacted_types.insert(&added_types[added_types.len() - 1]);
     }
-}
+}}
 
 pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
     fn invalid_char(c: u8) -> bool {

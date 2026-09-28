@@ -31,7 +31,7 @@ use std::ffi::c_void;
 /// - If creation succeeds, the callback code and any data reached through `context` must remain
 ///   valid until `ddog_sidecar_remote_config_notification_drop` returns.
 /// - The callback must not drop its own notification.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
     callback: Option<unsafe extern "C" fn(*mut c_void)>,
     context: *mut c_void,
@@ -60,7 +60,7 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
 /// - A non-NULL pointer may be passed to this function only once and must not be used concurrently
 ///   by another call, including `ddog_sidecar_session_set_config`.
 /// - This function must not be called from the notification's callback.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_drop(
     notification: *mut RemoteConfigNotification,
 ) {

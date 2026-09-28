@@ -23,7 +23,7 @@ use std::{
 };
 
 fn set_sidecar_per_process() {
-    std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
+    unsafe { std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process") }
 }
 
 #[test]

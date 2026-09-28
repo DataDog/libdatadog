@@ -12,7 +12,7 @@ use libdd_common_ffi::{Error, MaybeError};
 ///
 /// # Safety
 /// `transport` must be exclusively borrowed and `output` must be writable for this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_prepare_signal_flush(
     transport: &mut SidecarTransport,
     options: SidecarFlushOptions,
@@ -32,7 +32,7 @@ pub unsafe extern "C" fn ddog_sidecar_prepare_signal_flush(
 ///
 /// # Safety
 /// `flush` must be null or an owned pointer returned by prepare. Any raw worker must have exited.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_signal_flush_drop(flush: *mut SignalFlush) {
     if !flush.is_null() {
         drop(Box::from_raw(flush));
@@ -46,7 +46,7 @@ pub unsafe extern "C" fn ddog_sidecar_signal_flush_drop(flush: *mut SignalFlush)
 /// The object must remain alive through the call, with exclusive one-shot use of this object.
 /// The normal transport may continue sending and receiving concurrently.
 /// All worker signals must be blocked. Do not use an inherited object after fork.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[inline(never)]
 pub unsafe extern "C-unwind" fn ddog_sidecar_signal_flush_run(flush: &SignalFlush) -> i32 {
     flush.run()

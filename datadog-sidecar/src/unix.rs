@@ -27,7 +27,7 @@ use spawn_worker::{entrypoint, get_dl_path_raw};
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(unused)]
 pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
@@ -261,7 +261,7 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineData) {
     unsafe {
         if let Err(e) = libdd_crashtracker::receiver_entry_point_stdin() {

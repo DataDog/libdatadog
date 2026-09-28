@@ -25,7 +25,7 @@ use crate::{Entrypoint, ENV_PASS_FD_KEY};
 ///
 /// # Safety
 /// addr must be a valid address accepted by dladdr(2)
-pub unsafe fn get_dl_path_raw(addr: *const libc::c_void) -> (Option<CString>, Option<CString>) {
+pub unsafe fn get_dl_path_raw(addr: *const libc::c_void) -> (Option<CString>, Option<CString>) { unsafe {
     let mut info = libc::Dl_info {
         dli_fname: ptr::null(),
         dli_fbase: ptr::null_mut(),
@@ -50,7 +50,7 @@ pub unsafe fn get_dl_path_raw(addr: *const libc::c_void) -> (Option<CString>, Op
     };
 
     (path_name, symbol_name)
-}
+}}
 
 /// Returns PID of current process
 pub fn getpid() -> libc::pid_t {

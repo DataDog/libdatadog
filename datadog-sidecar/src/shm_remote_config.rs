@@ -59,11 +59,11 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 ///
 /// # Safety
 /// Pointers should be valid and non-null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn debug_dump_inv_tar(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
-) {
+) { unsafe {
     let id = &*id;
     let target = &*target;
     debug!("ConfigInvariants: {:#?}", id);
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn debug_dump_inv_tar(
         "Shared memory path: {:?}",
         path_for_remote_config(id, target)
     );
-}
+}}
 
 type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
 static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
@@ -80,10 +80,10 @@ static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
 /// # Safety
 /// This function modifies a global without synchronization.
 /// It is designed to be called by the main thread before other threads are spawned.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) { unsafe {
     IN_PROC_NOTIFY_FUN = notify_fn;
-}
+}}
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
     // We need a stable hash so that the outcome is independent of the process
@@ -275,11 +275,17 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            #[allow(clippy::unwrap_used)]
-            // SAFETY: no concurrent unlink() on this handle.
-            serialized.extend_from_slice(unsafe {
-                file.handle.lock_or_panic().as_ref().unwrap().get_path()
-            });
+            {
+                // Scope the guard so it is released before the `ApmTracing` branch
+                // below re-locks the same handle. Edition 2024 drops the temporary at
+                // the end of the statement (before the borrowed path slice is used),
+                // so bind it here explicitly instead.
+                let handle = file.handle.lock_or_panic();
+                // SAFETY: no concurrent unlink() on this handle.
+                #[allow(clippy::unwrap_used)]
+                let path = unsafe { handle.as_ref().unwrap().get_path() };
+                serialized.extend_from_slice(path);
+            }
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());

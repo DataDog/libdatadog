@@ -20,14 +20,14 @@ pub enum Fork {
 ///
 /// When forking a multithreaded application, no code should allocate or access other potentially
 /// locked resources until call to exec is executed
-pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> {
+pub(crate) unsafe fn fork() -> Result<Fork, std::io::Error> { unsafe {
     let res = libc::fork();
     match res {
         -1 => Err(std::io::Error::last_os_error()),
         0 => Ok(Fork::Child),
         res => Ok(Fork::Parent(res)),
     }
-}
+}}
 
 /// Forks, skipping pthread_atfork() handlers
 #[cfg(target_os = "linux")]
@@ -54,7 +54,7 @@ pub(crate) unsafe fn fork_skip_atfork_handlers() -> Result<Fork, std::io::Error>
 /// When forking a multithreaded application, no code should allocate or access other potentially
 /// locked resources until call to exec is executed
 #[cfg(test)]
-unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> {
+unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, std::io::Error> { unsafe {
     match fork()? {
         Fork::Parent(pid) => Ok(pid),
         Fork::Child => {
@@ -62,7 +62,7 @@ unsafe fn fork_fn<Args>(args: Args, f: fn(Args) -> ()) -> Result<libc::pid_t, st
             std::process::exit(0)
         }
     }
-}
+}}
 
 /// Sets test panic handler that will ensure exit(1) is called after
 /// the original panic handler
