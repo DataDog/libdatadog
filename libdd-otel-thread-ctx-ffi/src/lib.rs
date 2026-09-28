@@ -72,6 +72,15 @@ mod linux {
 
     /// Allocate and initialise a new thread context, including its W3C trace-flags byte.
     ///
+    /// `trace_id`, `span_id`, and `local_root_span_id` use W3C Trace Context byte order,
+    /// equivalent to big-endian when interpreted as integers.
+    ///
+    /// When representing an active trace, both `trace_id` and `span_id` must be nonzero. Otherwise,
+    /// `trace_id`, `span_id`, and `trace_flags` must be zero.
+    ///
+    /// This function does not validate IDs or reject invalid combinations of `trace_id`, `span_id`,
+    /// and `trace_flags`.
+    ///
     /// Returns a non-null owned handle that must eventually be released with
     /// `ddog_otel_thread_ctx_free`.
     #[no_mangle]
@@ -131,6 +140,7 @@ mod linux {
     }
 
     /// Update the currently attached context in-place, including its W3C trace-flags byte.
+    /// Uses the same ID byte order and zero-value rules as `ddog_otel_thread_ctx_new`.
     ///
     /// If no context is currently attached, one is created and attached, equivalent to calling
     /// `ddog_otel_thread_ctx_new` followed by `ddog_otel_thread_ctx_attach`.
@@ -145,7 +155,8 @@ mod linux {
     }
 
     /// Update `ctx` and attach it to the current thread. Returns the previously attached different
-    /// context, if any.
+    /// context, if any. Uses the same ID byte order and zero-value rules as
+    /// `ddog_otel_thread_ctx_new`.
     ///
     /// # Safety
     ///
