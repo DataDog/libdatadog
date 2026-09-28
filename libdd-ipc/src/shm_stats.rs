@@ -221,24 +221,24 @@ fn bucket_start(bucket_idx: u8, bucket_region_size: u32) -> usize {
     page_size::get() + bucket_idx as usize * bucket_region_size as usize
 }
 
-unsafe fn shm_header(base: *const u8) -> &'static ShmHeader {
+unsafe fn shm_header(base: *const u8) -> &'static ShmHeader { unsafe {
     &*(base as *const ShmHeader)
-}
+}}
 
-unsafe fn bucket_header(base: *const u8, bkt_start: usize) -> &'static ShmBucketHeader {
+unsafe fn bucket_header(base: *const u8, bkt_start: usize) -> &'static ShmBucketHeader { unsafe {
     &*(base.add(bkt_start) as *const ShmBucketHeader)
-}
+}}
 
-unsafe fn entry_ref(base: *const u8, bkt_start: usize, slot: usize) -> &'static ShmEntry {
+unsafe fn entry_ref(base: *const u8, bkt_start: usize, slot: usize) -> &'static ShmEntry { unsafe {
     let p = base.add(bkt_start + bucket_hdr_size() + slot * size_of::<ShmEntry>());
     &*(p as *const ShmEntry)
-}
+}}
 
-unsafe fn pool_base(base: *const u8, bkt_start: usize, slot_count: u32) -> *const u8 {
+unsafe fn pool_base(base: *const u8, bkt_start: usize, slot_count: u32) -> *const u8 { unsafe {
     base.add(bkt_start + pool_start_within_bucket(slot_count))
-}
+}}
 
-unsafe fn sref_str<'a>(pool: *const u8, sr: StringRef) -> &'a str {
+unsafe fn sref_str<'a>(pool: *const u8, sr: StringRef) -> &'a str { unsafe {
     if sr.len == 0 {
         return "";
     }
@@ -246,7 +246,7 @@ unsafe fn sref_str<'a>(pool: *const u8, sr: StringRef) -> &'a str {
         pool.add(sr.offset as usize),
         sr.len as usize,
     ))
-}
+}}
 
 fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
     let mut h = ZwoHasher::default();
@@ -262,16 +262,16 @@ fn hash_key(input: &ShmSpanInput<'_>) -> u64 {
     }
 }
 
-unsafe fn key_matches(entry: &ShmEntry, input: &ShmSpanInput<'_>, pool: *const u8) -> bool {
+unsafe fn key_matches(entry: &ShmEntry, input: &ShmSpanInput<'_>, pool: *const u8) -> bool { unsafe {
     let k = &*entry.key.get();
-    k.fixed.convert(|sr| unsafe { sref_str(pool, *sr) }) == input.fixed
+    k.fixed.convert(|sr| sref_str(pool, *sr)) == input.fixed
         && (k.peer_tag_count as usize) == input.peer_tags.len()
         && input.peer_tags.iter().enumerate().all(|(i, &(ik, iv))| {
             sref_str(pool, k.peer_tag_keys[i]) == ik && sref_str(pool, k.peer_tag_values[i]) == iv
         })
-}
+}}
 
-unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) -> StringRef {
+unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) -> StringRef { unsafe {
     let len = s.len() as u32;
     if len == 0 {
         return StringRef::default();
@@ -297,7 +297,7 @@ unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) 
             hint::spin_loop();
         }
     }
-}
+}}
 
 /// Pre-extracted span stats for one span, ready to be fed into [`ShmSpanConcentrator::add_span`].
 pub struct ShmSpanInput<'a> {
@@ -552,17 +552,17 @@ impl ShmSpanConcentrator {
         pool: *mut u8,
         cursor: &AtomicU32,
         pool_size: u32,
-    ) {
+    ) { unsafe {
         let k = &mut *entry.key.get();
         let fi = &input.fixed;
-        k.fixed = fi.convert(|s| unsafe { alloc_str(pool, cursor, pool_size, s) });
+        k.fixed = fi.convert(|s| alloc_str(pool, cursor, pool_size, s));
         let n = input.peer_tags.len().min(MAX_PEER_TAGS);
         k.peer_tag_count = n as u8;
         for (i, &(tk, tv)) in input.peer_tags[..n].iter().enumerate() {
             k.peer_tag_keys[i] = alloc_str(pool, cursor, pool_size, tk);
             k.peer_tag_values[i] = alloc_str(pool, cursor, pool_size, tv);
         }
-    }
+    }}
 
     fn update_stats(entry: &ShmEntry, input: &ShmSpanInput<'_>) {
         let s = &entry.stats;
@@ -742,7 +742,7 @@ impl ShmSpanConcentrator {
         })
     }
 
-    unsafe fn read_entry(entry: &ShmEntry, pool: *const u8) -> pb::ClientGroupedStats {
+    unsafe fn read_entry(entry: &ShmEntry, pool: *const u8) -> pb::ClientGroupedStats { unsafe {
         let k = &*entry.key.get();
         let f = &k.fixed;
         let s = &entry.stats;
@@ -819,7 +819,7 @@ impl ShmSpanConcentrator {
             span_derived_primary_tags: vec![],
             additional_metric_tags: vec![],
         }
-    }
+    }}
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {

@@ -46,12 +46,12 @@ pub struct NamedShmHandle {
 impl NamedShmHandle {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
-    pub unsafe fn get_path(&self) -> &[u8] {
+    pub unsafe fn get_path(&self) -> &[u8] { unsafe {
         match self.path.as_option() {
             Some(shm_path) => shm_path.name.to_bytes(),
             None => b"",
         }
-    }
+    }}
 }
 
 fn page_aligned_size(size: usize) -> usize {
@@ -190,9 +190,9 @@ impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
 impl MappedMem<NamedShmHandle> {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
-    pub unsafe fn get_path(&self) -> &[u8] {
+    pub unsafe fn get_path(&self) -> &[u8] { unsafe {
         self.mem.get_path()
-    }
+    }}
 }
 
 impl<T: FileBackedHandle> From<MappedMem<T>> for ShmHandle {

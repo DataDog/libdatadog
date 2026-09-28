@@ -68,7 +68,7 @@ impl<T> AtomicOption<T> {
     /// # Safety
     /// `bits` must hold a valid `Option<T>` bit-pattern in its low
     /// `size_of::<Option<T>>()` bytes, as produced by a previous `encode`.
-    const unsafe fn decode(bits: u64) -> Option<T> {
+    const unsafe fn decode(bits: u64) -> Option<T> { unsafe {
         let mut result = MaybeUninit::<Option<T>>::uninit();
         ptr::copy_nonoverlapping(
             ptr::from_ref(&bits).cast::<u8>(),
@@ -76,7 +76,7 @@ impl<T> AtomicOption<T> {
             size_of::<Option<T>>(),
         );
         result.assume_init()
-    }
+    }}
 
     /// Atomically replace the stored value with `None` and return what was there.
     /// Returns `None` if the value was already taken.
@@ -101,9 +101,9 @@ impl<T> AtomicOption<T> {
     ///
     /// # Safety
     /// Must not be called concurrently with [`take`], [`set`], or [`replace`].
-    pub unsafe fn as_option(&self) -> &Option<T> {
+    pub unsafe fn as_option(&self) -> &Option<T> { unsafe {
         &*self.0.get()
-    }
+    }}
 }
 
 impl<T> From<Option<T>> for AtomicOption<T> {

@@ -23,7 +23,7 @@ pub(crate) use mem_handle::*;
 #[cfg(target_os = "macos")]
 pub use mem_handle_macos::set_shm_owner_uid;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[cfg(polyfill_glibc_memfd)]
 /// # Safety
 /// Emulating memfd create, has the same safety level than libc::memfd_create
