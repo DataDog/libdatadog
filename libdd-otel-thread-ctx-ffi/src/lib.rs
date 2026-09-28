@@ -14,7 +14,7 @@ pub use linux::*;
 /// Returns `VoidResult::Ok` if all checks pass, or a `VoidResult::Err` with a
 /// diagnostic message on failure.
 #[cfg(all(target_os = "linux", feature = "sanity-check"))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_common_ffi::VoidResult {
     match libdd_otel_thread_ctx::sanity_check::sanity_check() {
         Ok(()) => libdd_common_ffi::VoidResult::Ok,
@@ -52,9 +52,9 @@ mod linux {
         /// `handle` must come from a prior [`Self::from_context`] call and must not have been
         /// reclaimed yet.
         #[inline]
-        unsafe fn into_context(handle: NonNull<Self>) -> OwnedThreadContext {
+        unsafe fn into_context(handle: NonNull<Self>) -> OwnedThreadContext { unsafe {
             OwnedThreadContext::from_opaque_ptr(handle.cast())
-        }
+        }}
     }
 
     /// Maximum size in bytes of the `attrs_data` field of a thread context record.
@@ -83,7 +83,7 @@ mod linux {
     ///
     /// Returns a non-null owned handle that must eventually be released with
     /// `ddog_otel_thread_ctx_free`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_otel_thread_ctx_new(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
@@ -108,12 +108,12 @@ mod linux {
     ///
     /// `ctx` must be a valid non-null pointer obtained from `ddog_otel_thread_ctx_new` or
     /// `ddog_otel_thread_ctx_detach`, and must not be used after this call.
-    #[no_mangle]
-    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) { unsafe {
         if let Some(ctx) = NonNull::new(ctx) {
             let _ = ThreadContextHandle::into_context(ctx);
         }
-    }
+    }}
 
     /// Attach `ctx` to the current thread. Returns the previously attached context if any, or null
     /// otherwise.
@@ -124,20 +124,20 @@ mod linux {
     /// is still actively attached**.
     ///
     /// `ctx` must be a valid non-null pointer obtained from this API.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
         ctx: *mut ThreadContextHandle,
-    ) -> Option<NonNull<ThreadContextHandle>> {
+    ) -> Option<NonNull<ThreadContextHandle>> { unsafe {
         ThreadContextHandle::into_context(NonNull::new(ctx)?)
             .attach()
             .map(ThreadContextHandle::from_context)
-    }
+    }}
 
     /// Remove the currently attached context from the TLS slot.
     ///
     /// Returns the detached context (caller now owns it and must release it with
     /// `ddog_otel_thread_ctx_free`), or null if the slot was empty.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextHandle>> {
         OwnedThreadContext::detach().map(ThreadContextHandle::from_context)
     }
@@ -147,7 +147,7 @@ mod linux {
     ///
     /// If no context is currently attached, one is created and attached, equivalent to calling
     /// `ddog_otel_thread_ctx_new` followed by `ddog_otel_thread_ctx_attach`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_otel_thread_ctx_update(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
@@ -166,7 +166,7 @@ mod linux {
     /// `ctx` may be null; otherwise it must be a valid non-null pointer obtained from this API.
     /// If attached, it must be attached only to the calling native thread and must not be
     /// concurrently updated or freed. A non-null returned context is owned by the caller.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_update_and_attach(
         ctx: *mut ThreadContextHandle,
         trace_id: &[u8; 16],

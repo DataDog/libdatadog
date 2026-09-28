@@ -47,9 +47,9 @@ impl Bytes {
         ptr: NonNull<u8>,
         len: usize,
         refcount: RefCountedCell,
-    ) -> Self {
+    ) -> Self { unsafe {
         Self::from_raw(ptr, len, Some(refcount))
-    }
+    }}
 
     #[inline]
     /// Creates a new `Bytes` from the given slice data and the refcount. Can be used after calling
@@ -408,7 +408,7 @@ struct CustomArc<T> {
 /// The data passed to this cell will only be dopped when the last
 /// clone of the cell is dropped.
 fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
-    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell {
+    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell { unsafe {
         let custom_arc = data.cast::<CustomArc<T>>().as_ref();
         custom_arc
             .rc
@@ -420,9 +420,9 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
                 drop: custom_arc_drop::<T>,
             },
         )
-    }
+    }}
 
-    unsafe fn custom_arc_drop<T>(data: NonNull<()>) {
+    unsafe fn custom_arc_drop<T>(data: NonNull<()>) { unsafe {
         let custom_arc = data.cast::<CustomArc<T>>().as_ref();
         if custom_arc
             .rc
@@ -447,7 +447,7 @@ fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
             data.as_ptr() as *mut u8,
             std::alloc::Layout::new::<CustomArc<T>>(),
         );
-    }
+    }}
 
     let rc = Box::leak(Box::new(CustomArc {
         rc: AtomicUsize::new(1),

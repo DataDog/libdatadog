@@ -61,7 +61,7 @@ pub mod os {
     ///   malformed, considering we `zeroed` it, it virtually cannot be
     ///   malformed. All in all pretty safe
     #[cfg(unix)]
-    pub unsafe fn uname() -> Option<String> {
+    pub unsafe fn uname() -> Option<String> { unsafe {
         let mut n = std::mem::zeroed();
         match libc::uname(&mut n) {
             0 => Some(
@@ -71,5 +71,5 @@ pub mod os {
             ),
             _ => None,
         }
-    }
+    }}
 }

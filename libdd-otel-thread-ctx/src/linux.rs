@@ -56,7 +56,7 @@ core::arch::global_asm!(
 /// the TLSDESC dialect.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
-unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+unsafe fn tls_slot() -> *mut *mut ThreadContextRecord { unsafe {
     let ptr: usize;
     // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
     // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
@@ -81,13 +81,13 @@ unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         options(att_syntax),
     );
     ptr as *mut *mut ThreadContextRecord
-}
+}}
 
 /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
 /// the TLSDESC dialect.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
-unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+unsafe fn tls_slot() -> *mut *mut ThreadContextRecord { unsafe {
     let ptr: usize;
     // WARNING: do not change the assembly below. See the warning above for amd64, and
     // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
@@ -106,7 +106,7 @@ unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         out("x30") _,
     );
     ptr as *mut *mut ThreadContextRecord
-}
+}}
 
 /// Run `f` with an atomic view of the current thread's TLS slot.
 ///
