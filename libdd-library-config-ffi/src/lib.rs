@@ -1,18 +1,18 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-// #![no_std] is only set under `no_std_entry`: a standalone staticlib/cdylib owns the
+// #![no_std] is only set under `standalone`: a staticlib/cdylib owns the
 // allocator and panic handler, while a `lib` consumer provides its own.
-#![cfg_attr(all(not(feature = "std"), feature = "no_std_entry"), no_std)]
+#![cfg_attr(all(not(feature = "std"), feature = "standalone"), no_std)]
 
 extern crate alloc;
 
-#[cfg(all(not(feature = "std"), feature = "no_std_entry", not(panic = "abort")))]
+#[cfg(all(not(feature = "std"), feature = "standalone", not(panic = "abort")))]
 compile_error!(
-    "The `no_std_entry` feature requires `panic = \"abort\"` in the Cargo profile. \
+    "The `standalone` feature requires `panic = \"abort\"` in the Cargo profile. \
      Building with panic=unwind causes undefined behavior at FFI boundaries."
 );
 
-#[cfg(all(not(feature = "std"), feature = "no_std_entry"))]
+#[cfg(all(not(feature = "std"), feature = "standalone"))]
 mod no_std_support {
     #[cfg(target_os = "linux")]
     #[global_allocator]

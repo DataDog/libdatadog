@@ -1,7 +1,5 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(feature = "std")]
-
 //! Implementation of the Linux parts of the [OTEL process
 //! context specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md).
 //!

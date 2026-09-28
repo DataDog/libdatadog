@@ -1,7 +1,5 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-#![cfg(feature = "std")]
-
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 
 /// Thread-level context metadata the tracer wants to publish as part of the OTel process context.
