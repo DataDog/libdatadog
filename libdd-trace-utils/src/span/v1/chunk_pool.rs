@@ -11,7 +11,20 @@ use std::sync::Arc;
 use thread_local::ThreadLocal;
 
 /// V1 counterpart of [`crate::span::span_pool`]'s drop policy: see its docs for the rationale.
-/// The policy operates at the same granularity as this pool (whole [`TraceChunk`]s).
+///
+/// When this function returns true, do not add the returned chunk batch to the queue.
+///
+/// Why are we doing this?
+///
+/// If we keep recycling chunks forever, two things are going to happen:
+/// * We will keep the **maximum** number of chunks ever used by the program alive, even if memory
+///   usage scales down.
+/// * As chunks get reused and their attributes/spans grow and shrink, they will tend to grow to
+///   have the maximum size ever seen.
+///
+/// The policy operates at chunk granularity: `add_chunks` draws once per chunk and either
+/// recycles it or drops it. Dropping a fixed pct of chunks returned ensures that we eventually
+/// free memory if chunk usage spikes, and then goes down.
 fn drop_policy() -> bool {
     const PCT_OF_CHUNKS_RETURNED_DROPPED: f64 = 0.1;
     thread_local! {
@@ -88,8 +101,18 @@ fn split_batch<T: TraceData>(
 /// `attributes` map in addition to its `spans`. So the recyclable unit here is the whole
 /// [`TraceChunk`], not the individual [`Span`]s inside it.
 ///
-/// See [`crate::span::span_pool::SpanPool`]'s docs for the channel/thread-local-cache/capacity
-/// design this mirrors.
+/// Chunks come back as whole batches (`Vec<TraceChunk<T>>`) via [`TraceChunkPool::add_chunks`]
+/// (usually by dropping a [`PooledChunks`]) and are handed out by [`TraceChunkPool::get_chunk`].
+/// Reuse keeps the pre-allocated `attributes`/`spans` buffers alive across flushes, skipping
+/// alloc churn.
+///
+/// Backed by an unbounded crossbeam channel of batches (one send per batch, not per chunk). The
+/// capacity (in chunks) bounds the channel only. Thread-local caches are not counted, so idle
+/// threads holding cached chunks don't reduce the pool's headroom.
+///
+/// `get_chunk` first hits a per-thread cache ([`ThreadLocal`]) and only when empty does it
+/// dequeue a fresh chunk batch. This keeps the single-producer path lock-free and gives each
+/// thread a local batch under contention.
 #[derive(Debug, Clone)]
 pub struct TraceChunkPool<T: TraceData> {
     inner: Arc<TraceChunkPoolInner<T>>,

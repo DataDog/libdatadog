@@ -1253,16 +1253,16 @@ impl<
         result
     }
 
-    /// V1-native counterpart of [`Self::send_trace_chunks_inner`]. Operates on a fully
-    /// v1-native pipeline, independent of the v0.4 one: no v0.4↔v1 conversion happens anywhere
-    /// in this function.
+    /// V1-native counterpart of [`Self::send_trace_chunks_inner`]. The pipeline up to
+    /// serialization (stats, dedup, agentless/OTLP dispatch) stays v1-native throughout: no
+    /// v0.4↔v1 conversion happens for those paths.
     ///
-    /// Unlike the v0.4 path, this always targets the agent's `/v1.0/traces` endpoint rather
-    /// than negotiating the output format via `effective_output_format`/`v1_active`: falling
-    /// back to a v0.4-encoded payload would require converting the already-v1-native chunks
-    /// back to v0.4, which is out of scope (see the plan's "no v0.4↔v1 conversion" constraint).
-    /// If the agent does not advertise `/v1.0/traces`, sending here is expected to fail until
-    /// v0.4 senders migrate away.
+    /// Serialization onto the agent wire does negotiate, the same way
+    /// [`Self::send_trace_chunks_inner`] does via `v1_active`: while the agent hasn't advertised
+    /// `/v1.0/traces` (or has stopped advertising it), the v1-native chunks are downgraded to
+    /// v0.4 msgpack (via [`msgpack_encoder::v04::to_vec_from_v1`]) and sent to `/v0.4/traces`
+    /// instead of failing outright. This is a one-way downgrade for the wire format only — it
+    /// does not turn this function into a general v0.4↔v1 conversion path.
     ///
     /// Log-output export is not implemented for v1-native input in this pass; if configured,
     /// this path silently skips the log-output destination.
@@ -1333,6 +1333,16 @@ impl<
             };
         }
 
+        // Snapshot whether v1 is negotiated once so the serializer and the URL agree even if
+        // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise) —
+        // mirrors `effective_output_format` in `send_trace_chunks_inner`.
+        let v1_supported = self.v1_active.load(Ordering::Relaxed);
+        let effective_format = if v1_supported {
+            TraceExporterOutputFormat::V1
+        } else {
+            TraceExporterOutputFormat::V04
+        };
+
         let counts = PayloadCounts::from_v1_chunks(&traces);
         let chunk_count = traces.len();
         let headers = self.serializer.build_traces_headers(
@@ -1352,19 +1362,42 @@ impl<
             attributes,
             chunks: traces.into_chunks(),
         };
-        let mp_payload = msgpack_encoder::v1::to_vec_from_v1(&out_payload);
+        let mp_payload = if v1_supported {
+            msgpack_encoder::v1::to_vec_from_v1(&out_payload)
+        } else {
+            msgpack_encoder::v04::to_vec_from_v1(&out_payload)
+        };
         let counts = PayloadCounts {
             chunks: chunk_count,
             ..counts
         };
 
         let endpoint = Endpoint {
-            url: TraceExporterOutputFormat::V1.add_path(&self.endpoint.url),
+            url: effective_format.add_path(&self.endpoint.url),
             ..self.endpoint.clone()
         };
 
-        self.send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
-            .await
+        let result = self
+            .send_traces_with_telemetry(&endpoint, mp_payload, headers, counts)
+            .await;
+
+        // State-hash trap mitigation, same rationale as `send_trace_chunks_inner`: on a 404 to
+        // `/v1.0/traces`, fail closed immediately and force an `/info` refresh so the next send
+        // downgrades to v0.4 without waiting for the fetcher's next poll.
+        if effective_format == TraceExporterOutputFormat::V1 {
+            if let Err(TraceExporterError::Request(ref e)) = result {
+                if e.status() == http::StatusCode::NOT_FOUND
+                    && self.v1_active.swap(false, Ordering::Relaxed)
+                {
+                    warn!(
+                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+                    );
+                    self.info_response_observer.manual_trigger();
+                }
+            }
+        }
+
+        result
     }
 
     /// Handle the result of sending traces to the agent
@@ -2859,6 +2892,8 @@ mod tests {
     fn test_v1_input_default_output_sends_msgpack_v1() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
+        agent_info::clear_cache_for_test();
+
         let server = MockServer::start();
         let mock_traces = server.mock(|when, then| {
             when.method(POST)
@@ -2869,6 +2904,16 @@ mod tests {
                 .body(r#"{ "rate_by_service": { "service:,env:": 1.0 } }"#);
         });
 
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V1_TRACES_ENDPOINT}"]}}"#
+                ));
+        });
+
         let exporter = build_test_exporter(
             server.url("/"),
             None,
@@ -2877,6 +2922,17 @@ mod tests {
             false,
             false,
         );
+
+        // Wait until /info has been fetched; `v1_active` itself is only refreshed from within
+        // `send_async` (via `check_agent_info`), so the send below is what promotes it to true
+        // before `send_trace_chunks_inner_v1` makes its negotiation decision.
+        let start = std::time::Instant::now();
+        while agent_info::get_agent_info().is_none() {
+            if start.elapsed() > Duration::from_secs(5) {
+                panic!("timeout waiting for /info");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
 
         let payload = libdd_trace_utils::span::v1::TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
