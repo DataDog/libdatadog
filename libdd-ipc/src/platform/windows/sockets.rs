@@ -24,19 +24,23 @@
 //!
 //! ## Blocking and non-blocking I/O
 //!
-//! **Client ends** (from [`SeqpacketConn::connect`] / the client half of
-//! [`SeqpacketConn::socketpair`]) are put into `PIPE_NOWAIT | PIPE_READMODE_MESSAGE` once, at
-//! connect time, and their wait mode is never changed again for the lifetime of the handle.
-//! Non-blocking calls (`try_send_raw`, `try_recv_raw`) are single `WriteFile` / `ReadFile`
-//! attempts; blocking calls (`send_raw_blocking`, `recv_raw_blocking`, the connect handshake)
-//! retry those attempts, sleeping in between on an event that NPFS signals on readiness changes
-//! (`FSCTL_PIPE_EVENT_SELECT` / `FSCTL_PIPE_EVENT_ENUM`, see `pipe_poll`).  Blocking client calls
-//! honour `set_read_timeout` / `set_write_timeout` (`Err(TimedOut)`), like on Unix.
+//! Both ends of a connection are put into `PIPE_NOWAIT | PIPE_READMODE_MESSAGE` once, as soon as
+//! they are connected, and their wait mode is never changed again for the lifetime of the handle:
+//! client ends (from [`SeqpacketConn::connect`] / the client half of
+//! [`SeqpacketConn::socketpair`]) at connect time, server ends (from the listener or
+//! [`SeqpacketConn::from_server_handle`]) right after `ConnectNamedPipe` completed, before the PID
+//! handshake is written.  Server pipe instances are created in `PIPE_WAIT` mode and keep it while
+//! they wait for a client, because the listener's overlapped, cancellable `ConnectNamedPipe`
+//! needs it.
 //!
-//! **Server ends** (from the listener or [`SeqpacketConn::from_server_handle`]) keep their
-//! existing behaviour, implemented by `ServerPipe`.
+//! Non-blocking calls (`try_send_raw`, `try_recv_raw`) are single `WriteFile` / `ReadFile`
+//! attempts; blocking calls (`send_raw_blocking`, `recv_raw_blocking`, the async server calls, the
+//! PID handshake) retry those attempts, sleeping in between on an event that NPFS signals on
+//! readiness changes (`FSCTL_PIPE_EVENT_SELECT` / `FSCTL_PIPE_EVENT_ENUM`, see `pipe_poll`, which
+//! also explains why this is sound on the overlapped server handles).  Blocking calls honour
+//! `set_read_timeout` / `set_write_timeout` (`Err(TimedOut)`), like on Unix.
 
-use super::pipe_poll::ClientPipe;
+use super::pipe_poll::NowaitPipe;
 use crate::platform::message::MAX_FDS;
 use std::task::{Context, Poll};
 use std::{
@@ -46,7 +50,7 @@ use std::{
     os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle},
     path::Path,
     pin::Pin,
-    ptr::{null, null_mut},
+    ptr::null_mut,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
@@ -65,11 +69,11 @@ use winapi::um::winnt::{DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE};
 // windows-sys – used for all pipe/IO/threading syscalls
 use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::Storage::FileSystem::{
-    ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState, PIPE_NOWAIT,
-    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeA, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
+    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
@@ -183,109 +187,29 @@ fn parse_message(buf: &[u8], n: usize) -> io::Result<(usize, Vec<OwnedHandle>)> 
     Ok((handles_start, handles))
 }
 
-/// Server end of a connected named pipe (created by `create_pipe_server`).
+/// Turn a server pipe instance whose `ConnectNamedPipe` has just completed into a connection,
+/// then send the PID handshake to the client.
 ///
-/// Only server ends use [`server_pipe_read`] / [`server_pipe_write`], which switch the wait mode
-/// around non-blocking writes.  Client ends are [`ClientPipe`]s, whose wait mode is fixed.
-struct ServerPipe(OwnedHandle);
-
-impl ServerPipe {
-    fn raw(&self) -> SysHANDLE {
-        self.0.as_raw_handle() as SysHANDLE
-    }
-}
-
-/// The two kinds of pipe end a [`SeqpacketConn`] can wrap.
-enum PipeEnd {
-    Client(ClientPipe),
-    Server(ServerPipe),
-}
-
-impl PipeEnd {
-    fn as_raw_handle(&self) -> RawHandle {
-        match self {
-            PipeEnd::Client(c) => c.as_raw_handle(),
-            PipeEnd::Server(s) => s.0.as_raw_handle(),
-        }
-    }
-}
-
-/// Read one message from server pipe `pipe` directly into `buf`.
+/// The PID handshake: write our PID to the client so it can correctly `DuplicateHandle` into us.
+/// The named pipe creator is determined by who calls `CreateNamedPipeA`.  When PHP creates the
+/// listener and passes it to the sidecar, `GetNamedPipeServerProcessId` on the client side
+/// returns PHP's own PID - not the sidecar's - causing `DuplicateHandle` to target the wrong
+/// process.  This one-shot 4-byte message lets the client discover the actual acceptor PID
+/// before sending any handles.
 ///
-/// `buf` must be large enough to hold the entire wire message
-/// (payload + `HANDLE_SUFFIX_SIZE`).  If the message is larger than `buf`, `ReadFile`
-/// returns `ERROR_MORE_DATA` and this function propagates the error.
-///
-/// Returns `(payload_len, owned_handles)`.
-fn server_pipe_read(
-    pipe: &ServerPipe,
-    buf: &mut [u8],
-    blocking: bool,
-) -> io::Result<(usize, Vec<OwnedHandle>)> {
-    let h = pipe.raw();
-    if !blocking {
-        let mut avail: u32 = 0;
-        if unsafe { PeekNamedPipe(h, null_mut(), 0, null_mut(), &mut avail, null_mut()) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if avail == 0 {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-    }
-
-    let mut read: u32 = 0;
-    if unsafe {
-        ReadFile(
-            h,
-            buf.as_mut_ptr() as _,
-            buf.len() as u32,
-            &mut read,
-            null_mut(),
-        )
-    } == 0
-    {
-        return Err(io::Error::last_os_error());
-    }
-    parse_message(buf, read as usize)
-}
-
-/// Write one message to server pipe `pipe`.
-///
-/// Server-side behaviour is unchanged from before the client/server split: a non-blocking write
-/// temporarily switches the server handle to `PIPE_NOWAIT`.  Never used for client ends.
-fn server_pipe_write(pipe: &ServerPipe, data: &[u8], blocking: bool) -> io::Result<()> {
-    let h = pipe.raw();
-    if !blocking {
-        let mode = PIPE_NOWAIT | PIPE_READMODE_MESSAGE;
-        unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) };
-    }
-
-    let mut written: u32 = 0;
-    let ok = unsafe {
-        WriteFile(
-            h,
-            data.as_ptr() as _,
-            data.len() as u32,
-            &mut written,
-            null_mut(),
-        )
-    };
-
-    if !blocking {
-        let mode = PIPE_WAIT | PIPE_READMODE_MESSAGE;
-        unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) };
-    }
-
-    if ok == 0 {
-        let err = io::Error::last_os_error();
-        if !blocking
-            && err.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_NO_DATA as i32)
-        {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-        return Err(err);
-    }
-    Ok(())
+/// The handshake is written through the connection's [`NowaitPipe`], i.e. only after the handle
+/// has been switched to `PIPE_NOWAIT`, so that no `PIPE_WAIT`-mode (potentially pending) write is
+/// ever issued on the overlapped server handle without an `OVERLAPPED`.  It is a blocking write,
+/// like the `PIPE_WAIT` `WriteFile` it replaces, but it cannot actually wait: nothing else has
+/// been written to the fresh instance, so its outbound buffer is empty.  As before, a failure
+/// (the client already went away) is ignored; the connection then fails on first use.
+fn accepted_server_conn(handle: OwnedHandle) -> io::Result<SeqpacketConn> {
+    let mut client_pid: ULONG = 0;
+    unsafe { GetNamedPipeClientProcessId(handle.as_raw_handle() as HANDLE, &mut client_pid) };
+    let conn = SeqpacketConn::from_server_handle(handle, client_pid)?;
+    let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
+    let _ = conn.pipe.write_blocking(&pid_bytes, None);
+    Ok(conn)
 }
 
 fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHandle> {
@@ -452,33 +376,11 @@ impl SeqpacketListener {
             return Err(io::Error::last_os_error());
         }
 
-        let mut client_pid: ULONG = 0;
-        unsafe { GetNamedPipeClientProcessId(guard.as_raw_handle() as HANDLE, &mut client_pid) };
-
         // Swap: the connected handle goes to the SeqpacketConn; the fresh server replaces it.
         let conn_handle = std::mem::replace(&mut *guard, new_server);
 
-        // PID handshake: write our PID to the client so it can correctly DuplicateHandle into us.
-        //
-        // The named pipe creator is determined by who calls CreateNamedPipeA.  When PHP creates the
-        // listener and passes it to the sidecar, GetNamedPipeServerProcessId on the client side
-        // returns PHP's own PID - not the sidecar's - causing DuplicateHandle to target the wrong
-        // process.  This one-shot 4-byte message lets the client discover the actual acceptor PID
-        // before sending any handles.
-        let my_pid = unsafe { GetCurrentProcessId() };
-        let pid_bytes = my_pid.to_le_bytes();
-        let mut written: u32 = 0;
-        unsafe {
-            WriteFile(
-                conn_handle.as_raw_handle() as SysHANDLE,
-                pid_bytes.as_ptr() as _,
-                4,
-                &mut written,
-                null_mut(),
-            )
-        };
-
-        Ok(SeqpacketConn::from_server_handle(conn_handle, client_pid))
+        // Switch the connected handle to PIPE_NOWAIT and write the PID handshake.
+        accepted_server_conn(conn_handle)
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
@@ -506,10 +408,11 @@ impl IntoRawHandle for SeqpacketListener {
 
 /// A connected named pipe providing message-boundary-preserving IPC.
 ///
-/// Client ends are permanently in `PIPE_NOWAIT` mode (see the module documentation); callers
-/// must not change the wait mode through [`SeqpacketConn::as_raw_handle`].
+/// Both client and server ends are permanently in `PIPE_NOWAIT` mode (see the module
+/// documentation); callers must not change the wait mode through
+/// [`SeqpacketConn::as_raw_handle`].
 pub struct SeqpacketConn {
-    pipe: PipeEnd,
+    pipe: NowaitPipe,
     peer_pid: u32,
     read_timeout: Option<std::time::Duration>,
     write_timeout: Option<std::time::Duration>,
@@ -548,7 +451,7 @@ impl SeqpacketConn {
 
         // Switch to PIPE_NOWAIT | PIPE_READMODE_MESSAGE, once and for all, and register the
         // readiness event.  From here on every blocking operation waits on that event.
-        let pipe = ClientPipe::new(handle)?;
+        let pipe = NowaitPipe::new(handle)?;
 
         // PID handshake: read the 4-byte PID written by try_accept() so that we know the real
         // acceptor PID, not the pipe-creator PID returned by GetNamedPipeServerProcessId.
@@ -571,7 +474,7 @@ impl SeqpacketConn {
         };
 
         Ok(Self {
-            pipe: PipeEnd::Client(pipe),
+            pipe,
             peer_pid: server_pid,
             read_timeout: None,
             write_timeout: None,
@@ -608,48 +511,41 @@ impl SeqpacketConn {
             CloseHandle(event as HANDLE);
         }
 
-        // Write PID handshake to unblock the client thread's ReadFile in connect().
-        let pid_bytes = pid.to_le_bytes();
-        let mut written: u32 = 0;
-        unsafe {
-            WriteFile(
-                srv_raw,
-                pid_bytes.as_ptr() as _,
-                4,
-                &mut written,
-                null_mut(),
-            )
-        };
+        // Switch the server end to PIPE_NOWAIT and write the PID handshake that unblocks the
+        // client thread in connect(), matching what try_accept() does.
+        let server = accepted_server_conn(server_handle)?;
 
         let client = client_thread
             .join()
             .map_err(|_| io::Error::from(io::ErrorKind::Other))??;
 
-        let server = Self::from_server_handle(server_handle, pid);
         Ok((server, client))
     }
 
-    /// Build a `SeqpacketConn` from a server-side pipe handle (after `ConnectNamedPipe`).
-    pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> Self {
-        Self {
-            pipe: PipeEnd::Server(ServerPipe(handle)),
+    /// Build a `SeqpacketConn` from a server-side pipe handle whose `ConnectNamedPipe` has
+    /// completed (with no overlapped operation still outstanding on it, and no I/O issued on it
+    /// yet).
+    ///
+    /// Switches the handle to `PIPE_NOWAIT | PIPE_READMODE_MESSAGE` for the rest of its life and
+    /// registers its NPFS readiness event, which is why this can fail.  Does not write the PID
+    /// handshake.
+    pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> io::Result<Self> {
+        Ok(Self {
+            pipe: NowaitPipe::new(handle)?,
             peer_pid: client_pid,
             read_timeout: None,
             write_timeout: None,
-        }
+        })
     }
 
     /// Size check done *before* handles are duplicated into the peer, so that a message that
     /// can never fit fails with `InvalidInput` without leaking duplicated handles.
-    fn check_client_message_len(&self, data: &[u8], handles: &[RawHandle]) -> io::Result<()> {
-        if let PipeEnd::Client(c) = &self.pipe {
-            let wire_len = data
-                .len()
-                .saturating_add(4)
-                .saturating_add(handles.len().saturating_mul(8));
-            c.check_write_len(wire_len)?;
-        }
-        Ok(())
+    fn check_message_len(&self, data: &[u8], handles: &[RawHandle]) -> io::Result<()> {
+        let wire_len = data
+            .len()
+            .saturating_add(4)
+            .saturating_add(handles.len().saturating_mul(8));
+        self.pipe.check_write_len(wire_len)
     }
 
     /// Retrieve the peer process's credentials (pid, uid).
@@ -666,39 +562,32 @@ impl SeqpacketConn {
     /// back to its original length - whether the write succeeded or failed.  On `WouldBlock`
     /// nothing was written and the caller can retry without re-encoding `data`.
     ///
-    /// On a client end, a message larger than the pipe's buffer quota fails with
-    /// `InvalidInput` (it could never be written).
+    /// A message larger than the pipe's buffer quota fails with `InvalidInput` (it could never
+    /// be written).
     pub fn try_send_raw(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
-        self.check_client_message_len(data, handles)?;
+        self.check_message_len(data, handles)?;
         let orig_len = data.len();
         if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = match &self.pipe {
-            PipeEnd::Client(c) => c.try_write(data),
-            PipeEnd::Server(s) => server_pipe_write(s, data, false),
-        };
+        let result = self.pipe.try_write(data);
         data.truncate(orig_len);
         result
     }
 
     /// Blocking send.
     ///
-    /// On a client end, waits for pipe buffer space (bounded by the write timeout, if any,
-    /// after which `Err(TimedOut)` is returned) and fails with `BrokenPipe` if the peer goes
-    /// away.
+    /// Waits for pipe buffer space (bounded by the write timeout, if any, after which
+    /// `Err(TimedOut)` is returned) and fails with `BrokenPipe` if the peer goes away.
     pub fn send_raw_blocking(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
-        self.check_client_message_len(data, handles)?;
+        self.check_message_len(data, handles)?;
         let orig_len = data.len();
         if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = match &self.pipe {
-            PipeEnd::Client(c) => c.write_blocking(data, self.write_timeout),
-            PipeEnd::Server(s) => server_pipe_write(s, data, true),
-        };
+        let result = self.pipe.write_blocking(data, self.write_timeout);
         data.truncate(orig_len);
         result
     }
@@ -707,13 +596,8 @@ impl SeqpacketConn {
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        match &self.pipe {
-            PipeEnd::Client(c) => {
-                let n = c.try_read(buf)?;
-                parse_message(buf, n)
-            }
-            PipeEnd::Server(s) => server_pipe_read(s, buf, false),
-        }
+        let n = self.pipe.try_read(buf)?;
+        parse_message(buf, n)
     }
 
     /// Non-blocking drain of up to `max` available ack messages. Returns the count drained.
@@ -738,35 +622,26 @@ impl SeqpacketConn {
 
     /// Blocking receive.
     ///
-    /// On a client end, waits for a message (bounded by the read timeout, if any, after which
-    /// `Err(TimedOut)` is returned) and fails with `BrokenPipe` if the peer goes away.
+    /// Waits for a message (bounded by the read timeout, if any, after which `Err(TimedOut)` is
+    /// returned) and fails with `BrokenPipe` if the peer goes away.
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        match &self.pipe {
-            PipeEnd::Client(c) => {
-                let n = c.read_blocking(buf, self.read_timeout)?;
-                parse_message(buf, n)
-            }
-            PipeEnd::Server(s) => server_pipe_read(s, buf, true),
-        }
+        let n = self.pipe.read_blocking(buf, self.read_timeout)?;
+        parse_message(buf, n)
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
         self.pipe.as_raw_handle()
     }
 
-    /// Bound the time `recv_raw_blocking` waits on a client end (`None` = wait forever).
-    ///
-    /// Server ends ignore it (unchanged behaviour).
+    /// Bound the time `recv_raw_blocking` waits (`None` = wait forever).
     pub fn set_read_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
         self.read_timeout = d;
         Ok(())
     }
 
-    /// Bound the time `send_raw_blocking` waits on a client end (`None` = wait forever).
-    ///
-    /// Server ends ignore it (unchanged behaviour).
+    /// Bound the time `send_raw_blocking` waits (`None` = wait forever).
     pub fn set_write_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
         self.write_timeout = d;
         Ok(())
@@ -791,7 +666,7 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
 
 /// On Windows, `AsyncConn` is the same type as `SeqpacketConn` — both hold a
 /// pipe end and a peer PID.  The async serve loop drives I/O via
-/// `block_in_place` + raw `ReadFile`/`WriteFile`, bypassing mio entirely.
+/// `block_in_place` + the blocking `PIPE_NOWAIT` reads/writes, bypassing mio entirely.
 pub type AsyncConn = SeqpacketConn;
 
 impl SeqpacketConn {
@@ -923,26 +798,10 @@ impl SeqpacketListener {
                 Err(connect_err)
             };
 
-            // Write PID handshake and build AsyncConn on success.
-            let result = conn_result.map(|conn_handle| {
-                let conn_raw = conn_handle.as_raw_handle() as SysHANDLE;
-                let mut client_pid: ULONG = 0;
-                unsafe {
-                    GetNamedPipeClientProcessId(conn_raw as HANDLE, &mut client_pid);
-                }
-                let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
-                let mut written: u32 = 0;
-                unsafe {
-                    WriteFile(
-                        conn_raw,
-                        pid_bytes.as_ptr() as _,
-                        4,
-                        &mut written,
-                        null_mut(),
-                    );
-                }
-                SeqpacketConn::from_server_handle(conn_handle, client_pid)
-            });
+            // On success the ConnectNamedPipe has completed (no overlapped operation is left on
+            // the handle): switch it to PIPE_NOWAIT, write the PID handshake and build the
+            // AsyncConn.
+            let result = conn_result.and_then(accepted_server_conn);
 
             let _ = tx.send(result);
             // cancel_for_thread (Arc<OwnedHandle>) is dropped here.
@@ -958,7 +817,7 @@ impl SeqpacketListener {
 
 /// Async receive on a Windows named pipe IPC connection.
 ///
-/// Uses `block_in_place` + raw `ReadFile` to avoid mio's 4 KB internal read-
+/// Uses `block_in_place` + a blocking `PIPE_NOWAIT` read to avoid mio's 4 KB internal read-
 /// buffer limit.  For message-mode pipes a single `ReadFile` delivers the
 /// entire message.
 /// Receive one IPC message and decode it in-place using the supplied callback.
@@ -981,12 +840,10 @@ where
             if buf.len() < size {
                 buf.resize(size, 0u8);
             }
-            let received = match &conn.pipe {
-                PipeEnd::Server(s) => server_pipe_read(s, buf, true),
-                PipeEnd::Client(c) => c
-                    .read_blocking(buf, None)
-                    .and_then(|n| parse_message(buf, n)),
-            };
+            let received = conn
+                .pipe
+                .read_blocking(buf, None)
+                .and_then(|n| parse_message(buf, n));
             match received {
                 Err(e) => Err(e),
                 Ok((payload_len, handles)) => Ok((decode(&buf[..payload_len]), handles)),
@@ -998,32 +855,84 @@ where
 /// Async send on a Windows named pipe IPC connection.
 ///
 /// Server responses never carry handles; a zero-handle-count suffix is
-/// appended.  Uses `block_in_place` + raw `WriteFile` to bypass mio.
+/// appended.  Uses `block_in_place` + a blocking `PIPE_NOWAIT` write to bypass mio.
 pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
     let mut buf = data.to_vec();
     buf.extend_from_slice(&0u32.to_le_bytes()); // zero handle count
-    tokio::task::block_in_place(move || match &conn.pipe {
-        PipeEnd::Server(s) => server_pipe_write(s, &buf, true),
-        PipeEnd::Client(c) => c.write_blocking(&buf, None),
-    })
+    tokio::task::block_in_place(move || conn.pipe.write_blocking(&buf, None))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The client end must wait via the NPFS readiness event, not the polling fallback, and the
-    /// server end must not be a `ClientPipe`.
+    /// A client that connects and disconnects again before the accepting side switched the
+    /// server end to PIPE_NOWAIT must not make the accept fail (an accept error ends the
+    /// sidecar's accept loop): the connection is returned, and reports the closed peer on use.
     #[test]
-    fn client_end_uses_npfs_readiness_event() {
-        let (server, client) = SeqpacketConn::socketpair().expect("socketpair");
-        match &client.pipe {
-            PipeEnd::Client(c) => assert!(
-                c.event_registered(),
-                "FSCTL_PIPE_EVENT_SELECT unsupported; waits would fall back to polling"
-            ),
-            PipeEnd::Server(_) => panic!("socketpair client half is not a client pipe end"),
+    fn accept_of_already_disconnected_client_yields_broken_connection() {
+        use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
+        use winapi::um::winnt::{GENERIC_READ, GENERIC_WRITE};
+
+        let name_str = format!(r"\\.\pipe\datadog-ipc-gone-{}", unsafe {
+            GetCurrentProcessId()
+        });
+        let name = path_to_null_terminated(Path::new(&name_str));
+        let server_handle = create_pipe_server(&name, true).expect("create_pipe_server");
+        let event = unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) };
+        assert_ne!(event, 0);
+        let mut ov = make_overlapped(event);
+        let srv_raw = server_handle.as_raw_handle() as SysHANDLE;
+        unsafe { ConnectNamedPipe(srv_raw, &mut ov) };
+        let client = unsafe {
+            CreateFileA(
+                name.as_ptr() as *const i8,
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                null_mut(),
+                OPEN_EXISTING,
+                0,
+                null_mut(),
+            )
+        };
+        assert_ne!(client, INVALID_HANDLE_VALUE);
+        assert_eq!(unsafe { WaitForSingleObject(event, 5000) }, WAIT_OBJECT_0);
+        let mut transferred: u32 = 0;
+        assert_ne!(
+            unsafe { GetOverlappedResult(srv_raw, &ov, &mut transferred, 0) },
+            0
+        );
+        unsafe {
+            CloseHandle(event as HANDLE);
+            CloseHandle(client);
         }
-        assert!(matches!(server.pipe, PipeEnd::Server(_)));
+
+        let conn = accepted_server_conn(server_handle).expect("accept must not fail");
+        let mut buf = vec![0u8; 64 + HANDLE_SUFFIX_SIZE];
+        for result in [
+            conn.try_recv_raw(&mut buf).map(|_| ()),
+            conn.recv_raw_blocking(&mut buf).map(|_| ()),
+            conn.try_send_raw(&mut vec![1u8; 8], &[]),
+            conn.send_raw_blocking(&mut vec![1u8; 8], &[]),
+        ] {
+            match result {
+                Err(e) => assert_eq!(e.kind(), io::ErrorKind::BrokenPipe, "{e:?}"),
+                Ok(()) => panic!("I/O on a connection whose client is gone succeeded"),
+            }
+        }
+    }
+
+    /// Both ends must wait via the NPFS readiness event, not the polling fallback.  The server end
+    /// is an overlapped pipe instance, on which FSCTL_PIPE_EVENT_SELECT returns STATUS_PENDING, so
+    /// this also checks that the pending request is waited for and its final status used.
+    #[test]
+    fn both_ends_use_npfs_readiness_event() {
+        let (server, client) = SeqpacketConn::socketpair().expect("socketpair");
+        for (end, conn) in [("client", &client), ("server", &server)] {
+            assert!(
+                conn.pipe.event_registered(),
+                "{end} end: FSCTL_PIPE_EVENT_SELECT unsupported; waits would fall back to polling"
+            );
+        }
     }
 }
