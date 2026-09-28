@@ -22,7 +22,9 @@
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
 //! bytes beyond the maximum expected payload size.
 
+mod reader;
 mod writer;
+use reader::PipeReader;
 use writer::PipeWriter;
 
 use crate::platform::message::MAX_FDS;
@@ -58,8 +60,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, PeekNamedPipe, SetNamedPipeHandleState,
-    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeA, SetNamedPipeHandleState, PIPE_READMODE_MESSAGE,
+    PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
@@ -190,100 +192,6 @@ impl Drop for PendingHandleTransfers {
             }
         }
     }
-}
-
-/// Parse the handle-suffix wire format from a received message.
-///
-/// `buf[..n]` contains the raw bytes received from the pipe.
-/// Returns `(payload_len, owned_handles)`.
-fn parse_message(buf: &[u8], n: usize) -> io::Result<(usize, Vec<OwnedHandle>)> {
-    if n < 4 {
-        return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-    }
-    let count_bytes: [u8; 4] = buf[n - 4..n]
-        .try_into()
-        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-    let count = u32::from_le_bytes(count_bytes) as usize;
-
-    let handles_start = n
-        .checked_sub(4 + 8 * count)
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidData))?;
-
-    let mut handles = Vec::with_capacity(count);
-    for i in 0..count {
-        let off = handles_start + 8 * i;
-        let val_bytes: [u8; 8] = buf[off..off + 8]
-            .try_into()
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-        let val = u64::from_le_bytes(val_bytes);
-        handles.push(unsafe { OwnedHandle::from_raw_handle(val as RawHandle) });
-    }
-
-    Ok((handles_start, handles))
-}
-
-/// Read one message from `h` directly into `buf`.
-///
-/// `buf` must be large enough to hold the entire wire message
-/// (payload + `HANDLE_SUFFIX_SIZE`).  If the message is larger than `buf`, `ReadFile`
-/// returns `ERROR_MORE_DATA` and this function propagates the error.
-///
-/// Returns `(payload_len, owned_handles)`.
-fn pipe_read(
-    h: SysHANDLE,
-    buf: &mut [u8],
-    blocking: bool,
-) -> io::Result<(usize, Vec<OwnedHandle>)> {
-    if !blocking {
-        let mut avail: u32 = 0;
-        if unsafe { PeekNamedPipe(h, null_mut(), 0, null_mut(), &mut avail, null_mut()) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if avail == 0 {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-    }
-
-    let len = u32::try_from(buf.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC buffer is too large"))?;
-    let event = unsafe { CreateEventA(null(), 1, 0, null()) };
-    if event == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
-    // The low event bit suppresses IOCP notifications. Reads do not reserve a
-    // TP_IO callback, even after the writer registers this handle.
-    let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
-    if unsafe { ReadFile(h, buf.as_mut_ptr() as _, len, null_mut(), &mut overlapped) } == 0 {
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() != Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32) {
-            return Err(error);
-        }
-        if !blocking {
-            // The Named Pipe File System (NPFS) stages incoming bytes, then atomically
-            // claims the read's I/O Request Packet (IRP) by clearing its cancel routine.
-            // Only the winning read decrements the writer's BytesNotWritten count,
-            // committing consumption. If cancellation owns the IRP, NPFS frees the
-            // staged copy and leaves the message for the next read; if the read owns it,
-            // completion reports success. After waiting for terminal completion below,
-            // ERROR_OPERATION_ABORTED is therefore a rollback-safe WouldBlock result.
-            // Writes have the reverse ordering; see PipeWriter.
-            unsafe { CancelIoEx(h, &overlapped) };
-        }
-    }
-
-    let mut read = 0;
-    if unsafe { GetOverlappedResult(h, &overlapped, &mut read, 1) } == 0 {
-        let error = io::Error::last_os_error();
-        if !blocking
-            && error.raw_os_error()
-                == Some(windows_sys::Win32::Foundation::ERROR_OPERATION_ABORTED as i32)
-        {
-            return Err(io::ErrorKind::WouldBlock.into());
-        }
-        return Err(error);
-    }
-    parse_message(buf, read as usize)
 }
 
 // PID handshakes precede writer registration and always wait for completion.
@@ -498,6 +406,7 @@ impl SeqpacketListener {
 
         Ok(SeqpacketConn {
             writer: OnceLock::new(),
+            reader: PipeReader::default(),
             handle: conn_handle,
             peer_pid: client_pid,
             read_timeout: None,
@@ -532,6 +441,7 @@ impl IntoRawHandle for SeqpacketListener {
 pub struct SeqpacketConn {
     // Fields drop in declaration order: quiesce writer callbacks before closing pipe.
     writer: OnceLock<Result<PipeWriter, i32>>,
+    reader: PipeReader,
     handle: OwnedHandle,
     peer_pid: u32,
     read_timeout: Option<std::time::Duration>,
@@ -626,6 +536,7 @@ impl SeqpacketConn {
 
         Ok(Self {
             writer: OnceLock::new(),
+            reader: PipeReader::default(),
             handle,
             peer_pid: server_pid,
             read_timeout: None,
@@ -673,6 +584,7 @@ impl SeqpacketConn {
 
         let server = Self {
             writer: OnceLock::new(),
+            reader: PipeReader::default(),
             handle: server_handle,
             peer_pid: pid,
             read_timeout: None,
@@ -686,6 +598,7 @@ impl SeqpacketConn {
     pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> Self {
         Self {
             writer: OnceLock::new(),
+            reader: PipeReader::default(),
             handle,
             peer_pid: client_pid,
             read_timeout: None,
@@ -728,7 +641,7 @@ impl SeqpacketConn {
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
         self.check_write_error()?;
-        pipe_read(self.raw_handle(), buf, false)
+        self.reader.read(self.raw_handle(), buf, false)
     }
 
     /// Non-blocking drain of up to `max` available ack messages. Returns the count drained.
@@ -757,7 +670,7 @@ impl SeqpacketConn {
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
         self.check_write_error()?;
-        pipe_read(self.raw_handle(), buf, true)
+        self.reader.read(self.raw_handle(), buf, true)
     }
 
     /// Borrow the pipe handle. The connection owns its I/O and completion-port
@@ -994,7 +907,7 @@ where
             if buf.len() < size {
                 buf.resize(size, 0u8);
             }
-            match pipe_read(raw, buf, true) {
+            match conn.reader.read(raw, buf, true) {
                 Err(e) => Err(e),
                 Ok((payload_len, handles)) => Ok((decode(&buf[..payload_len]), handles)),
             }

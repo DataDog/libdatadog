@@ -32,7 +32,7 @@ use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED
 /// This strategy was chosen because Unix nonblocking behavior cannot safely be
 /// simulated by canceling a `WriteFile` that returns `ERROR_IO_PENDING` and
 /// translating a final `ERROR_OPERATION_ABORTED` into `WouldBlock`, like is
-/// done for reads in `pipe_read`. The Named Pipe File System (NPFS) can queue
+/// done for reads in `PipeReader`. The Named Pipe File System (NPFS) can queue
 /// the whole buffer while its I/O Request Packet (IRP) remains pending for
 /// quota. The peer may consume those bytes before NPFS atomically claims the
 /// write IRP's completion. If cancellation claimed it first, NPFS cannot undo
