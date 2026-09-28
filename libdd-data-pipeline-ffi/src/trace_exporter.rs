@@ -422,6 +422,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_mutable_metadata(
 }
 
 /// Sets the process tags to be included in the stats payload.
+///
+/// This should not be used when `ddog_trace_exporter_config_set_mutable_metadata` is used.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
     config: Option<&mut TraceExporterConfig>,
@@ -441,7 +443,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
     )
 }
 
-/// Sets the process tags to be included in the stats payload.
+/// Sets the runtime id used in payloads.
+///
+/// This should not be used when `ddog_trace_exporter_config_set_mutable_metadata` is used.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_runtime_id(
     config: Option<&mut TraceExporterConfig>,
@@ -827,8 +831,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
-                .set_process_tags(config.process_tags.as_deref().unwrap_or(""))
-                .set_runtime_id(config.runtime_id.as_deref().unwrap_or(""))
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
@@ -849,7 +851,15 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(handle) = &config.mutable_metadata {
                 builder.set_mutable_metadata(handle.clone());
+            } else {
+                if let Some(process_tags) = &config.process_tags {
+                    builder.set_process_tags(process_tags);
+                };
+                if let Some(runtime_id) = &config.runtime_id {
+                    builder.set_runtime_id(runtime_id);
+                };
             }
+
             builder.set_telemetry_instrumentation_sessions(
                 config.telemetry_instrumentation_sessions.clone(),
             );
