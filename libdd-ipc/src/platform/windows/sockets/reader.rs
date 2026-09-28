@@ -113,20 +113,11 @@ impl PipeReader {
     }
 
     fn take_cached_event(&self) -> Option<OwnedHandle> {
-        let mut raw = self.cached_event.load(Ordering::Relaxed);
-        loop {
-            if raw == 0 {
-                return None;
-            }
-            match self.cached_event.compare_exchange_weak(
-                raw,
-                0,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(raw) => return Some(unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) }),
-                Err(current) => raw = current,
-            }
+        let raw = self.cached_event.swap(0, Ordering::Relaxed);
+        if raw == 0 {
+            None
+        } else {
+            Some(unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) })
         }
     }
 
