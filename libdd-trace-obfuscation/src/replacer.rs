@@ -149,9 +149,26 @@ pub fn replace_span_tags_v1<T: TraceData>(span: &mut v1::Span<T>, rules: &[Repla
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
                 // functions, which apply "*" rules to both span meta and `s.Resource`).
                 apply_rule(rule, &mut span.resource);
+                // `env`/`version`/`component` were plain meta tags in v0.4 (and thus already
+                // covered by the loop above); v1 promoted them to dedicated fields, so the
+                // wildcard needs to reach them explicitly to keep the same behavior.
+                apply_rule(rule, &mut span.env);
+                apply_rule(rule, &mut span.version);
+                apply_rule(rule, &mut span.component);
             }
             "resource.name" => {
                 apply_rule(rule, &mut span.resource);
+            }
+            // `env`/`version`/`component` are dedicated v1 fields; in v0.4 they were ordinary
+            // meta tags reachable by name, so mirror that here for backward compatibility.
+            "env" => {
+                apply_rule(rule, &mut span.env);
+            }
+            "version" => {
+                apply_rule(rule, &mut span.version);
+            }
+            "component" => {
+                apply_rule(rule, &mut span.component);
             }
             _ => {
                 if let Some(AttributeValue::String(s)) = span.attributes.get_mut(rule.name.as_str())

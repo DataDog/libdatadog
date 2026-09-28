@@ -160,10 +160,10 @@ where
         for span in &mut chunk.spans {
             // Obfuscate every span we are about to send to the intake
             libdd_trace_obfuscation::obfuscate::obfuscate_v1_span(span, &config.obfuscation_config);
+            // Remove duplicate attributes before serialization
+            span.dedup();
         }
-
-        // Remove duplicate attributes before serialization
-        chunk.dedup();
+        chunk.attributes.dedup();
     }
 
     let trace_count = traces.len();

@@ -389,12 +389,10 @@ pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &Obfuscat
     }
 
     if config.credit_cards.enabled {
-        for (key, value) in &mut span.attributes {
-            if !should_obfuscate_cc_key(as_str(key), config) {
-                continue;
-            }
-            obfuscate_v1_attribute_credit_card(value, config);
-        }
+        span.attributes
+            .iter_mut()
+            .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
+            .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
     }
 
     match as_str(&span.r#type) {
@@ -456,7 +454,7 @@ pub fn obfuscate_v1_span<T: TraceData>(span: &mut v1::Span<T>, config: &Obfuscat
                     AttributeValue::String(s) => Some(as_str(s)),
                     _ => None,
                 })
-                .and_then(|dbms| TryInto::try_into(dbms).ok())
+                .and_then(|dbms| dbms.try_into().ok())
                 .unwrap_or_default();
             if let Some(query) = obfuscate_sql_opt(as_str(&span.resource), &config.sql, dbms) {
                 span.resource = T::Text::from_owned(query.clone());
@@ -505,20 +503,19 @@ fn obfuscate_v1_span_event<T: TraceData>(event: &mut v1::SpanEvent<T>, config: &
     if !config.credit_cards.enabled {
         return;
     }
-    for (key, value) in &mut event.attributes {
-        if !should_obfuscate_cc_key(as_str(key), config) {
-            continue;
-        }
-        obfuscate_v1_attribute_credit_card(value, config);
-    }
+    event
+        .attributes
+        .iter_mut()
+        .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
+        .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
 }
 
 /// Obfuscates a single [`v1::AttributeValue`] in place if it looks like a credit-card number.
 ///
 /// `String`, `Int`, and `Float` values are checked (stringifying the latter two); on a hit the
-/// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `List` elements are
-/// checked recursively. `Bool`, `Bytes`, and `KeyValue` are left untouched: they can't hold a
-/// card number in a form the check below understands.
+/// value becomes `String("?")`, mirroring [`obfuscate_v04_attribute_value`]. `List` elements and
+/// `KeyValue` entries are checked recursively. `Bool` and `Bytes` are left untouched: they can't
+/// hold a card number in a form the check below understands.
 fn obfuscate_v1_attribute_credit_card<T: TraceData>(
     value: &mut AttributeValue<T>,
     config: &ObfuscationConfig,
@@ -544,7 +541,12 @@ fn obfuscate_v1_attribute_credit_card<T: TraceData>(
                 obfuscate_v1_attribute_credit_card(v, config);
             }
         }
-        AttributeValue::Bool(_) | AttributeValue::Bytes(_) | AttributeValue::KeyValue(_) => {}
+        AttributeValue::KeyValue(map) => {
+            for (_, v) in map.iter_mut() {
+                obfuscate_v1_attribute_credit_card(v, config);
+            }
+        }
+        AttributeValue::Bool(_) | AttributeValue::Bytes(_) => {}
     }
 }
 
