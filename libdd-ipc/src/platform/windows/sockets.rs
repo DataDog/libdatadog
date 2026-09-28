@@ -21,7 +21,22 @@
 //! receiver can read directly into the caller-provided buffer, then strip the suffix in-place -
 //! no intermediate copy needed.  The caller's buffer must have at least `HANDLE_SUFFIX_SIZE`
 //! bytes beyond the maximum expected payload size.
+//!
+//! ## Blocking and non-blocking I/O
+//!
+//! **Client ends** (from [`SeqpacketConn::connect`] / the client half of
+//! [`SeqpacketConn::socketpair`]) are put into `PIPE_NOWAIT | PIPE_READMODE_MESSAGE` once, at
+//! connect time, and their wait mode is never changed again for the lifetime of the handle.
+//! Non-blocking calls (`try_send_raw`, `try_recv_raw`) are single `WriteFile` / `ReadFile`
+//! attempts; blocking calls (`send_raw_blocking`, `recv_raw_blocking`, the connect handshake)
+//! retry those attempts, sleeping in between on an event that NPFS signals on readiness changes
+//! (`FSCTL_PIPE_EVENT_SELECT` / `FSCTL_PIPE_EVENT_ENUM`, see `pipe_poll`).  Blocking client calls
+//! honour `set_read_timeout` / `set_write_timeout` (`Err(TimedOut)`), like on Unix.
+//!
+//! **Server ends** (from the listener or [`SeqpacketConn::from_server_handle`]) keep their
+//! existing behaviour, implemented by `ServerPipe`.
 
+use super::pipe_poll::ClientPipe;
 use crate::platform::message::MAX_FDS;
 use std::task::{Context, Poll};
 use std::{
@@ -168,18 +183,46 @@ fn parse_message(buf: &[u8], n: usize) -> io::Result<(usize, Vec<OwnedHandle>)> 
     Ok((handles_start, handles))
 }
 
-/// Read one message from `h` directly into `buf`.
+/// Server end of a connected named pipe (created by `create_pipe_server`).
+///
+/// Only server ends use [`server_pipe_read`] / [`server_pipe_write`], which switch the wait mode
+/// around non-blocking writes.  Client ends are [`ClientPipe`]s, whose wait mode is fixed.
+struct ServerPipe(OwnedHandle);
+
+impl ServerPipe {
+    fn raw(&self) -> SysHANDLE {
+        self.0.as_raw_handle() as SysHANDLE
+    }
+}
+
+/// The two kinds of pipe end a [`SeqpacketConn`] can wrap.
+enum PipeEnd {
+    Client(ClientPipe),
+    Server(ServerPipe),
+}
+
+impl PipeEnd {
+    fn as_raw_handle(&self) -> RawHandle {
+        match self {
+            PipeEnd::Client(c) => c.as_raw_handle(),
+            PipeEnd::Server(s) => s.0.as_raw_handle(),
+        }
+    }
+}
+
+/// Read one message from server pipe `pipe` directly into `buf`.
 ///
 /// `buf` must be large enough to hold the entire wire message
 /// (payload + `HANDLE_SUFFIX_SIZE`).  If the message is larger than `buf`, `ReadFile`
 /// returns `ERROR_MORE_DATA` and this function propagates the error.
 ///
 /// Returns `(payload_len, owned_handles)`.
-fn pipe_read(
-    h: SysHANDLE,
+fn server_pipe_read(
+    pipe: &ServerPipe,
     buf: &mut [u8],
     blocking: bool,
 ) -> io::Result<(usize, Vec<OwnedHandle>)> {
+    let h = pipe.raw();
     if !blocking {
         let mut avail: u32 = 0;
         if unsafe { PeekNamedPipe(h, null_mut(), 0, null_mut(), &mut avail, null_mut()) } == 0 {
@@ -206,7 +249,12 @@ fn pipe_read(
     parse_message(buf, read as usize)
 }
 
-fn pipe_write(h: SysHANDLE, data: &[u8], blocking: bool) -> io::Result<()> {
+/// Write one message to server pipe `pipe`.
+///
+/// Server-side behaviour is unchanged from before the client/server split: a non-blocking write
+/// temporarily switches the server handle to `PIPE_NOWAIT`.  Never used for client ends.
+fn server_pipe_write(pipe: &ServerPipe, data: &[u8], blocking: bool) -> io::Result<()> {
+    let h = pipe.raw();
     if !blocking {
         let mode = PIPE_NOWAIT | PIPE_READMODE_MESSAGE;
         unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) };
@@ -430,12 +478,7 @@ impl SeqpacketListener {
             )
         };
 
-        Ok(SeqpacketConn {
-            handle: conn_handle,
-            peer_pid: client_pid,
-            read_timeout: None,
-            write_timeout: None,
-        })
+        Ok(SeqpacketConn::from_server_handle(conn_handle, client_pid))
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
@@ -462,8 +505,11 @@ impl IntoRawHandle for SeqpacketListener {
 }
 
 /// A connected named pipe providing message-boundary-preserving IPC.
+///
+/// Client ends are permanently in `PIPE_NOWAIT` mode (see the module documentation); callers
+/// must not change the wait mode through [`SeqpacketConn::as_raw_handle`].
 pub struct SeqpacketConn {
-    handle: OwnedHandle,
+    pipe: PipeEnd,
     peer_pid: u32,
     read_timeout: Option<std::time::Duration>,
     write_timeout: Option<std::time::Duration>,
@@ -497,10 +543,12 @@ impl SeqpacketConn {
             }
             return Err(err);
         }
+        // SAFETY: `h` is a valid handle that we exclusively own from here on.
+        let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
 
-        // Upgrade to message read-mode.
-        let mode = PIPE_READMODE_MESSAGE;
-        unsafe { SetNamedPipeHandleState(h as SysHANDLE, &mode, null(), null()) };
+        // Switch to PIPE_NOWAIT | PIPE_READMODE_MESSAGE, once and for all, and register the
+        // readiness event.  From here on every blocking operation waits on that event.
+        let pipe = ClientPipe::new(handle)?;
 
         // PID handshake: read the 4-byte PID written by try_accept() so that we know the real
         // acceptor PID, not the pipe-creator PID returned by GetNamedPipeServerProcessId.
@@ -508,30 +556,22 @@ impl SeqpacketConn {
         // When PHP creates the listener and passes it to the sidecar, GetNamedPipeServerProcessId
         // returns PHP's own PID.  Using that for DuplicateHandle silently duplicates handles back
         // into PHP rather than into the sidecar, causing ERROR_INVALID_HANDLE on the sidecar side.
+        //
+        // Like the synchronous ReadFile this replaces, the wait is unbounded.
         let mut pid_buf = [0u8; 4];
-        let mut read_bytes: u32 = 0;
-        let pid_ok = unsafe {
-            ReadFile(
-                h as SysHANDLE,
-                pid_buf.as_mut_ptr() as _,
-                4,
-                &mut read_bytes,
-                null_mut(),
-            )
-        };
-        let server_pid: ULONG = if pid_ok != 0 && read_bytes == 4 {
-            u32::from_le_bytes(pid_buf)
-        } else {
-            // Fallback: use GetNamedPipeServerProcessId (returns the creator's PID, which may be
-            // our own PID if we created the pipe and passed it to the sidecar).
-            let mut spid: ULONG = 0;
-            unsafe { GetNamedPipeServerProcessId(h as HANDLE, &mut spid) };
-            spid
+        let server_pid: ULONG = match pipe.read_blocking(&mut pid_buf, None) {
+            Ok(4) => u32::from_le_bytes(pid_buf),
+            _ => {
+                // Fallback: use GetNamedPipeServerProcessId (returns the creator's PID, which may
+                // be our own PID if we created the pipe and passed it to the sidecar).
+                let mut spid: ULONG = 0;
+                unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle() as HANDLE, &mut spid) };
+                spid
+            }
         };
 
-        let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
         Ok(Self {
-            handle,
+            pipe: PipeEnd::Client(pipe),
             peer_pid: server_pid,
             read_timeout: None,
             write_timeout: None,
@@ -585,27 +625,31 @@ impl SeqpacketConn {
             .join()
             .map_err(|_| io::Error::from(io::ErrorKind::Other))??;
 
-        let server = Self {
-            handle: server_handle,
-            peer_pid: pid,
-            read_timeout: None,
-            write_timeout: None,
-        };
+        let server = Self::from_server_handle(server_handle, pid);
         Ok((server, client))
     }
 
     /// Build a `SeqpacketConn` from a server-side pipe handle (after `ConnectNamedPipe`).
     pub fn from_server_handle(handle: OwnedHandle, client_pid: u32) -> Self {
         Self {
-            handle,
+            pipe: PipeEnd::Server(ServerPipe(handle)),
             peer_pid: client_pid,
             read_timeout: None,
             write_timeout: None,
         }
     }
 
-    fn raw_handle(&self) -> SysHANDLE {
-        self.handle.as_raw_handle() as SysHANDLE
+    /// Size check done *before* handles are duplicated into the peer, so that a message that
+    /// can never fit fails with `InvalidInput` without leaking duplicated handles.
+    fn check_client_message_len(&self, data: &[u8], handles: &[RawHandle]) -> io::Result<()> {
+        if let PipeEnd::Client(c) = &self.pipe {
+            let wire_len = data
+                .len()
+                .saturating_add(4)
+                .saturating_add(handles.len().saturating_mul(8));
+            c.check_write_len(wire_len)?;
+        }
+        Ok(())
     }
 
     /// Retrieve the peer process's credentials (pid, uid).
@@ -620,26 +664,41 @@ impl SeqpacketConn {
     ///
     /// Appends the handle suffix to `data` in-place, writes the message, then truncates `data`
     /// back to its original length - whether the write succeeded or failed.  On `WouldBlock`
-    /// the caller can retry without re-encoding `data`.
+    /// nothing was written and the caller can retry without re-encoding `data`.
+    ///
+    /// On a client end, a message larger than the pipe's buffer quota fails with
+    /// `InvalidInput` (it could never be written).
     pub fn try_send_raw(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
+        self.check_client_message_len(data, handles)?;
         let orig_len = data.len();
         if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = pipe_write(self.raw_handle(), data, false);
+        let result = match &self.pipe {
+            PipeEnd::Client(c) => c.try_write(data),
+            PipeEnd::Server(s) => server_pipe_write(s, data, false),
+        };
         data.truncate(orig_len);
         result
     }
 
     /// Blocking send.
+    ///
+    /// On a client end, waits for pipe buffer space (bounded by the write timeout, if any,
+    /// after which `Err(TimedOut)` is returned) and fails with `BrokenPipe` if the peer goes
+    /// away.
     pub fn send_raw_blocking(&self, data: &mut Vec<u8>, handles: &[RawHandle]) -> io::Result<()> {
+        self.check_client_message_len(data, handles)?;
         let orig_len = data.len();
         if let Err(e) = append_handle_suffix(data, handles, self.peer_pid) {
             data.truncate(orig_len);
             return Err(e);
         }
-        let result = pipe_write(self.raw_handle(), data, true);
+        let result = match &self.pipe {
+            PipeEnd::Client(c) => c.write_blocking(data, self.write_timeout),
+            PipeEnd::Server(s) => server_pipe_write(s, data, true),
+        };
         data.truncate(orig_len);
         result
     }
@@ -648,7 +707,13 @@ impl SeqpacketConn {
     ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn try_recv_raw(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        pipe_read(self.raw_handle(), buf, false)
+        match &self.pipe {
+            PipeEnd::Client(c) => {
+                let n = c.try_read(buf)?;
+                parse_message(buf, n)
+            }
+            PipeEnd::Server(s) => server_pipe_read(s, buf, false),
+        }
     }
 
     /// Non-blocking drain of up to `max` available ack messages. Returns the count drained.
@@ -673,20 +738,35 @@ impl SeqpacketConn {
 
     /// Blocking receive.
     ///
+    /// On a client end, waits for a message (bounded by the read timeout, if any, after which
+    /// `Err(TimedOut)` is returned) and fails with `BrokenPipe` if the peer goes away.
+    ///
     /// `buf` must be at least `payload_max + HANDLE_SUFFIX_SIZE` bytes.
     pub fn recv_raw_blocking(&self, buf: &mut [u8]) -> io::Result<(usize, Vec<OwnedHandle>)> {
-        pipe_read(self.raw_handle(), buf, true)
+        match &self.pipe {
+            PipeEnd::Client(c) => {
+                let n = c.read_blocking(buf, self.read_timeout)?;
+                parse_message(buf, n)
+            }
+            PipeEnd::Server(s) => server_pipe_read(s, buf, true),
+        }
     }
 
     pub fn as_raw_handle(&self) -> RawHandle {
-        self.raw_handle() as RawHandle
+        self.pipe.as_raw_handle()
     }
 
+    /// Bound the time `recv_raw_blocking` waits on a client end (`None` = wait forever).
+    ///
+    /// Server ends ignore it (unchanged behaviour).
     pub fn set_read_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
         self.read_timeout = d;
         Ok(())
     }
 
+    /// Bound the time `send_raw_blocking` waits on a client end (`None` = wait forever).
+    ///
+    /// Server ends ignore it (unchanged behaviour).
     pub fn set_write_timeout(&mut self, d: Option<std::time::Duration>) -> io::Result<()> {
         self.write_timeout = d;
         Ok(())
@@ -709,8 +789,8 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     Ok(SeqpacketConn::connect(path).is_ok())
 }
 
-/// On Windows, `AsyncConn` is the same type as `SeqpacketConn` — both hold an
-/// `OwnedHandle` and a peer PID.  The async serve loop drives I/O via
+/// On Windows, `AsyncConn` is the same type as `SeqpacketConn` — both hold a
+/// pipe end and a peer PID.  The async serve loop drives I/O via
 /// `block_in_place` + raw `ReadFile`/`WriteFile`, bypassing mio entirely.
 pub type AsyncConn = SeqpacketConn;
 
@@ -895,14 +975,19 @@ where
         /// Reusable receive buffer. Grows on first use; never shrinks.
         static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     }
-    let raw = conn.as_raw_handle() as SysHANDLE;
     tokio::task::block_in_place(|| {
         RECV_BUF.with_borrow_mut(|buf| {
             let size = max_message_size() + HANDLE_SUFFIX_SIZE;
             if buf.len() < size {
                 buf.resize(size, 0u8);
             }
-            match pipe_read(raw, buf, true) {
+            let received = match &conn.pipe {
+                PipeEnd::Server(s) => server_pipe_read(s, buf, true),
+                PipeEnd::Client(c) => c
+                    .read_blocking(buf, None)
+                    .and_then(|n| parse_message(buf, n)),
+            };
+            match received {
                 Err(e) => Err(e),
                 Ok((payload_len, handles)) => Ok((decode(&buf[..payload_len]), handles)),
             }
@@ -915,8 +1000,30 @@ where
 /// Server responses never carry handles; a zero-handle-count suffix is
 /// appended.  Uses `block_in_place` + raw `WriteFile` to bypass mio.
 pub async fn send_raw_async(conn: &AsyncConn, data: &[u8]) -> io::Result<()> {
-    let raw = conn.as_raw_handle() as SysHANDLE;
     let mut buf = data.to_vec();
     buf.extend_from_slice(&0u32.to_le_bytes()); // zero handle count
-    tokio::task::block_in_place(move || pipe_write(raw, &buf, true))
+    tokio::task::block_in_place(move || match &conn.pipe {
+        PipeEnd::Server(s) => server_pipe_write(s, &buf, true),
+        PipeEnd::Client(c) => c.write_blocking(&buf, None),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The client end must wait via the NPFS readiness event, not the polling fallback, and the
+    /// server end must not be a `ClientPipe`.
+    #[test]
+    fn client_end_uses_npfs_readiness_event() {
+        let (server, client) = SeqpacketConn::socketpair().expect("socketpair");
+        match &client.pipe {
+            PipeEnd::Client(c) => assert!(
+                c.event_registered(),
+                "FSCTL_PIPE_EVENT_SELECT unsupported; waits would fall back to polling"
+            ),
+            PipeEnd::Server(_) => panic!("socketpair client half is not a client pipe end"),
+        }
+        assert!(matches!(server.pipe, PipeEnd::Server(_)));
+    }
 }

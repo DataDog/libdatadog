@@ -10,6 +10,8 @@ pub(crate) use mem_handle::*;
 mod named_pipe;
 pub use named_pipe::*;
 
+mod pipe_poll;
+
 pub mod sockets;
 pub use sockets::*;
 

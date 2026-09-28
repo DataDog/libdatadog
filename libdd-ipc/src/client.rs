@@ -17,8 +17,10 @@ use tracing::{trace, warn};
 /// Client-side state for a single IPC connection.
 ///
 /// Tracks in-flight message counts for ack-based flow control.
-/// `SeqpacketConn` is non-blocking; blocking behavior is implemented via
-/// `libc::poll` internally.
+/// `SeqpacketConn` is non-blocking; blocking behavior is implemented on top of it by waiting
+/// for readiness: `poll(2)` on Unix, and on Windows an NPFS readiness event
+/// (`FSCTL_PIPE_EVENT_SELECT`) on a client pipe handle that stays in `PIPE_NOWAIT` mode for its
+/// entire lifetime (its wait mode is never toggled).
 pub struct IpcClientConn {
     pub conn: SeqpacketConn,
     /// Number of messages sent (incremented on each successful send).
