@@ -383,7 +383,7 @@ mod tests {
 
         // Client → server
         client
-            .try_send_raw(&mut vec![1u8; 10], &[])
+            .try_send_raw(vec![1u8; 10], &[])
             .expect("client send");
         let mut buf = vec![0u8; 64];
         let (n, _) = server.try_recv_raw(&mut buf).expect("server recv");
@@ -392,7 +392,7 @@ mod tests {
         // Server → client (use a large enough buffer for 220 bytes)
         let mut buf220 = vec![0u8; 256];
         server
-            .try_send_raw(&mut vec![2u8; 220], &[])
+            .try_send_raw(vec![2u8; 220], &[])
             .expect("server send 220B");
         let (n, _) = client.try_recv_raw(&mut buf220).expect("client recv");
         assert_eq!(n, 220);
@@ -407,13 +407,13 @@ mod tests {
 
         // Both ends alive: send must succeed.
         conn0
-            .try_send_raw(&mut vec![42u8; 10], &[])
+            .try_send_raw(vec![42u8; 10], &[])
             .expect("send with peer alive");
 
         // Drop the peer: on macOS this disconnects conn0.
         drop(conn1);
         assert!(
-            conn0.try_send_raw(&mut vec![42u8; 10], &[]).is_err(),
+            conn0.try_send_raw(vec![42u8; 10], &[]).is_err(),
             "expected send error after dropping peer on macOS"
         );
     }
@@ -482,9 +482,7 @@ mod tests {
             buf[..n].to_vec()
         });
         std::thread::sleep(Duration::from_millis(50));
-        server
-            .try_send_raw(&mut b"final".to_vec(), &[])
-            .expect("send");
+        server.try_send_raw(b"final".to_vec(), &[]).expect("send");
         drop(server);
 
         let got = handle.join().expect("receiver thread");
@@ -535,9 +533,7 @@ mod tests {
         let server = listener.try_accept().expect("try_accept");
         let server = server.into_async_conn().expect("into_async_conn");
 
-        client
-            .try_send_raw(&mut b"final".to_vec(), &[])
-            .expect("send");
+        client.try_send_raw(b"final".to_vec(), &[]).expect("send");
         drop(client);
 
         let (got, _) = crate::recv_raw_async(&server, |buf: &[u8]| buf.to_vec())

@@ -216,7 +216,7 @@ impl SidecarSender {
     /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
     pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.0.send_blocking(&mut data.to_vec(), &[])
+        self.channel.0.send_blocking(data.to_vec(), &[])
     }
 
     pub fn set_session_config(

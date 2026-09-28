@@ -97,7 +97,7 @@ mod tests {
             let srv_thread = std::thread::spawn(move || listener.try_accept().unwrap());
             let client: SeqpacketConn = liaison.connect_to_server().unwrap();
             let srv: SeqpacketConn = srv_thread.join().unwrap();
-            client.send_raw_blocking(&mut vec![255], &[]).unwrap();
+            client.send_raw_blocking(vec![255], &[]).unwrap();
             let mut buf = vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);
