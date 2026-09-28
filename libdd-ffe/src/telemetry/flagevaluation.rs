@@ -329,6 +329,8 @@ fn add_counter(counter: &AtomicU64, count: u64) {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct EventKey {
+    // Degraded rows intentionally ignore consent, unlike full-detail rows.
+    consent: Option<bool>,
     flag_key: String,
     variant_key: Option<String>,
     allocation_key: Option<String>,
@@ -342,7 +344,11 @@ struct EventKey {
 
 impl EventKey {
     fn new(event: &FfeFlagEvaluationEvent) -> Self {
+        if event.is_degraded {
+            return Self::degraded(event);
+        }
         Self {
+            consent: Some(event.observe_full_evaluation_data),
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -363,6 +369,7 @@ impl EventKey {
 
     fn degraded(event: &FfeFlagEvaluationEvent) -> Self {
         Self {
+            consent: None,
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -458,6 +465,7 @@ where
             });
 
         for mut event in batch.flag_evaluations {
+            normalize_for_aggregation(&mut event);
             let key = EventKey::new(&event);
             if merge_pending_event(&mut state, &destination, &key, &event) {
                 continue;
@@ -470,7 +478,10 @@ where
                 .copied()
                 .unwrap_or(0);
 
-            if state.full_bucket_count < GLOBAL_CAP && full_bucket_count_for_flag < PER_FLAG_CAP {
+            if !event.is_degraded
+                && state.full_bucket_count < GLOBAL_CAP
+                && full_bucket_count_for_flag < PER_FLAG_CAP
+            {
                 if insert_pending_event(&mut state, &destination, key, event) {
                     state.full_bucket_count += 1;
                     *state.full_bucket_count_by_flag.entry(flag_key).or_default() += 1;
@@ -480,6 +491,7 @@ where
 
             event.targeting_key = None;
             event.context = None;
+            event.is_degraded = true;
             let evaluation_count = event.evaluation_count;
             let degraded_key = EventKey::degraded(&event);
             if merge_pending_event(&mut state, &destination, &degraded_key, &event) {
@@ -621,7 +633,22 @@ where
     true
 }
 
+fn normalize_for_aggregation(event: &mut FfeFlagEvaluationEvent) {
+    if event.is_degraded {
+        event.targeting_key = None;
+        event.context = None;
+    } else if !event.observe_full_evaluation_data {
+        if let Some(context) = event.context.as_mut() {
+            context.evaluation = None;
+        }
+    }
+    if let Some(error) = event.error.as_mut() {
+        error.message = privacy::error_code(&error.message).to_owned();
+    }
+}
+
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
+    existing.observe_full_evaluation_data &= incoming.observe_full_evaluation_data;
     existing.timestamp = existing.timestamp.max(incoming.timestamp);
     existing.first_evaluation = existing.first_evaluation.min(incoming.first_evaluation);
     existing.last_evaluation = existing.last_evaluation.max(incoming.last_evaluation);
@@ -758,13 +785,14 @@ fn push_payload(
 fn degrade_event_for_payload_limit(
     event: &FfeFlagEvaluationEvent,
 ) -> Option<FfeFlagEvaluationEvent> {
-    if event.targeting_key.is_none() && event.context.is_none() {
+    if event.is_degraded || (event.targeting_key.is_none() && event.context.is_none()) {
         return None;
     }
 
     let mut degraded = event.clone();
     degraded.targeting_key = None;
     degraded.context = None;
+    degraded.is_degraded = true;
     Some(degraded)
 }
 
@@ -1031,6 +1059,82 @@ mod tests {
             assert_eq!(wire["context"]["dd"]["service"], "frontend");
             assert!(wire["context"].get("evaluation").is_none());
             assert!(!raw.contains("malformed-context-canary"));
+        }
+    }
+
+    #[test]
+    fn consent_separates_full_but_not_degraded_identity() {
+        let mut protected = full_event();
+        protected.observe_full_evaluation_data = false;
+        let mut consented = protected.clone();
+        consented.observe_full_evaluation_data = true;
+        assert_ne!(EventKey::new(&protected), EventKey::new(&consented));
+        assert_eq!(
+            EventKey::degraded(&protected),
+            EventKey::degraded(&consented)
+        );
+        protected.targeting_key = None;
+        protected.context = None;
+        assert_ne!(EventKey::new(&protected), EventKey::degraded(&protected));
+    }
+
+    #[test]
+    fn privacy_merge_folds_consent_and_preserves_weighted_times() {
+        for (first, second) in [(true, false), (false, true)] {
+            let mut event = full_event();
+            event.observe_full_evaluation_data = first;
+            let mut incoming = event.clone();
+            incoming.observe_full_evaluation_data = second;
+            incoming.first_evaluation -= 100;
+            incoming.last_evaluation += 100;
+            incoming.timestamp += 100;
+            merge_event(&mut event, &incoming);
+            assert!(!event.observe_full_evaluation_data);
+            assert_eq!(event.evaluation_count, 84);
+            assert_eq!(event.first_evaluation, incoming.first_evaluation);
+            assert_eq!(event.last_evaluation, incoming.last_evaluation);
+            assert_eq!(event.timestamp, incoming.timestamp);
+        }
+    }
+
+    #[test]
+    fn privacy_aggregation_discards_protected_context_and_raw_errors() {
+        let coalescer = FlagEvaluationEvpCoalescer::default();
+        let mut first = full_event();
+        first.observe_full_evaluation_data = false;
+        first.error = Some(EvalError {
+            message: "private-error-one".into(),
+        });
+        let mut second = first.clone();
+        second.context.as_mut().unwrap().evaluation =
+            Some(r#"{"other":"private-context-two"}"#.into());
+        second.error.as_mut().unwrap().message = "private-error-two".into();
+        coalescer.enqueue(
+            "destination",
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![first, second],
+            },
+        );
+        let batches = coalescer.take_batches();
+        let events = &batches[0].1.flag_evaluations;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].evaluation_count, 84);
+        assert_eq!(events[0].targeting_key.as_deref(), Some("user-123"));
+        assert!(events[0].context.as_ref().unwrap().evaluation.is_none());
+        assert_eq!(events[0].error.as_ref().unwrap().message, "GENERAL");
+    }
+
+    #[test]
+    fn privacy_degraded_wire_rejects_injected_sensitive_fields() {
+        for consent in [false, true] {
+            let mut event = full_event();
+            event.is_degraded = true;
+            event.observe_full_evaluation_data = consent;
+            let raw = build_event_payload(&event).unwrap();
+            let wire: Value = serde_json::from_str(&raw).unwrap();
+            assert!(wire.get("targeting_key").is_none());
+            assert!(wire.get("context").is_none());
         }
     }
 
