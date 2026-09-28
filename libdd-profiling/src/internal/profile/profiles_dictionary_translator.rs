@@ -111,7 +111,7 @@ impl ProfilesDictionaryTranslator {
         mappings: &mut impl Dedup<Mapping>,
         string_table: &mut StringTable,
         id2: MappingId2,
-    ) -> anyhow::Result<Option<MappingId>> {
+    ) -> anyhow::Result<Option<MappingId>> { unsafe {
         // Translate null MappingId2 to Ok(None). This is different from
         // functions because the internal module uses Option<MappingId>,
         // whereas it assumes functions are required.
@@ -126,7 +126,7 @@ impl ProfilesDictionaryTranslator {
         // SAFETY: This is safe if `id2` (the MappingId2) was created by
         // `self.profiles_dictionary`, which is a precondition of calling
         // this method.
-        let mapping = unsafe { *self.profiles_dictionary.mappings().get(set_id) };
+        let mapping = *self.profiles_dictionary.mappings().get(set_id);
         let internal = Mapping {
             memory_start: mapping.memory_start,
             memory_limit: mapping.memory_limit,
@@ -142,7 +142,7 @@ impl ProfilesDictionaryTranslator {
         )?;
         self.mappings.insert(set_id, internal_id);
         Ok(Some(internal_id))
-    }
+    }}
 
     /// Translates a StringRef from the ProfilesDictionary into a StringId
     /// for this profile's internal string table.

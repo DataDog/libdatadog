@@ -188,7 +188,7 @@ impl SymbolOverrides {
         dyn_info: &DynamicInfo,
         library_name: String,
         guard: &mut PageProtGuard,
-    ) {
+    ) { unsafe {
         // Detect base-address reuse: a previous `dlclose` may have freed
         // the load address, and a later `dlopen` can place a different
         // library at the same address. If the name differs from what we
@@ -238,7 +238,7 @@ impl SymbolOverrides {
                 guard,
             );
         }
-    }
+    }}
 
     /// Resolve one relocation's symbol name and, if it matches a registered
     /// override, rewrite the GOT entry at `r_offset` to point at the hook.
@@ -256,7 +256,7 @@ impl SymbolOverrides {
         sym_index: u32,
         r_offset: usize,
         guard: &mut PageProtGuard,
-    ) {
+    ) { unsafe {
         // st_name -> string in strtab. Walk lazily: we look up the
         // name in the override map; if it's not there, skip. Relocation
         // symbol indices come from the object being inspected, so guard
@@ -286,5 +286,5 @@ impl SymbolOverrides {
         // Re-patching an already-hooked entry with the same hook address is
         // idempotent, so no per-entry dedup is needed.
         guard.override_entry(addr, ov.new_symbol);
-    }
+    }}
 }

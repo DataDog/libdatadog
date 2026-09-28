@@ -400,14 +400,14 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 /// # Safety
 /// All slices must be have pointers that are suitably aligned for their type
 /// and must have the correct number of elements for the slice.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_new(
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
-) -> ProfileNewResult {
+) -> ProfileNewResult { unsafe {
     profile_new(sample_types, period, None)
-}
+}}
 
 /// Create a new profile with the given sample types. Must call
 /// `ddog_prof_Profile_drop` when you are done with the profile.
@@ -427,26 +427,26 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 ///
 /// The `out` pointer must be non-null and suitable for pointer writes,
 /// including that it has the correct size and alignment.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
     out: *mut Profile,
     dict: &ArcHandle<ProfilesDictionary>,
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
-) -> ProfileStatus {
+) -> ProfileStatus { unsafe {
     ensure_non_null_out_parameter!(out);
     match profile_with_dictionary(dict, sample_types, period) {
         // SAFETY: checked that it isn't null above, the rest comes from this
         // function's own safety conditions. Technically, our safety conditions
         // don't require a null check, but we're being safe there.
-        Ok(profile) => unsafe {
+        Ok(profile) => {
             out.write(profile);
             ProfileStatus::OK
-        },
+        }
         Err(e) => ProfileStatus::from(e),
     }
-}
+}}
 
 unsafe fn profile_with_dictionary(
     dict: &ArcHandle<ProfilesDictionary>,
@@ -465,22 +465,22 @@ unsafe fn profile_with_dictionary(
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: ManagedStringStorage,
-) -> ProfileNewResult {
+) -> ProfileNewResult { unsafe {
     profile_new(sample_types, period, Some(string_storage))
-}
+}}
 
 unsafe fn profile_new(
     sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
-) -> ProfileNewResult {
+) -> ProfileNewResult { unsafe {
     let types = match sample_types.try_as_slice() {
         Ok(s) => s,
         Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
@@ -506,7 +506,7 @@ unsafe fn profile_new(
         }
         Err(err) => ProfileNewResult::Err(err.into()),
     }
-}
+}}
 
 /// Configure one of the custom sample type slots (`Custom1` through `Custom5`)
 /// with its concrete `(type, unit)` string pair.
@@ -519,14 +519,14 @@ unsafe fn profile_new(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. The `type_str` and `unit` slices must point to valid UTF-8 memory for
 /// the duration of this call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
     profile: *mut Profile,
     slot: SampleType,
     type_str: CharSlice,
     unit: CharSlice,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         let type_str = type_str
@@ -539,19 +539,19 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
     })()
     .context("ddog_prof_Profile_set_custom_sample_type failed")
     .into()
-}
+}}
 
 /// # Safety
 /// The `profile` can be null, but if non-null it must point to a Profile
 /// made by this module, which has not previously been dropped.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_prof_Profile_drop(profile: *mut Profile) { unsafe {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     if !profile.is_null() {
         drop((*profile).take())
     }
-}
+}}
 
 #[cfg(test)]
 impl From<ProfileResult> for Result<(), Error> {
@@ -586,12 +586,12 @@ impl From<ProfileNewResult> for Result<Profile, Error> {
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add(
     profile: *mut Profile,
     sample: Sample,
     timestamp: Option<NonZeroI64>,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         let uses_string_ids = sample
@@ -607,7 +607,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     })()
     .context("ddog_prof_Profile_add failed")
     .into()
-}
+}}
 /// # Safety
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module. All pointers inside the `sample` need to be valid for the duration
@@ -618,12 +618,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 ///
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add2(
     profile: *mut Profile,
     sample: Sample2,
     timestamp: Option<NonZeroI64>,
-) -> ProfileStatus {
+) -> ProfileStatus { unsafe {
     ProfileStatus::from((|| {
         let profile = profile_ptr_to_inner(profile)?;
 
@@ -643,11 +643,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
             .try_add_sample2(locations.iter().copied(), values, labels_iter, timestamp)
             .context("ddog_prof_Profile_add failed")
     })())
-}
+}}
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut internal::Profile> {
+) -> anyhow::Result<&'a mut internal::Profile> { unsafe {
     match profile_ptr.as_mut() {
         None => anyhow::bail!("profile pointer was null"),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
@@ -655,7 +655,7 @@ pub(crate) unsafe fn profile_ptr_to_inner<'a>(
             None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
         },
     }
-}
+}}
 
 /// Associate an endpoint to a given local root span id.
 /// During the serialization of the profile, an endpoint label will be added
@@ -673,13 +673,13 @@ pub(crate) unsafe fn profile_ptr_to_inner<'a>(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     profile: *mut Profile,
     local_root_span_id: u64,
     endpoint: CharSlice,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         let endpoint = endpoint.to_utf8_lossy();
@@ -687,7 +687,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
-}
+}}
 
 /// Count the number of times an endpoint has been seen.
 ///
@@ -699,13 +699,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_endpoint(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     profile: *mut Profile,
     endpoint: CharSlice,
     value: i64,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         let endpoint = endpoint.to_utf8_lossy();
@@ -713,7 +713,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     })()
     .context("ddog_prof_Profile_set_endpoint failed")
     .into()
-}
+}}
 
 /// Set whether "local root span id" labels should be omitted when serializing.
 ///
@@ -727,12 +727,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
 /// The `profile` ptr must point to a valid Profile object created by this
 /// module.
 /// This call is _NOT_ thread-safe.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_serializing(
     profile: *mut Profile,
     omit: bool,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         profile.set_omit_local_root_span_id_when_serializing(omit);
@@ -740,7 +740,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_seri
     })()
     .context("ddog_prof_Profile_set_omit_local_root_span_id_when_serializing failed")
     .into()
-}
+}}
 
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
@@ -763,7 +763,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_seri
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     profile: *mut Profile,
     offset_values: Slice<usize>,
@@ -772,7 +772,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     sum_value_offset: usize,
     count_value_offset: usize,
     sampling_distance: u64,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         anyhow::ensure!(sampling_distance != 0, "sampling_distance must not be 0");
@@ -791,7 +791,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
     })()
     .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
     .into()
-}
+}}
 
 /// Add a proportional-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
@@ -812,7 +812,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_poisson(
 /// module.
 /// This call is _NOT_ thread-safe.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     profile: *mut Profile,
     offset_values: Slice<usize>,
@@ -820,7 +820,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     label_value: CharSlice,
     total_sampled: u64,
     total_real: u64,
-) -> ProfileResult {
+) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         anyhow::ensure!(total_sampled != 0, "total_sampled must not be 0");
@@ -838,7 +838,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_upscaling_rule_proportional(
     })()
     .context("ddog_prof_Profile_add_upscaling_rule_proportional failed")
     .into()
-}
+}}
 
 unsafe fn add_upscaling_rule(
     profile: &mut internal::Profile,
@@ -861,35 +861,35 @@ unsafe fn add_upscaling_rule(
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`, or null. A
 /// valid reference also means that it hasn't already been dropped or exported (do not
 /// call this twice on the same object).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
     profile: *mut Handle<internal::EncodedProfile>,
-) {
+) { unsafe {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
     if !profile.is_null() {
         drop((*profile).take())
     }
-}
+}}
 
 /// Given an EncodedProfile, get a slice representing the bytes in the pprof.
 /// This slice is valid for use until the encoded_profile is modified in any way (e.g. dropped or
 /// consumed).
 /// # Safety
 /// Only pass a reference to a valid `ddog_prof_EncodedProfile`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     mut encoded_profile: *mut Handle<internal::EncodedProfile>,
-) -> libdd_common_ffi::Result<ByteSlice<'a>> {
+) -> libdd_common_ffi::Result<ByteSlice<'a>> { unsafe {
     wrap_with_ffi_result!({
         let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
         // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
         let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
         anyhow::Ok(byte_slice)
     })
-}
+}}
 
 /// Serialize the aggregated profile.
 /// Drains the data, and then resets the profile for future use.
@@ -908,12 +908,12 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
 /// The `profile` must point to a valid profile object.
 /// The `start_time` and `end_time` must be null or otherwise point to a valid TimeSpec object.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     profile: *mut Profile,
     start_time: Option<&Timespec>,
     end_time: Option<&Timespec>,
-) -> SerializeResult {
+) -> SerializeResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
 
@@ -927,10 +927,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()
-}
+}}
 
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -> Slice<'_, u8> {
     vec.as_slice()
 }
@@ -947,9 +947,9 @@ pub unsafe extern "C" fn ddog_Vec_U8_as_slice(vec: &libdd_common_ffi::Vec<u8>) -
 /// The `profile` must meet all the requirements of a mutable reference to the profile. Given this
 /// can be called across an FFI boundary, the compiler cannot enforce this.
 /// If `time` is not null, it must point to a valid Timespec object.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
-pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> ProfileResult {
+pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> ProfileResult { unsafe {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
         profile.reset_and_return_previous()?;
@@ -957,7 +957,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
     })()
     .context("ddog_prof_Profile_reset failed")
     .into()
-}
+}}
 
 #[cfg(test)]
 mod tests {
@@ -1282,7 +1282,7 @@ mod tests {
         }
     }
 
-    unsafe fn provide_distinct_locations_ffi() -> Profile {
+    unsafe fn provide_distinct_locations_ffi() -> Profile { unsafe {
         let sample_type = SampleType::CpuSamples;
         let mut profile = Result::from(ddog_prof_Profile_new(
             Slice::from_raw_parts(&sample_type, 1),
@@ -1364,7 +1364,7 @@ mod tests {
         );
 
         profile
-    }
+    }}
 
     #[test]
     fn distinct_locations_ffi() {

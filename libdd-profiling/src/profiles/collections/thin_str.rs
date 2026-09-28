@@ -324,7 +324,7 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
     pub unsafe fn from_slice_in_unchecked(
         slice: &[T],
         spare_capacity: &'a mut [MaybeUninit<u8>],
-    ) -> Self {
+    ) -> Self { unsafe {
         let allocation = spare_capacity.as_mut_ptr().cast::<u8>();
 
         // Write the size prefix
@@ -332,7 +332,7 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
         core::ptr::copy_nonoverlapping(size_bytes.as_ptr(), allocation, USIZE_WIDTH);
 
         // Write the data
-        let data = unsafe { allocation.add(USIZE_WIDTH).cast::<T>() };
+        let data = allocation.add(USIZE_WIDTH).cast::<T>();
         core::ptr::copy_nonoverlapping(slice.as_ptr(), data, slice.len());
 
         let size_ptr = NonNull::new_unchecked(allocation);
@@ -342,7 +342,7 @@ impl<'a, T: Copy> ThinSlice<'a, T> {
         };
         let _marker = PhantomData;
         ThinSlice { thin_ptr, _marker }
-    }
+    }}
 
     /// Returns the memory layout of this slice.
     pub fn layout(&self) -> Layout {
@@ -436,10 +436,10 @@ impl<'a> ThinStr<'a> {
     pub unsafe fn from_str_in_unchecked(
         str: &str,
         spare_capacity: &'a mut [MaybeUninit<u8>],
-    ) -> Self {
+    ) -> Self { unsafe {
         let inner = ThinSlice::from_slice_in_unchecked(str.as_bytes(), spare_capacity);
         ThinStr { inner }
-    }
+    }}
 
     /// Returns the memory layout of this string.
     pub fn layout(&self) -> Layout {

@@ -148,17 +148,17 @@ unsafe impl<T: Hash + Eq + 'static> SetOps for Set<T> {
         self.len()
     }
 
-    unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> {
+    unsafe fn find_with_hash(&self, hash: u64, key: Self::Lookup<'_>) -> Option<Self::Id> { unsafe {
         self.find_with_hash(hash, key)
-    }
+    }}
 
     unsafe fn insert_unique_uncontended_with_hash(
         &mut self,
         hash: u64,
         value: Self::Owned<'_>,
-    ) -> Result<Self::Id, SetError> {
+    ) -> Result<Self::Id, SetError> { unsafe {
         self.insert_unique_uncontended_with_hash(hash, value)
-    }
+    }}
 }
 
 unsafe impl<T: Copy + Hash + Eq + 'static> SetOps for SliceSet<T> {

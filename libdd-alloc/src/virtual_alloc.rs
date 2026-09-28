@@ -119,7 +119,7 @@ pub mod os {
             Ok(ptr::NonNull::slice_from_raw_parts(addr, size))
         }
 
-        unsafe fn deallocate(&self, nonnull: ptr::NonNull<u8>, layout: Layout) {
+        unsafe fn deallocate(&self, nonnull: ptr::NonNull<u8>, layout: Layout) { unsafe {
             let ptr = nonnull.as_ptr();
             // SAFETY: this would have failed if it didn't fit, unless the
             // caller violated the preconditions.
@@ -128,7 +128,7 @@ pub mod os {
             // SAFETY: if the caller meets the safety conditions of this function,
             // then this is safe by extension.
             _ = libc::munmap(ptr.cast(), size);
-        }
+        }}
     }
 }
 
@@ -174,9 +174,9 @@ pub mod os {
             }
         }
 
-        unsafe fn deallocate(&self, ptr: ptr::NonNull<u8>, _layout: Layout) {
+        unsafe fn deallocate(&self, ptr: ptr::NonNull<u8>, _layout: Layout) { unsafe {
             _ = Memory::VirtualFree(ptr.as_ptr() as *mut _, 0, Memory::MEM_RELEASE);
-        }
+        }}
     }
 }
 

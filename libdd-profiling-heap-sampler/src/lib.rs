@@ -115,7 +115,7 @@ fn parse_heap_sampling_enabled(value: Option<&[u8]>) -> bool {
 fn read_heap_sampling_enabled() -> bool {
     use core::ffi::{c_char, CStr};
 
-    extern "C" {
+    unsafe extern "C" {
         fn getenv(name: *const c_char) -> *mut c_char;
     }
 

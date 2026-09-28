@@ -202,7 +202,7 @@ impl Profile {
     where
         Locations: ExactSizeIterator<Item = api2::Location2>,
         Labels: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
-    {
+    { unsafe {
         let Some(translator) = &mut self.profiles_dictionary_translator else {
             anyhow::bail!("profiles dictionary not set");
         };
@@ -270,7 +270,7 @@ impl Profile {
         }
 
         self.try_add_sample_internal(values, labels, internal_locations, timestamp)
-    }
+    }}
 
     /// Gets the profiles dictionary, needed for `api2` operations.
     pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {

@@ -259,7 +259,7 @@ impl<T, A: Allocator> Arc<T, A> {
     /// - It must not be used to create multiple owning `Arc`s without corresponding `into_raw`
     ///   calls; otherwise the refcount will be decremented multiple times.
     #[inline]
-    pub unsafe fn from_raw_in(ptr: NonNull<T>, alloc: A) -> Self {
+    pub unsafe fn from_raw_in(ptr: NonNull<T>, alloc: A) -> Self { unsafe {
         let data = ptr.as_ptr() as *const u8;
         let arc_ptr_u8 = data.sub(Self::data_offset());
         let arc_ptr = arc_ptr_u8 as *mut ArcInner<T>;
@@ -268,7 +268,7 @@ impl<T, A: Allocator> Arc<T, A> {
             alloc,
             phantom: PhantomData,
         }
-    }
+    }}
 }
 
 impl<T> Arc<T> {
@@ -278,9 +278,9 @@ impl<T> Arc<T> {
     /// # Safety
     /// See [`Arc::from_raw_in`] for requirements.
     #[inline]
-    pub unsafe fn from_raw(ptr: NonNull<T>) -> Self {
+    pub unsafe fn from_raw(ptr: NonNull<T>) -> Self { unsafe {
         Arc::from_raw_in(ptr, Global)
-    }
+    }}
 }
 
 #[cfg(test)]

@@ -50,7 +50,7 @@ fn warn_if_not_isolated() {
 #[serial]
 fn install_keeps_heap_functional() {
     warn_if_not_isolated();
-    extern "C" {
+    unsafe extern "C" {
         fn malloc(size: usize) -> *mut c_void;
     }
 
@@ -274,7 +274,7 @@ fn realloc_of_sampled_allocation_preserves_data() {
 /// sizeof(void*), which every alignment in the menu except 1 satisfies,
 /// and (unlike aligned_alloc) it places no multiple-of-alignment
 /// constraint on the size.
-unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void {
+unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void { unsafe {
     if align <= 1 {
         libc::malloc(size)
     } else {
@@ -285,7 +285,7 @@ unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void {
             out
         }
     }
-}
+}}
 
 /// Stress the realloc + free paths across a matrix of alignments and
 /// sizes with sampling forced on. Mirrors examples/gotter_usdt_demo.rs's

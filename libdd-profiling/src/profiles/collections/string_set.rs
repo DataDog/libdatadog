@@ -35,9 +35,9 @@ impl StringRef {
     ///
     /// `this` needs to be created from [``StringRef::into_raw`] and the set
     /// it belongs to should still be alive.
-    pub unsafe fn from_raw(this: NonNull<c_void>) -> Self {
+    pub unsafe fn from_raw(this: NonNull<c_void>) -> Self { unsafe {
         Self(ThinStr::from_raw(this))
-    }
+    }}
 }
 
 impl From<&StringRef> for StringRef {
@@ -108,10 +108,10 @@ impl UnsyncStringSet {
     ///  1. The hash must be the same as if the str was re-hashed with the hasher the string set
     ///     would use.
     ///  2. The string must be unique within the set.
-    pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringRef, SetError> {
+    pub unsafe fn insert_unique_uncontended(&mut self, str: &str) -> Result<StringRef, SetError> { unsafe {
         let hash = Hasher::default().hash_one(str.as_bytes());
         self.insert_unique_uncontended_with_hash(hash, str)
-    }
+    }}
 
     /// Inserts a string into the string set without checking for duplicates, using a pre-calculated
     /// hash.
@@ -124,12 +124,12 @@ impl UnsyncStringSet {
         &mut self,
         hash: u64,
         str: &str,
-    ) -> Result<StringRef, SetError> {
+    ) -> Result<StringRef, SetError> { unsafe {
         let new_slice = self
             .0
             .insert_unique_uncontended_with_hash(hash, str.as_bytes())?;
         Ok(StringRef(new_slice.into()))
-    }
+    }}
 
     /// Adds the string to the string set if it isn't present already, and
     /// returns a handle to the string that can be used to retrieve it later.
@@ -148,7 +148,7 @@ impl UnsyncStringSet {
         &mut self,
         hash: u64,
         str: &str,
-    ) -> Result<StringRef, SetError> {
+    ) -> Result<StringRef, SetError> { unsafe {
         // SAFETY: the string's hash is correct, we use the same hasher as
         // StringSet uses.
         if let Some(id) = self.find_with_hash(hash, str) {
@@ -157,7 +157,7 @@ impl UnsyncStringSet {
 
         // SAFETY: we just checked above that the string isn't in the set.
         self.insert_unique_uncontended_with_hash(hash, str)
-    }
+    }}
 
     /// Returns an iterator over all strings in the set as [`StringRef`]s.
     pub fn string_ids(&self) -> impl Iterator<Item = StringRef> + '_ {

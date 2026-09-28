@@ -274,7 +274,7 @@ impl ProfileStatus {
 /// # Safety
 ///
 /// The pointer should point at a valid Status object, if it's not null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_Status_drop(status: *mut ProfileStatus) {
     if status.is_null() {
         return;

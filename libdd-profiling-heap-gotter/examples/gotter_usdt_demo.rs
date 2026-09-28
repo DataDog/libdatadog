@@ -152,15 +152,15 @@ mod linux {
         *r.choice(ALIGNMENTS)
     }
 
-    unsafe fn do_malloc(size: usize) -> Option<LiveAlloc> {
+    unsafe fn do_malloc(size: usize) -> Option<LiveAlloc> { unsafe {
         let ptr = libc::malloc(size) as *mut u8;
         if ptr.is_null() {
             return None;
         }
         Some(LiveAlloc { ptr, size, seed: 0 })
-    }
+    }}
 
-    unsafe fn do_calloc(nmemb: usize, size: usize) -> Option<LiveAlloc> {
+    unsafe fn do_calloc(nmemb: usize, size: usize) -> Option<LiveAlloc> { unsafe {
         let ptr = libc::calloc(nmemb, size) as *mut u8;
         if ptr.is_null() {
             return None;
@@ -179,9 +179,9 @@ mod linux {
             size: total,
             seed: 0,
         })
-    }
+    }}
 
-    unsafe fn do_aligned_alloc(alignment: usize, size: usize) -> Option<LiveAlloc> {
+    unsafe fn do_aligned_alloc(alignment: usize, size: usize) -> Option<LiveAlloc> { unsafe {
         // aligned_alloc requires size % alignment == 0. Round up.
         let rounded = size.div_ceil(alignment) * alignment;
         let ptr = libc::aligned_alloc(alignment, rounded) as *mut u8;
@@ -198,9 +198,9 @@ mod linux {
             size: rounded,
             seed: 0,
         })
-    }
+    }}
 
-    unsafe fn do_posix_memalign(alignment: usize, size: usize) -> Option<LiveAlloc> {
+    unsafe fn do_posix_memalign(alignment: usize, size: usize) -> Option<LiveAlloc> { unsafe {
         // posix_memalign requires alignment to be a power of two and a
         // multiple of sizeof(void*).
         if alignment < std::mem::size_of::<*mut u8>() || !alignment.is_power_of_two() {
@@ -221,9 +221,9 @@ mod linux {
             size,
             seed: 0,
         })
-    }
+    }}
 
-    unsafe fn do_realloc(old: LiveAlloc, new_size: usize) -> Option<LiveAlloc> {
+    unsafe fn do_realloc(old: LiveAlloc, new_size: usize) -> Option<LiveAlloc> { unsafe {
         // Verify old contents before releasing the block.
         verify_content(old.as_slice(), old.seed);
         let new_ptr = libc::realloc(old.ptr as *mut libc::c_void, new_size) as *mut u8;
@@ -249,12 +249,12 @@ mod linux {
             size: new_size,
             seed: 0,
         })
-    }
+    }}
 
-    unsafe fn do_free(a: LiveAlloc) {
+    unsafe fn do_free(a: LiveAlloc) { unsafe {
         verify_content(a.as_slice(), a.seed);
         libc::free(a.ptr as *mut libc::c_void);
-    }
+    }}
 
     fn worker(
         thread_id: u64,

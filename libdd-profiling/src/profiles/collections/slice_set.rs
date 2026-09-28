@@ -42,10 +42,10 @@ impl<T: Copy + Hash + Eq + 'static> SliceSet<T> {
     pub unsafe fn insert_unique_uncontended(
         &mut self,
         slice: &[T],
-    ) -> Result<ThinSlice<'static, T>, SetError> {
+    ) -> Result<ThinSlice<'static, T>, SetError> { unsafe {
         let hash = Hasher::default().hash_one(slice);
         self.insert_unique_uncontended_with_hash(hash, slice)
-    }
+    }}
 
     /// # Safety
     ///  1. The hash must be the same as if the slice was re-hashed with the hasher the slice set

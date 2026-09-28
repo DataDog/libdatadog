@@ -56,9 +56,9 @@ impl TrimmedObservation {
     /// Consumes self, ensuring that the memory behind it is dropped.
     /// It is an error to drop a TrimmedObservation without consuming it first.
     /// Safety: the ObservationLength must have come from the same profile as the Observation
-    pub unsafe fn consume(self, len: ObservationLength) {
+    pub unsafe fn consume(self, len: ObservationLength) { unsafe {
         drop(self.into_boxed_slice(len));
-    }
+    }}
 
     /// Converts a `Vec<i64>` representing sample observations
     /// into a more memory efficient `Observation`

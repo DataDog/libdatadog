@@ -40,7 +40,7 @@ impl SampledAllocator<System> {
 unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[cfg(target_os = "linux")]
     #[inline]
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 { unsafe {
         // when sampling is disabled via
         // DD_HEAP_SAMPLING_ENABLED, forward straight to the inner allocator
         // so we're indistinguishable from an unwrapped allocator. realloc /
@@ -55,17 +55,17 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
         let inner_layout = Layout::from_size_align_unchecked(req.size, layout.align());
         let raw = self.inner.alloc(inner_layout);
         dd_allocation_created(raw.cast(), req).cast()
-    }
+    }}
 
     #[cfg(not(target_os = "linux"))]
     #[inline(always)]
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 { unsafe {
         self.inner.alloc(layout)
-    }
+    }}
 
     #[cfg(target_os = "linux")]
     #[inline]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe {
         // Honour bypass
         if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
             return self.inner.dealloc(ptr, layout);
@@ -80,13 +80,13 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
         // adds — it's just satisfying the contract our caller is on the hook for.
         let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
         self.inner.dealloc(freed.ptr.cast(), inner_layout);
-    }
+    }}
 
     #[cfg(not(target_os = "linux"))]
     #[inline(always)]
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe {
         self.inner.dealloc(ptr, layout);
-    }
+    }}
 }
 
 // Tests dispatch through the wrapped allocator and (on Linux) into the
@@ -118,15 +118,15 @@ mod tests {
     }
 
     unsafe impl GlobalAlloc for CountingSystem {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 { unsafe {
             self.alloc_count.fetch_add(1, Ordering::Relaxed);
             self.last_alloc_size.store(layout.size(), Ordering::Relaxed);
             System.alloc(layout)
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        }}
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) { unsafe {
             self.dealloc_count.fetch_add(1, Ordering::Relaxed);
             System.dealloc(ptr, layout);
-        }
+        }}
     }
 
     #[test]

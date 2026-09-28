@@ -35,7 +35,7 @@ pub enum ManagedStringStorageNewResult {
     Err(Error),
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNewResult {
     let storage = InternalManagedStringStorage::new();
@@ -45,13 +45,13 @@ pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNe
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
-pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) {
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) { unsafe {
     if let Ok(storage) = get_inner_string_storage(storage, false) {
         drop(storage);
     }
-}
+}}
 
 #[repr(C)]
 #[allow(dead_code)]
@@ -61,12 +61,12 @@ pub enum ManagedStringStorageInternResult {
 }
 
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
     string: CharSlice,
-) -> ManagedStringStorageInternResult {
+) -> ManagedStringStorageInternResult { unsafe {
     // Empty strings always get assigned id 0, no need to check.
     if string.is_empty() {
         return anyhow::Ok(ManagedStringId::empty()).into();
@@ -84,7 +84,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     })()
     .context("ddog_prof_ManagedStringStorage_intern failed")
     .into()
-}
+}}
 
 /// Interns all the strings in `strings`, writing the resulting id to the same
 /// offset in `output_ids`.
@@ -98,14 +98,14 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
 /// If a failure occurs, do not use any of the ids in the output array. After
 /// this point, you should only use read-only routines (except for drop) on
 /// the managed string storage.
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
     storage: ManagedStringStorage,
     strings: Slice<CharSlice>,
     output_ids: *mut MaybeUninit<ManagedStringId>,
     output_ids_size: usize,
-) -> MaybeError {
+) -> MaybeError { unsafe {
     let result = (|| {
         if strings.len() != output_ids_size {
             anyhow::bail!("input and output arrays have different sizes")
@@ -136,14 +136,14 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
         Ok(_) => MaybeError::None,
         Err(e) => MaybeError::Some(e.into()),
     }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: ManagedStringId,
-) -> MaybeError {
+) -> MaybeError { unsafe {
     let Some(non_empty_string_id) = NonZeroU32::new(id.value) else {
         return MaybeError::None; // Empty string, nothing to do
     };
@@ -163,14 +163,14 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
         Ok(_) => MaybeError::None,
         Err(e) => MaybeError::Some(e.into()),
     }
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
     storage: ManagedStringStorage,
     ids: Slice<ManagedStringId>,
-) -> MaybeError {
+) -> MaybeError { unsafe {
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
@@ -190,10 +190,10 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
         Ok(_) => MaybeError::None,
         Err(e) => MaybeError::Some(e.into()),
     }
-}
+}}
 
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// Returns a string given its id.
 /// This API is mostly for testing, overall you should avoid reading back strings from libdatadog
 /// once they've been interned and should instead always operate on the id.
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     storage: ManagedStringStorage,
     id: ManagedStringId,
-) -> StringWrapperResult {
+) -> StringWrapperResult { unsafe {
     (|| {
         let storage = get_inner_string_storage(storage, true)?;
         let string: String = (*storage
@@ -217,13 +217,13 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     })()
     .context("ddog_prof_ManagedStringStorage_get_string failed")
     .into()
-}
+}}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
     storage: ManagedStringStorage,
-) -> MaybeError {
+) -> MaybeError { unsafe {
     let result = (|| {
         let storage = get_inner_string_storage(storage, true)?;
 
@@ -240,7 +240,7 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
         Ok(_) => MaybeError::None,
         Err(e) => MaybeError::Some(e.into()),
     }
-}
+}}
 
 pub unsafe fn get_inner_string_storage(
     storage: ManagedStringStorage,
@@ -248,7 +248,7 @@ pub unsafe fn get_inner_string_storage(
     // (E.g. we use this flag to know if we need to increment the refcount for the copy we create
     // or not).
     for_use: bool,
-) -> anyhow::Result<Arc<Mutex<InternalManagedStringStorage>>> {
+) -> anyhow::Result<Arc<Mutex<InternalManagedStringStorage>>> { unsafe {
     if storage.inner.is_null() {
         anyhow::bail!("storage inner pointer is null");
     }
@@ -266,7 +266,7 @@ pub unsafe fn get_inner_string_storage(
     Ok(Arc::from_raw(
         storage_ptr as *const Mutex<InternalManagedStringStorage>,
     ))
-}
+}}
 
 impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult {
     fn from(value: anyhow::Result<ManagedStringId>) -> Self {
