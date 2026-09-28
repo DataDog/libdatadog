@@ -30,6 +30,7 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+mod privacy;
 mod sender;
 pub use sender::{
     flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch, FlagEvaluationEvpSendConfig,
@@ -93,7 +94,7 @@ pub struct FfeFlagEvaluationBatch {
 /// as `null`/`false` on the wire; the EVP payload encoder
 /// ([`encode_flag_evaluation_payloads`]) strips those null/empty placeholders
 /// before the EVP POST so the flageval-worker schema sees no null placeholders.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FfeFlagEvaluationEvent {
     /// Unix timestamp of the aggregation window (milliseconds).
     pub timestamp: i64,
@@ -135,6 +136,30 @@ pub struct FfeFlagEvaluationEvent {
     /// `#[serde(default)]` keeps deserialization robust when the field is absent.
     #[serde(default)]
     pub runtime_default_used: bool,
+
+    /// Consent from the configuration used for this evaluation. Internal IPC
+    /// metadata only; never included in the EVP payload.
+    #[serde(default)]
+    pub observe_full_evaluation_data: bool,
+    /// Explicit tier prevents a keyless full row being mistaken for a degraded
+    /// row. Degraded output always omits targeting identity and context.
+    #[serde(default)]
+    pub is_degraded: bool,
+}
+
+impl std::fmt::Debug for FfeFlagEvaluationEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // IPC request Debug is used by both oversized-message warnings and
+        // receiver trace logging. Never include customer-controlled fields.
+        f.debug_struct("FfeFlagEvaluationEvent")
+            .field("evaluation_count", &self.evaluation_count)
+            .field(
+                "observe_full_evaluation_data",
+                &self.observe_full_evaluation_data,
+            )
+            .field("is_degraded", &self.is_degraded)
+            .finish_non_exhaustive()
+    }
 }
 
 // ── Field sub-types ──────────────────────────────────────────────────────────
@@ -765,6 +790,33 @@ fn build_context_payload(context: &FfeTelemetryContext) -> Result<String, serde_
 
 fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(event)?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("observe_full_evaluation_data");
+        object.remove("is_degraded");
+        if event.is_degraded {
+            object.remove("targeting_key");
+            object.remove("context");
+        } else if !event.observe_full_evaluation_data {
+            if let Some(key) = &event.targeting_key {
+                object.insert(
+                    "targeting_key".into(),
+                    privacy::protected_targeting_key(key).into(),
+                );
+            }
+            if let Some(context) = object
+                .get_mut("context")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                context.remove("evaluation");
+            }
+        }
+        if let Some(error) = &event.error {
+            object.insert(
+                "error".into(),
+                serde_json::json!({"message": privacy::error_code(&error.message)}),
+            );
+        }
+    }
     expand_event_context(&mut value);
     strip_placeholders(&mut value);
     serde_json::to_string(&value)
@@ -891,6 +943,97 @@ mod tests {
         }
     }
 
+    #[test]
+    fn protected_wire_omits_canary_without_upstream_normalization() {
+        let mut event = full_event();
+        event.observe_full_evaluation_data = false;
+        event.targeting_key = Some("jane.doe@datadoghq.com".into());
+        event.error = Some(EvalError {
+            message: "private-error-canary".into(),
+        });
+        let raw = build_event_payload(&event).unwrap();
+        assert!(!raw.contains("jane.doe@datadoghq.com"));
+        assert!(!raw.contains("private-error-canary"));
+        assert!(!raw.contains("premium"));
+        assert!(
+            raw.contains("sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b")
+        );
+    }
+
+    #[test]
+    fn event_debug_redacts_sensitive_fields() {
+        let mut event = full_event();
+        event.targeting_key = Some("private-identity-canary".into());
+        event.error = Some(EvalError {
+            message: "private-error-canary".into(),
+        });
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![event],
+        };
+        let debug = format!("{batch:?}");
+        assert!(!debug.contains("private-identity-canary"));
+        assert!(!debug.contains("private-error-canary"));
+        assert!(!debug.contains("premium"));
+    }
+
+    #[test]
+    fn privacy_wire_modes_and_optional_identity() {
+        for consent in [false, true] {
+            for key in [None, Some(""), Some("jane.doe@datadoghq.com")] {
+                let mut input = serde_json::to_value(full_event()).unwrap();
+                input["observe_full_evaluation_data"] = json!(consent);
+                input["targeting_key"] = json!(key);
+                input["error"] = json!({"message": "private-error-canary"});
+                let event: FfeFlagEvaluationEvent = serde_json::from_value(input).unwrap();
+                let raw = build_event_payload(&event).unwrap();
+                let wire: Value = serde_json::from_str(&raw).unwrap();
+                assert!(!raw.contains("private-error-canary"));
+                assert_eq!(wire["error"]["message"], "GENERAL");
+                assert!(wire.get("observe_full_evaluation_data").is_none());
+                assert!(wire.get("is_degraded").is_none());
+                assert!(wire.get("runtime_default_used").is_none());
+                assert_eq!(wire["context"]["evaluation"].is_object(), consent);
+                let expected = match key {
+                    None => Value::Null,
+                    Some("") => json!(""),
+                    Some(key) if consent => json!(key),
+                    _ => json!(
+                        "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b"
+                    ),
+                };
+                assert_eq!(wire["targeting_key"], expected);
+                assert_eq!(raw, build_event_payload(&event).unwrap());
+                assert_eq!(event.targeting_key.as_deref(), key);
+            }
+        }
+    }
+
+    #[test]
+    fn protected_wire_hashes_exact_text_even_when_hash_looking() {
+        for (key, expected) in [
+            (
+                " ユーザー ",
+                "sha256_d775f0ec7cd3d73f48f9e160952e6c8776715a8ba7ca0757539c3104f6482e00",
+            ),
+            (
+                "sha256_customer-supplied",
+                "sha256_73b799a7a2b0a51aece81180632904cb575cd74b96664fca80b226712f5e6703",
+            ),
+        ] {
+            let mut event = full_event();
+            event.observe_full_evaluation_data = false;
+            event.targeting_key = Some(key.into());
+            event.context.as_mut().unwrap().evaluation = Some("malformed-context-canary".into());
+            let raw = build_event_payload(&event).unwrap();
+            let wire: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(wire["targeting_key"], expected);
+            assert_eq!(wire["context"]["dd"]["service"], "frontend");
+            assert!(wire["context"].get("evaluation").is_none());
+            assert!(!raw.contains("malformed-context-canary"));
+        }
+    }
+
     fn full_event() -> FfeFlagEvaluationEvent {
         FfeFlagEvaluationEvent {
             timestamp: 1_700_000_000_000,
@@ -923,6 +1066,8 @@ mod tests {
             }),
             error: None,
             runtime_default_used: false,
+            observe_full_evaluation_data: true,
+            is_degraded: false,
         }
     }
 
@@ -967,6 +1112,8 @@ mod tests {
             context: None,
             error: None,
             runtime_default_used: false,
+            observe_full_evaluation_data: false,
+            is_degraded: true,
         }
     }
 
@@ -1194,7 +1341,10 @@ mod tests {
             ev["targeting_key"], "user-123",
             "targeting_key must be kept"
         );
-        assert_eq!(ev["error"]["message"], "boom", "error must be kept");
+        assert_eq!(
+            ev["error"]["message"], "GENERAL",
+            "raw error must be sanitized"
+        );
         assert_eq!(
             ev["runtime_default_used"], true,
             "runtime_default_used=true must be kept"
@@ -1486,7 +1636,7 @@ mod tests {
         assert_eq!(ev["variant"]["key"], "on");
         assert_eq!(ev["allocation"]["key"], "alloc-a");
         assert_eq!(ev["targeting_rule"]["key"], "rule-1");
-        assert_eq!(ev["error"]["message"], "boom");
+        assert_eq!(ev["error"]["message"], "GENERAL");
     }
 
     #[test]

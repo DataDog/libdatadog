@@ -1618,6 +1618,8 @@ mod tests {
                 context: None,
                 error: None,
                 runtime_default_used: false,
+                observe_full_evaluation_data: false,
+                is_degraded: false,
             }],
         }
     }

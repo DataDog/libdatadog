@@ -1546,6 +1546,8 @@ fn ffe_flag_evaluation_from_ffi(
         context,
         error: optional_string(event.error_message)?.map(|message| EvalError { message }),
         runtime_default_used: event.runtime_default_used,
+        observe_full_evaluation_data: false,
+        is_degraded: false,
     })
 }
 
