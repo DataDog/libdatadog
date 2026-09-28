@@ -69,11 +69,11 @@ fn json_from_bytes(b: &[u8]) -> Value {
 fn runtime_id_updates_propagate_through_the_metadata_handle() {
     let metadata = base_metadata();
     let chunks = [minimal_chunk([0; 16], SpanBytes::default())];
-    let bytes = encode_payload_from_v1(&chunks, &metadata).unwrap();
+    let bytes = encode_payload_from_v1(&chunks, &metadata, false).unwrap();
     assert_eq!(json_from_bytes(&bytes)["traces"][0]["runtimeID"], "rt-1");
 
     metadata.mutable_metadata.set_runtime_id("rt-2".into());
-    let bytes = encode_payload_from_v1(&chunks, &metadata).unwrap();
+    let bytes = encode_payload_from_v1(&chunks, &metadata, false).unwrap();
     assert_eq!(json_from_bytes(&bytes)["traces"][0]["runtimeID"], "rt-2");
 }
 
