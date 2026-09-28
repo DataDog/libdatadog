@@ -21,6 +21,7 @@ includes = ["common.h"]
 
 [defines]
 "target_os = windows" = "_WIN32"
+"target_os = linux" = "__linux__"
 
 [export]
 prefix = "ddog_"

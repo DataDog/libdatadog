@@ -277,6 +277,14 @@ pub trait SidecarInterface {
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
 
+    /// Flush in the normal connection's packet order, then close the completion pipe.
+    /// The raw signal worker can send this packet concurrently without disturbing normal replies.
+    #[oneway]
+    async fn flush_signal(
+        options: SidecarFlushOptions,
+        #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    );
+
     /// Sets x-datadog-test-session-token on all requests for the given session.
     ///
     /// # Arguments

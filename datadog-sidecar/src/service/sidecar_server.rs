@@ -1398,6 +1398,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
+    async fn flush_signal(
+        &self,
+        options: SidecarFlushOptions,
+        completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    ) {
+        self.flush(options).await;
+        drop(completion);
+    }
+
     async fn set_test_session_token(&self, token: String) {
         let session_id = self
             .session_id
@@ -1719,6 +1728,76 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(next_stats.configurations_stored, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets")]
+    async fn signal_flush_preserves_normal_reply_accounting() {
+        use super::super::blocking::SidecarTransport;
+        use libdd_ipc::platform::PlatformHandle;
+        use std::io::Read;
+
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(SidecarServer::default().accept_connection(server));
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            let sender = transport.inner.get_mut().unwrap();
+            let (mut receiver, completion) = std::io::pipe().unwrap();
+            for _ in 0..18 {
+                assert!(sender
+                    .channel
+                    .try_send_set_test_session_token("test".to_owned()));
+            }
+            assert!(sender.channel.try_send_flush_signal(
+                SidecarFlushOptions::default(),
+                PlatformHandle::from(completion),
+            ));
+            assert_eq!(receiver.read(&mut [0]).unwrap(), 0);
+            sender.channel.call_ping().unwrap();
+            assert_eq!(sender.channel.0.outstanding(), 0);
+            sender.channel.call_dump().unwrap();
+        })
+        .await
+        .unwrap();
+        // Socketpair peer-close detection differs by platform; this test owns the server task.
+        server.abort();
+        if let Err(error) = server.await {
+            assert!(error.is_cancelled());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "requires native IPC sockets and inline assembly")]
+    async fn raw_signal_flush_preserves_normal_reply_accounting() {
+        use super::super::{blocking::SidecarTransport, signal_flush::SignalFlush};
+        let (client, server) = SeqpacketConn::socketpair().unwrap();
+        let server = tokio::spawn(SidecarServer::default().accept_connection(server));
+        tokio::task::spawn_blocking(move || {
+            let mut transport = SidecarTransport::from(client);
+            let flush =
+                SignalFlush::prepare(&mut transport, SidecarFlushOptions::default()).unwrap();
+            let sender = transport.inner.get_mut().unwrap();
+            // Leave ordinary ACKs pending on the original connection when the raw request arrives.
+            for _ in 0..18 {
+                assert!(sender
+                    .channel
+                    .try_send_set_test_session_token("test".to_owned()));
+            }
+            assert_eq!(unsafe { flush.run() }, 0);
+            sender.channel.call_ping().unwrap();
+            assert_eq!(sender.channel.0.outstanding(), 0);
+            // A typed reply would fail to decode if the emergency request had left a stray ACK.
+            sender.channel.call_dump().unwrap();
+            drop(flush);
+            drop(transport);
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     fn ffe_context() -> FfeTelemetryContext {
