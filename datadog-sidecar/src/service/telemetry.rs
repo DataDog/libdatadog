@@ -13,7 +13,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
 use libdd_ipc::platform::NamedShmHandle;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -718,12 +718,12 @@ impl TelemetryCachedClientSet {
     ) {
         let key = (service.to_string(), env.to_string());
         let mut clients = self.inner.lock_or_panic();
-        let is_expected = clients
-            .get(&key)
-            .is_some_and(|entry| Arc::ptr_eq(&entry.client, expected));
-
-        if is_expected {
-            clients.remove(&key);
+        let entry = clients.entry(key);
+        match entry {
+            Entry::Occupied(entry) if Arc::ptr_eq(&entry.get().client, expected) => {
+                entry.remove();
+            }
+            _ => {}
         }
     }
 }
