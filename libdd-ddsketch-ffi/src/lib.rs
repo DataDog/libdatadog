@@ -19,7 +19,7 @@ fn ddsketch_error(msg: &str) -> Error {
 }
 
 /// Creates a new DDSketch instance with default configuration.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_ddsketch_new() -> Handle<DDSketch> {
     DDSketch::default().into()
 }
@@ -29,21 +29,21 @@ pub extern "C" fn ddog_ddsketch_new() -> Handle<DDSketch> {
 /// # Safety
 ///
 /// The sketch handle must have been created by this library and not already dropped.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) { unsafe {
     drop(sketch.take());
-}
+}}
 
 /// Adds a point to the DDSketch.
 ///
 /// # Safety
 ///
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ddsketch_add(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
-) -> VoidResult {
+) -> VoidResult { unsafe {
     let sketch_ref = match sketch.to_inner_mut() {
         Ok(s) => s,
         Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
@@ -53,19 +53,19 @@ pub unsafe extern "C" fn ddog_ddsketch_add(
         Ok(_) => VoidResult::Ok,
         Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
     }
-}
+}}
 
 /// Adds a point with a specific count to the DDSketch.
 ///
 /// # Safety
 ///
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
     count: f64,
-) -> VoidResult {
+) -> VoidResult { unsafe {
     let sketch_ref = match sketch.to_inner_mut() {
         Ok(s) => s,
         Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
@@ -75,7 +75,7 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
         Ok(_) => VoidResult::Ok,
         Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
     }
-}
+}}
 
 /// Returns the count of points in the DDSketch via the output parameter.
 ///
@@ -83,11 +83,11 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
 ///
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// The `count_out` parameter must be a valid pointer to uninitialized f64 memory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ddsketch_count(
     mut sketch: *mut Handle<DDSketch>,
     count_out: *mut MaybeUninit<f64>,
-) -> VoidResult {
+) -> VoidResult { unsafe {
     if count_out.is_null() {
         return VoidResult::Err(ddsketch_error(NULL_POINTER_ERROR));
     }
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn ddog_ddsketch_count(
 
     count_out.write(MaybeUninit::new(sketch_ref.count()));
     VoidResult::Ok
-}
+}}
 
 /// Returns the protobuf-encoded bytes of the DDSketch.
 /// The sketch handle is consumed by this operation.
@@ -108,8 +108,8 @@ pub unsafe extern "C" fn ddog_ddsketch_count(
 ///
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// The returned vector must be freed with `ddog_Vec_U8_drop`.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>) -> ffi::Vec<u8> {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>) -> ffi::Vec<u8> { unsafe {
     match sketch.take() {
         Ok(ddsketch) => {
             let encoded = ddsketch.encode_to_vec();
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>)
         }
         Err(_) => ffi::Vec::new(),
     }
-}
+}}
 
 /// Frees the memory allocated for a Vec<u8> returned by ddsketch functions.
 ///
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>)
 ///
 /// The vec parameter must be a valid Vec<u8> returned by this library.
 /// After being called, the vec will not point to valid memory.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_Vec_U8_drop(_vec: ffi::Vec<u8>) {
     // The Vec will be automatically dropped when it goes out of scope
 }
