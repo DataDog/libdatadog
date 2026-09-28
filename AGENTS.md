@@ -93,6 +93,14 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - A panic that reaches an `extern "C"` boundary aborts the host process. FFI entry points must catch unwinds (e.g. `std::panic::catch_unwind`) and convert them into error returns rather than letting them propagate into the caller's runtime. Whether a release artifact gets panic containment is decided by `builder` alone, through its `catch_panic` feature (a default), which propagates to the `catch_panic` feature in `libdd-profiling-ffi/Cargo.toml`. Projects building their own flavor with `builder`'s default features off ask for `catch_panic` explicitly; leaving it out yields abort-on-panic semantics. The FFI examples are what verify containment is on for our own release process.
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
+New `pub extern "C" fn` and `pub unsafe extern "C" fn` entry points are checked in pull requests by `ffi-panic-lint`. Run it locally against a branch diff with:
+
+```bash
+(cd .github/actions && cargo run -p ffi-panic-lint -- --base-ref origin/main)
+```
+
+Use `// allow(ffi-panic-boundary): <justification>` in either of the two lines directly above a genuinely panic-free entry point when adding containment would be redundant. The justification is required.
+
 ### Dependency declarations
 Every external dependency of a workspace member is declared once in the root `Cargo.toml` `[workspace.dependencies]` and inherited by members with `workspace = true`. Workspace entries should have no features enabled (`default-features = false`, no `features`), so that each leaf crate opts into exactly the features it needs.
 
