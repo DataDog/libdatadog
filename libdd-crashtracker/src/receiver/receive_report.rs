@@ -745,10 +745,10 @@ mod tests {
         // Stand in for the agent, so the debug log has somewhere to land
         // without a config block telling the receiver where to send.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        std::env::set_var(
+        unsafe { std::env::set_var(
             "DD_TRACE_AGENT_URL",
             format!("http://{}", listener.local_addr().unwrap()),
-        );
+        ) };
         let server = tokio::spawn(async move {
             tokio::time::timeout(
                 Duration::from_secs(5),

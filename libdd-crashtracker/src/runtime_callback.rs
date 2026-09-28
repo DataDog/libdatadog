@@ -149,7 +149,7 @@ pub fn is_runtime_callback_registered() -> bool {
 /// or registration functions concurrently, as those could invalidate
 /// the pointer between the null check and dereferencing.
 #[cfg(all(unix, feature = "collector"))]
-pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> {
+pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> { unsafe {
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
         return None;
@@ -159,7 +159,7 @@ pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> {
     // Box::into_raw() in registration functions, so it's a valid pointer
     // to a properly aligned, initialized CallbackData.
     Some(callback_ptr.read())
-}
+}}
 
 /// Get the callback type C string pointer from the currently registered callback
 ///
@@ -169,7 +169,7 @@ pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> {
 /// or registration functions concurrently, as those could invalidate
 /// the pointer between the null check and dereferencing.
 #[cfg(unix)]
-pub unsafe fn get_registered_callback_type_ptr() -> *const core::ffi::c_char {
+pub unsafe fn get_registered_callback_type_ptr() -> *const core::ffi::c_char { unsafe {
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
         return core::ptr::null();
@@ -184,7 +184,7 @@ pub unsafe fn get_registered_callback_type_ptr() -> *const core::ffi::c_char {
         CallbackData::Frame(_) => FRAME_CSTR.as_ptr(),
         CallbackData::StacktraceString(_) => STACKTRACE_STRING_CSTR.as_ptr(),
     }
-}
+}}
 
 /// Clear the registered runtime callback
 ///
@@ -195,14 +195,14 @@ pub unsafe fn get_registered_callback_type_ptr() -> *const core::ffi::c_char {
 /// - No signal handlers are currently executing that might invoke the callback
 /// - The callback is not being used in any other way
 #[cfg(unix)]
-pub unsafe fn clear_runtime_callback() {
+pub unsafe fn clear_runtime_callback() { unsafe {
     let old_ptr = RUNTIME_CALLBACK.swap(core::ptr::null_mut(), Ordering::SeqCst);
     if !old_ptr.is_null() {
         // Safety: old_ptr was created by Box::into_raw() in register_runtime_stack_callback(),
         // so it's a valid Box pointer. We reconstruct the Box to properly drop the tuple.
         let _ = Box::from_raw(old_ptr);
     }
-}
+}}
 
 /// Internal function to invoke the registered runtime callback with direct pipe writing
 ///
@@ -215,7 +215,7 @@ pub unsafe fn clear_runtime_callback() {
 #[cfg(all(unix, feature = "collector"))]
 pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     writer: &mut W,
-) -> Result<(), std::io::Error> {
+) -> Result<(), std::io::Error> { unsafe {
     static mut CURRENT_WRITER: Option<&'static mut dyn std::io::Write> = None;
 
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
@@ -229,14 +229,14 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
         &'static mut dyn std::io::Write,
     >(writer));
 
-    unsafe extern "C" fn emit_frame_collector(frame: &RuntimeStackFrame) {
+    unsafe extern "C" fn emit_frame_collector(frame: &RuntimeStackFrame) { unsafe {
         if let Some(ref mut writer) = CURRENT_WRITER {
             let _ = emit_frame_as_json(writer, frame);
             let _ = writer.flush();
         }
-    }
+    }}
 
-    unsafe extern "C" fn emit_stacktrace_string_collector(stacktrace_string: *const c_char) {
+    unsafe extern "C" fn emit_stacktrace_string_collector(stacktrace_string: *const c_char) { unsafe {
         if stacktrace_string.is_null() {
             return;
         }
@@ -249,7 +249,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
             let _ = writeln!(writer);
             let _ = writer.flush();
         }
-    }
+    }}
 
     match callback_data {
         CallbackData::Frame(cb) => cb(emit_frame_collector),
@@ -259,7 +259,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     CURRENT_WRITER = None;
 
     Ok(())
-}
+}}
 
 /// Emit a single runtime frame as JSON to the writer
 ///
@@ -333,7 +333,7 @@ mod tests {
 
     unsafe extern "C" fn test_emit_frame_callback(
         emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
-    ) {
+    ) { unsafe {
         let type_name = "TestModule.TestClass";
         let function_name = "test_function";
         let file_name = "test.rb";
@@ -347,16 +347,16 @@ mod tests {
         };
 
         emit_frame(&frame);
-    }
+    }}
 
     #[cfg(feature = "collector")]
     unsafe extern "C" fn test_emit_stacktrace_string_callback(
         emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
-    ) {
+    ) { unsafe {
         let stacktrace_string = alloc::ffi::CString::new("test_stacktrace_string").unwrap();
 
         emit_stacktrace_string(stacktrace_string.as_ptr());
-    }
+    }}
 
     fn ensure_callback_cleared() {
         let old_ptr = RUNTIME_CALLBACK.swap(ptr::null_mut(), Ordering::SeqCst);

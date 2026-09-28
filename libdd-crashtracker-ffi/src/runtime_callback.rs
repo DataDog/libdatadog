@@ -70,7 +70,7 @@ fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrame) -> CoreRuntimeStackF
 }
 
 #[cfg(unix)]
-unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) {
+unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) { unsafe {
     if ffi_frame_ptr.is_null() {
         return;
     }
@@ -80,13 +80,13 @@ unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) {
         let core_frame = convert_ffi_to_core_frame(ffi_frame);
         core_emit(&core_frame);
     }
-}
+}}
 
 /// Wrapper function that bridges FFI callback to core callback
 #[cfg(unix)]
 unsafe extern "C" fn ffi_callback_wrapper(
     emit_core_frame: unsafe extern "C" fn(&CoreRuntimeStackFrame),
-) {
+) { unsafe {
     if let Some(ffi_callback) = STORED_FFI_CALLBACK {
         STORED_CORE_EMIT = Some(emit_core_frame);
 
@@ -95,7 +95,7 @@ unsafe extern "C" fn ffi_callback_wrapper(
 
         STORED_CORE_EMIT = None;
     }
-}
+}}
 
 /// Register a runtime stack collection callback
 ///
@@ -130,10 +130,10 @@ unsafe extern "C" fn ffi_callback_wrapper(
 ///     emit_frame(&frame);
 /// }
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
     callback: RuntimeStackFrameCallback,
-) -> CallbackResult {
+) -> CallbackResult { unsafe {
     STORED_FFI_CALLBACK = Some(callback);
 
     // Register the wrapper with the core crate
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
         Ok(()) => CallbackResult::Ok,
         Err(e) => e.into(),
     }
-}
+}}
 
 /// Register a runtime stacktrace string collection callback
 ///
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
 /// - The callback must be signal-safe
 /// - Only one callback can be registered at a time (this replaces any existing one)
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_stacktrace_string_callback(
     callback: RuntimeStacktraceStringCallback,
 ) -> CallbackResult {
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_stacktrace_string_callback
 /// # Safety
 /// This function is safe to call at any time
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
     is_runtime_callback_registered()
 }
@@ -183,10 +183,10 @@ pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
 /// - The caller should not free the returned pointer
 /// - The returned string should be copied if it needs to persist beyond callback lifetime
 #[cfg(unix)]
-#[no_mangle]
-pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const std::ffi::c_char {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const std::ffi::c_char { unsafe {
     get_registered_callback_type_ptr()
-}
+}}
 
 #[cfg(all(test, unix))]
 mod tests {
@@ -200,7 +200,7 @@ mod tests {
 
     unsafe extern "C" fn test_frame_callback(
         emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
-    ) {
+    ) { unsafe {
         let function_name = "TestModule.TestClass.test_function";
         let file_name = "test.rb";
 
@@ -213,14 +213,14 @@ mod tests {
         };
 
         emit_frame(&frame);
-    }
+    }}
 
     unsafe extern "C" fn test_stacktrace_string_callback(
         emit_stacktrace_string: unsafe extern "C" fn(*const std::ffi::c_char),
-    ) {
+    ) { unsafe {
         let stacktrace_string = "test_stacktrace_string\0";
         emit_stacktrace_string(stacktrace_string.as_ptr() as *const std::ffi::c_char);
-    }
+    }}
 
     #[test]
     fn test_callback_invocation() {

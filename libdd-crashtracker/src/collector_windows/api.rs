@@ -512,21 +512,19 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
 /// This function reads memory from another process and casts it to an arbitrary type.
 /// Make sure to perform proper validation on the data before using it, and don't use it for
 /// types that have references, because the references are relative to the target process.
-unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
+unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> { unsafe {
     let mut bytes_read = 0;
     let mut value = MaybeUninit::<T>::uninit();
     let size = size_of::<T>();
 
     // SAFETY: value has a size of `size`
-    let result = unsafe {
-        ReadProcessMemory(
-            process_handle,
-            address as *const _,
-            value.as_mut_ptr() as *mut _,
-            size,
-            Some(&mut bytes_read),
-        )
-    };
+    let result = ReadProcessMemory(
+        process_handle,
+        address as *const _,
+        value.as_mut_ptr() as *mut _,
+        size,
+        Some(&mut bytes_read),
+    );
 
     anyhow::ensure!(
         result.is_ok() && bytes_read == size,
@@ -534,7 +532,7 @@ unsafe fn read_memory<T>(process_handle: HANDLE, address: u64) -> Result<T> {
     );
 
     Ok(value.assume_init())
-}
+}}
 
 fn read_memory_raw(process_handle: HANDLE, address: u64, size: usize) -> Result<Vec<u8>> {
     let mut buffer = vec![0u8; size];

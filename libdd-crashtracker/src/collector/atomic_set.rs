@@ -247,13 +247,13 @@ impl AtomicString {
     }
 
     // Safety: This should only be called on pointers that came from `ptr_from_inner`.
-    unsafe fn inner_from_ptr(v: *mut String) -> Option<String> {
+    unsafe fn inner_from_ptr(v: *mut String) -> Option<String> { unsafe {
         if v.is_null() {
             None
         } else {
             Some(*Box::from_raw(v))
         }
-    }
+    }}
 }
 
 impl Atomic for AtomicString {
@@ -289,7 +289,7 @@ impl Atomic for AtomicString {
 
     /// SAFETY: This is only safe to use in a single threaded context
     #[cfg(test)]
-    unsafe fn load(&self) -> Option<Self::Item> {
+    unsafe fn load(&self) -> Option<Self::Item> { unsafe {
         let v = self.inner.load(SeqCst);
         if v.is_null() {
             None
@@ -298,7 +298,7 @@ impl Atomic for AtomicString {
             // We need to clone here since the set owns the original.
             Some((*v).clone())
         }
-    }
+    }}
 
     fn swap(&self, new: Option<Self::Item>) -> Option<Self::Item> {
         let old = self.inner.swap(Self::ptr_from_inner(new), SeqCst);

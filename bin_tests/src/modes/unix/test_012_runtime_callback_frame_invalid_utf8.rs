@@ -43,7 +43,7 @@ impl Behavior for Test {
 // Signal-safe test callback that emits mock runtime stack frames with invalid UTF-8
 unsafe extern "C" fn test_runtime_callback_frame_with_invalid_utf8(
     emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
-) {
+) { unsafe {
     // 0xFF is invalid utf8
     static INVALID_UTF8_FUNCTION_NAME: &[u8] = b"runtime_function_\xFF_invalid";
     static INVALID_UTF8_TYPE_NAME: &[u8] = b"TestModule.\xFF.TestClass";
@@ -130,7 +130,7 @@ unsafe extern "C" fn test_runtime_callback_frame_with_invalid_utf8(
         column: 0,
     };
     emit_frame(&frame7);
-}
+}}
 
 #[cfg(test)]
 mod tests {

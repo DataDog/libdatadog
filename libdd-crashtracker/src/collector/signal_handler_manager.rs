@@ -136,7 +136,7 @@ pub(crate) unsafe fn chain_signal_handler(
 
 /// Allocates a signal altstack, and puts a guard page at the end.
 /// Inspired by https://github.com/rust-lang/rust/pull/69969/files
-unsafe fn create_alt_stack() -> anyhow::Result<()> {
+unsafe fn create_alt_stack() -> anyhow::Result<()> { unsafe {
     // Ensure that the altstack size is the greater of 16 pages or SIGSTKSZ. This is necessary
     // because the default SIGSTKSZ is 8KB, which we're starting to run into. This new size is
     // arbitrary, but at least it's large enough for our purposes, and yet a small enough part of
@@ -170,12 +170,12 @@ unsafe fn create_alt_stack() -> anyhow::Result<()> {
     let rval = sigaltstack(&stack, ptr::null_mut());
     anyhow::ensure!(rval == 0, "sigaltstack failed {rval}");
     Ok(())
-}
+}}
 
 unsafe fn register_signal_handler(
     signum: i32,
     config: &CrashtrackerConfiguration,
-) -> anyhow::Result<(signal::Signal, SigAction)> {
+) -> anyhow::Result<(signal::Signal, SigAction)> { unsafe {
     let signal_type = signal_from_signum(signum)?;
 
     // Between this and `create_alt_stack()`, there are a few things going on.
@@ -204,7 +204,7 @@ unsafe fn register_signal_handler(
 
     let old_handler = signal::sigaction(signal_type, &sig_action)?;
     Ok((signal_type, old_handler))
-}
+}}
 
 #[cfg(test)]
 mod tests {

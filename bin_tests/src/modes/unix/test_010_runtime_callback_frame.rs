@@ -43,7 +43,7 @@ impl Behavior for Test {
 // Signal-safe test callback that emits mock runtime stack frames
 unsafe extern "C" fn test_runtime_callback_frame(
     emit_frame: unsafe extern "C" fn(&RuntimeStackFrame),
-) {
+) { unsafe {
     static FUNCTION_NAME_1: &str = "runtime_function_1";
     static FUNCTION_NAME_2: &str = "runtime_function_2";
     static FUNCTION_NAME_3: &str = "runtime_main";
@@ -79,7 +79,7 @@ unsafe extern "C" fn test_runtime_callback_frame(
         column: 1,
     };
     emit_frame(&frame3);
-}
+}}
 
 #[cfg(test)]
 mod tests {
