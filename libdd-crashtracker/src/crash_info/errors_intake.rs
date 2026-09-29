@@ -283,8 +283,11 @@ pub struct ErrorsIntakePayload {
 #[derive(Debug, Default)]
 struct ExtractedMetadata {
     env: Option<String>,
+    family: String,
     language_name: Option<String>,
     language_version: Option<String>,
+    library_name: String,
+    library_version: String,
     process_tags: Option<String>,
     service_name: String,
     service_version: Option<String>,
@@ -294,6 +297,9 @@ struct ExtractedMetadata {
 impl ExtractedMetadata {
     fn from_metadata(metadata: &Metadata) -> Self {
         let mut result = Self {
+            family: metadata.family.clone(),
+            library_name: metadata.library_name.clone(),
+            library_version: metadata.library_version.clone(),
             service_name: "unknown".to_string(),
             ..Default::default()
         };
@@ -332,6 +338,13 @@ impl ExtractedMetadata {
         if let Some(version) = &self.service_version {
             tags.push_str(&format!(",version:{version}"));
         }
+        self.append_library_tags(tags);
+    }
+
+    fn append_library_tags(&self, tags: &mut String) {
+        tags.push_str(&format!(",library_name:{}", self.library_name));
+        tags.push_str(&format!(",library_version:{}", self.library_version));
+        tags.push_str(&format!(",family:{}", self.family));
     }
 
     fn append_runtime_tags(&self, tags: &mut String) {
@@ -488,6 +501,7 @@ impl ErrorsIntakePayload {
         if let Some(version) = &extracted_metadata.service_version {
             ddtags.push_str(&format!(",version:{version}"));
         }
+        extracted_metadata.append_library_tags(&mut ddtags);
         extracted_metadata.append_process_tags(&mut ddtags);
 
         if let Some(sig_info) = sig_info {
@@ -696,6 +710,9 @@ mod tests {
         assert!(ddtags.contains("service:foo"));
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
+        assert!(ddtags.contains("library_name:libdatadog"));
+        assert!(ddtags.contains("library_version:1.2.3"));
+        assert!(ddtags.contains("family:native"));
 
         assert!(ddtags.contains("data_schema_version:1.8"));
         assert!(ddtags.contains("incomplete:true"));
@@ -748,6 +765,10 @@ mod tests {
         assert!(ddtags.contains("language_name:native"));
 
         assert!(ddtags.contains("version:bar"));
+
+        assert!(ddtags.contains("library_name:libdatadog"));
+        assert!(ddtags.contains("library_version:1.2.3"));
+        assert!(ddtags.contains("family:native"));
 
         assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
         assert!(ddtags.contains("si_signo:11"));
