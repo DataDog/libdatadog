@@ -297,7 +297,7 @@ mod tests {
         assert!(normalizer::normalize_span(&mut test_span).is_ok());
         assert!(test_span.start >= min_start); // start should have been reset to current time
         assert!(test_span.start <= get_current_time()); //start should have been reset to current
-                                                        // time
+        // time
     }
 
     #[test]
@@ -431,10 +431,12 @@ mod tests {
         let mut trace = vec![];
         let result = normalizer::normalize_trace(&mut trace);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Normalize Trace Error: Trace is empty"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Normalize Trace Error: Trace is empty")
+        );
     }
 
     #[test]
@@ -447,10 +449,12 @@ mod tests {
         let mut trace = vec![span_1, span_2];
         let result = normalizer::normalize_trace(&mut trace);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Normalize Trace Error: Trace has foreign span"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Normalize Trace Error: Trace has foreign span")
+        );
     }
 
     #[test]

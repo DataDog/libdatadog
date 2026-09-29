@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use criterion::measurement::Measurement;
-use criterion::{black_box, criterion_group, Criterion, Throughput};
-use libdd_common::bench_utils::{memory_allocated_criterion, MeasurementName};
+use criterion::{Criterion, Throughput, black_box, criterion_group};
+use libdd_common::bench_utils::{MeasurementName, memory_allocated_criterion};
 use libdd_tinybytes::BytesString;
+use libdd_trace_utils::span::BytesData;
 use libdd_trace_utils::span::span_pool::SpanPool;
 use libdd_trace_utils::span::v04::Span;
-use libdd_trace_utils::span::BytesData;
 
 /// Configurations exercised by the benchmarks: `(number of chunks, spans per chunk)`.
 /// The small one resembles a single trace flush; the large one resembles a full payload.
