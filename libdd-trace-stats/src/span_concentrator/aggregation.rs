@@ -346,7 +346,11 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let http_endpoint = span
             .get_meta("http.endpoint")
-            .or_else(|| span.get_meta("http.route"))
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                span.get_meta("http.route")
+                    .filter(|value| !value.is_empty())
+            })
             .unwrap_or_default();
 
         let status_code = get_http_status_code(span);
@@ -1418,7 +1422,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // Span with http.method and http.endpoint (http.endpoint takes precedence)
+            // Span with http.route and http.endpoint (http.endpoint takes precedence)
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1428,7 +1432,7 @@ mod tests {
                     parent_id: 0,
                     meta: vec![
                         ("http.method".into(), "POST".into()),
-                        ("http.route".into(), "/users/create".into()),
+                        ("http.route".into(), "/users/create1".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
                     ]
                     .into(),
@@ -1440,6 +1444,34 @@ mod tests {
                     resource_name: "POST /users/create".into(),
                     http_method: "POST".into(),
                     http_endpoint: "/users/create2".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Span with empty http.endpoint and http.route (fallback to http.route)
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "POST /users/create".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.method".into(), "POST".into()),
+                        ("http.route".into(), "/users/create1".into()),
+                        ("http.endpoint".into(), "".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "POST /users/create".into(),
+                    http_method: "POST".into(),
+                    http_endpoint: "/users/create1".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     ..Default::default()
