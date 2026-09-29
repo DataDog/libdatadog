@@ -285,6 +285,7 @@ struct ExtractedMetadata {
     env: Option<String>,
     language_name: Option<String>,
     language_version: Option<String>,
+    process_tags: Option<String>,
     service_name: String,
     service_version: Option<String>,
     tracer_version: Option<String>,
@@ -312,6 +313,7 @@ impl ExtractedMetadata {
                     "library_version" | "profiler_version" => {
                         result.tracer_version = Some(value.to_string())
                     }
+                    "process_tags" => result.process_tags = Some(value.to_string()),
                     _ => {}
                 }
             }
@@ -339,6 +341,13 @@ impl ExtractedMetadata {
         }
         if let Some(tracer_version) = &self.tracer_version {
             tags.push_str(&format!(",tracer_version:{tracer_version}"));
+        }
+    }
+
+    fn append_process_tags(&self, tags: &mut String) {
+        if let Some(process_tags) = &self.process_tags {
+            tags.push(',');
+            tags.push_str(process_tags);
         }
     }
 }
@@ -398,6 +407,7 @@ impl ErrorsIntakePayload {
         let mut ddtags = String::new();
         metadata.append_base_tags(&mut ddtags);
         metadata.append_runtime_tags(&mut ddtags);
+        metadata.append_process_tags(&mut ddtags);
 
         let crash_tags = build_crash_info_tags(crash_info);
         ddtags.push_str(&format!(",{crash_tags}"));
@@ -470,6 +480,7 @@ impl ErrorsIntakePayload {
         if let Some(version) = &extracted_metadata.service_version {
             ddtags.push_str(&format!(",version:{version}"));
         }
+        extracted_metadata.append_process_tags(&mut ddtags);
 
         if let Some(sig_info) = sig_info {
             append_signal_tags(&mut ddtags, sig_info);
@@ -812,6 +823,55 @@ mod tests {
                 payload.ddtags
             );
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_process_tags_in_crash_info_ddtags() {
+        let mut crash_info = CrashInfo::test_instance(1);
+        crash_info
+            .metadata
+            .tags
+            .push("process_tags:entrypoint.name:cli,entrypoint.type:script".to_string());
+
+        let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
+        assert!(
+            payload.ddtags.contains("entrypoint.name:cli"),
+            "Missing entrypoint.name:cli in ddtags: {}",
+            payload.ddtags
+        );
+        assert!(
+            payload.ddtags.contains("entrypoint.type:script"),
+            "Missing entrypoint.type:script in ddtags: {}",
+            payload.ddtags
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_process_tags_in_crash_ping_ddtags() {
+        let mut metadata = Metadata::test_instance(1);
+        metadata
+            .tags
+            .push("process_tags:entrypoint.name:cli,entrypoint.type:script".to_string());
+
+        let crash_ping = crate::CrashPingBuilder::new(uuid::Uuid::from_u128(0x03))
+            .with_metadata(metadata)
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
+        assert!(
+            payload.ddtags.contains("entrypoint.name:cli"),
+            "Missing entrypoint.name:cli in ddtags: {}",
+            payload.ddtags
+        );
+        assert!(
+            payload.ddtags.contains("entrypoint.type:script"),
+            "Missing entrypoint.type:script in ddtags: {}",
+            payload.ddtags
+        );
     }
 
     #[test]
