@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::config::Config;
 use crate::log;
+use crate::service::SidecarServer;
 use crate::service::ffe_flagevaluation_flusher::{
     FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC, FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC,
     FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC, FLAG_EVALUATION_REASON_CARDINALITY_CAP,
     FLAG_EVALUATION_REASON_DEGRADED_CAP, FLAG_EVALUATION_REASON_PAYLOAD_LIMIT,
 };
-use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
-use libdd_common::{tag, tag::Tag, MutexExt};
+use libdd_common::{MutexExt, tag, tag::Tag};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use datadog_sidecar::service::{
-    blocking::SidecarTransport, signal_flush::SignalFlush, SidecarFlushOptions,
+    SidecarFlushOptions, blocking::SidecarTransport, signal_flush::SignalFlush,
 };
 use libdd_common_ffi::{Error, MaybeError};
 

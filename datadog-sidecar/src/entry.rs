@@ -5,22 +5,22 @@ use anyhow::Context;
 use crossbeam_utils::atomic::AtomicCell;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
-use spawn_worker::{entrypoint, Entrypoint, Stdio};
+use spawn_worker::{Entrypoint, Stdio, entrypoint};
 use std::fs::File;
 use std::future::Future;
 use std::{
     io,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant as TokioInstant;
 
-use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
+use crate::service::blocking::SidecarTransport;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 

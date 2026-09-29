@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
 use libdd_live_debugger::debugger_defs::SnapshotEvaluationError;
 use libdd_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
 use std::borrow::Cow;
@@ -211,9 +211,11 @@ impl<'e> libdd_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_register_expr_evaluator(eval: &Evaluator) { unsafe {
-    FFI_EVALUATOR = Some(eval.clone());
-}}
+pub unsafe extern "C" fn ddog_register_expr_evaluator(eval: &Evaluator) {
+    unsafe {
+        FFI_EVALUATOR = Some(eval.clone());
+    }
+}
 
 #[repr(C)]
 pub enum ConditionEvaluationResult {

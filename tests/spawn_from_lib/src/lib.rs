@@ -4,7 +4,7 @@
 use std::io::Write;
 
 use spawn_worker::SpawnWorker;
-use spawn_worker::{entrypoint, TrampolineData};
+use spawn_worker::{TrampolineData, entrypoint};
 
 #[cfg(not(target_os = "windows"))]
 use spawn_worker::recv_passed_fd;

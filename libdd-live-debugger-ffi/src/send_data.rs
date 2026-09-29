@@ -136,8 +136,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     buffer.push(snapshot);
 
     #[allow(clippy::unwrap_used)]
-    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger
-    else {
+    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else {
         unreachable!();
     };
 
@@ -208,60 +207,66 @@ pub extern "C" fn ddog_update_payload_message<'a>(
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
     payload: &mut DebuggerPayload<'a>,
-) -> *mut DebuggerCapture<'a> { unsafe {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+) -> *mut DebuggerCapture<'a> {
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .entry
-            .insert(Capture::default()),
-    )
-}}
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .entry
+                .insert(Capture::default()),
+        )
+    }
+}
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
     payload: &mut DebuggerPayload<'a>,
     line: u32,
-) -> *mut DebuggerCapture<'a> { unsafe {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+) -> *mut DebuggerCapture<'a> {
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        match snapshot.captures.as_mut().unwrap().lines.entry(line) {
-            hash_map::Entry::Occupied(e) => e.into_mut(),
-            hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
-        },
-    )
-}}
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            match snapshot.captures.as_mut().unwrap().lines.entry(line) {
+                hash_map::Entry::Occupied(e) => e.into_mut(),
+                hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
+            },
+        )
+    }
+}
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     payload: &mut DebuggerPayload<'a>,
-) -> *mut DebuggerCapture<'a> { unsafe {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+) -> *mut DebuggerCapture<'a> {
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .r#return
-            .insert(Capture::default()),
-    )
-}}
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .r#return
+                .insert(Capture::default()),
+        )
+    }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_redacted_name(name: CharSlice) -> bool {
@@ -270,15 +275,15 @@ pub extern "C" fn ddog_snapshot_redacted_name(name: CharSlice) -> bool {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_snapshot_add_redacted_name(name: CharSlice) { unsafe {
-    add_redacted_name(name.as_bytes())
-}}
+pub unsafe extern "C" fn ddog_snapshot_add_redacted_name(name: CharSlice) {
+    unsafe { add_redacted_name(name.as_bytes()) }
+}
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_snapshot_add_excluded_name(name: CharSlice) { unsafe {
-    add_excluded_name(name.as_bytes())
-}}
+pub unsafe extern "C" fn ddog_snapshot_add_excluded_name(name: CharSlice) {
+    unsafe { add_excluded_name(name.as_bytes()) }
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
@@ -287,9 +292,9 @@ pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
 
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_snapshot_add_redacted_type(name: CharSlice) { unsafe {
-    add_redacted_type(name.as_bytes())
-}}
+pub unsafe extern "C" fn ddog_snapshot_add_redacted_type(name: CharSlice) {
+    unsafe { add_redacted_type(name.as_bytes()) }
+}
 
 #[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]

@@ -4,28 +4,28 @@
 use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-use libdd_common::{tag::Tag, MutexExt};
-use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_common::{MutexExt, tag::Tag};
+use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use libdd_ipc::rate_limiter::ShmLimiter;
 use libdd_live_debugger::LiveDebuggingData;
-use libdd_remote_config::config::dynamic::{parse_json, Configs};
+use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
 use libdd_remote_config::{
-    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
-    Target,
+    ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
+    default_registry,
 };
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
@@ -63,16 +63,18 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 pub unsafe extern "C" fn debug_dump_inv_tar(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
-) { unsafe {
-    let id = &*id;
-    let target = &*target;
-    debug!("ConfigInvariants: {:#?}", id);
-    debug!("Target: {:#?}", target);
-    debug!(
-        "Shared memory path: {:?}",
-        path_for_remote_config(id, target)
-    );
-}}
+) {
+    unsafe {
+        let id = &*id;
+        let target = &*target;
+        debug!("ConfigInvariants: {:#?}", id);
+        debug!("Target: {:#?}", target);
+        debug!(
+            "Shared memory path: {:?}",
+            path_for_remote_config(id, target)
+        );
+    }
+}
 
 type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
 static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
@@ -81,9 +83,11 @@ static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
 /// This function modifies a global without synchronization.
 /// It is designed to be called by the main thread before other threads are spawned.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) { unsafe {
-    IN_PROC_NOTIFY_FUN = notify_fn;
-}}
+pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
+    unsafe {
+        IN_PROC_NOTIFY_FUN = notify_fn;
+    }
+}
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
     // We need a stable hash so that the outcome is independent of the process
@@ -801,7 +805,7 @@ impl RemoteConfigManager {
 mod tests {
     use super::*;
     use libdd_remote_config::config::dynamic::{
-        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
+        Configs, DynamicConfigFile, tests::dummy_dynamic_config,
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
     use manual_future::ManualFuture;

@@ -13,8 +13,8 @@ use std::ptr;
 use std::sync::{Arc, Mutex};
 use windows_sys::Win32::Foundation::{HANDLE, TRUE};
 use windows_sys::Win32::System::Threading::{
-    CloseThreadpoolWait, CreateEventW, CreateThreadpoolWait, SetThreadpoolWait,
-    WaitForThreadpoolWaitCallbacks, PTP_CALLBACK_INSTANCE, PTP_WAIT,
+    CloseThreadpoolWait, CreateEventW, CreateThreadpoolWait, PTP_CALLBACK_INSTANCE, PTP_WAIT,
+    SetThreadpoolWait, WaitForThreadpoolWaitCallbacks,
 };
 
 /// Owns a wait registered on the process's shared Windows thread pool.

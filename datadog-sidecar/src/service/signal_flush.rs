@@ -4,7 +4,7 @@
 //! Prepared flushes sent on the normal connection, with a private completion pipe.
 
 use super::{
-    blocking::SidecarTransport, sidecar_interface::SidecarInterfaceRequest, SidecarFlushOptions,
+    SidecarFlushOptions, blocking::SidecarTransport, sidecar_interface::SidecarInterfaceRequest,
 };
 use libdd_ipc::{platform::PlatformHandle, signal_safe::PreparedRequest};
 use std::io;
