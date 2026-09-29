@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
-    CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE, ThreadData,
+    CrashInfo, ErrorKind, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE, ThreadData,
     telemetry::CrashPing,
 };
 use anyhow::Context;
@@ -248,6 +248,8 @@ pub struct ErrorObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_crash: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ErrorKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
@@ -432,6 +434,7 @@ impl ErrorsIntakePayload {
                 thread_name: crash_info.error.thread_name.clone(),
                 stack: error_stack,
                 is_crash: Some(true),
+                kind: Some(crash_info.error.kind.clone()),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: crash_info.experimental.clone(),
                 threads: crash_info.error.threads.clone(),
@@ -491,6 +494,7 @@ impl ErrorsIntakePayload {
                 thread_name: None,
                 stack: None,
                 is_crash: Some(false),
+                kind: Some(crash_ping.kind()),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
                 threads: None,
@@ -650,6 +654,9 @@ mod tests {
             ))
         );
 
+        // error.kind inherits from crash_info.error.kind
+        assert_eq!(payload.error.kind, Some(crash_info.error.kind.clone()));
+
         // experimental inherits from crash_info
         assert_eq!(payload.error.experimental, crash_info.experimental);
 
@@ -711,6 +718,7 @@ mod tests {
             payload.error.error_type,
             Some(format!("{:?}", sig_info.si_signo_human_readable))
         );
+        assert_eq!(payload.error.kind, Some(crash_ping.kind()));
 
         let ddtags = &payload.ddtags;
 
