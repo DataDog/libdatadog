@@ -9,8 +9,8 @@ use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
 
-fn read_byte_array_len<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn read_byte_array_len<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<u32, DecodeError> {
     decode::read_bin_len(buf.as_mut_slice()).map_err(|_| {
         DecodeError::InvalidFormat("Unable to read binary len for meta_struct".to_owned())
@@ -18,15 +18,15 @@ fn read_byte_array_len<T: DeserializableTraceData>(
 }
 
 #[inline]
-pub fn read_meta_struct<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub fn read_meta_struct<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<VecMap<T::Text, T::Bytes>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(VecMap::new());
     }
 
-    fn read_meta_struct_pair<T: DeserializableTraceData>(
-        buf: &mut Buffer<T>,
+    fn read_meta_struct_pair<'a, T: DeserializableTraceData<'a>>(
+        buf: &mut Buffer<'a, T>,
     ) -> Result<(T::Text, T::Bytes), DecodeError> {
         let key = buf.read_string()?;
         let byte_array_len = read_byte_array_len(buf)? as usize;
@@ -56,7 +56,7 @@ mod tests {
         let meta = HashMap::from([("key".to_string(), Bytes::from(vec![1, 2, 3, 4]))]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
-        let mut slice = Buffer::<SliceData>::new(serialized.as_ref());
+        let mut slice = Buffer::<SliceData>::from(serialized.as_ref());
         let res = read_meta_struct(&mut slice).unwrap();
 
         let val = res.iter().find(|(k, _)| *k == "key").map(|(_, v)| v);
@@ -68,7 +68,7 @@ mod tests {
         let meta = HashMap::from([("key".to_string(), vec![1, 2, 3, 4])]);
 
         let serialized = rmp_serde::to_vec_named(&meta).unwrap();
-        let mut slice = Buffer::<SliceData>::new(serialized.as_ref());
+        let mut slice = Buffer::<SliceData>::from(serialized.as_ref());
         let res = read_meta_struct(&mut slice);
 
         assert!(res.is_err());

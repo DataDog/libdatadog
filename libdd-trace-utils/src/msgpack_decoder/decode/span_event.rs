@@ -27,8 +27,8 @@ use std::str::FromStr;
 /// This function will return an error if:
 /// - The marker for the array length cannot be read.
 /// - Any `SpanEvent` cannot be decoded.
-pub(crate) fn read_span_events<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(crate) fn read_span_events<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<Vec<SpanEvent<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
@@ -66,8 +66,8 @@ impl FromStr for SpanEventKey {
     }
 }
 
-fn decode_span_event<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_span_event<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<SpanEvent<T>, DecodeError> {
     let mut event = SpanEvent::default();
     let event_size = rmp::decode::read_map_len(buf.as_mut_slice())
@@ -84,8 +84,8 @@ fn decode_span_event<T: DeserializableTraceData>(
     Ok(event)
 }
 
-fn read_attributes_map<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn read_attributes_map<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<HashMap<T::Text, AttributeAnyValue<T>>, DecodeError> {
     let len = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidType("Unable to get map len for attributes".to_owned()))?;
@@ -126,8 +126,8 @@ impl FromStr for AttributeAnyKey {
     }
 }
 
-fn decode_attribute_any<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_attribute_any<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<AttributeAnyValue<T>, DecodeError> {
     let mut attribute: Option<AttributeAnyValue<T>> = None;
     let attribute_size = rmp::decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
@@ -175,8 +175,8 @@ fn decode_attribute_any<T: DeserializableTraceData>(
     }
 }
 
-fn read_attributes_array<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn read_attributes_array<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<Vec<AttributeArrayValue<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
@@ -245,8 +245,8 @@ impl FromStr for AttributeArrayKey {
     }
 }
 
-fn get_attribute_from_key<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn get_attribute_from_key<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     key: AttributeArrayKey,
 ) -> Result<AttributeArrayValue<T>, DecodeError> {
     match key {
@@ -268,8 +268,8 @@ fn get_attribute_from_key<T: DeserializableTraceData>(
     }
 }
 
-fn decode_attribute_array<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_attribute_array<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     array_type: Option<u8>,
 ) -> Result<AttributeArrayValue<T>, DecodeError> {
     let mut attribute: Option<AttributeArrayValue<T>> = None;

@@ -405,7 +405,7 @@ mod tests {
         };
 
         let serialized = rmp_serde::encode::to_vec_named(&span).unwrap();
-        let mut serialized_slice = Buffer::<SliceData<'_>>::new(serialized.as_ref());
+        let mut serialized_slice = Buffer::<SliceData<'_>>::from(serialized.as_ref());
         let deserialized = decode_span(&mut serialized_slice).unwrap();
 
         assert_eq!(span.name, deserialized.name);

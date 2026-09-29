@@ -6,8 +6,9 @@ pub(super) mod span;
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v1::{TraceChunk, TracerPayload, TracerPayloadBytes, TracerPayloadSlice};
-use crate::span::DeserializableTraceData;
+use crate::span::{BytesData, DeserializableTraceData, SliceData, TraceData};
 use rmp::decode;
+use rmpv::decode::read_value_ref;
 use std::borrow::Borrow;
 
 // Integer keys used by the V1 wire format. Kept in sync with the encoder side
@@ -91,14 +92,14 @@ pub(super) const TRACE_ID_LEN: u32 = 16;
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
 /// msgpack `uint` reference on every subsequent occurrence. ID 0 is reserved for the empty
 /// string and is pre-inserted on construction.
-pub(super) struct StringTable<T: DeserializableTraceData>
+pub(super) struct StringTable<T: TraceData>
 where
     T::Text: Clone,
 {
     seen: Vec<T::Text>,
 }
 
-impl<T: DeserializableTraceData> StringTable<T>
+impl<T: TraceData> StringTable<T>
 where
     T::Text: Clone,
 {
@@ -132,15 +133,14 @@ where
 /// Decides based on the next msgpack marker:
 /// - `str`/`fixstr` → read and intern, return the value
 /// - any unsigned int marker → resolve the table reference
-pub(super) fn read_interned_string<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_interned_string<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<T::Text, DecodeError>
 where
     T::Text: Clone,
 {
-    let slice: &[u8] = buf.as_slice();
-    let marker_byte = *slice.first().ok_or_else(|| {
+    let marker_byte = *buf.first().ok_or_else(|| {
         DecodeError::InvalidFormat(
             "Unexpected end of V1 buffer when reading interned string".to_owned(),
         )
@@ -186,18 +186,18 @@ where
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(TracerPayloadBytes, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<BytesData>::from(&data))
 }
 
 /// Decodes a V1 msgpack payload from a borrowed slice into a [`TracerPayloadSlice`].
 /// The resulting payload borrows from the input buffer (same lifetime).
 pub fn from_slice(data: &[u8]) -> Result<(TracerPayloadSlice<'_>, usize), DecodeError> {
-    from_buffer(&mut Buffer::new(data))
+    from_buffer(&mut Buffer::<SliceData>::from(data))
 }
 
 /// Generic over the deserialization mode (owned `BytesData` or borrowed `SliceData`).
-pub fn from_buffer<T: DeserializableTraceData>(
-    data: &mut Buffer<T>,
+pub fn from_buffer<'a, T: DeserializableTraceData<'a>>(
+    data: &mut Buffer<'a, T>,
 ) -> Result<(TracerPayload<T>, usize), DecodeError>
 where
     T::Text: Clone,
@@ -216,54 +216,54 @@ where
 /// Any inline string encountered while skipping (at any nesting depth) is interned into `table`,
 /// same as a recognized field would: skipping a value must not desync later back-references to
 /// strings that happen to also appear inside it.
-pub(super) fn skip_unknown_value<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn skip_unknown_value<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<(), DecodeError>
 where
     T::Text: Clone,
 {
-    // Snapshot the buffer's owning handle *before* advancing past the skipped value: any string
-    // found inside it will be a substring of this exact allocation, so this is what
-    // `T::intern_skipped_str` must derive ownership from. Cloning is cheap (a refcount bump for
-    // `T::Bytes = Bytes`), unaffected by the lied `'static` lifetime `as_mut_slice` exposes.
-    let owner = buf.bytes().clone();
-    let value = rmpv::decode::read_value_ref(buf.as_mut_slice())
+    // `read_value_ref` consumes the whole value through the buffer's `Read`/`BorrowRead`
+    // implementations and enforces its own nesting depth limit (`rmpv::decode::MAX_DEPTH`),
+    // so a hostile payload can't exhaust the stack. The decoded `ValueRef` borrows every
+    // string straight from the source payload at its honest lifetime.
+    let value = read_value_ref(&mut *buf)
         .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;
-    record_strings_in_value_ref::<T>(&value, &owner, table);
+    record_strings_in_value_ref(&value, buf.source(), table);
     Ok(())
 }
 
-/// Recursively walks a parsed [`rmpv::ValueRef`], interning every string it contains into
-/// `table`. Strings with invalid UTF-8 are ignored: they can never have been produced by
-/// [`read_interned_string`]'s own encoder-side counterpart, so they can't be the target of a
-/// later back-reference either.
-///
-/// `owner` must be a snapshot of the buffer taken before it was advanced past `value`: the
-/// strings inside `value` report a lied `'static` lifetime (see `Buffer::as_mut_slice`) but
-/// really borrow from `owner`'s memory.
-fn record_strings_in_value_ref<T: DeserializableTraceData>(
-    value: &rmpv::ValueRef<'static>,
-    owner: &T::Bytes,
+/// Recursively walks a skipped [`rmpv::ValueRef`], interning every string it contains into
+/// `table`.
+fn record_strings_in_value_ref<'a, T: DeserializableTraceData<'a>>(
+    value: &rmpv::ValueRef<'a>,
+    source: &'a T::Source,
     table: &mut StringTable<T>,
 ) where
     T::Text: Clone,
 {
     match value {
         rmpv::ValueRef::String(s) => {
-            if let Some(s) = (*s).into_str() {
-                table.record(&T::intern_skipped_str(owner, s));
+            // `into_str` hands the string back at the payload's honest lifetime `'a`. Invalid
+            // UTF-8 yields `None` and is ignored: it can never have been produced by
+            // [`read_interned_string`]'s encoder-side counterpart, so it can't be the target
+            // of a later back-reference either.
+            if let Some(interned) = (*s)
+                .into_str()
+                .and_then(|s| T::intern_skipped_str(source, s))
+            {
+                table.record(&interned);
             }
         }
         rmpv::ValueRef::Array(items) => {
             for item in items {
-                record_strings_in_value_ref::<T>(item, owner, table);
+                record_strings_in_value_ref(item, source, table);
             }
         }
         rmpv::ValueRef::Map(entries) => {
             for (key, val) in entries {
-                record_strings_in_value_ref::<T>(key, owner, table);
-                record_strings_in_value_ref::<T>(val, owner, table);
+                record_strings_in_value_ref(key, source, table);
+                record_strings_in_value_ref(val, source, table);
             }
         }
         _ => {}
@@ -271,8 +271,8 @@ fn record_strings_in_value_ref<T: DeserializableTraceData>(
 }
 
 /// Decodes the top-level V1 payload map: tracer metadata fields + chunks array.
-fn decode_payload<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_payload<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<TracerPayload<T>, DecodeError>
 where
@@ -319,8 +319,8 @@ where
     Ok(payload)
 }
 
-fn decode_chunks<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_chunks<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<Vec<TraceChunk<T>>, DecodeError>
 where
@@ -335,8 +335,8 @@ where
     Ok(chunks)
 }
 
-fn decode_chunk<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_chunk<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<TraceChunk<T>, DecodeError>
 where

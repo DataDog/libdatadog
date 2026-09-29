@@ -22,8 +22,8 @@ use std::borrow::Borrow;
 ///
 /// The streaming `StringTable` is shared across the whole payload, so interned references in
 /// this span can resolve to strings that appeared in an earlier chunk or payload header.
-pub(super) fn decode_span<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn decode_span<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<Span<T>, DecodeError>
 where
@@ -111,8 +111,8 @@ where
 }
 
 /// Reads a V1 attributes map encoded as a flat array of `[key, type_uint8, value, ...]` triplets.
-pub(super) fn read_attributes_map<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_attributes_map<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<VecMap<T::Text, AttributeValue<T>>, DecodeError>
 where
@@ -144,8 +144,8 @@ where
 
 /// Reads `[type_uint8, value]` and dispatches by type discriminant. Recurses into `Array` and
 /// `KeyValueList`.
-pub(super) fn read_typed_attribute_value<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_typed_attribute_value<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<AttributeValue<T>, DecodeError>
 where
@@ -206,7 +206,9 @@ where
 }
 
 /// Reads a msgpack `bin` and slices the matching range out of the buffer.
-fn read_bin<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<T::Bytes, DecodeError> {
+fn read_bin<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
+) -> Result<T::Bytes, DecodeError> {
     let len = decode::read_bin_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 bin len read failure".to_owned()))?;
     buf.try_slice_and_advance(len as usize)
@@ -214,8 +216,8 @@ fn read_bin<T: DeserializableTraceData>(buf: &mut Buffer<T>) -> Result<T::Bytes,
 }
 
 /// Reads the span_links array. The `SpanLinks` map key has already been consumed by the caller.
-pub(super) fn read_span_links<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_span_links<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<ThinVec<SpanLink<T>>, DecodeError>
 where
@@ -230,8 +232,8 @@ where
     Ok(links)
 }
 
-fn decode_span_link<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_span_link<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<SpanLink<T>, DecodeError>
 where
@@ -282,8 +284,8 @@ where
     Ok(link)
 }
 
-pub(super) fn read_span_events<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(super) fn read_span_events<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<ThinVec<SpanEvent<T>>, DecodeError>
 where
@@ -298,8 +300,8 @@ where
     Ok(events)
 }
 
-fn decode_span_event<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_span_event<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
     table: &mut StringTable<T>,
 ) -> Result<SpanEvent<T>, DecodeError>
 where

@@ -27,8 +27,8 @@ use std::str::FromStr;
 /// - The marker for the array length cannot be read.
 /// - Any `SpanLink` cannot be decoded.
 /// ```
-pub(crate) fn read_span_links<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+pub(crate) fn read_span_links<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<Vec<SpanLink<T>>, DecodeError> {
     if handle_null_marker(buf) {
         return Ok(Vec::default());
@@ -72,8 +72,8 @@ impl FromStr for SpanLinkKey {
     }
 }
 
-fn decode_span_link<T: DeserializableTraceData>(
-    buf: &mut Buffer<T>,
+fn decode_span_link<'a, T: DeserializableTraceData<'a>>(
+    buf: &mut Buffer<'a, T>,
 ) -> Result<SpanLink<T>, DecodeError> {
     let mut span = SpanLink::default();
     let span_size = rmp::decode::read_map_len(buf.as_mut_slice())

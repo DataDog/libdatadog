@@ -29,8 +29,8 @@ use std::borrow::Borrow;
 /// This function will return an error if:
 /// - The map length cannot be read.
 /// - Any key or value cannot be decoded.
-pub fn decode_span<T: DeserializableTraceData>(
-    buffer: &mut Buffer<T>,
+pub fn decode_span<'a, T: DeserializableTraceData<'a>>(
+    buffer: &mut Buffer<'a, T>,
 ) -> Result<Span<T>, DecodeError> {
     let mut span = Span::<T>::default();
 
@@ -53,9 +53,9 @@ pub fn decode_span<T: DeserializableTraceData>(
 
 // Safety: read_string_ref checks utf8 validity, so we don't do it again when creating the
 // BytesStrings
-fn fill_span<T: DeserializableTraceData>(
+fn fill_span<'a, T: DeserializableTraceData<'a>>(
     span: &mut Span<T>,
-    buf: &mut Buffer<T>,
+    buf: &mut Buffer<'a, T>,
 ) -> Result<(), DecodeError> {
     let key = buf
         .read_string()?
