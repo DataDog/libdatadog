@@ -11,19 +11,19 @@
 
 use super::OtlpResourceInfo;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-    any_value::Value as ProtoValue, AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue,
-    InstrumentationScope as ProtoScope, KeyValue as ProtoKeyValue,
+    AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue, InstrumentationScope as ProtoScope,
+    KeyValue as ProtoKeyValue, any_value::Value as ProtoValue,
 };
 use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource as ProtoResource;
 use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
-    span::{Event as ProtoEvent, Link as ProtoLink},
     ResourceSpans as ProtoResourceSpans, ScopeSpans as ProtoScopeSpans, Span as ProtoSpan,
     Status as ProtoStatus,
+    span::{Event as ProtoEvent, Link as ProtoLink},
 };
 
 /// Maximum number of attributes per span; excess are dropped and counted.
