@@ -47,11 +47,13 @@ pub extern "C" fn ddog_prof_ManagedStringStorage_new() -> ManagedStringStorageNe
 
 #[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
-pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) { unsafe {
-    if let Ok(storage) = get_inner_string_storage(storage, false) {
-        drop(storage);
+pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_drop(storage: ManagedStringStorage) {
+    unsafe {
+        if let Ok(storage) = get_inner_string_storage(storage, false) {
+            drop(storage);
+        }
     }
-}}
+}
 
 #[repr(C)]
 #[allow(dead_code)]
@@ -66,25 +68,27 @@ pub enum ManagedStringStorageInternResult {
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern(
     storage: ManagedStringStorage,
     string: CharSlice,
-) -> ManagedStringStorageInternResult { unsafe {
-    // Empty strings always get assigned id 0, no need to check.
-    if string.is_empty() {
-        return anyhow::Ok(ManagedStringId::empty()).into();
+) -> ManagedStringStorageInternResult {
+    unsafe {
+        // Empty strings always get assigned id 0, no need to check.
+        if string.is_empty() {
+            return anyhow::Ok(ManagedStringId::empty()).into();
+        }
+
+        (|| {
+            let storage = get_inner_string_storage(storage, true)?;
+
+            let string_id = storage
+                .lock()
+                .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
+                .intern(string.try_to_utf8()?)?;
+
+            anyhow::Ok(ManagedStringId::new(string_id))
+        })()
+        .context("ddog_prof_ManagedStringStorage_intern failed")
+        .into()
     }
-
-    (|| {
-        let storage = get_inner_string_storage(storage, true)?;
-
-        let string_id = storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
-            .intern(string.try_to_utf8()?)?;
-
-        anyhow::Ok(ManagedStringId::new(string_id))
-    })()
-    .context("ddog_prof_ManagedStringStorage_intern failed")
-    .into()
-}}
+}
 
 /// Interns all the strings in `strings`, writing the resulting id to the same
 /// offset in `output_ids`.
@@ -105,92 +109,98 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_intern_all(
     strings: Slice<CharSlice>,
     output_ids: *mut MaybeUninit<ManagedStringId>,
     output_ids_size: usize,
-) -> MaybeError { unsafe {
-    let result = (|| {
-        if strings.len() != output_ids_size {
-            anyhow::bail!("input and output arrays have different sizes")
+) -> MaybeError {
+    unsafe {
+        let result = (|| {
+            if strings.len() != output_ids_size {
+                anyhow::bail!("input and output arrays have different sizes")
+            }
+
+            let storage = get_inner_string_storage(storage, true)?;
+
+            let mut write_locked_storage = storage
+                .lock()
+                .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+
+            let output_slice = core::slice::from_raw_parts_mut(output_ids, output_ids_size);
+
+            for (output_id, input_str) in output_slice.iter_mut().zip(strings.iter()) {
+                let string_id = if input_str.is_empty() {
+                    ManagedStringId::empty()
+                } else {
+                    ManagedStringId::new(write_locked_storage.intern(input_str.try_to_utf8()?)?)
+                };
+                output_id.write(string_id);
+            }
+
+            anyhow::Ok(())
+        })()
+        .context("ddog_prof_ManagedStringStorage_intern failed");
+
+        match result {
+            Ok(_) => MaybeError::None,
+            Err(e) => MaybeError::Some(e.into()),
         }
-
-        let storage = get_inner_string_storage(storage, true)?;
-
-        let mut write_locked_storage = storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
-
-        let output_slice = core::slice::from_raw_parts_mut(output_ids, output_ids_size);
-
-        for (output_id, input_str) in output_slice.iter_mut().zip(strings.iter()) {
-            let string_id = if input_str.is_empty() {
-                ManagedStringId::empty()
-            } else {
-                ManagedStringId::new(write_locked_storage.intern(input_str.try_to_utf8()?)?)
-            };
-            output_id.write(string_id);
-        }
-
-        anyhow::Ok(())
-    })()
-    .context("ddog_prof_ManagedStringStorage_intern failed");
-
-    match result {
-        Ok(_) => MaybeError::None,
-        Err(e) => MaybeError::Some(e.into()),
     }
-}}
+}
 
 #[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern(
     storage: ManagedStringStorage,
     id: ManagedStringId,
-) -> MaybeError { unsafe {
-    let Some(non_empty_string_id) = NonZeroU32::new(id.value) else {
-        return MaybeError::None; // Empty string, nothing to do
-    };
+) -> MaybeError {
+    unsafe {
+        let Some(non_empty_string_id) = NonZeroU32::new(id.value) else {
+            return MaybeError::None; // Empty string, nothing to do
+        };
 
-    let result = (|| {
-        let storage = get_inner_string_storage(storage, true)?;
+        let result = (|| {
+            let storage = get_inner_string_storage(storage, true)?;
 
-        let mut write_locked_storage = storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+            let mut write_locked_storage = storage
+                .lock()
+                .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
-        write_locked_storage.unintern(non_empty_string_id)
-    })()
-    .context("ddog_prof_ManagedStringStorage_unintern failed");
+            write_locked_storage.unintern(non_empty_string_id)
+        })()
+        .context("ddog_prof_ManagedStringStorage_unintern failed");
 
-    match result {
-        Ok(_) => MaybeError::None,
-        Err(e) => MaybeError::Some(e.into()),
+        match result {
+            Ok(_) => MaybeError::None,
+            Err(e) => MaybeError::Some(e.into()),
+        }
     }
-}}
+}
 
 #[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
     storage: ManagedStringStorage,
     ids: Slice<ManagedStringId>,
-) -> MaybeError { unsafe {
-    let result = (|| {
-        let storage = get_inner_string_storage(storage, true)?;
+) -> MaybeError {
+    unsafe {
+        let result = (|| {
+            let storage = get_inner_string_storage(storage, true)?;
 
-        let mut write_locked_storage = storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
+            let mut write_locked_storage = storage
+                .lock()
+                .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?;
 
-        for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
-            write_locked_storage.unintern(non_empty_string_id)?;
+            for non_empty_string_id in ids.iter().filter_map(|id| NonZeroU32::new(id.value)) {
+                write_locked_storage.unintern(non_empty_string_id)?;
+            }
+
+            anyhow::Ok(())
+        })()
+        .context("ddog_prof_ManagedStringStorage_unintern failed");
+
+        match result {
+            Ok(_) => MaybeError::None,
+            Err(e) => MaybeError::Some(e.into()),
         }
-
-        anyhow::Ok(())
-    })()
-    .context("ddog_prof_ManagedStringStorage_unintern failed");
-
-    match result {
-        Ok(_) => MaybeError::None,
-        Err(e) => MaybeError::Some(e.into()),
     }
-}}
+}
 
 #[must_use]
 #[unsafe(no_mangle)]
@@ -202,45 +212,49 @@ pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_unintern_all(
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_get_string(
     storage: ManagedStringStorage,
     id: ManagedStringId,
-) -> StringWrapperResult { unsafe {
-    (|| {
-        let storage = get_inner_string_storage(storage, true)?;
-        let string: String = (*storage
-            .lock()
-            .map_err(|_| {
-                anyhow::anyhow!("acquisition of read lock on string storage should succeed")
-            })?
-            .get_string(id.value)?)
-        .to_owned();
+) -> StringWrapperResult {
+    unsafe {
+        (|| {
+            let storage = get_inner_string_storage(storage, true)?;
+            let string: String = (*storage
+                .lock()
+                .map_err(|_| {
+                    anyhow::anyhow!("acquisition of read lock on string storage should succeed")
+                })?
+                .get_string(id.value)?)
+            .to_owned();
 
-        anyhow::Ok(string)
-    })()
-    .context("ddog_prof_ManagedStringStorage_get_string failed")
-    .into()
-}}
+            anyhow::Ok(string)
+        })()
+        .context("ddog_prof_ManagedStringStorage_get_string failed")
+        .into()
+    }
+}
 
 #[unsafe(no_mangle)]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_ManagedStringStorage_advance_gen(
     storage: ManagedStringStorage,
-) -> MaybeError { unsafe {
-    let result = (|| {
-        let storage = get_inner_string_storage(storage, true)?;
+) -> MaybeError {
+    unsafe {
+        let result = (|| {
+            let storage = get_inner_string_storage(storage, true)?;
 
-        storage
-            .lock()
-            .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
-            .advance_gen();
+            storage
+                .lock()
+                .map_err(|_| anyhow::anyhow!("string storage lock was poisoned"))?
+                .advance_gen();
 
-        anyhow::Ok(())
-    })()
-    .context("ddog_prof_ManagedStringStorage_advance_gen failed");
+            anyhow::Ok(())
+        })()
+        .context("ddog_prof_ManagedStringStorage_advance_gen failed");
 
-    match result {
-        Ok(_) => MaybeError::None,
-        Err(e) => MaybeError::Some(e.into()),
+        match result {
+            Ok(_) => MaybeError::None,
+            Err(e) => MaybeError::Some(e.into()),
+        }
     }
-}}
+}
 
 pub unsafe fn get_inner_string_storage(
     storage: ManagedStringStorage,
@@ -248,25 +262,28 @@ pub unsafe fn get_inner_string_storage(
     // (E.g. we use this flag to know if we need to increment the refcount for the copy we create
     // or not).
     for_use: bool,
-) -> anyhow::Result<Arc<Mutex<InternalManagedStringStorage>>> { unsafe {
-    if storage.inner.is_null() {
-        anyhow::bail!("storage inner pointer is null");
-    }
+) -> anyhow::Result<Arc<Mutex<InternalManagedStringStorage>>> {
+    unsafe {
+        if storage.inner.is_null() {
+            anyhow::bail!("storage inner pointer is null");
+        }
 
-    let storage_ptr = storage.inner;
+        let storage_ptr = storage.inner;
 
-    if for_use {
-        // By incrementing strong count here we ensure that the returned Arc represents a "clone" of
-        // the original and will thus not trigger a drop of the underlying data when out of
-        // scope. NOTE: We can't simply do Arc::from_raw(storage_ptr).clone() because when we
-        // return, the Arc created through `Arc::from_raw` would go out of scope and decrement
-        // strong count.
-        Arc::increment_strong_count(storage_ptr);
+        if for_use {
+            // By incrementing strong count here we ensure that the returned Arc represents a
+            // "clone" of the original and will thus not trigger a drop of the
+            // underlying data when out of scope. NOTE: We can't simply do
+            // Arc::from_raw(storage_ptr).clone() because when we return, the Arc
+            // created through `Arc::from_raw` would go out of scope and decrement
+            // strong count.
+            Arc::increment_strong_count(storage_ptr);
+        }
+        Ok(Arc::from_raw(
+            storage_ptr as *const Mutex<InternalManagedStringStorage>,
+        ))
     }
-    Ok(Arc::from_raw(
-        storage_ptr as *const Mutex<InternalManagedStringStorage>,
-    ))
-}}
+}
 
 impl From<anyhow::Result<ManagedStringId>> for ManagedStringStorageInternResult {
     fn from(value: anyhow::Result<ManagedStringId>) -> Self {

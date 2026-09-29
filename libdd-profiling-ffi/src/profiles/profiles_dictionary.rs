@@ -1,13 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::ProfileError;
 use crate::arc_handle::ArcHandle;
 use crate::profile_status::ProfileStatus;
 use crate::profiles::utf8::{self, Utf8Option};
 use crate::profiles::{ensure_non_null_insert, ensure_non_null_out_parameter};
-use crate::ProfileError;
-use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_common_ffi::MutSlice;
+use libdd_common_ffi::slice::{CharSlice, Slice};
 use libdd_profiling::profiles::collections::StringRef;
 use libdd_profiling::profiles::datatypes::{
     Function2, FunctionId2, Mapping2, MappingId2, ProfilesDictionary, StringId2,
@@ -237,19 +237,21 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_str(
     result: *mut CharSlice<'static>,
     dict: Option<&ProfilesDictionary>,
     string_id: StringId2,
-) -> ProfileStatus { unsafe {
-    ensure_non_null_out_parameter!(result);
-    let Some(dict) = dict else {
-        return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
-    };
-    // SAFETY: It's not actually safe--as indicated in the docs
-    // for this function, the caller needs to be sure the string
-    // set in the dictionary outlives the slice.
-    result.write(std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(
-        CharSlice::from(dict.get_str(string_id)),
-    ));
-    ProfileStatus::OK
-}}
+) -> ProfileStatus {
+    unsafe {
+        ensure_non_null_out_parameter!(result);
+        let Some(dict) = dict else {
+            return ProfileStatus::from(NULL_PROFILES_DICTIONARY);
+        };
+        // SAFETY: It's not actually safe--as indicated in the docs
+        // for this function, the caller needs to be sure the string
+        // set in the dictionary outlives the slice.
+        result.write(std::mem::transmute::<CharSlice<'_>, CharSlice<'static>>(
+            CharSlice::from(dict.get_str(string_id)),
+        ));
+        ProfileStatus::OK
+    }
+}
 
 /// Tries to get the function value associated with the function id.
 ///
@@ -285,11 +287,13 @@ pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_get_func(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_prof_ProfilesDictionary_drop(
     handle: *mut ArcHandle<ProfilesDictionary>,
-) { unsafe {
-    if let Some(h) = handle.as_mut() {
-        h.drop_resource();
+) {
+    unsafe {
+        if let Some(h) = handle.as_mut() {
+            h.drop_resource();
+        }
     }
-}}
+}
 
 #[cfg(test)]
 mod tests {

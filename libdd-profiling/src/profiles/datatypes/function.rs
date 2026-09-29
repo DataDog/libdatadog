@@ -104,13 +104,15 @@ impl FunctionId2 {
     /// # Safety
     /// The pointer object must still be alive. In general this means the
     /// profiles dictionary it came from must be alive.
-    pub unsafe fn read(self) -> Option<Function2> { unsafe {
-        if self.is_empty() {
-            None
-        } else {
-            Some(self.0.read())
+    pub unsafe fn read(self) -> Option<Function2> {
+        unsafe {
+            if self.is_empty() {
+                None
+            } else {
+                Some(self.0.read())
+            }
         }
-    }}
+    }
 }
 
 impl From<SetId<Function>> for FunctionId2 {

@@ -85,13 +85,15 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
     ) -> Result<ThinSlice<'static, T>, SetError>
     where
         T: hash::Hash,
-    { unsafe {
-        let hash = Hasher::default().hash_one(slice);
-        let shard_idx = Self::select_shard(hash);
-        let lock = &self.shards[shard_idx];
-        let mut guard = lock.write();
-        guard.insert_unique_uncontended(slice)
-    }}
+    {
+        unsafe {
+            let hash = Hasher::default().hash_one(slice);
+            let shard_idx = Self::select_shard(hash);
+            let lock = &self.shards[shard_idx];
+            let mut guard = lock.write();
+            guard.insert_unique_uncontended(slice)
+        }
+    }
 
     /// Adds the slice to the slice set if it isn't present already, and
     /// returns a handle to the slice that can be used to retrieve it later.

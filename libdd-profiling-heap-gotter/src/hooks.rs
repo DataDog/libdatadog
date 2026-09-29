@@ -54,29 +54,31 @@ pub(crate) static HOOK_HITS: AtomicUsize = AtomicUsize::new(0);
 /// `apply_overrides` writes into `slot` (see the `ORIG_*` docs above); if
 /// `slot` is still `0`, this returns `None` rather than transmuting.
 #[inline]
-unsafe fn load_fn<T>(slot: &AtomicUsize) -> Option<T> { unsafe {
-    // `Acquire` pairs with the `store(Release)` in elf.rs's
-    // `apply_overrides`, which runs before the GOT is ever patched to
-    // route calls into these hooks. That gives a real happens-before
-    // edge: once this observes a non-zero slot, it's guaranteed to see
-    // the fully-published address, not just "no torn read".
-    let v = slot.load(Ordering::Acquire);
-    if v == 0 {
-        None
-    } else {
-        // SAFETY: caller guarantees T is the right `extern "C" fn(...)`
-        // type and that `v` was written by `apply_overrides` with a
-        // function of that signature.
-        //
-        // transmute_copy, not transmute: `transmute::<usize, T>` won't
-        // compile for a generic T because the size-equality check runs
-        // before monomorphization, so the compiler can't prove
-        // `size_of::<T>() == size_of::<usize>()`. Every T here is a
-        // pointer-sized fn pointer, so copying `size_of::<T>()` bytes is
-        // sound.
-        Some(core::mem::transmute_copy::<usize, T>(&v))
+unsafe fn load_fn<T>(slot: &AtomicUsize) -> Option<T> {
+    unsafe {
+        // `Acquire` pairs with the `store(Release)` in elf.rs's
+        // `apply_overrides`, which runs before the GOT is ever patched to
+        // route calls into these hooks. That gives a real happens-before
+        // edge: once this observes a non-zero slot, it's guaranteed to see
+        // the fully-published address, not just "no torn read".
+        let v = slot.load(Ordering::Acquire);
+        if v == 0 {
+            None
+        } else {
+            // SAFETY: caller guarantees T is the right `extern "C" fn(...)`
+            // type and that `v` was written by `apply_overrides` with a
+            // function of that signature.
+            //
+            // transmute_copy, not transmute: `transmute::<usize, T>` won't
+            // compile for a generic T because the size-equality check runs
+            // before monomorphization, so the compiler can't prove
+            // `size_of::<T>() == size_of::<usize>()`. Every T here is a
+            // pointer-sized fn pointer, so copying `size_of::<T>()` bytes is
+            // sound.
+            Some(core::mem::transmute_copy::<usize, T>(&v))
+        }
     }
-}}
+}
 
 // These mirror the C-standard / POSIX ABI signatures of the hooked
 // functions (malloc(size_t), free(void*), ...). That ABI is effectively
@@ -112,56 +114,63 @@ type PthreadCreateFn = unsafe extern "C" fn(
 ) -> c_int;
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_malloc(size: usize) -> *mut c_void { unsafe {
-    #[cfg(feature = "test-support")]
-    HOOK_HITS.fetch_add(1, Ordering::Relaxed);
-    let Some(real): Option<MallocFn> = load_fn(&ORIG_MALLOC) else {
-        return std::ptr::null_mut();
-    };
-    // Default alignment for malloc on glibc is 2*sizeof(void*) == 16.
-    let req = dd_allocation_requested(size, core::mem::align_of::<*mut c_void>() * 2);
-    let raw = real(req.size);
-    dd_allocation_created(raw, req)
-}}
+pub unsafe extern "C" fn gotter_malloc(size: usize) -> *mut c_void {
+    unsafe {
+        #[cfg(feature = "test-support")]
+        HOOK_HITS.fetch_add(1, Ordering::Relaxed);
+        let Some(real): Option<MallocFn> = load_fn(&ORIG_MALLOC) else {
+            return std::ptr::null_mut();
+        };
+        // Default alignment for malloc on glibc is 2*sizeof(void*) == 16.
+        let req = dd_allocation_requested(size, core::mem::align_of::<*mut c_void>() * 2);
+        let raw = real(req.size);
+        dd_allocation_created(raw, req)
+    }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_free(ptr: *mut c_void) { unsafe {
-    #[cfg(feature = "test-support")]
-    HOOK_HITS.fetch_add(1, Ordering::Relaxed);
-    let Some(real): Option<FreeFn> = load_fn(&ORIG_FREE) else {
-        return;
-    };
-    // Forward unconditionally, including free(NULL): the sampler's check
-    // rejects NULL without dereferencing (returns it unchanged), and
-    // free(NULL) is a defined no-op - forwarding preserves whatever the
-    // real allocator does rather than assuming.
-    let freed = dd_allocation_freed(ptr, 0, 0);
-    real(freed.ptr);
-}}
+pub unsafe extern "C" fn gotter_free(ptr: *mut c_void) {
+    unsafe {
+        #[cfg(feature = "test-support")]
+        HOOK_HITS.fetch_add(1, Ordering::Relaxed);
+        let Some(real): Option<FreeFn> = load_fn(&ORIG_FREE) else {
+            return;
+        };
+        // Forward unconditionally, including free(NULL): the sampler's check
+        // rejects NULL without dereferencing (returns it unchanged), and
+        // free(NULL) is a defined no-op - forwarding preserves whatever the
+        // real allocator does rather than assuming.
+        let freed = dd_allocation_freed(ptr, 0, 0);
+        real(freed.ptr);
+    }
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void { unsafe {
-    let Some(real): Option<CallocFn> = load_fn(&ORIG_CALLOC) else {
-        return std::ptr::null_mut();
-    };
-    let Some(total) = nmemb.checked_mul(size) else {
-        return real(nmemb, size);
-    };
-    let req = dd_allocation_requested(total, core::mem::align_of::<*mut c_void>() * 2);
-    // calloc takes (nmemb, size); when the sampler bumps `req.size` we
-    // funnel the extra bytes into the size argument (nmemb stays 1's
-    // worth conceptually). The simplest robust path is to switch to a
-    // single (1, req.size) allocation when sampling kicks in, so the
-    // underlying allocator zeroes everything we hand back. Unsampled
-    // path keeps the user's (nmemb, size) verbatim.
-    // `req.weight == 0` is `!dd_alloc_req_is_sampled(req)`, inlined here to avoid a cross-FFI call.
-    let raw = if req.weight == 0 {
-        real(nmemb, size)
-    } else {
-        real(1, req.size)
-    };
-    dd_allocation_created(raw, req)
-}}
+pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void {
+    unsafe {
+        let Some(real): Option<CallocFn> = load_fn(&ORIG_CALLOC) else {
+            return std::ptr::null_mut();
+        };
+        let Some(total) = nmemb.checked_mul(size) else {
+            return real(nmemb, size);
+        };
+        let req = dd_allocation_requested(total, core::mem::align_of::<*mut c_void>() * 2);
+        // calloc takes (nmemb, size); when the sampler bumps `req.size` we
+        // funnel the extra bytes into the size argument (nmemb stays 1's
+        // worth conceptually). The simplest robust path is to switch to a
+        // single (1, req.size) allocation when sampling kicks in, so the
+        // underlying allocator zeroes everything we hand back. Unsampled
+        // path keeps the user's (nmemb, size) verbatim.
+        // `req.weight == 0` is `!dd_alloc_req_is_sampled(req)`, inlined here to avoid a cross-FFI
+        // call.
+        let raw = if req.weight == 0 {
+            real(nmemb, size)
+        } else {
+            real(1, req.size)
+        };
+        dd_allocation_created(raw, req)
+    }
+}
 
 /// `realloc` hook.
 ///
@@ -170,68 +179,76 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
 /// real realloc symbol, then ask the sampler to turn the result back into
 /// the user-visible pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_realloc(ptr: *mut c_void, size: usize) -> *mut c_void { unsafe {
-    let Some(real): Option<ReallocFn> = load_fn(&ORIG_REALLOC) else {
-        return std::ptr::null_mut();
-    };
-    let prep = dd_allocation_realloc_prepare(ptr, size);
-    let new_raw = real(prep.raw_ptr, prep.raw_size);
-    dd_allocation_realloc_commit(ptr, new_raw, prep)
-}}
+pub unsafe extern "C" fn gotter_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    unsafe {
+        let Some(real): Option<ReallocFn> = load_fn(&ORIG_REALLOC) else {
+            return std::ptr::null_mut();
+        };
+        let prep = dd_allocation_realloc_prepare(ptr, size);
+        let new_raw = real(prep.raw_ptr, prep.raw_size);
+        dd_allocation_realloc_commit(ptr, new_raw, prep)
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gotter_posix_memalign(
     memptr: *mut *mut c_void,
     alignment: usize,
     size: usize,
-) -> c_int { unsafe {
-    let Some(real): Option<PosixMemalignFn> = load_fn(&ORIG_POSIX_MEMALIGN) else {
-        return libc::ENOMEM;
-    };
-    let req = dd_allocation_requested(size, alignment);
-    let ret = real(memptr, alignment, req.size);
-    // Always pair with dd_allocation_created, even on failure, so the
-    // sampler's reentry guard opened by dd_allocation_requested is
-    // closed. Passing raw == NULL is the documented "allocation
-    // failed" path: no flag stamped, no USDT fired, guard closed.
-    if ret == 0 && !memptr.is_null() {
-        let raw = *memptr;
-        *memptr = dd_allocation_created(raw, req);
-    } else {
-        let _ = dd_allocation_created(std::ptr::null_mut(), req);
+) -> c_int {
+    unsafe {
+        let Some(real): Option<PosixMemalignFn> = load_fn(&ORIG_POSIX_MEMALIGN) else {
+            return libc::ENOMEM;
+        };
+        let req = dd_allocation_requested(size, alignment);
+        let ret = real(memptr, alignment, req.size);
+        // Always pair with dd_allocation_created, even on failure, so the
+        // sampler's reentry guard opened by dd_allocation_requested is
+        // closed. Passing raw == NULL is the documented "allocation
+        // failed" path: no flag stamped, no USDT fired, guard closed.
+        if ret == 0 && !memptr.is_null() {
+            let raw = *memptr;
+            *memptr = dd_allocation_created(raw, req);
+        } else {
+            let _ = dd_allocation_created(std::ptr::null_mut(), req);
+        }
+        ret
     }
-    ret
-}}
+}
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_aligned_alloc(alignment: usize, size: usize) -> *mut c_void { unsafe {
-    let Some(real): Option<AlignedAllocFn> = load_fn(&ORIG_ALIGNED_ALLOC) else {
-        return std::ptr::null_mut();
-    };
-    let req = dd_allocation_requested(size, alignment);
-    let raw = real(alignment, req.size);
-    dd_allocation_created(raw, req)
-}}
+pub unsafe extern "C" fn gotter_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    unsafe {
+        let Some(real): Option<AlignedAllocFn> = load_fn(&ORIG_ALIGNED_ALLOC) else {
+            return std::ptr::null_mut();
+        };
+        let req = dd_allocation_requested(size, alignment);
+        let raw = real(alignment, req.size);
+        dd_allocation_created(raw, req)
+    }
+}
 
 /// Forward `dlopen` and then patch any GOT entries introduced by the newly-loaded library.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) -> *mut c_void { unsafe {
-    let Some(real): Option<DlopenFn> = load_fn(&ORIG_DLOPEN) else {
-        // Hooks not yet wired up; calling real() would NPE - punt to libc.
-        return libc::dlopen(filename, flags);
-    };
-    let handle = real(filename, flags);
-    if flags & RTLD_DEEPBIND != 0 {
-        // DEEPBIND changes symbol resolution order and causes issues with
-        // GOT patching, so skip newly-loaded deep-bound libraries for now.
-        return handle;
+pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
+    unsafe {
+        let Some(real): Option<DlopenFn> = load_fn(&ORIG_DLOPEN) else {
+            // Hooks not yet wired up; calling real() would NPE - punt to libc.
+            return libc::dlopen(filename, flags);
+        };
+        let handle = real(filename, flags);
+        if flags & RTLD_DEEPBIND != 0 {
+            // DEEPBIND changes symbol resolution order and causes issues with
+            // GOT patching, so skip newly-loaded deep-bound libraries for now.
+            return handle;
+        }
+        // New library may have introduced new GOT entries that need patching.
+        // This hook is an extern "C" boundary, so never let a Rust panic from
+        // best-effort ELF parsing/GOT patching unwind into the caller.
+        let _ = std::panic::catch_unwind(crate::update_heap_overrides);
+        handle
     }
-    // New library may have introduced new GOT entries that need patching.
-    // This hook is an extern "C" boundary, so never let a Rust panic from
-    // best-effort ELF parsing/GOT patching unwind into the caller.
-    let _ = std::panic::catch_unwind(crate::update_heap_overrides);
-    handle
-}}
+}
 
 /// Args we package up so the wrapped start routine sees its original
 /// arg through our trampoline.
@@ -240,13 +257,15 @@ struct PthreadCreateArgs {
     arg: *mut c_void,
 }
 
-unsafe extern "C" fn pthread_start_trampoline(arg: *mut c_void) -> *mut c_void { unsafe {
-    let boxed: Box<PthreadCreateArgs> = Box::from_raw(arg as *mut PthreadCreateArgs);
-    // Materialise per-thread sampler state up front so the first
-    // tracked alloc on this thread doesn't have to.
-    dd_tl_state_init();
-    (boxed.start)(boxed.arg)
-}}
+unsafe extern "C" fn pthread_start_trampoline(arg: *mut c_void) -> *mut c_void {
+    unsafe {
+        let boxed: Box<PthreadCreateArgs> = Box::from_raw(arg as *mut PthreadCreateArgs);
+        // Materialise per-thread sampler state up front so the first
+        // tracked alloc on this thread doesn't have to.
+        dd_tl_state_init();
+        (boxed.start)(boxed.arg)
+    }
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gotter_pthread_create(
@@ -254,19 +273,21 @@ pub unsafe extern "C" fn gotter_pthread_create(
     attr: *const libc::pthread_attr_t,
     start: StartRoutine,
     arg: *mut c_void,
-) -> c_int { unsafe {
-    let Some(real): Option<PthreadCreateFn> = load_fn(&ORIG_PTHREAD_CREATE) else {
-        return libc::EAGAIN;
-    };
-    let boxed = Box::new(PthreadCreateArgs { start, arg });
-    let raw = Box::into_raw(boxed);
-    let rc = real(thread, attr, pthread_start_trampoline, raw as *mut c_void);
-    if rc != 0 {
-        // Reclaim the box; trampoline won't run.
-        drop(Box::from_raw(raw));
+) -> c_int {
+    unsafe {
+        let Some(real): Option<PthreadCreateFn> = load_fn(&ORIG_PTHREAD_CREATE) else {
+            return libc::EAGAIN;
+        };
+        let boxed = Box::new(PthreadCreateArgs { start, arg });
+        let raw = Box::into_raw(boxed);
+        let rc = real(thread, attr, pthread_start_trampoline, raw as *mut c_void);
+        if rc != 0 {
+            // Reclaim the box; trampoline won't run.
+            drop(Box::from_raw(raw));
+        }
+        rc
     }
-    rc
-}}
+}
 
 // Touch the sampler-side reentry guard helpers indirectly; silences
 // "unused import" warnings about `dd_alloc_req_t` once cfg-gated paths

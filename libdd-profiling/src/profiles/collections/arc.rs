@@ -5,7 +5,7 @@
 
 use allocator_api2::alloc::{AllocError, Allocator, Global};
 use allocator_api2::boxed::Box;
-use core::sync::atomic::{fence, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering, fence};
 use core::{alloc::Layout, fmt, mem::ManuallyDrop, ptr};
 use core::{marker::PhantomData, ops::Deref, ptr::NonNull};
 use crossbeam_utils::CachePadded;
@@ -259,16 +259,18 @@ impl<T, A: Allocator> Arc<T, A> {
     /// - It must not be used to create multiple owning `Arc`s without corresponding `into_raw`
     ///   calls; otherwise the refcount will be decremented multiple times.
     #[inline]
-    pub unsafe fn from_raw_in(ptr: NonNull<T>, alloc: A) -> Self { unsafe {
-        let data = ptr.as_ptr() as *const u8;
-        let arc_ptr_u8 = data.sub(Self::data_offset());
-        let arc_ptr = arc_ptr_u8 as *mut ArcInner<T>;
-        Arc {
-            ptr: NonNull::new_unchecked(arc_ptr),
-            alloc,
-            phantom: PhantomData,
+    pub unsafe fn from_raw_in(ptr: NonNull<T>, alloc: A) -> Self {
+        unsafe {
+            let data = ptr.as_ptr() as *const u8;
+            let arc_ptr_u8 = data.sub(Self::data_offset());
+            let arc_ptr = arc_ptr_u8 as *mut ArcInner<T>;
+            Arc {
+                ptr: NonNull::new_unchecked(arc_ptr),
+                alloc,
+                phantom: PhantomData,
+            }
         }
-    }}
+    }
 }
 
 impl<T> Arc<T> {
@@ -278,9 +280,9 @@ impl<T> Arc<T> {
     /// # Safety
     /// See [`Arc::from_raw_in`] for requirements.
     #[inline]
-    pub unsafe fn from_raw(ptr: NonNull<T>) -> Self { unsafe {
-        Arc::from_raw_in(ptr, Global)
-    }}
+    pub unsafe fn from_raw(ptr: NonNull<T>) -> Self {
+        unsafe { Arc::from_raw_in(ptr, Global) }
+    }
 }
 
 #[cfg(test)]

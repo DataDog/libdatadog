@@ -70,10 +70,12 @@ impl Utf8Option {
     pub unsafe fn try_as_bytes_convert<'a, T: AsBytes<'a>>(
         self,
         t: T,
-    ) -> Result<Cow<'a, str>, Utf8ConversionError> { unsafe {
-        let bytes = t.try_as_bytes()?;
-        self.convert(bytes)
-    }}
+    ) -> Result<Cow<'a, str>, Utf8ConversionError> {
+        unsafe {
+            let bytes = t.try_as_bytes()?;
+            self.convert(bytes)
+        }
+    }
 }
 
 /// Tries to convert a slice of bytes to a string. The input may have invalid

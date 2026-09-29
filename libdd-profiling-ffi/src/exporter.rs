@@ -8,7 +8,7 @@ use function_name::named;
 use libdd_common::tag::Tag;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{
-    wrap_with_ffi_result, wrap_with_void_ffi_result, Handle, Result, ToInner, VoidResult,
+    Handle, Result, ToInner, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result,
 };
 use libdd_profiling::exporter;
 use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
@@ -113,32 +113,34 @@ unsafe fn try_to_url(slice: CharSlice) -> anyhow::Result<hyper::Uri> {
 
 pub unsafe fn try_to_endpoint(
     endpoint: ProfilingEndpoint,
-) -> anyhow::Result<libdd_common::Endpoint> { unsafe {
-    // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
-    // a failed result is likely to be an error.
-    match endpoint {
-        ProfilingEndpoint::Agent(url, timeout_ms, use_system_resolver) => {
-            let base_url = try_to_url(url)?;
-            Ok(exporter::config::agent(base_url)?
+) -> anyhow::Result<libdd_common::Endpoint> {
+    unsafe {
+        // convert to utf8 losslessly -- URLs and API keys should all be ASCII, so
+        // a failed result is likely to be an error.
+        match endpoint {
+            ProfilingEndpoint::Agent(url, timeout_ms, use_system_resolver) => {
+                let base_url = try_to_url(url)?;
+                Ok(exporter::config::agent(base_url)?
+                    .with_timeout(timeout_ms)
+                    .with_system_resolver(use_system_resolver))
+            }
+            ProfilingEndpoint::Agentless(site, api_key, timeout_ms, use_system_resolver) => {
+                let site_str = site.try_to_utf8()?;
+                let api_key_str = api_key.try_to_utf8()?;
+                Ok(exporter::config::agentless(
+                    Cow::Owned(site_str.to_owned()),
+                    Cow::Owned(api_key_str.to_owned()),
+                )?
                 .with_timeout(timeout_ms)
                 .with_system_resolver(use_system_resolver))
-        }
-        ProfilingEndpoint::Agentless(site, api_key, timeout_ms, use_system_resolver) => {
-            let site_str = site.try_to_utf8()?;
-            let api_key_str = api_key.try_to_utf8()?;
-            Ok(exporter::config::agentless(
-                Cow::Owned(site_str.to_owned()),
-                Cow::Owned(api_key_str.to_owned()),
-            )?
-            .with_timeout(timeout_ms)
-            .with_system_resolver(use_system_resolver))
-        }
-        ProfilingEndpoint::File(filename) => {
-            let filename = filename.try_to_utf8()?;
-            exporter::config::file(filename)
+            }
+            ProfilingEndpoint::File(filename) => {
+                let filename = filename.try_to_utf8()?;
+                exporter::config::file(filename)
+            }
         }
     }
-}}
+}
 
 /// Creates a new exporter to be used to report profiling data.
 /// # Arguments
@@ -190,11 +192,13 @@ pub unsafe extern "C" fn ddog_prof_Exporter_new(
 /// valid `ddog_prof_Exporter_Request` object made by the Rust Global
 /// allocator that has not already been dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) { unsafe {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    drop(exporter.take())
-}}
+pub unsafe extern "C" fn ddog_prof_Exporter_drop(mut exporter: *mut Handle<ProfileExporter>) {
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        drop(exporter.take())
+    }
+}
 
 unsafe fn try_into_vec_files<'a>(
     slice: Slice<'a, File>,
@@ -251,12 +255,14 @@ unsafe fn parse_json(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
     mut exporter: *mut Handle<ProfileExporter>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let exporter = exporter.to_inner_mut()?;
-        exporter.init_runtime()?
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let exporter = exporter.to_inner_mut()?;
+            exporter.init_runtime()?
+        })
+    }
+}
 
 /// Builds a request and sends it, returning the HttpStatus.
 ///
@@ -287,32 +293,35 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
     mut cancel: *mut Handle<TokioCancellationToken>,
-) -> Result<HttpStatus> { unsafe {
-    wrap_with_ffi_result!({
-        let exporter = exporter.to_inner_mut()?;
-        let profile = *profile.take()?;
-        let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
-        let tags = try_clone_optional_tags(optional_additional_tags)?;
-        let process_tags_str = optional_process_tags
-            .map(|cs| cs.try_to_utf8())
-            .transpose()?;
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
-        let info = parse_json("info", optional_info_json)?;
+) -> Result<HttpStatus> {
+    unsafe {
+        wrap_with_ffi_result!({
+            let exporter = exporter.to_inner_mut()?;
+            let profile = *profile.take()?;
+            let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
+            let tags = try_clone_optional_tags(optional_additional_tags)?;
+            let process_tags_str = optional_process_tags
+                .map(|cs| cs.try_to_utf8())
+                .transpose()?;
+            let internal_metadata =
+                parse_json("internal_metadata", optional_internal_metadata_json)?;
+            let info = parse_json("info", optional_info_json)?;
 
-        let cancel = cancel.to_inner_mut().ok();
-        let status = exporter.send_blocking(
-            profile,
-            files_to_compress_and_export.as_slice(),
-            &tags,
-            internal_metadata,
-            info,
-            process_tags_str,
-            cancel.as_deref(),
-        )?;
+            let cancel = cancel.to_inner_mut().ok();
+            let status = exporter.send_blocking(
+                profile,
+                files_to_compress_and_export.as_slice(),
+                &tags,
+                internal_metadata,
+                info,
+                process_tags_str,
+                cancel.as_deref(),
+            )?;
 
-        anyhow::Ok(HttpStatus(status.as_u16()))
-    })
-}}
+            anyhow::Ok(HttpStatus(status.as_u16()))
+        })
+    }
+}
 
 /// Can be passed as an argument to send and then be used to asynchronously cancel it from a
 /// different thread.
@@ -350,13 +359,15 @@ pub extern "C" fn ddog_CancellationToken_new() -> Handle<TokioCancellationToken>
 #[must_use]
 pub unsafe extern "C" fn ddog_CancellationToken_clone(
     mut token: *mut Handle<TokioCancellationToken>,
-) -> Handle<TokioCancellationToken> { unsafe {
-    if let Ok(token) = token.to_inner_mut() {
-        token.clone().into()
-    } else {
-        Handle::empty()
+) -> Handle<TokioCancellationToken> {
+    unsafe {
+        if let Ok(token) = token.to_inner_mut() {
+            token.clone().into()
+        } else {
+            Handle::empty()
+        }
     }
-}}
+}
 
 /// Cancel send that is being called in another thread with the given token.
 /// Note that cancellation is a terminal state; cancelling a token more than once does nothing.
@@ -364,17 +375,19 @@ pub unsafe extern "C" fn ddog_CancellationToken_clone(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_CancellationToken_cancel(
     mut cancel: *mut Handle<TokioCancellationToken>,
-) -> bool { unsafe {
-    if let Ok(token) = cancel.to_inner_mut() {
-        let will_cancel = !token.is_cancelled();
-        if will_cancel {
-            token.cancel();
+) -> bool {
+    unsafe {
+        if let Ok(token) = cancel.to_inner_mut() {
+            let will_cancel = !token.is_cancelled();
+            if will_cancel {
+                token.cancel();
+            }
+            will_cancel
+        } else {
+            false
         }
-        will_cancel
-    } else {
-        false
     }
-}}
+}
 
 /// # Safety
 /// The `token` can be null, but non-null values must be created by the Rust
@@ -382,9 +395,9 @@ pub unsafe extern "C" fn ddog_CancellationToken_cancel(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_CancellationToken_drop(
     mut token: *mut Handle<TokioCancellationToken>,
-) { unsafe {
-    drop(token.take())
-}}
+) {
+    unsafe { drop(token.take()) }
+}
 
 // ============================================================================
 // ExporterManager - Async background worker for exporting profiles
@@ -405,12 +418,14 @@ pub unsafe extern "C" fn ddog_CancellationToken_drop(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_new(
     mut exporter: *mut Handle<ProfileExporter>,
-) -> Result<Handle<ExporterManager>> { unsafe {
-    wrap_with_ffi_result!({
-        let exporter = *exporter.take()?;
-        anyhow::Ok(ExporterManager::new(exporter)?.into())
-    })
-}}
+) -> Result<Handle<ExporterManager>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            let exporter = *exporter.take()?;
+            anyhow::Ok(ExporterManager::new(exporter)?.into())
+        })
+    }
+}
 
 /// Queues a profile to be sent asynchronously by the background worker thread.
 ///
@@ -439,28 +454,31 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
     optional_process_tags: Option<&CharSlice>,
     optional_internal_metadata_json: Option<&CharSlice>,
     optional_info_json: Option<&CharSlice>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let manager = manager.to_inner_mut()?;
-        let profile = *profile.take()?;
-        let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
-        let tags = try_clone_optional_tags(optional_additional_tags)?;
-        let process_tags_str = optional_process_tags
-            .map(|cs| cs.try_to_utf8())
-            .transpose()?;
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
-        let info = parse_json("info", optional_info_json)?;
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let manager = manager.to_inner_mut()?;
+            let profile = *profile.take()?;
+            let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
+            let tags = try_clone_optional_tags(optional_additional_tags)?;
+            let process_tags_str = optional_process_tags
+                .map(|cs| cs.try_to_utf8())
+                .transpose()?;
+            let internal_metadata =
+                parse_json("internal_metadata", optional_internal_metadata_json)?;
+            let info = parse_json("info", optional_info_json)?;
 
-        manager.queue(
-            profile,
-            files_to_compress_and_export.as_slice(),
-            &tags,
-            internal_metadata,
-            info,
-            process_tags_str,
-        )?
-    })
-}}
+            manager.queue(
+                profile,
+                files_to_compress_and_export.as_slice(),
+                &tags,
+                internal_metadata,
+                info,
+                process_tags_str,
+            )?
+        })
+    }
+}
 
 /// Aborts the manager, stopping the worker thread and returning inflight requests.
 ///
@@ -476,9 +494,9 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_abort(
     mut manager: *mut Handle<ExporterManager>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.abort()? })
-}}
+) -> VoidResult {
+    unsafe { wrap_with_void_ffi_result!({ manager.to_inner_mut()?.abort()? }) }
+}
 
 /// Suspends the manager before forking (prefork).
 ///
@@ -494,9 +512,9 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_abort(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_prefork(
     mut manager: *mut Handle<ExporterManager>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({ manager.to_inner_mut()?.prefork()? })
-}}
+) -> VoidResult {
+    unsafe { wrap_with_void_ffi_result!({ manager.to_inner_mut()?.prefork()? }) }
+}
 
 /// Creates a new manager in the child process after forking (postfork_child).
 ///
@@ -512,9 +530,9 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_prefork(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_child(
     mut suspended: *mut Handle<ExporterManager>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_child()? })
-}}
+) -> VoidResult {
+    unsafe { wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_child()? }) }
+}
 
 /// Creates a new manager in the parent process after forking (postfork_parent).
 ///
@@ -530,18 +548,18 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_child(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_postfork_parent(
     mut suspended: *mut Handle<ExporterManager>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_parent()? })
-}}
+) -> VoidResult {
+    unsafe { wrap_with_void_ffi_result!({ suspended.to_inner_mut()?.postfork_parent()? }) }
+}
 
 /// # Safety
 /// The `manager` may be null, but if non-null the pointer must point to a
 /// valid `ExporterManager` object made by the Rust Global allocator that
 /// has not already been dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle<ExporterManager>) { unsafe {
-    drop(manager.take())
-}}
+pub unsafe extern "C" fn ddog_prof_ExporterManager_drop(mut manager: *mut Handle<ExporterManager>) {
+    unsafe { drop(manager.take()) }
+}
 
 #[cfg(test)]
 mod tests {

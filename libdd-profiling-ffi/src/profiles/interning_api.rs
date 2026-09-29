@@ -3,19 +3,18 @@
 
 use std::num::NonZeroI64;
 
-use super::datatypes::{profile_ptr_to_inner, Profile};
+use super::datatypes::{Profile, profile_ptr_to_inner};
 use function_name::named;
 use libdd_common_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, MutSlice, Result,
-    Slice, VoidResult,
+    CharSlice, MutSlice, Result, Slice, VoidResult, slice::AsBytes, wrap_with_ffi_result,
+    wrap_with_void_ffi_result,
 };
 use libdd_profiling::{
     api::ManagedStringId,
     collections::identifiable::StringId,
     internal::{
-        self,
+        self, FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
         interning_api::{Generation, GenerationalId},
-        FunctionId, LabelId, LabelSetId, LocationId, MappingId, StackTraceId,
     },
 };
 
@@ -46,11 +45,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_function(
     name: GenerationalId<StringId>,
     system_name: GenerationalId<StringId>,
     filename: GenerationalId<StringId>,
-) -> Result<GenerationalId<FunctionId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_function(name, system_name, filename)
-    })
-}}
+) -> Result<GenerationalId<FunctionId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_function(name, system_name, filename)
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -70,15 +71,17 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num(
     profile: *mut Profile,
     key: GenerationalId<StringId>,
     val: i64,
-) -> Result<GenerationalId<LabelId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_label_num(
-            key,
-            val,
-            GenerationalId::new_immortal(StringId::ZERO),
-        )
-    })
-}}
+) -> Result<GenerationalId<LabelId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_label_num(
+                key,
+                val,
+                GenerationalId::new_immortal(StringId::ZERO),
+            )
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -99,9 +102,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_num_with_unit(
     key: GenerationalId<StringId>,
     val: i64,
     unit: GenerationalId<StringId>,
-) -> Result<GenerationalId<LabelId>> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, unit) })
-}}
+) -> Result<GenerationalId<LabelId>> {
+    unsafe {
+        wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_num(key, val, unit) })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -121,9 +126,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_str(
     profile: *mut Profile,
     key: GenerationalId<StringId>,
     val: GenerationalId<StringId>,
-) -> Result<GenerationalId<LabelId>> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_str(key, val) })
-}}
+) -> Result<GenerationalId<LabelId>> {
+    unsafe { wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_label_str(key, val) }) }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -142,9 +147,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_label_str(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_labelset(
     profile: *mut Profile,
     labels: Slice<GenerationalId<LabelId>>,
-) -> Result<GenerationalId<LabelSetId>> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_labelset(labels.as_slice()) })
-}}
+) -> Result<GenerationalId<LabelSetId>> {
+    unsafe {
+        wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_labelset(labels.as_slice()) })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -165,11 +172,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location(
     function_id: GenerationalId<FunctionId>,
     address: u64,
     line: i64,
-) -> Result<GenerationalId<LocationId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_location(None, function_id, address, line)
-    })
-}}
+) -> Result<GenerationalId<LocationId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_location(None, function_id, address, line)
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -191,11 +200,18 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location_with_mapping_id(
     function_id: GenerationalId<FunctionId>,
     address: u64,
     line: i64,
-) -> Result<GenerationalId<LocationId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_location(Some(mapping_id), function_id, address, line)
-    })
-}}
+) -> Result<GenerationalId<LocationId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_location(
+                Some(mapping_id),
+                function_id,
+                address,
+                line,
+            )
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -214,9 +230,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_location_with_mapping_id(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_string(
     profile: *mut Profile,
     s: ManagedStringId,
-) -> Result<GenerationalId<StringId>> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_managed_string(s) })
-}}
+) -> Result<GenerationalId<StringId>> {
+    unsafe { wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_managed_string(s) }) }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -236,13 +252,15 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_managed_strings(
     profile: *mut Profile,
     strings: Slice<ManagedStringId>,
     mut out: MutSlice<GenerationalId<StringId>>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        anyhow::ensure!(strings.len() == out.len());
-        profile_ptr_to_inner(profile)?
-            .intern_managed_strings(strings.as_slice(), out.as_mut_slice())?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            anyhow::ensure!(strings.len() == out.len());
+            profile_ptr_to_inner(profile)?
+                .intern_managed_strings(strings.as_slice(), out.as_mut_slice())?;
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -265,17 +283,19 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_mapping(
     file_offset: u64,
     filename: GenerationalId<StringId>,
     build_id: GenerationalId<StringId>,
-) -> Result<GenerationalId<MappingId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_mapping(
-            memory_start,
-            memory_limit,
-            file_offset,
-            filename,
-            build_id,
-        )
-    })
-}}
+) -> Result<GenerationalId<MappingId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_mapping(
+                memory_start,
+                memory_limit,
+                file_offset,
+                filename,
+                build_id,
+            )
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns void.
@@ -297,17 +317,19 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_sample(
     values: Slice<i64>,
     labels: GenerationalId<LabelSetId>,
     timestamp: Option<NonZeroI64>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        // TODO, this to_vec might not be necessary.
-        profile_ptr_to_inner(profile)?.intern_sample(
-            stacktrace,
-            values.as_slice(),
-            labels,
-            timestamp,
-        )?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            // TODO, this to_vec might not be necessary.
+            profile_ptr_to_inner(profile)?.intern_sample(
+                stacktrace,
+                values.as_slice(),
+                labels,
+                timestamp,
+            )?;
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -326,11 +348,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_sample(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_stacktrace(
     profile: *mut Profile,
     locations: Slice<GenerationalId<LocationId>>,
-) -> Result<GenerationalId<StackTraceId>> { unsafe {
-    wrap_with_ffi_result!({
-        profile_ptr_to_inner(profile)?.intern_stacktrace(locations.as_slice())
-    })
-}}
+) -> Result<GenerationalId<StackTraceId>> {
+    unsafe {
+        wrap_with_ffi_result!({
+            profile_ptr_to_inner(profile)?.intern_stacktrace(locations.as_slice())
+        })
+    }
+}
 
 /// This function interns its argument into the profiler.
 /// If successful, it returns an opaque interning ID.
@@ -349,9 +373,11 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_stacktrace(
 pub unsafe extern "C" fn ddog_prof_Profile_intern_string(
     profile: *mut Profile,
     s: CharSlice,
-) -> Result<GenerationalId<StringId>> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_string(s.try_to_utf8()?) })
-}}
+) -> Result<GenerationalId<StringId>> {
+    unsafe {
+        wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.intern_string(s.try_to_utf8()?) })
+    }
+}
 
 /// This functions returns an interned id for an empty string
 ///
@@ -380,17 +406,19 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
     profile: *mut Profile,
     strings: Slice<CharSlice>,
     mut out: MutSlice<GenerationalId<StringId>>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        anyhow::ensure!(strings.len() == out.len());
-        let mut v = Vec::new();
-        v.try_reserve_exact(strings.len())?;
-        for s in strings.iter() {
-            v.push(s.try_to_utf8()?);
-        }
-        profile_ptr_to_inner(profile)?.intern_strings(&v, out.as_mut_slice())?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            anyhow::ensure!(strings.len() == out.len());
+            let mut v = Vec::new();
+            v.try_reserve_exact(strings.len())?;
+            for s in strings.iter() {
+                v.push(s.try_to_utf8()?);
+            }
+            profile_ptr_to_inner(profile)?.intern_strings(&v, out.as_mut_slice())?;
+        })
+    }
+}
 
 /// This functions returns the current generation of the profiler.
 /// On error, it holds an error message in the error variant.
@@ -404,9 +432,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Profile_get_generation(
     profile: *mut Profile,
-) -> Result<Generation> { unsafe {
-    wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.get_generation() })
-}}
+) -> Result<Generation> {
+    unsafe { wrap_with_ffi_result!({ profile_ptr_to_inner(profile)?.get_generation() }) }
+}
 
 /// This functions returns whether the given generations are equal.
 ///
@@ -431,11 +459,13 @@ pub unsafe extern "C" fn ddog_prof_Profile_generations_are_equal(
 #[must_use]
 #[unsafe(no_mangle)]
 #[named]
-pub unsafe extern "C" fn ddog_prof_Profile_sample_end(profile: *mut Profile) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        profile_ptr_to_inner(profile)?.sample_end()?;
-    })
-}}
+pub unsafe extern "C" fn ddog_prof_Profile_sample_end(profile: *mut Profile) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            profile_ptr_to_inner(profile)?.sample_end()?;
+        })
+    }
+}
 
 /// This functions starts a sample and blocks the exporter from continuing.
 ///
@@ -446,8 +476,10 @@ pub unsafe extern "C" fn ddog_prof_Profile_sample_end(profile: *mut Profile) -> 
 #[must_use]
 #[unsafe(no_mangle)]
 #[named]
-pub unsafe extern "C" fn ddog_prof_Profile_sample_start(profile: *mut Profile) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        profile_ptr_to_inner(profile)?.sample_start()?;
-    })
-}}
+pub unsafe extern "C" fn ddog_prof_Profile_sample_start(profile: *mut Profile) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            profile_ptr_to_inner(profile)?.sample_start()?;
+        })
+    }
+}

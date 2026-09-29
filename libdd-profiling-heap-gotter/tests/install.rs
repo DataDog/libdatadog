@@ -274,18 +274,20 @@ fn realloc_of_sampled_allocation_preserves_data() {
 /// sizeof(void*), which every alignment in the menu except 1 satisfies,
 /// and (unlike aligned_alloc) it places no multiple-of-alignment
 /// constraint on the size.
-unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void { unsafe {
-    if align <= 1 {
-        libc::malloc(size)
-    } else {
-        let mut out: *mut c_void = std::ptr::null_mut();
-        if libc::posix_memalign(&mut out, align, size) != 0 {
-            std::ptr::null_mut()
+unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void {
+    unsafe {
+        if align <= 1 {
+            libc::malloc(size)
         } else {
-            out
+            let mut out: *mut c_void = std::ptr::null_mut();
+            if libc::posix_memalign(&mut out, align, size) != 0 {
+                std::ptr::null_mut()
+            } else {
+                out
+            }
         }
     }
-}}
+}
 
 /// Stress the realloc + free paths across a matrix of alignments and
 /// sizes with sampling forced on. Mirrors examples/gotter_usdt_demo.rs's
