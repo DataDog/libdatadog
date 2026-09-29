@@ -30,6 +30,7 @@ struct MethodInfo {
     name: Ident,
     variant: Ident,
     is_blocking: bool,
+    is_oneway: bool,
     return_type: Option<Box<Type>>,
     params: Vec<ParamInfo>,
     handle_param_indices: Vec<usize>,
@@ -46,6 +47,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
         let name = func.sig.ident.clone();
         let variant = Ident::new(&name.to_string().to_pascal_case(), Span::mixed_site());
         let is_blocking = has_attr(&func.attrs, "blocking");
+        let is_oneway = has_attr(&func.attrs, "oneway");
 
         let return_type = match &func.sig.output {
             ReturnType::Default => None,
@@ -58,6 +60,10 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             }
         };
 
+        assert!(
+            !is_oneway || (!is_blocking && return_type.is_none()),
+            "oneway methods cannot return a response"
+        );
         let mut params: Vec<ParamInfo> = Vec::new();
         let mut handle_param_indices: Vec<usize> = Vec::new();
 
@@ -106,6 +112,7 @@ fn collect_methods(item: &ItemTrait) -> Vec<MethodInfo> {
             name,
             variant,
             is_blocking,
+            is_oneway,
             return_type,
             params,
             handle_param_indices,
@@ -125,6 +132,7 @@ fn has_client_request(methods: &[MethodInfo]) -> bool {
 }
 
 fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let response_predicate = gen_response_predicate(enum_name, methods, false);
     let variants: Vec<_> = methods
         .iter()
         .map(|m| {
@@ -151,10 +159,12 @@ fn gen_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::T
         pub enum #enum_name {
             #(#variants),*
         }
+        #response_predicate
     }
 }
 
 fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_macro2::TokenStream {
+    let response_predicate = gen_response_predicate(enum_name, methods, true);
     let variants: Vec<_> = methods
         .iter()
         .map(|method| {
@@ -181,6 +191,27 @@ fn gen_client_request_enum(enum_name: &Ident, methods: &[MethodInfo]) -> proc_ma
         #[derive(::serde::Serialize, Debug)]
         pub enum #enum_name<'request> {
             #(#variants),*
+        }
+        #response_predicate
+    }
+}
+
+fn gen_response_predicate(
+    enum_name: &Ident,
+    methods: &[MethodInfo],
+    client: bool,
+) -> proc_macro2::TokenStream {
+    let lifetime = client.then(|| quote! { <'request> });
+    let arms = methods.iter().filter(|m| m.is_oneway).map(|m| {
+        let variant = &m.variant;
+        quote! { Self::#variant { .. } => false, }
+    });
+    quote! {
+        impl #lifetime #enum_name #lifetime {
+            /// Whether this request participates in the connection's reply accounting.
+            pub fn expects_response(&self) -> bool {
+                match self { #(#arms)* _ => true }
+            }
         }
     }
 }
@@ -357,7 +388,9 @@ fn gen_serve_fn(
                 quote! { false }
             };
 
-            let response_code = if m.return_type.is_some() {
+            let response_code = if m.is_oneway {
+                quote! { handler.#name(#(#field_names),*).await; }
+            } else if m.return_type.is_some() {
                 // Flush any buffered acks before sending the typed response, so the client's
                 // send_count/ack_count loop processes them before reading the real reply.
                 quote! {
@@ -478,6 +511,10 @@ fn gen_channel(
             where
                 __Response: ::serde::de::DeserializeOwned,
             {
+                if !req.expects_response() {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidInput, "oneway request has no reply")));
+                }
                 self.call_serialized_request_blocking(req)
             }
         }
@@ -535,15 +572,25 @@ fn gen_channel(
                 }
             };
 
-            if m.return_type.is_none() && !m.is_blocking {
+            if m.is_oneway {
                 let method_name = format_ident!("try_send_{}", name);
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        self.0.try_send(__data, &__fds)
+                        self.0.conn.try_send_raw(__data, &__fds).is_ok()
                     }
                 }
-            } else if m.return_type.is_none() {
+            } else if let Some(ret_ty) = &m.return_type {
+                let method_name = format_ident!("call_{}", name);
+                quote! {
+                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
+                        #build_req_and_fds
+                        let (__resp, _) = self.0.call(__data, &__fds)
+                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
+                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                    }
+                }
+            } else if m.is_blocking {
                 let method_name = format_ident!("call_{}", name);
                 quote! {
                     pub fn #method_name(&mut self, #(#params),*) -> ::std::io::Result<()> {
@@ -553,14 +600,11 @@ fn gen_channel(
                     }
                 }
             } else {
-                let method_name = format_ident!("call_{}", name);
-                let ret_ty = m.return_type.as_ref().unwrap();
+                let method_name = format_ident!("try_send_{}", name);
                 quote! {
-                    pub fn #method_name(&mut self, #(#params),*) -> ::std::result::Result<#ret_ty, libdd_ipc::codec::DecodeError> {
+                    pub fn #method_name(&mut self, #(#params),*) -> bool {
                         #build_req_and_fds
-                        let (__resp, _) = self.0.call(__data, &__fds)
-                            .map_err(libdd_ipc::codec::DecodeError::Io)?;
-                        libdd_ipc::codec::decode::<#ret_ty>(&__resp)
+                        self.0.try_send(__data, &__fds)
                     }
                 }
             }
@@ -591,7 +635,11 @@ fn gen_channel(
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.try_send(__data, &__fds)
+                if req.expects_response() {
+                    self.0.try_send(__data, &__fds)
+                } else {
+                    self.0.conn.try_send_raw(__data, &__fds).is_ok()
+                }
             }
 
             /// Generic blocking send (used by SidecarSender outbox drain).
@@ -611,7 +659,11 @@ fn gen_channel(
                 if __data.len() > __max {
                     ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
                 }
-                self.0.send_blocking(__data, &__fds)
+                if req.expects_response() {
+                    self.0.send_blocking(__data, &__fds)
+                } else {
+                    self.0.conn.send_raw_blocking(__data, &__fds)
+                }
             }
 
             /// Generic blocking request/response call that retains ownership of the request.
@@ -622,6 +674,10 @@ fn gen_channel(
             where
                 __Response: ::serde::de::DeserializeOwned,
             {
+                if !req.expects_response() {
+                    return Err(libdd_ipc::codec::DecodeError::Io(::std::io::Error::new(
+                        ::std::io::ErrorKind::InvalidInput, "oneway request has no reply")));
+                }
                 self.call_serialized_request_blocking(req)
             }
 
@@ -668,6 +724,7 @@ fn gen_channel(
 ///
 /// Method attributes recognized (stripped before emission):
 /// - `#[blocking]` — `-> ()` method where client waits for ack (vs fire-and-forget)
+/// - `#[oneway]` — sends no reply and does not participate in client reply accounting
 /// - `#[SerializedHandle]` on a parameter — transfer the value's OS handles separately from its
 ///   serialized bytes. The parameter type must implement `TransferHandles`; wrapper structs
 ///   implement it by forwarding to their contained handle-bearing value.

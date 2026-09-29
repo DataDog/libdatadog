@@ -51,6 +51,8 @@ mod serialized_tracer_header_tags;
 mod session_info;
 pub mod sidecar_interface;
 pub(crate) mod sidecar_server;
+#[cfg(target_os = "linux")]
+pub mod signal_flush;
 pub mod stats_flusher;
 pub mod telemetry;
 pub(crate) mod tracing;

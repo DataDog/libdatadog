@@ -26,6 +26,7 @@ use arc_swap::ArcSwap;
 #[cfg(feature = "telemetry")]
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
@@ -38,6 +39,7 @@ use libdd_trace_stats::stats_exporter::AgentlessStatsTarget;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::debug;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
@@ -74,7 +76,6 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     instrumentation_scope_name: String,
     instrumentation_scope_version: String,
     git_commit_sha: String,
-    process_tags: String,
     tracer_tags: Vec<String>,
     container_id: String,
     input_format: TraceExporterInputFormat,
@@ -111,7 +112,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
-    runtime_id: Option<String>,
+    mutable_metadata: Option<MutableMetadataHandle>,
     /// When true, traces are written as newline-delimited JSON to stdout (the
     /// Datadog Forwarder "log exporter" path) instead of being sent to an agent.
     output_to_log: bool,
@@ -154,7 +155,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             instrumentation_scope_name: String::new(),
             instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
-            process_tags: String::new(),
             tracer_tags: Vec::new(),
             container_id: String::new(),
             input_format: TraceExporterInputFormat::default(),
@@ -184,7 +184,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_metrics_endpoint: None,
             otlp_metrics_headers: Vec::new(),
             otel_trace_semantics_enabled: false,
-            runtime_id: None,
+            mutable_metadata: None,
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
@@ -255,8 +255,14 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
+    /// Set process tags formatted as a comma-separated key:value list.
+    ///
+    /// This shouldn't be used when `set_mutable_metadata` is used as it will update the handle
+    /// value.
     pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
-        process_tags.clone_into(&mut self.process_tags);
+        self.mutable_metadata
+            .get_or_insert_default()
+            .set_process_tags(process_tags.to_string());
         self
     }
 
@@ -583,10 +589,20 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     /// Set the runtime identifier supplied by the language tracer.
     ///
-    /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
-    /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    /// This shouldn't be used when `set_mutable_metadata` is used as it will update the handle
+    /// value.
+    ///
+    /// If not set, a fresh UUID is generated.
     pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
-        self.runtime_id = Some(id.to_owned());
+        self.mutable_metadata
+            .get_or_insert_default()
+            .set_runtime_id(id.to_string());
+        self
+    }
+
+    /// Provide a shared, updatable [`MutableMetadataHandle`].
+    pub fn set_mutable_metadata(&mut self, handle: MutableMetadataHandle) -> &mut Self {
+        self.mutable_metadata = Some(handle);
         self
     }
     /// Configure the exporter to write traces as newline-delimited JSON to stdout
@@ -871,9 +887,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 ..Default::default()
             }));
 
-        let runtime_id = self
-            .runtime_id
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
+            let mut metadata = MutableMetadata::default();
+            debug!("No runtime_id provided to the TraceExporter, generating an new one");
+            metadata.runtime_id = uuid::Uuid::new_v4().to_string();
+            metadata.into()
+        });
         let metadata = TracerMetadata {
             tracer_version: self.tracer_version,
             language_version: self.language_version,
@@ -881,25 +900,24 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             language_interpreter_vendor: self.language_interpreter_vendor,
             language: self.language,
             git_commit_sha: self.git_commit_sha,
-            process_tags: self.process_tags,
+            mutable_metadata,
             client_computed_stats: self.client_computed_stats,
             client_computed_top_level: self.client_computed_top_level,
             hostname: self.hostname,
             env: self.env,
             app_version: self.app_version,
-            runtime_id,
             service: self.service,
             container_id: self.container_id,
         };
 
-        let base_otlp_resource = |rid: &str| {
+        let base_otlp_resource = || {
             let mut r = OtlpResourceInfo::default();
             r.service = metadata.service.clone();
             r.env = metadata.env.clone();
             r.app_version = metadata.app_version.clone();
             r.language = metadata.language.clone();
             r.tracer_version = metadata.tracer_version.clone();
-            r.runtime_id = rid.to_string();
+            r.mutable_metadata = metadata.mutable_metadata.clone();
             r
         };
 
@@ -923,9 +941,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 #[cfg(feature = "stats-obfuscation")]
                 Some(stats_obfuscation_config.clone()),
             )));
-            let mut resource = base_otlp_resource(&metadata.runtime_id);
+            let mut resource = base_otlp_resource();
             resource.hostname = metadata.hostname.clone();
-            resource.process_tags = metadata.process_tags.clone();
             resource.tracer_tags = self.tracer_tags.clone();
             let worker = OtlpStatsExporter {
                 flush_interval: bucket_size,
@@ -1049,7 +1066,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         }
 
         let otlp_resource_info = if let Some(mode) = otlp.as_ref() {
-            let mut r = base_otlp_resource(&metadata.runtime_id);
+            let mut r = base_otlp_resource();
             r.client_computed_stats = metadata.client_computed_stats || otlp_stats_enabled;
             match mode {
                 OtlpExportMode::Http(config) => {

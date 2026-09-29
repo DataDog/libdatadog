@@ -9,6 +9,8 @@
 
 #[cfg(windows)]
 pub mod remote_config_notification;
+#[cfg(target_os = "linux")]
+pub mod signal_flush;
 pub mod span;
 
 use crate::span::TracesBytes;
