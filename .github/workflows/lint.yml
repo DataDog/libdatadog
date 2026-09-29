@@ -71,6 +71,18 @@ jobs:
         with:
           shellcheck_opts: '-e SC2086'
 
+  # Structural / syntactic rules in .sg/rules. Cheap: no rustc, no matrix.
+  # Same command as local: bash scripts/run-ast-grep.sh
+  ast-grep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - name: Run ast-grep
+        run: bash scripts/run-ast-grep.sh
+
   changes:
     runs-on: ubuntu-latest
     outputs:

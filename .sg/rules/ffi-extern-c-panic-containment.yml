@@ -1,0 +1,58 @@
+id: ffi-extern-c-panic-containment
+language: rust
+severity: warning
+message: >-
+  New pub extern "C" entry points must acknowledge panic containment.
+  Wrap the body with wrap_with_ffi_result!, wrap_with_void_ffi_result!,
+  catch_panic!, or std::panic::catch_unwind. If containment is wrong
+  here (trivial accessor, or datadog-sidecar-ffi which uses panic=abort),
+  add `// allow(ffi-panic-boundary): <justification>` on a line directly
+  above the function (attributes may sit in between).
+note: |
+  A panic that reaches an extern "C" boundary aborts the host process.
+  Clippy's panic/unwrap lints only see explicit panic constructs, not
+  panics from callees. See AGENTS.md "Reliability & integrability".
+
+  Accepted in-body markers: catch_unwind, catch_panic!, wrap_with_ffi_result!,
+  wrap_with_void_ffi_result!, and the *_no_catch! variants (explicit
+  acknowledgement). Empty `// allow(ffi-panic-boundary):` is not enough.
+
+  Whole-repo scan leaves this rule off (~400 existing accessors). The
+  blocking check is diff-scoped: only functions whose signature was
+  added on the branch fail CI.
+files:
+  - "**/*.rs"
+ignores:
+  - "**/tests/**"
+  - "**/examples/**"
+  - "symbolizer-ffi/**"
+rule:
+  all:
+    - kind: function_item
+    - has:
+        kind: visibility_modifier
+        regex: "^pub$"
+    - has:
+        kind: function_modifiers
+        has:
+          kind: extern_modifier
+          has:
+            kind: string_literal
+            regex: '^"C"$'
+    - not:
+        has:
+          stopBy: end
+          any:
+            - pattern: catch_unwind($$$A)
+            - pattern: std::panic::catch_unwind($$$A)
+            - kind: macro_invocation
+              regex: "^(wrap_with_ffi_result|wrap_with_void_ffi_result|wrap_with_ffi_result_no_catch|wrap_with_void_ffi_result_no_catch|catch_panic)!"
+    - not:
+        follows:
+          stopBy:
+            not:
+              any:
+                - kind: attribute_item
+                - kind: line_comment
+          kind: line_comment
+          regex: "allow\\(ffi-panic-boundary\\):\\s+\\S"
