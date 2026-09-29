@@ -542,8 +542,10 @@ fn obfuscate_v1_attribute_credit_card<T: TraceData>(
             }
         }
         AttributeValue::KeyValue(map) => {
-            for (_, v) in map.iter_mut() {
-                obfuscate_v1_attribute_credit_card(v, config);
+            for (k, v) in map.iter_mut() {
+                if should_obfuscate_cc_key(as_str(k), config) {
+                    obfuscate_v1_attribute_credit_card(v, config);
+                }
             }
         }
         AttributeValue::Bool(_) | AttributeValue::Bytes(_) => {}
