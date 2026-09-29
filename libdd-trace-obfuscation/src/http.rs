@@ -30,6 +30,95 @@ const fn is_go_url_escape_cat2_fragment(c: char) -> bool {
     matches!(c, '\'' | '[' | ']')
 }
 
+/// Returns true for `[` and `]`, which RFC 3986 allows only in an IP-literal host, so `UriRef`
+/// rejects them anywhere else. Go's `net/url` accepts them in a path or fragment (`validEncoded`
+/// leaves them alone as "not specified in RFC 3986 but left alone by modern browsers"), so they
+/// must be percent-encoded before parsing and restored afterwards rather than failing the parse.
+const fn is_uri_bracket(c: char) -> bool {
+    matches!(c, '[' | ']')
+}
+
+/// Whether Go's `escape()` would rewrite this region of a URL rather than emit it verbatim: it
+/// holds a Cat1 character or a non-ASCII byte, so the region is not what Go's `validEncoded` calls
+/// a valid encoding. Brackets never disqualify a region, which is what lets them be restored after
+/// parsing.
+fn needs_escaping(region: &str) -> bool {
+    region
+        .bytes()
+        .any(|b| b > 127 || is_go_url_escape_cat1(b as char))
+}
+
+/// Byte offset in `url` where the path begins, `path_end` being where it ends.
+///
+/// The path follows the authority when there is one (`scheme://authority/path`, or `//authority`
+/// without a scheme) and the scheme otherwise. The boundary matters because `[` and `]` are URI
+/// syntax inside an authority (the `[::1]` host form) and must survive there unencoded.
+fn path_start(url: &str, path_end: usize) -> usize {
+    let head = &url.as_bytes()[..path_end];
+    let mut start = 0;
+    // RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":".
+    if head.first().is_some_and(u8::is_ascii_alphabetic) {
+        let mut i = 1;
+        while head
+            .get(i)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+        {
+            i += 1;
+        }
+        if head.get(i) == Some(&b':') {
+            start = i + 1;
+        }
+    }
+    if head[start..].starts_with(b"//") {
+        start += 2;
+        while head.get(start).is_some_and(|b| *b != b'/') {
+            start += 1;
+        }
+    }
+    start
+}
+
+/// Percent-encodes the characters of a fragment that `UriRef` (strict RFC 3986) rejects but Go's
+/// `net/url` accepts, appending to `out`.
+fn pre_encode_fragment(out: &mut String, fragment: &str, escape_cat2: bool) {
+    for c in fragment.chars() {
+        if !c.is_ascii()
+            || (c as u32) < 0x20
+            || c as u32 == 0x7F
+            || c == '#'
+            || is_go_url_escape_cat1(c)
+            || is_uri_bracket(c)
+            || (escape_cat2 && is_go_url_escape_cat2_fragment(c))
+        {
+            encode_char(out, c);
+        } else {
+            out.push(c);
+        }
+    }
+}
+
+/// Percent-encodes the characters of one region of a URL that `UriRef` (strict RFC 3986) rejects
+/// but Go's `net/url` accepts, appending to `out`.
+///
+/// `escape_brackets` is for regions where `[` and `]` are not URI syntax, which is everywhere but
+/// the authority.
+#[inline]
+fn pre_encode(out: &mut String, region: &str, escape_cat2: bool, escape_brackets: bool) {
+    for c in region.chars() {
+        if !c.is_ascii() {
+            encode_char(out, c);
+        } else if is_go_url_escape_cat1(c)
+            || (escape_brackets && is_uri_bracket(c))
+            // Cat2 covers the brackets, so it must not reach the authority's.
+            || (escape_cat2 && is_go_url_escape_cat2_path(c) && !is_uri_bracket(c))
+        {
+            let _ = write!(out, "%{:02X}", c as u8);
+        } else {
+            out.push(c);
+        }
+    }
+}
+
 const fn hex_val(b: u8) -> u8 {
     match b {
         b'0'..=b'9' => b - b'0',
@@ -100,21 +189,61 @@ fn strip_userinfo_best_effort(url: &str, prefix_end: usize) -> String {
     out
 }
 
-fn redact_path_digits(path: &str) -> String {
-    path.split('/')
+/// The path to emit, mirroring Go's `url.URL.EscapedPath`: the raw path is emitted whenever it is a
+/// valid encoding, and the re-escaped path (`parsed`, which carries the escapes the pre-encode pass
+/// added) only when it is not.
+///
+/// Digit redaction rewrites Go's decoded path, and Go re-escapes a path it rewrote, so a raw path
+/// that redaction changes loses its raw form after all.
+fn obfuscated_path(
+    raw: &str,
+    parsed: &str,
+    remove_path_digits: bool,
+    raw_is_valid_encoding: bool,
+) -> String {
+    let from_parsed = || {
+        let path = normalize_pct_encoded_unreserved(parsed);
+        if remove_path_digits {
+            redact_path_digits(&path).unwrap_or(path)
+        } else {
+            path
+        }
+    };
+    if !raw_is_valid_encoding {
+        return from_parsed();
+    }
+    let normalized = normalize_pct_encoded_unreserved(raw);
+    if !remove_path_digits {
+        return normalized;
+    }
+    match redact_path_digits(&normalized) {
+        // Only a bracket can differ between the two sources, and only a rewrite forces Go to
+        // re-escape it, so this is the one case where the raw path was the wrong source.
+        Some(_) if raw.contains(is_uri_bracket) => from_parsed(),
+        Some(redacted) => redacted,
+        None => normalized,
+    }
+}
+
+/// Replaces every path segment holding a digit with `?`, or `None` when no segment holds one.
+fn redact_path_digits(path: &str) -> Option<String> {
+    let mut redacted = false;
+    let segments = path
+        .split('/')
         .map(|seg| {
             if percent_decode_str(seg)
                 .decode_utf8_lossy()
                 .chars()
                 .any(|c| c.is_ascii_digit())
             {
+                redacted = true;
                 "?"
             } else {
                 seg
             }
         })
-        .collect::<Vec<_>>()
-        .join("/")
+        .collect::<Vec<_>>();
+    redacted.then(|| segments.join("/"))
 }
 
 /// Returns whether [`obfuscate_url_string`] could change `url`, letting callers skip building the
@@ -198,6 +327,7 @@ pub fn obfuscate_url(
     ))
 }
 
+#[must_use]
 pub fn obfuscate_url_string(
     url: &str,
     remove_query_string: bool,
@@ -220,10 +350,22 @@ pub fn obfuscate_url_string(
         };
     }
 
-    // Determine Go's escape() trigger: Cat1 or non-ASCII in path causes Cat2 encoding too
-    let path = &url[..path_end];
-    let needs_full_path = path.bytes().any(|b| b > 127) || path.chars().any(is_go_url_escape_cat1);
-    let frag_has_non_ascii = frag_pos.is_some_and(|i| url[i + 1..].bytes().any(|b| b > 127));
+    // Where the path begins, which is where the authority ends when there is one.
+    let authority_end = path_start(url, path_end);
+
+    // Cat1 or non-ASCII in the path causes Cat2 encoding too, and it is also what stops Go emitting
+    // the raw path and fragment verbatim; a fragment is disqualified by a control character or a
+    // `#` as well, which the path cannot hold by the time it gets here.
+    let needs_full_path = needs_escaping(&url[..path_end]);
+    // Go escapes the authority on its own, so only the path decides whether the raw path is what
+    // Go emits. Scanning the authority too would re-escape a bracketed path behind a non-ASCII
+    // host.
+    let raw_path_is_valid = !needs_escaping(&url[authority_end..path_end]);
+    let frag_has_non_ascii = frag_pos.is_some_and(|i| !url[i + 1..].is_ascii());
+    let raw_frag_is_valid = frag_pos.is_some_and(|i| {
+        let fragment = &url[i + 1..];
+        !needs_escaping(fragment) && !fragment.bytes().any(|b| b < 0x20 || b == 0x7F || b == b'#')
+    });
 
     // Pre-encode chars that UriRef (strict RFC 3986) rejects.
     // We encode ALL non-ASCII chars (not just Cat1/Cat2) so that characters outside
@@ -231,30 +373,18 @@ pub fn obfuscate_url_string(
     // Exclude the query — Go doesn't validate query percent-encoding, so we pass
     // only path + fragment to UriRef and restore the original query afterward.
     let mut pre = String::with_capacity(url.len() * 4);
-    for c in url[..path_end].chars() {
-        if !c.is_ascii() {
-            encode_char(&mut pre, c);
-        } else if is_go_url_escape_cat1(c) || (needs_full_path && is_go_url_escape_cat2_path(c)) {
-            let _ = write!(pre, "%{:02X}", c as u8);
-        } else {
-            pre.push(c);
-        }
-    }
+    // The authority keeps its brackets (`[::1]` is a host); the path cannot, so `obfuscated_path`
+    // restores those from the raw path once the parse has succeeded.
+    pre_encode(&mut pre, &url[..authority_end], needs_full_path, false);
+    pre_encode(
+        &mut pre,
+        &url[authority_end..path_end],
+        needs_full_path,
+        true,
+    );
     if let Some(fi) = frag_pos {
         pre.push('#');
-        for c in url[fi + 1..].chars() {
-            if !c.is_ascii()
-                || (c as u32) < 0x20
-                || c as u32 == 0x7F
-                || c == '#'
-                || is_go_url_escape_cat1(c)
-                || (frag_has_non_ascii && is_go_url_escape_cat2_fragment(c))
-            {
-                encode_char(&mut pre, c);
-            } else {
-                pre.push(c);
-            }
-        }
+        pre_encode_fragment(&mut pre, &url[fi + 1..], frag_has_non_ascii);
     }
 
     let Ok(parsed) = UriRef::parse(pre.as_str()) else {
@@ -280,12 +410,12 @@ pub fn obfuscate_url_string(
             out.push(':');
             out.push_str(port.as_str());
         }
-        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
-        if remove_path_digits {
-            out.push_str(&redact_path_digits(&path_str));
-        } else {
-            out.push_str(&path_str);
-        }
+        out.push_str(&obfuscated_path(
+            &url[authority_end..path_end],
+            parsed.path().as_str(),
+            remove_path_digits,
+            raw_path_is_valid,
+        ));
     } else if let Some(scheme) = parsed.scheme() {
         // This is a really weird case because there is a scheme but no authority.
         // For example: http:#
@@ -294,13 +424,13 @@ pub fn obfuscate_url_string(
         // http://example.com/?query -> //example.com/
         out.push_str(&url[scheme_end..path_end]);
     } else {
-        // Relative reference: use pre-encoded path
-        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
-        if remove_path_digits {
-            out.push_str(&redact_path_digits(&path_str));
-        } else {
-            out.push_str(&path_str);
-        }
+        // Relative reference: no authority, so the whole prefix is the path.
+        out.push_str(&obfuscated_path(
+            &url[..path_end],
+            parsed.path().as_str(),
+            remove_path_digits,
+            raw_path_is_valid,
+        ));
     }
 
     // Use original URL positions to detect query — uri.query() is always None since we
@@ -315,9 +445,13 @@ pub fn obfuscate_url_string(
     }
 
     if let Some(frag) = parsed.fragment() {
-        if !frag.as_str().is_empty() {
+        let frag = match frag_pos {
+            Some(i) if raw_frag_is_valid => &url[i + 1..],
+            _ => frag.as_str(),
+        };
+        if !frag.is_empty() {
             out.push('#');
-            out.push_str(frag.as_str());
+            out.push_str(frag);
         }
     }
 
@@ -328,7 +462,7 @@ pub fn obfuscate_url_string(
 mod tests {
     use duplicate::duplicate_item;
 
-    use super::obfuscate_url_string;
+    use super::{obfuscate_url, obfuscate_url_string};
 
     #[duplicate_item(
     test_name remove_query_string remove_path_digits input expected_output;
@@ -412,6 +546,31 @@ mod tests {
     [parity_frag_curly_brace] [true] [true] ["ჸ#{ჸ"] ["%E1%83%B8#%7B%E1%83%B8"];
     [parity_opaque_url_unicode] [true] [true] ["A:ჸ"] ["a:ჸ"];
     [no_decode_dash] [false] [false] ["http://foo.com/foo%20bar/"] ["http://foo.com/foo%20bar/"];
+    // Brackets are only URI syntax in an IP-literal host, so RFC 3986 parsing rejects them in a
+    // path or fragment while Go's net/url leaves them alone. Every expectation below is Go's.
+    [brackets_in_path_keep_the_endpoint] [true] [false] ["https://example.com/api/items[1]/detail"] ["https://example.com/api/items[1]/detail"];
+    [brackets_in_path_redact_only_the_digit_segment] [false] [true] ["https://example.com/api/items[1]/detail"] ["https://example.com/api/?/detail"];
+    [brackets_in_path_with_query_removed] [true] [true] ["https://example.com/api/items[1]/detail?q=2"] ["https://example.com/api/?/detail?"];
+    // Redaction rewrites the path, which Go then re-escapes, so a surviving bracket ends up encoded.
+    [brackets_are_escaped_once_redaction_rewrites_the_path] [true] [true] ["http://foo.com/a]b/c1"] ["http://foo.com/a%5Db/?"];
+    [brackets_in_fragment_are_kept] [true] [true] ["http://foo.com/x#a[b]c"] ["http://foo.com/x#a[b]c"];
+    [brackets_in_query_are_kept] [false] [true] ["http://foo.com/x?a[b]=1#f[2]"] ["http://foo.com/x?a[b]=1#f[2]"];
+    [brackets_in_relative_reference] [true] [true] ["/api/items[1]/detail"] ["/api/?/detail"];
+    [lone_bracket] [true] [true] ["["] ["["];
+    [brackets_with_userinfo_only_lose_the_credentials] [false] [false] ["http://user:pw@foo.com/a[b"] ["http://foo.com/a[b"];
+    // An escaped bracket in the input stays escaped: only the escapes this module adds are undone.
+    [escaped_bracket_in_path_is_left_alone] [true] [true] ["http://foo.com/a%5Bb/c"] ["http://foo.com/a%5Bb/c"];
+    // Go escapes a non-ASCII authority on its own, so the authority never decides whether the raw
+    // path is emitted.
+    [non_ascii_host_keeps_the_path_brackets] [true] [true] ["http://é.example/a[b]"] ["http://%C3%A9.example/a[b]"];
+    [non_ascii_host_keeps_the_path_cat2] [true] [true] ["http://é.example/a(b)"] ["http://%C3%A9.example/a(b)"];
+    [non_ascii_host_still_escapes_a_redacted_path] [false] [true] ["http://é.example/a[b]/c1"] ["http://%C3%A9.example/a%5Bb%5D/?"];
+    // An IP-literal host needs its brackets to parse, including when the path forces escaping.
+    [ip_literal_host_survives] [false] [true] ["http://[::1]:8080/x1"] ["http://[::1]:8080/?"];
+    [ip_literal_host_survives_an_escaped_path] [true] [true] ["http://[::1]:8080/x y"] ["http://[::1]:8080/x%20y"];
+    [ip_literal_host_loses_userinfo_and_query] [true] [true] ["http://user:pw@[::1]:8080/x1?q=1"] ["http://[::1]:8080/??"];
+    // A bracket in an authority that is not an IP-literal is still a parse failure, as in Go.
+    [bracket_in_a_malformed_authority_redacts_everything] [true] [true] ["http://foo.com:abc[x]/y"] ["?"];
     [parity_fuzzing_supp_unicode_frag] [true] [true] ["\u{91cb8}\u{9232f}झ\u{44db0}#\u{3}\n\u{5bb50}\u{925d9}\u{925d5}\u{925d5}\u{925d5}\u{925d5}䕞\u{9a70d}\u{3d2ff}\u{10ef4f}\u{87307}\u{6}\u{10ef0a}\u{10ffff}\u{ad7e5}\u{33f}筚\u{361}➑\u{2}{\u{10de13}\u{10ffff}\u{10ffff}'"] ["%F2%91%B2%B8%F2%92%8C%AF%E0%A4%9D%F1%84%B6%B0#%03%0A%F1%9B%AD%90%F2%92%97%99%F2%92%97%95%F2%92%97%95%F2%92%97%95%F2%92%97%95%E4%95%9E%F2%9A%9C%8D%F0%BD%8B%BF%F4%8E%BD%8F%F2%87%8C%87%06%F4%8E%BC%8A%F4%8F%BF%BF%F2%AD%9F%A5%CC%BF%E7%AD%9A%CD%A1%E2%9E%91%02%7B%F4%8D%B8%93%F4%8F%BF%BF%F4%8F%BF%BF%27"];
     )]
     #[test]
@@ -434,5 +593,11 @@ mod tests {
         assert!(!should_obfuscate_url("http://foo.com/path", false, false));
         // Path digit with remove_path_digits triggers obfuscation.
         assert!(should_obfuscate_url("http://foo.com/p1", false, true));
+        // A bracket in the path is escaped for parsing and restored, so the URL is unchanged; the
+        // precheck is a superset and may still admit it.
+        assert_eq!(
+            obfuscate_url("http://foo.com/a[b", true, false),
+            Some("http://foo.com/a[b".to_string())
+        );
     }
 }

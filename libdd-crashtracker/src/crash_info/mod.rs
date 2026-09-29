@@ -14,7 +14,7 @@ mod sig_info;
 mod spans;
 mod stacktrace;
 mod telemetry;
-mod test_utils;
+pub(crate) mod test_utils;
 mod ucontext;
 mod unknown_value;
 

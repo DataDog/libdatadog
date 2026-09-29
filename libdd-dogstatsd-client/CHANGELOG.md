@@ -2,6 +2,14 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v6.0.0..libdd-dogstatsd-client-v7.0.0) - 2026-09-24
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v5.0.0..libdd-dogstatsd-client-v6.0.0) - 2026-09-08
 
 ### Changed

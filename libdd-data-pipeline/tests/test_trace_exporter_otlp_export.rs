@@ -146,6 +146,78 @@ mod otlp_export_tests {
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
+    async fn otlp_mutable_metadata_runtime_id_updates_propagate() {
+        use httpmock::MockServer;
+        use libdd_common::mutable_metadata::MutableMetadataHandle;
+
+        let server = MockServer::start_async().await;
+        // The first send carries the initial runtime_id...
+        let mock_old = server
+            .mock_async(|when, then| {
+                when.method("POST")
+                    .path("/v1/traces")
+                    .header("content-type", "application/json")
+                    .body_includes("rt-initial");
+                then.status(200).body("{}");
+            })
+            .await;
+        // ...and after the host updates the shared handle, the next send carries
+        // the new one.
+        let mock_new = server
+            .mock_async(|when, then| {
+                when.method("POST")
+                    .path("/v1/traces")
+                    .header("content-type", "application/json")
+                    .body_includes("rt-updated");
+                then.status(200).body("{}");
+            })
+            .await;
+        // No request may carry the legacy `set_runtime_id` value.
+        let mock_legacy = server
+            .mock_async(|when, then| {
+                when.method("POST")
+                    .path("/v1/traces")
+                    .body_includes("ignored-legacy-id");
+                then.status(200).body("{}");
+            })
+            .await;
+
+        let handle = MutableMetadataHandle::default();
+        handle.set_runtime_id("rt-initial".into());
+
+        let otlp_endpoint = format!("http://localhost:{}/v1/traces", server.port());
+        let task_result = task::spawn_blocking(move || {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .set_otlp_endpoint(&otlp_endpoint)
+                .set_language("test-lang")
+                // Ignored: the shared handle supersedes the legacy setter.
+                .set_runtime_id("ignored-legacy-id")
+                .set_mutable_metadata(handle.clone());
+            let trace_exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("Unable to build TraceExporter");
+            let data = get_v04_trace_snapshot_test_payload("test_otlp_mutable_metadata");
+
+            let response = trace_exporter.send(data.as_ref());
+            assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
+
+            // Update runtime_id after the exporter has started: the next send must
+            // pick up the new value.
+            handle.set_runtime_id("rt-updated".into());
+            let response = trace_exporter.send(data.as_ref());
+            assert!(response.is_ok(), "OTLP send failed: {:?}", response.err());
+        })
+        .await;
+
+        assert!(task_result.is_ok());
+        assert_eq!(mock_old.calls_async().await, 1);
+        assert_eq!(mock_new.calls_async().await, 1);
+        assert_eq!(mock_legacy.calls_async().await, 0);
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
     async fn otlp_v05_export_sets_sampled_flag() {
         use httpmock::MockServer;
 

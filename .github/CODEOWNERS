@@ -119,3 +119,123 @@ libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabil
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
+
+# Release co-ownership
+# @DataDog/libdatadog-release is added as an additional co-owner of every
+# file the automated crate-release PR touches: each crate's Cargo.toml and CHANGELOG.md,
+# plus the workspace Cargo.toml and Cargo.lock. Existing owners are preserved
+# These lines are last in the file so they win (last match wins) for these specific files.
+# libdatadog-release is registered in DataDog/ci-checks reviewer_teams.yml, so it is not counted as a code
+# owner for Green CI / test-failure reporting.
+
+libdd-agent-client/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-capabilities-impl/CHANGELOG.md         @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-capabilities-impl/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-capabilities/CHANGELOG.md              @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-capabilities/Cargo.toml                @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-data-pipeline-core/CHANGELOG.md        @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-data-pipeline-core/Cargo.toml          @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-data-pipeline-ffi/Cargo.toml           @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-data-pipeline/CHANGELOG.md             @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-data-pipeline/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-dogstatsd-client/CHANGELOG.md          @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-dogstatsd-client/Cargo.toml            @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-http-client/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-http-client/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-log-ffi/Cargo.toml                     @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-log/CHANGELOG.md                       @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-log/Cargo.toml                         @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-otel-thread-ctx-ffi/Cargo.toml         @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-otel-thread-ctx/CHANGELOG.md           @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-otel-thread-ctx/Cargo.toml             @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-sampling/CHANGELOG.md                  @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-sampling/Cargo.toml                    @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-shared-runtime-ffi/Cargo.toml          @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-shared-runtime/CHANGELOG.md            @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-shared-runtime/Cargo.toml              @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-telemetry-ffi/Cargo.toml               @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-telemetry/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-telemetry/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-tinybytes/CHANGELOG.md                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-tinybytes/Cargo.toml                   @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-trace-stats/CHANGELOG.md               @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-trace-stats/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
+tools/Cargo.toml                             @DataDog/apm-common-components-core @DataDog/libdatadog-release
+
+libdd-library-config-ffi/Cargo.toml          @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
+libdd-library-config/CHANGELOG.md            @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
+libdd-library-config/Cargo.toml              @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
+
+libdd-ffe-ffi/Cargo.toml                     @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
+libdd-ffe-test-suite/Cargo.toml              @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
+libdd-ffe/CHANGELOG.md                       @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
+libdd-ffe/Cargo.toml                         @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
+
+/Cargo.lock                                  @DataDog/libdatadog @DataDog/libdatadog-release
+/Cargo.toml                                  @DataDog/libdatadog @DataDog/libdatadog-release
+bin_tests/Cargo.toml                         @DataDog/libdatadog @DataDog/libdatadog-release
+builder/Cargo.toml                           @DataDog/libdatadog @DataDog/libdatadog-release
+libdd-common-ffi/Cargo.toml                  @DataDog/libdatadog @DataDog/libdatadog-release
+libdd-common/CHANGELOG.md                    @DataDog/libdatadog @DataDog/libdatadog-release
+libdd-common/Cargo.toml                      @DataDog/libdatadog @DataDog/libdatadog-release
+
+libdd-gotter/CHANGELOG.md                    @DataDog/libdatadog @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-gotter/Cargo.toml                      @DataDog/libdatadog @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+
+libdd-tracer-flare/CHANGELOG.md              @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-tracer-flare/Cargo.toml                @DataDog/libdatadog-apm @DataDog/libdatadog-release
+
+libdd-ddsketch-ffi/Cargo.toml                @DataDog/libdatadog-apm @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-ddsketch/CHANGELOG.md                  @DataDog/libdatadog-apm @DataDog/apm-common-components-core @DataDog/libdatadog-release
+libdd-ddsketch/Cargo.toml                    @DataDog/libdatadog-apm @DataDog/apm-common-components-core @DataDog/libdatadog-release
+
+datadog-sidecar-macros/Cargo.toml            @DataDog/libdatadog-php @DataDog/libdatadog-release
+libdd-ipc-macros/CHANGELOG.md                @DataDog/libdatadog-php @DataDog/libdatadog-release
+libdd-ipc-macros/Cargo.toml                  @DataDog/libdatadog-php @DataDog/libdatadog-release
+libdd-ipc/CHANGELOG.md                       @DataDog/libdatadog-php @DataDog/libdatadog-release
+libdd-ipc/Cargo.toml                         @DataDog/libdatadog-php @DataDog/libdatadog-release
+tools/cc_utils/Cargo.toml                    @DataDog/libdatadog-php @DataDog/libdatadog-release
+tools/sidecar_mockgen/Cargo.toml             @DataDog/libdatadog-php @DataDog/libdatadog-release
+
+datadog-sidecar-ffi/Cargo.toml               @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+datadog-sidecar/Cargo.toml                   @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-live-debugger-ffi/Cargo.toml           @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-live-debugger/CHANGELOG.md             @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-live-debugger/Cargo.toml               @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+spawn_worker/Cargo.toml                      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+tests/spawn_from_lib/Cargo.toml              @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/libdatadog-release
+
+libdd-remote-config/CHANGELOG.md             @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config @DataDog/libdatadog-release
+libdd-remote-config/Cargo.toml               @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config @DataDog/libdatadog-release
+
+datadog-profiling-replayer/Cargo.toml        @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-alloc/CHANGELOG.md                     @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-alloc/Cargo.toml                       @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-ffi/Cargo.toml               @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-allocator/CHANGELOG.md  @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-allocator/Cargo.toml    @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-gotter-ffi/Cargo.toml   @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-gotter/CHANGELOG.md     @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-gotter/Cargo.toml       @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-sampler/CHANGELOG.md    @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-heap-sampler/Cargo.toml      @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-protobuf/CHANGELOG.md        @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling-protobuf/Cargo.toml          @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling/CHANGELOG.md                 @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+libdd-profiling/Cargo.toml                   @DataDog/libdatadog-profiling @DataDog/libdatadog-release
+
+libdd-crashtracker-ffi/Cargo.toml            @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/libdatadog-release
+libdd-crashtracker/CHANGELOG.md              @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/libdatadog-release
+libdd-crashtracker/Cargo.toml                @DataDog/libdatadog-profiling @DataDog/libdatadog-crashtracking-reviewers @DataDog/libdatadog-release
+
+tests/wasm/Cargo.toml                        @DataDog/libdatadog-profiling @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+
+libdd-trace-normalization/CHANGELOG.md       @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-normalization/Cargo.toml         @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-obfuscation/CHANGELOG.md         @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-obfuscation/Cargo.toml           @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-protobuf/CHANGELOG.md            @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-protobuf/Cargo.toml              @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-utils/CHANGELOG.md               @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+libdd-trace-utils/Cargo.toml                 @DataDog/serverless @DataDog/libdatadog-apm @DataDog/libdatadog-release
+

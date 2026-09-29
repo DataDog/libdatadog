@@ -13,7 +13,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
 use libdd_ipc::platform::NamedShmHandle;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -609,7 +609,7 @@ type EnvString = String;
 type TelemetryCachedClientKey = (ServiceString, EnvString);
 
 pub struct TelemetryCachedClientSet {
-    pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    pub(crate) inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -659,11 +659,15 @@ impl TelemetryCachedClientSet {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         let key = (service.to_string(), env.to_string());
 
-        let mut map = self.inner.lock_or_panic();
-        map.get_mut(&key).map(|entry| {
-            entry.last_used = Instant::now();
-            entry.client.clone()
-        })
+        let client = {
+            let mut map = self.inner.lock_or_panic();
+            map.get_mut(&key).map(|entry| {
+                entry.last_used = Instant::now();
+                entry.client.clone()
+            })
+        };
+        // Stop marks clients retired before removing them from the cache.
+        client.filter(|client| client.lock_or_panic().is_some())
     }
 
     pub fn get_or_create<F>(
@@ -706,9 +710,21 @@ impl TelemetryCachedClientSet {
         new_client
     }
 
-    pub fn remove_telemetry_client(&self, service: &str, env: &str) {
+    pub fn remove_telemetry_client(
+        &self,
+        service: &str,
+        env: &str,
+        expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    ) {
         let key = (service.to_string(), env.to_string());
-        self.inner.lock_or_panic().remove(&key);
+        let mut clients = self.inner.lock_or_panic();
+        let entry = clients.entry(key);
+        match entry {
+            Entry::Occupied(entry) if Arc::ptr_eq(&entry.get().client, expected) => {
+                entry.remove();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -791,6 +807,34 @@ fn get_telemetry_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A delayed removal must not evict a newer client stored under the same key.
+    #[test]
+    fn stale_client_removal_preserves_replacement() {
+        let clients = TelemetryCachedClientSet {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            cleanup_handle: None,
+        };
+        let stale = Arc::new(Mutex::new(None));
+        let replacement = Arc::new(Mutex::new(None));
+        clients.inner.lock_or_panic().insert(
+            ("service".to_owned(), "env".to_owned()),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: Arc::clone(&replacement),
+            },
+        );
+
+        clients.remove_telemetry_client("service", "env", &stale);
+
+        assert!(Arc::ptr_eq(
+            &clients.inner.lock_or_panic()[&("service".to_owned(), "env".to_owned())].client,
+            &replacement,
+        ));
+
+        clients.remove_telemetry_client("service", "env", &replacement);
+        assert!(clients.inner.lock_or_panic().is_empty());
+    }
 
     #[test]
     fn in_process_client_keeps_instance_and_rebinds_application() {

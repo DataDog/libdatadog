@@ -27,6 +27,7 @@ pub mod connector;
 pub mod dump_server;
 pub mod entity_id;
 pub mod machine_id;
+pub mod mutable_metadata;
 pub mod regex_engine;
 #[macro_use]
 pub mod cstr;

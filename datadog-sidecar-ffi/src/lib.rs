@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(target_os = "linux")]
+pub mod signal_flush;
 pub mod span;
 
 use crate::span::TracesBytes;

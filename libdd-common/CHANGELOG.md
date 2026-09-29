@@ -2,6 +2,21 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v6.0.0..libdd-common-v7.0.0) - 2026-09-24
+
+### Changed
+
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Enforce workspace-level dependency declarations ([#2514](https://github.com/datadog/libdatadog/issues/2514)) - ([a5e7164](https://github.com/datadog/libdatadog/commit/a5e71645f6805c5e21c9881506ba065986a89bdc))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Benchmark was doing many samples for deterministic heap usage ([#2465](https://github.com/datadog/libdatadog/issues/2465)) - ([441cdcf](https://github.com/datadog/libdatadog/commit/441cdcf2fa14ac2b0a75df3f901a219eda2cc705))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.2.0..libdd-common-v6.0.0) - 2026-09-08
 
 ### Added

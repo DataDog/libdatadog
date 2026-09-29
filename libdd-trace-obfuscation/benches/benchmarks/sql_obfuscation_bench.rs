@@ -12,7 +12,7 @@ fn sql_obfuscation(c: &mut Criterion) {
             || Vec::with_capacity(CASES.len()) as Vec<String>,
             |res: &mut Vec<String>| {
                 for (input, _) in CASES {
-                    res.push(black_box(obfuscate_sql_string(input)));
+                    res.push(black_box(obfuscate_sql_string(input).unwrap_or_default()));
                 }
             },
             criterion::BatchSize::LargeInput,

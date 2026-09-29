@@ -14,11 +14,11 @@ build = "build.rs"
 once_cell = { workspace = true, features = ["std"] }
 anyhow = { workspace = true, default-features = true }
 current_platform.workspace = true
-libdd-profiling = { path = "../libdd-profiling" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 tempfile.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
 libc.workspace = true
 errno = { workspace = true, default-features = true }
 nix = { workspace = true, features = ["signal", "socket"] }

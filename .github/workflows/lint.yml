@@ -77,6 +77,8 @@ jobs:
       codeowners: ${{ steps.filter.outputs.codeowners }}
       licensecheck: ${{ steps.filter.outputs.licensecheck }}
       license_3rdparty: ${{ steps.filter.outputs.license_3rdparty }}
+      manifests: ${{ steps.filter.outputs.manifests }}
+      ci_helpers: ${{ steps.filter.outputs.ci_helpers }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -93,6 +95,14 @@ jobs:
             license_3rdparty:
               - 'Cargo.lock'
               - '**/Cargo.toml'
+            manifests:
+              - '**/Cargo.toml'
+            ci_helpers:
+              - '.github/actions/**'
+              - '.github/workflows/lint.yml'
+              - 'nightly-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
 
   rustfmt:
     needs: setup
@@ -188,6 +198,147 @@ jobs:
           else
             # shellcheck disable=SC2086
             cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
+          fi
+
+  workspace-deps:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    name: "Workspace dependency declarations"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          workspaces: .github/actions
+          cache-targets: true # cache build artifacts
+          shared-key: workspace-deps-lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      # The helper crates under .github/actions pin their own stable toolchain.
+      - name: Build the dependency linter
+        working-directory: .github/actions
+        run: cargo build --release -p workspace-deps-lint
+      - name: Check dependency declarations
+        # The linter shells out to `cargo metadata` to enumerate the workspace
+        # members. Keep that on the runner's preinstalled stable toolchain
+        # instead of downloading the workspace MSRV just to read a manifest.
+        env:
+          RUSTUP_TOOLCHAIN: stable
+        run: .github/actions/target/release/workspace-deps-lint --manifest-path Cargo.toml
+
+  ci-helpers:
+    needs: changes
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.ci_helpers == 'true' ||
+      contains(github.event.pull_request.labels.*.name, 'run-all-tests')
+    runs-on: ubuntu-latest
+    name: "CI helper crates (fmt, clippy, test)"
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0 # to diff against the PR base branch
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Cache [rust]
+        id: rust-cache
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          workspaces: .github/actions
+          # We expect CI executables to be small and reasonably fast to
+          # compile. Let's not pollute the cache for now.
+          cache-targets: false
+          shared-key: ci-helpers
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      # The helper crates under .github/actions form their own workspace, which
+      # is invisible to the root-workspace change report of the `setup` job.
+      #
+      # A helper crate's directory equals its package name, so the touched
+      # directories of the PR diff map directly to `cargo -p` selectors. The
+      # helper crates are small and fast to build, so a plain git diff is
+      # enough; we don't need the affected-crates tooling here.
+      - name: Detect touched helper crates
+        id: detect
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_REF: ${{ github.base_ref }}
+          HAS_RUN_ALL_TESTS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'run-all-tests') }}
+        run: |
+          if [[ "$HAS_RUN_ALL_TESTS_LABEL" == "true" ]]; then
+            exit 0 # empty 'packages' → check everything
+          fi
+
+          # Workspace-level files, and ci-shared which every other helper
+          # crate depends on, affect every helper crate.
+          if git diff --name-only "origin/${PR_BASE_REF}...HEAD" -- \
+              .github/actions/Cargo.toml .github/actions/Cargo.lock .github/actions/rust-toolchain.toml \
+              .github/actions/ci-shared | grep -q .; then
+            exit 0 # empty 'packages' → check everything
+          fi
+
+          packages=""
+          for crate in $(git diff --name-only "origin/${PR_BASE_REF}...HEAD" -- .github/actions/ | cut -d/ -f3 | sort -u); do
+            # Skip non-crate directories (e.g. ci-workspace-level files).
+            if [[ -f ".github/actions/$crate/Cargo.toml" ]]; then
+              packages="$packages -p $crate"
+            fi
+          done
+
+          echo "packages=$packages" >> $GITHUB_OUTPUT
+      - name: Install ${{ steps.nightly-version.outputs.version }} toolchain and rustfmt
+        run: |
+          rustup set profile minimal
+          rustup install ${{ steps.nightly-version.outputs.version }}
+          rustup component add rustfmt --toolchain ${{ steps.nightly-version.outputs.version }}
+      - name: Run rustfmt
+        working-directory: .github/actions
+        env:
+          FMT_PACKAGES: ${{ steps.detect.outputs.packages }}
+          # Override the helper workspace's stable pin so rustfmt runs on
+          # nightly (required by the unstable_features in rustfmt.toml).
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+        run: |
+          if [[ -z "$FMT_PACKAGES" ]]; then
+            cargo fmt --all -- --check
+          else
+            # shellcheck disable=SC2086
+            cargo fmt $FMT_PACKAGES -- --check
+          fi
+      - name: Run clippy
+        working-directory: .github/actions
+        env:
+          CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
+        run: |
+          if [[ -z "$CHECK_PACKAGES" ]]; then
+            cargo clippy --workspace --all-targets -- -D warnings
+          else
+            # shellcheck disable=SC2086
+            cargo clippy $CHECK_PACKAGES --all-targets -- -D warnings
+          fi
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: nextest@0.9.96
+      - name: Run tests
+        working-directory: .github/actions
+        env:
+          CHECK_PACKAGES: ${{ steps.detect.outputs.packages }}
+        run: |
+          # Some helper crates (e.g. crates-reporter) have no tests.
+          if [[ -z "$CHECK_PACKAGES" ]]; then
+            cargo nextest run --workspace --no-tests=pass
+          else
+            # shellcheck disable=SC2086
+            cargo nextest run $CHECK_PACKAGES --no-tests=pass
           fi
 
   licensecheck:

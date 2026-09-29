@@ -79,9 +79,9 @@ impl IpcClientConn {
 
     /// Attempt a non-blocking send.
     ///
-    /// Returns `false` if the socket would block (EAGAIN).
-    /// `data` is unmodified after the call.
-    pub fn try_send(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> bool {
+    /// Returns `false` if the socket would block (EAGAIN). `data` is consumed
+    /// regardless of whether the transport accepts it.
+    pub fn try_send(&mut self, data: Vec<u8>, fds: &[RawFd]) -> bool {
         match self.conn.try_send_raw(data, fds) {
             Ok(()) => {
                 self.send_count += 1;
@@ -98,8 +98,9 @@ impl IpcClientConn {
 
     /// Blocking send (no response wait).
     ///
-    /// Used when draining the outbox of state-change messages.
-    pub fn send_blocking(&mut self, data: &mut Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+    /// Used when draining the outbox of state-change messages. Takes ownership
+    /// of `data` so a pending Windows write can retain its allocation.
+    pub fn send_blocking(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
         self.conn.send_raw_blocking(data, fds).inspect_err(|_| {
             self.closed = true;
         })?;
@@ -113,12 +114,9 @@ impl IpcClientConn {
     /// before sending, so the subsequent blocking recv loop only needs to wait for the single
     /// response ack.  Sends `data`/`fds` (blocking), then receives in a loop until the ack
     /// for this specific send arrives.  Returns the response bytes and any transferred file
-    /// descriptors.
-    pub fn call(
-        &mut self,
-        data: &mut Vec<u8>,
-        fds: &[RawFd],
-    ) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
+    /// descriptors. Takes ownership of `data` so a pending Windows write can retain
+    /// its allocation.
+    pub fn call(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<(Vec<u8>, Vec<OwnedFd>)> {
         self.drain_acks();
         if self.closed {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));

@@ -200,7 +200,7 @@ mod tests {
             Self::default()
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self::default()
         }
 

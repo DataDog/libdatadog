@@ -118,7 +118,7 @@ fn futex_wake(addr: *const u32) {
 ))]
 fn futex_wait(addr: *const u32, expected: u32, timeout: Duration) {
     let ts = libc::timespec {
-        tv_sec: timeout.as_secs() as libc::time_t,
+        tv_sec: timeout.as_secs() as _,
         tv_nsec: timeout.subsec_nanos() as libc::c_long,
     };
     // FUTEX_WAIT atomically checks `*addr == expected` and sleeps if so; returns

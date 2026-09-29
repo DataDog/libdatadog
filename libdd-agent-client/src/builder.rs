@@ -86,7 +86,6 @@ pub struct AgentClientBuilder {
     timeout: Option<Duration>,
     language: Option<LanguageMetadata>,
     retry: Option<RetryConfig>,
-    allow_connection_pooling: bool,
     extra_headers: Vec<(String, String)>,
 }
 
@@ -161,23 +160,6 @@ impl AgentClientBuilder {
         self
     }
 
-    /// Allow connection pooling. Defaults to `false`.
-    ///
-    /// Note that whether pooling is actually used depends on the HTTP backend of
-    /// [libdd_http_client], though both currently available backends (reqwest and hyper) support
-    /// pooling. This setting should be understood as: if set to `false`, no connection pooling will
-    /// happen. If set to `true`, connection pooling may happen, at the discretion of the HTTP
-    /// backend.
-    ///
-    /// The Datadog agent has a low keep-alive timeout that causes "pipe closed" errors on every
-    /// second connection. The default of `false` is correct for all periodic-flush writers (traces,
-    /// stats, data streams). Set to `true` only for high-frequency continuous senders (e.g. a
-    /// streaming profiling exporter).
-    pub fn allow_connection_pooling(mut self, enabled: bool) -> Self {
-        self.allow_connection_pooling = enabled;
-        self
-    }
-
     /// Additional custom headers to inject.
     pub fn extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.extra_headers = headers;
@@ -194,8 +176,7 @@ impl AgentClientBuilder {
         let retry = self.retry.unwrap_or_default();
 
         let http =
-            Self::build_http_client(transport, timeout, retry, self.allow_connection_pooling)
-                .map_err(BuildError::HttpClient)?;
+            Self::build_http_client(transport, timeout, retry).map_err(BuildError::HttpClient)?;
 
         let static_headers =
             Self::build_static_headers(language, self.test_token, self.extra_headers);
@@ -207,7 +188,6 @@ impl AgentClientBuilder {
         transport: AgentTransport,
         timeout: Duration,
         retry: RetryConfig,
-        allow_connection_pooling: bool,
     ) -> Result<libdd_http_client::HttpClient, libdd_http_client::HttpClientError> {
         let base_url = match &transport {
             AgentTransport::Http { host, port } => format!("http://{}:{}", host, port),
@@ -226,7 +206,7 @@ impl AgentClientBuilder {
             // This allows methods like `agent_info` to interpret 404 as Ok(None) rather than
             // an error, and avoids retrying on HTTP 4xx/5xx.
             .treat_http_errors_as_errors(false)
-            .allow_connection_pooling(allow_connection_pooling)
+            .periodic(true)
             .retry(retry);
 
         match transport {

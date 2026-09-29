@@ -401,7 +401,8 @@ pub(super) fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource 
         "telemetry.sdk.version",
         &resource_info.tracer_version,
     );
-    push_str_attr(&mut attributes, "runtime-id", &resource_info.runtime_id);
+    let mutable_metadata = resource_info.mutable_metadata.load();
+    push_str_attr(&mut attributes, "runtime-id", &mutable_metadata.runtime_id);
     // Tells Datadog Agent OTLP receivers to skip their concentrator; prevents double-counted
     // APM metrics.
     if resource_info.client_computed_stats {

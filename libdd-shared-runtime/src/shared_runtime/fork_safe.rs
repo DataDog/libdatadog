@@ -184,7 +184,7 @@ impl SharedRuntime for ForkSafeRuntime {
         Self::with_worker_threads(1)
     }
 
-    fn spawn_worker<T: Worker + Sync + 'static>(
+    fn spawn_worker<T: Worker + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,
