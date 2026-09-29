@@ -51,13 +51,14 @@ impl PreparedRequest {
         message.msg_iov = &mut *iov;
         message.msg_iovlen = 1;
         message.msg_control = control.as_mut_ptr().cast();
+        // musl uses u32 for these lengths; glibc uses usize
         message.msg_controllen =
-            unsafe { libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) } as usize;
+            unsafe { libc::CMSG_SPACE(std::mem::size_of::<i32>() as u32) } as _;
         unsafe {
             let header = libc::CMSG_FIRSTHDR(&message);
             (*header).cmsg_level = libc::SOL_SOCKET;
             (*header).cmsg_type = libc::SCM_RIGHTS;
-            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as u32) as usize;
+            (*header).cmsg_len = libc::CMSG_LEN(std::mem::size_of::<i32>() as u32) as _;
             libc::CMSG_DATA(header)
                 .cast::<i32>()
                 .write(completion.as_raw_fd());
