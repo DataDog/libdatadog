@@ -30,9 +30,11 @@ pub extern "C" fn ddog_ddsketch_new() -> Handle<DDSketch> {
 ///
 /// The sketch handle must have been created by this library and not already dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) { unsafe {
-    drop(sketch.take());
-}}
+pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) {
+    unsafe {
+        drop(sketch.take());
+    }
+}
 
 /// Adds a point to the DDSketch.
 ///
@@ -43,17 +45,19 @@ pub unsafe extern "C" fn ddog_ddsketch_drop(mut sketch: *mut Handle<DDSketch>) {
 pub unsafe extern "C" fn ddog_ddsketch_add(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
-) -> VoidResult { unsafe {
-    let sketch_ref = match sketch.to_inner_mut() {
-        Ok(s) => s,
-        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
-    };
+) -> VoidResult {
+    unsafe {
+        let sketch_ref = match sketch.to_inner_mut() {
+            Ok(s) => s,
+            Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
+        };
 
-    match sketch_ref.add(point) {
-        Ok(_) => VoidResult::Ok,
-        Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
+        match sketch_ref.add(point) {
+            Ok(_) => VoidResult::Ok,
+            Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
+        }
     }
-}}
+}
 
 /// Adds a point with a specific count to the DDSketch.
 ///
@@ -65,17 +69,19 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
     mut sketch: *mut Handle<DDSketch>,
     point: f64,
     count: f64,
-) -> VoidResult { unsafe {
-    let sketch_ref = match sketch.to_inner_mut() {
-        Ok(s) => s,
-        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
-    };
+) -> VoidResult {
+    unsafe {
+        let sketch_ref = match sketch.to_inner_mut() {
+            Ok(s) => s,
+            Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
+        };
 
-    match sketch_ref.add_with_count(point, count) {
-        Ok(_) => VoidResult::Ok,
-        Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
+        match sketch_ref.add_with_count(point, count) {
+            Ok(_) => VoidResult::Ok,
+            Err(e) => VoidResult::Err(ddsketch_error(&e.to_string())),
+        }
     }
-}}
+}
 
 /// Returns the count of points in the DDSketch via the output parameter.
 ///
@@ -87,19 +93,21 @@ pub unsafe extern "C" fn ddog_ddsketch_add_with_count(
 pub unsafe extern "C" fn ddog_ddsketch_count(
     mut sketch: *mut Handle<DDSketch>,
     count_out: *mut MaybeUninit<f64>,
-) -> VoidResult { unsafe {
-    if count_out.is_null() {
-        return VoidResult::Err(ddsketch_error(NULL_POINTER_ERROR));
+) -> VoidResult {
+    unsafe {
+        if count_out.is_null() {
+            return VoidResult::Err(ddsketch_error(NULL_POINTER_ERROR));
+        }
+
+        let sketch_ref = match sketch.to_inner_mut() {
+            Ok(s) => s,
+            Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
+        };
+
+        count_out.write(MaybeUninit::new(sketch_ref.count()));
+        VoidResult::Ok
     }
-
-    let sketch_ref = match sketch.to_inner_mut() {
-        Ok(s) => s,
-        Err(e) => return VoidResult::Err(ddsketch_error(&e.to_string())),
-    };
-
-    count_out.write(MaybeUninit::new(sketch_ref.count()));
-    VoidResult::Ok
-}}
+}
 
 /// Returns the protobuf-encoded bytes of the DDSketch.
 /// The sketch handle is consumed by this operation.
@@ -109,15 +117,17 @@ pub unsafe extern "C" fn ddog_ddsketch_count(
 /// The `sketch` parameter must be a valid pointer to a DDSketch handle.
 /// The returned vector must be freed with `ddog_Vec_U8_drop`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>) -> ffi::Vec<u8> { unsafe {
-    match sketch.take() {
-        Ok(ddsketch) => {
-            let encoded = ddsketch.encode_to_vec();
-            ffi::Vec::from(encoded)
+pub unsafe extern "C" fn ddog_ddsketch_encode(mut sketch: *mut Handle<DDSketch>) -> ffi::Vec<u8> {
+    unsafe {
+        match sketch.take() {
+            Ok(ddsketch) => {
+                let encoded = ddsketch.encode_to_vec();
+                ffi::Vec::from(encoded)
+            }
+            Err(_) => ffi::Vec::new(),
         }
-        Err(_) => ffi::Vec::new(),
     }
-}}
+}
 
 /// Frees the memory allocated for a Vec<u8> returned by ddsketch functions.
 ///
