@@ -47,6 +47,7 @@ pub enum PausableWorker<T: Worker + MaybeSend + Sync + 'static> {
     Running {
         handle: WorkerJoinHandle<T>,
         stop_token: CancellationToken,
+        interrupt_token: CancellationToken,
     },
     Paused {
         worker: T,
@@ -116,6 +117,8 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
+                let interrupt_token = CancellationToken::new();
+                let cloned_interrupt_token = interrupt_token.clone();
                 let future = Box::pin(async move {
                     // First iteration using initial_trigger.
                     //
@@ -128,9 +131,19 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
-                        _ = WeakWakerFuture::new(worker.initial_trigger()) => {
-                            worker.run().await;
+                        _ = cloned_interrupt_token.cancelled() => {
+                            return worker;
                         }
+                        _ = WeakWakerFuture::new(worker.initial_trigger()) => {}
+                    }
+                    // Fork preparation can interrupt run(), which may await I/O backed by a
+                    // blocking runtime task. Normal pause and shutdown remain graceful.
+                    select! {
+                        biased;
+                        _ = cloned_interrupt_token.cancelled() => {
+                            return worker;
+                        }
+                        _ = worker.run() => {}
                     }
 
                     // Regular iterations
@@ -140,9 +153,17 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
-                            _ = WeakWakerFuture::new(worker.trigger()) => {
-                                worker.run().await;
+                            _ = cloned_interrupt_token.cancelled() => {
+                                break;
                             }
+                            _ = WeakWakerFuture::new(worker.trigger()) => {}
+                        }
+                        select! {
+                            biased;
+                            _ = cloned_interrupt_token.cancelled() => {
+                                break;
+                            }
+                            _ = worker.run() => {}
                         }
                     }
                     worker
@@ -150,7 +171,11 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 
                 let handle = spawn_fn(future);
 
-                *self = PausableWorker::Running { handle, stop_token };
+                *self = PausableWorker::Running {
+                    handle,
+                    stop_token,
+                    interrupt_token,
+                };
                 Ok(())
             }
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
@@ -165,8 +190,11 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
         match self {
             PausableWorker::Running { .. } => {
                 debug!("Waiting for worker to pause");
-                let PausableWorker::Running { handle, stop_token } =
-                    std::mem::replace(self, PausableWorker::InvalidState)
+                let PausableWorker::Running {
+                    handle,
+                    stop_token,
+                    interrupt_token: _,
+                } = std::mem::replace(self, PausableWorker::InvalidState)
                 else {
                     // Unreachable
                     return Ok(());
@@ -178,6 +206,42 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 
                 if let Ok(worker) = handle.await {
                     debug!(?worker, "Worker paused successfully");
+                    *self = PausableWorker::Paused { worker };
+                    Ok(())
+                } else {
+                    *self = PausableWorker::InvalidState;
+                    Err(PausableWorkerError::TaskAborted)
+                }
+            }
+            PausableWorker::Paused { .. } => Ok(()),
+            PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
+        }
+    }
+
+    /// Interrupt the worker and wait for its state to be returned.
+    ///
+    /// Unlike [`Self::pause`], this cancels an in-progress `run()` operation. This is needed
+    /// during fork preparation, where waiting for runtime-backed blocking I/O can deadlock.
+    pub async fn pause_immediately(&mut self) -> Result<(), PausableWorkerError> {
+        match self {
+            PausableWorker::Running { .. } => {
+                debug!("Waiting for worker to pause immediately");
+                let PausableWorker::Running {
+                    handle,
+                    stop_token: _,
+                    interrupt_token,
+                } = std::mem::replace(self, PausableWorker::InvalidState)
+                else {
+                    // Unreachable
+                    return Ok(());
+                };
+
+                if !interrupt_token.is_cancelled() {
+                    interrupt_token.cancel();
+                }
+
+                if let Ok(worker) = handle.await {
+                    debug!(?worker, "Worker paused immediately");
                     *self = PausableWorker::Paused { worker };
                     Ok(())
                 } else {

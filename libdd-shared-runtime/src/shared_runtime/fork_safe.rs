@@ -48,11 +48,15 @@ impl ForkSafeRuntime {
         })
     }
 
-    /// Pauses all workers before `fork()`. Worker pause errors are logged, not propagated.
+    /// Pauses all workers before `fork()` without dropping the parent runtime.
+    ///
+    /// The runtime can still own blocking tasks after their awaiting worker futures are
+    /// cancelled. Dropping it here would wait for those tasks while platform fork handlers
+    /// may hold locks they need, such as the macOS resolver lock.
     pub fn before_fork(&self) {
         debug!("before_fork: pausing all workers");
-        let mut runtime_lock = self.runtime.lock_or_panic();
-        let Some(runtime) = runtime_lock.take() else {
+        let runtime_lock = self.runtime.lock_or_panic();
+        let Some(runtime) = runtime_lock.as_ref() else {
             return;
         };
         let mut workers_lock = self.workers.lock_or_panic();
@@ -60,7 +64,7 @@ impl ForkSafeRuntime {
             let futures: FuturesUnordered<_> = workers_lock
                 .iter_mut()
                 .map(|worker_entry| async {
-                    if let Err(e) = worker_entry.worker.pause().await {
+                    if let Err(e) = worker_entry.worker.pause_immediately().await {
                         error!("Worker failed to pause before fork: {:?}", e);
                     }
                 })
@@ -107,18 +111,18 @@ impl ForkSafeRuntime {
 
     /// Reinitializes the runtime in the child after forking.
     /// Workers with `restart_on_fork = true` are reset and restarted; others are dropped
-    /// without shutdown.
+    /// without shutdown. The inherited runtime is intentionally leaked because its
+    /// synchronization and I/O state belonged to parent threads that no longer exist.
     pub fn after_fork_child(&self) -> Result<(), SharedRuntimeError> {
         debug!("after_fork_child: reinitializing runtime and workers");
-        self.restart_runtime()?;
-
-        let runtime_lock = self.runtime.lock_or_panic();
-        let handle = runtime_lock
-            .as_ref()
-            .ok_or(SharedRuntimeError::RuntimeUnavailable)?
-            .handle()
-            .clone();
-        drop(runtime_lock);
+        let runtime = Arc::new(build_runtime(self.worker_threads)?);
+        let handle = runtime.handle().clone();
+        let inherited_runtime = self.runtime.lock_or_panic().replace(runtime);
+        if let Some(inherited_runtime) = inherited_runtime {
+            // The inherited runtime contains synchronization primitives and I/O state from
+            // threads that no longer exist. Dropping it in the child can block or panic.
+            std::mem::forget(inherited_runtime);
+        }
 
         let mut workers_lock = self.workers.lock_or_panic();
 
@@ -194,8 +198,7 @@ impl SharedRuntime for ForkSafeRuntime {
         let mut pausable_worker = PausableWorker::new(boxed_worker);
 
         // Hold both locks together (runtime → workers, per struct lock order) so
-        // before_fork cannot interleave between start and push. If runtime is already
-        // None (fork window), skip start; after_fork_* will pick it up.
+        // before_fork cannot interleave between start and push.
         let runtime_guard = self.runtime.lock_or_panic();
         let mut workers_guard = self.workers.lock_or_panic();
 
@@ -229,7 +232,7 @@ impl SharedRuntime for ForkSafeRuntime {
 }
 
 impl BlockingRuntime for ForkSafeRuntime {
-    /// Falls back to a temporary current-thread runtime in the fork window.
+    /// Falls back to a temporary current-thread runtime when the owned runtime is unavailable.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
         let runtime = match self.runtime.lock_or_panic().as_ref() {
             None => Arc::new(Builder::new_current_thread().enable_all().build()?),
@@ -244,7 +247,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::mpsc::{channel, Receiver, Sender};
-    use std::time::Duration;
+    use std::sync::{Arc, Barrier};
+    use std::time::{Duration, Instant};
     use tokio::time::sleep;
 
     #[derive(Debug)]
@@ -356,6 +360,52 @@ mod tests {
             after_fork_value > state_before_fork,
             "after_fork_parent should preserve state: got {after_fork_value}, expected > {state_before_fork}"
         );
+    }
+
+    #[test]
+    fn test_before_fork_does_not_wait_for_blocking_runtime_task() {
+        #[derive(Debug)]
+        struct BlockingWorker {
+            entered: Sender<()>,
+            release: Arc<Barrier>,
+        }
+
+        #[async_trait]
+        impl Worker for BlockingWorker {
+            async fn run(&mut self) {
+                let entered = self.entered.clone();
+                let release = self.release.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = entered.send(());
+                    release.wait();
+                })
+                .await;
+            }
+
+            async fn trigger(&mut self) {}
+        }
+
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (entered_tx, entered_rx) = channel();
+        let release = Arc::new(Barrier::new(2));
+        let worker = BlockingWorker {
+            entered: entered_tx,
+            release: release.clone(),
+        };
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+        entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not enter the blocking runtime task");
+
+        let start = Instant::now();
+        shared_runtime.before_fork();
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "before_fork waited for a blocking runtime task"
+        );
+
+        release.wait();
+        shared_runtime.shutdown(None).unwrap();
     }
 
     #[test]
