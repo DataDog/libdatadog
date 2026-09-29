@@ -120,29 +120,31 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_tracer_metadata_store(
     ptr: *mut TracerMetadata,
-) -> Result<TracerMemfdHandle> { unsafe {
-    if ptr.is_null() {
-        return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
-            "Failed to store tracer metadata: received a null pointer"
-        ))
-        .into();
-    }
+) -> Result<TracerMemfdHandle> {
+    unsafe {
+        if ptr.is_null() {
+            return Err::<TracerMemfdHandle, _>(anyhow::anyhow!(
+                "Failed to store tracer metadata: received a null pointer"
+            ))
+            .into();
+        }
 
-    let metadata = &mut *ptr;
-    let result: anyhow::Result<TracerMemfdHandle> =
-        match tracer_metadata::store_tracer_metadata(metadata) {
-            #[cfg(target_os = "linux")]
-            Ok(handle) => {
-                use std::os::fd::{IntoRawFd, OwnedFd};
-                let AnonymousFileHandle::Linux(memfd) = handle;
-                let owned_fd: OwnedFd = memfd.into_file().into();
-                Ok(TracerMemfdHandle {
-                    fd: owned_fd.into_raw_fd(),
-                })
-            }
-            #[cfg(not(target_os = "linux"))]
-            Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
-            Err(err) => Err(err),
-        };
-    result.into()
-}}
+        let metadata = &mut *ptr;
+        let result: anyhow::Result<TracerMemfdHandle> =
+            match tracer_metadata::store_tracer_metadata(metadata) {
+                #[cfg(target_os = "linux")]
+                Ok(handle) => {
+                    use std::os::fd::{IntoRawFd, OwnedFd};
+                    let AnonymousFileHandle::Linux(memfd) = handle;
+                    let owned_fd: OwnedFd = memfd.into_file().into();
+                    Ok(TracerMemfdHandle {
+                        fd: owned_fd.into_raw_fd(),
+                    })
+                }
+                #[cfg(not(target_os = "linux"))]
+                Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
+                Err(err) => Err(err),
+            };
+        result.into()
+    }
+}
