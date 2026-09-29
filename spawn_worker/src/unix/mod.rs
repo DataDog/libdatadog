@@ -13,6 +13,8 @@ use std::{
 
 pub mod fork;
 
+#[cfg(all(target_os = "linux", feature = "trampoline-host-loader"))]
+mod elf_interp;
 mod spawn;
 pub use spawn::*;
 
@@ -103,6 +105,34 @@ pub fn read_pt_interp_self() -> Option<PathBuf> {
     Some(PathBuf::from(interp.to_string_lossy().as_ref()))
 }
 
+/// The trampoline executable, set up to run under the running process's own
+/// dynamic loader.
+///
+/// The embedded trampoline carries the interpreter of the libc it was linked
+/// against. A trampoline built against musl with glibc-compatible library names
+/// also runs on glibc, but only through glibc's loader, so rewrite its padded
+/// PT_INTERP to the loader this process uses. Falls back to the embedded image
+/// when this process has no interpreter or its path does not fit.
+#[cfg(all(target_os = "linux", feature = "trampoline-host-loader"))]
+pub(crate) fn trampoline_bin() -> std::borrow::Cow<'static, [u8]> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let Some(loader) = read_pt_interp_self() else {
+        return std::borrow::Cow::Borrowed(crate::TRAMPOLINE_BIN);
+    };
+    let mut bin = crate::TRAMPOLINE_BIN.to_vec();
+    if elf_interp::set_interp_path(&mut bin, loader.as_os_str().as_bytes()) {
+        std::borrow::Cow::Owned(bin)
+    } else {
+        std::borrow::Cow::Borrowed(crate::TRAMPOLINE_BIN)
+    }
+}
+
+#[cfg(not(all(target_os = "linux", feature = "trampoline-host-loader")))]
+pub(crate) fn trampoline_bin() -> std::borrow::Cow<'static, [u8]> {
+    std::borrow::Cow::Borrowed(crate::TRAMPOLINE_BIN)
+}
+
 impl Entrypoint {
     pub fn get_fs_path(&self) -> Option<PathBuf> {
         let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };
@@ -142,4 +172,27 @@ macro_rules! assert_child_exit {
     ($pid:expr) => {
         assert_child_exit!($pid, 0)
     };
+}
+
+#[cfg(all(test, target_os = "linux", feature = "trampoline-host-loader"))]
+mod trampoline_interp_tests {
+    use super::{elf_interp, read_pt_interp_self, trampoline_bin};
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn embedded_trampoline_has_padded_interpreter() {
+        let range = elf_interp::interp_range(crate::TRAMPOLINE_BIN).expect("no PT_INTERP");
+        assert_eq!(range.len(), elf_interp::INTERP_CAPACITY);
+    }
+
+    #[test]
+    fn trampoline_runs_under_this_process_loader() {
+        let loader = read_pt_interp_self().expect("test binary has no interpreter");
+        let bin = trampoline_bin();
+        assert_eq!(
+            elf_interp::interp_path(&bin),
+            Some(loader.as_os_str().as_bytes())
+        );
+        assert_eq!(bin.len(), crate::TRAMPOLINE_BIN.len());
+    }
 }
