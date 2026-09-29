@@ -87,6 +87,11 @@ In this model, the SDK either needs to:
 - (**Recommended**) Enable the `thread-exit-autoclean` feature, which will
   piggy back on Rust built-in TLS clean up mechanism to free any context still
   attached when the thread is exited.
+
+  In this case, **do not attach nor free contexts yourself** (swapping model,
+  GC finalizers, your own thread-exit hooks, etc.) which could incur a risk of
+  double free. Only call `update` and let the auto-cleaner takes care of
+  freeing a context when the thread is exited.
 - Manually install their own thread hooks to detach and free a potential
   context upon thread exits, typically using pthread, OS or runtime-based
   mechanisms.

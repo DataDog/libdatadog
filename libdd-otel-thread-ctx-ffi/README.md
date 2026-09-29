@@ -15,4 +15,5 @@ lifecycle" section) for a detailed explanation. TLDR:
 - **If you're using the in-place `update` API, enable the
   `thread-exit-autoclean` feature to avoid leaking contexts upon thread exit**. 
 - If you're instead attaching/deattaching contexts wrapped in GC-managed
-  objects, you're all set. 
+  objects, you're all set. **Leave the `thread-exit-autoclean` feature disabled
+  in this case**, which could cause double free.
