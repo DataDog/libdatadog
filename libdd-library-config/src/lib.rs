@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod config_read;
+pub mod io;
 pub use config_read::*;
 
 #[cfg(all(
@@ -536,19 +537,19 @@ impl Configurator {
         debug_messages: &mut Vec<String>,
     ) -> Result<StableConfig, anyhow::Error> {
         let bytes = match reader.read(path) {
+            Ok(bytes) if bytes.len() <= MAX_CONFIG_FILE_SIZE => Some(bytes),
             // Safety net per the `ConfigRead` trait contract: oversized output from a custom
-            // reader is treated like `TooLarge`.
-            Ok(bytes) if bytes.len() <= MAX_CONFIG_FILE_SIZE => bytes,
-            Ok(_) | Err(ConfigReadError::TooLarge) => {
-                debug_messages.push(format!(
-                    "failed to read {label} config file: file is too large (> 100mb)"
-                ));
-                return Ok(StableConfig::default());
-            }
-            Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
-            Err(ConfigReadError::Io(e)) => {
-                anyhow::bail!("failed to read {label} config file: {e}")
-            }
+            // reader is treated like `FileTooLarge`.
+            Ok(_) => None,
+            Err(e) if e.kind() == io::ErrorKind::FileTooLarge => None,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(StableConfig::default()),
+            Err(e) => anyhow::bail!("failed to read {label} config file: {e}"),
+        };
+        let Some(bytes) = bytes else {
+            debug_messages.push(format!(
+                "failed to read {label} config file: file is too large (> 100mb)"
+            ));
+            return Ok(StableConfig::default());
         };
 
         match self.parse_stable_config_slice(&bytes) {
@@ -1400,11 +1401,11 @@ mod config_read_tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use super::{ConfigRead, ConfigReadError, Configurator, ProcessInfo};
+    use super::{io, ConfigRead, Configurator, ProcessInfo};
 
     /// In-memory reader for testing the `ConfigRead` trait without filesystem access.
     struct MemReader {
-        files: BTreeMap<String, Result<Vec<u8>, ConfigReadError<String>>>,
+        files: BTreeMap<String, Result<Vec<u8>, io::ErrorKind>>,
     }
 
     impl MemReader {
@@ -1419,20 +1420,19 @@ mod config_read_tests {
             self
         }
 
-        fn with_error(mut self, path: &str, err: ConfigReadError<String>) -> Self {
-            self.files.insert(path.to_string(), Err(err));
+        fn with_error(mut self, path: &str, kind: io::ErrorKind) -> Self {
+            self.files.insert(path.to_string(), Err(kind));
             self
         }
     }
 
     impl ConfigRead for MemReader {
-        type IoError = String;
-
-        fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<String>> {
+        fn read(&self, path: &str) -> io::Result<Vec<u8>> {
             self.files
                 .get(path)
                 .cloned()
-                .unwrap_or(Err(ConfigReadError::NotFound))
+                .unwrap_or(Err(io::ErrorKind::NotFound))
+                .map_err(io::Error::from)
         }
     }
 
@@ -1447,7 +1447,7 @@ mod config_read_tests {
     #[test]
     fn reader_too_large_skipped() {
         let reader = MemReader::new()
-            .with_error("/local", ConfigReadError::TooLarge)
+            .with_error("/local", io::ErrorKind::FileTooLarge)
             .with_file(
                 "/fleet",
                 b"apm_configuration_default:\n  DD_SERVICE: fleet-svc",
@@ -1469,10 +1469,7 @@ mod config_read_tests {
 
     #[test]
     fn reader_io_error_aborts() {
-        let reader = MemReader::new().with_error(
-            "/local",
-            ConfigReadError::Io("permission denied".to_string()),
-        );
+        let reader = MemReader::new().with_error("/local", io::ErrorKind::PermissionDenied);
 
         let configurator = Configurator::new(false);
         let result =

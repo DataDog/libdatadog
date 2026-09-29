@@ -36,7 +36,6 @@ serde = { workspace = true, features = ["derive", "alloc"] }
 yaml_serde = { workspace = true }
 prost = { workspace = true, features = ["std"], optional = true }
 anyhow.workspace = true
-thiserror.workspace = true
 
 rand = { workspace = true, default-features = true, optional = true }
 rmp-serde = { workspace = true, optional = true }
