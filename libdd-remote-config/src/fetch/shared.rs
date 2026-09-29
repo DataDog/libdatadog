@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::fetch::{
-    random_uuid_string, ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
+    ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    random_uuid_string,
 };
 use crate::{RemoteConfigPath, Target};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
@@ -395,9 +396,9 @@ impl SharedFetcher {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::Target;
     use crate::fetch::fetcher::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
-    use crate::Target;
     use futures::future::join_all;
     use libdd_capabilities_impl::NativeCapabilities;
     use std::sync::{Arc, LazyLock};
