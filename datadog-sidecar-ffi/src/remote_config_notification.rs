@@ -17,10 +17,10 @@ use std::ffi::c_void;
 /// with `ddog_sidecar_remote_config_notification_drop`. Session configuration does not take
 /// ownership of the notification.
 ///
-/// The callback runs asynchronously on a Windows thread-pool thread. Calls for the same
-/// notification do not overlap, but several remote configuration updates may be represented by
-/// one call. Treat the callback as a prompt to read the latest configuration rather than as a
-/// count of updates.
+/// The callback runs asynchronously on a Windows thread-pool thread. Invocations of the
+/// caller-provided callback for the same notification do not overlap, but several remote
+/// configuration updates may be coalesced into one callback invocation. Treat the callback as a
+/// prompt to read the latest configuration rather than as a count of updates.
 ///
 /// If the function returns an error, a valid `out` parameter is set to NULL.
 ///
