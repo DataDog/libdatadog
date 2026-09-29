@@ -1301,7 +1301,6 @@ impl<
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,
-    pub runtime_id: Option<String>,
     pub debug_enabled: bool,
 }
 
