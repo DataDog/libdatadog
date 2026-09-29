@@ -3,8 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Diff-scoped enforcement of .sg/rules/ffi-extern-c-panic-containment.yml.
-# Matching is ast-grep; git only decides which signatures are new
-# (hundreds of legacy accessors are left alone).
+#
+# The rule itself is a whole-repo matcher and could run on every
+# `pub extern "C"` function. About 400 existing accessors would fail
+# that scan; we do not rewrite them here. This script is what makes
+# the check blocking-but-additive: ast-grep finds every match, git
+# diff -U0 decides which signatures are new on the branch, and only
+# those fail. `run-ast-grep.sh` leaves the rule `--off` on the
+# whole-repo scan so those legacy hits stay quiet.
 #
 # Usage:
 #   ./scripts/run-ffi-panic-lint.sh

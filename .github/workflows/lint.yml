@@ -73,6 +73,10 @@ jobs:
 
   # Structural / syntactic rules in .sg/rules. Cheap: no rustc, no matrix.
   # Same command as local: bash scripts/run-ast-grep.sh
+  # fetch-depth: 0 so run-ffi-panic-lint.sh can diff the PR against its
+  # base and fail only newly added uncontained pub extern "C" signatures
+  # (~400 legacy accessors are grandfathered; the rule can scan the
+  # whole tree).
   ast-grep:
     runs-on: ubuntu-latest
     steps:

@@ -2,7 +2,7 @@ id: ffi-extern-c-panic-containment
 language: rust
 severity: warning
 message: >-
-  New pub extern "C" entry points must acknowledge panic containment.
+  pub extern "C" entry points must acknowledge panic containment.
   Wrap the body with wrap_with_ffi_result!, wrap_with_void_ffi_result!,
   catch_panic!, or std::panic::catch_unwind. If containment is wrong
   here (trivial accessor, or datadog-sidecar-ffi which uses panic=abort),
@@ -16,10 +16,6 @@ note: |
   Accepted in-body markers: catch_unwind, catch_panic!, wrap_with_ffi_result!,
   wrap_with_void_ffi_result!, and the *_no_catch! variants (explicit
   acknowledgement). Empty `// allow(ffi-panic-boundary):` is not enough.
-
-  Whole-repo scan leaves this rule off (~400 existing accessors). The
-  blocking check is diff-scoped: only functions whose signature was
-  added on the branch fail CI.
 files:
   - "**/*.rs"
 ignores:
