@@ -773,7 +773,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
             let mut metadata = MutableMetadata::default();
-            debug!("No runtime_id provided to the TraceExporter, generating an new one");
+            debug!("No runtime_id provided to the TraceExporter, generating a new one");
             metadata.runtime_id = uuid::Uuid::new_v4().to_string();
             metadata.into()
         });
