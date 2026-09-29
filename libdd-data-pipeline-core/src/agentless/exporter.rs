@@ -157,6 +157,12 @@ where
         }
     }
     for chunk in traces.iter_mut() {
+        // Chunk-level attributes are merged into every span at encode time, so they need
+        // scrubbing too, not just the spans' own attributes below.
+        libdd_trace_obfuscation::obfuscate::obfuscate_v1_chunk_attributes(
+            chunk,
+            &config.obfuscation_config,
+        );
         for span in &mut chunk.spans {
             // Obfuscate every span we are about to send to the intake
             libdd_trace_obfuscation::obfuscate::obfuscate_v1_span(span, &config.obfuscation_config);

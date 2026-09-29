@@ -23,7 +23,9 @@ use crate::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
     },
-    replacer::{replace_span_tags, replace_span_tags_v04, replace_span_tags_v1},
+    replacer::{
+        replace_chunk_tags_v1, replace_span_tags, replace_span_tags_v04, replace_span_tags_v1,
+    },
     sql::obfuscate_sql_opt,
 };
 
@@ -377,6 +379,28 @@ fn obfuscate_v04_attribute_value<T: TraceData>(
     if is_card {
         *value = AttributeArrayValue::String(T::Text::from_static_str("?"));
     }
+}
+
+/// Obfuscates the `attributes` common to every span of a [`v1::TraceChunk`].
+///
+/// Chunk-level attributes are merged into each emitted span at encode time (see
+/// `collect_attrs_v1` in the agentless encoder), so a card number or a tag matched by a
+/// replacement rule stored there would otherwise reach the intake unredacted even though the
+/// equivalent span-level tag is scrubbed by [`obfuscate_v1_span`]. Only the generic credit-card
+/// and tag-replace handling applies here: the per-span-type obfuscators (URL, SQL, redis, ...)
+/// only make sense on a span's own tags.
+pub fn obfuscate_v1_chunk_attributes<T: TraceData>(
+    chunk: &mut v1::TraceChunk<T>,
+    config: &ObfuscationConfig,
+) {
+    if config.credit_cards.enabled {
+        chunk
+            .attributes
+            .iter_mut()
+            .filter(|(key, _)| should_obfuscate_cc_key(as_str(key), config))
+            .for_each(|(_, value)| obfuscate_v1_attribute_credit_card(value, config));
+    }
+    replace_chunk_tags_v1(chunk, &config.tag_replace_rules);
 }
 
 /// Obfuscates the fields of a [`v1::Span`].
