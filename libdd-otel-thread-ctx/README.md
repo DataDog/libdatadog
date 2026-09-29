@@ -26,7 +26,9 @@ explicitly releasing the memory backing thread records**:
   that will be automatically freed when it goes out of scope, as any normal
   Rust struct. In that case, there's nothing special to do.
 - For both the FFI and pure Rust API consumers, **you need to make sure no
-  context remains attached (and thus allocated) when the thread exits**.
+  context remains attached (and thus allocated) when the thread exits**,
+  unless the `thread-exit-autoclean` feature is enabled, which reclaims any
+  still-attached context on thread exit (see the In-place update section).
   Otherwise this will leak several hundred bytes for every thread created and
   destroyed, which can add up quickly.
 
