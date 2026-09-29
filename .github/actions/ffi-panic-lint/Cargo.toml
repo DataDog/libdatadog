@@ -1,0 +1,17 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "ffi-panic-lint"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87.0"
+description = "Checks newly added C FFI entry points for panic containment"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/ffi-panic-lint"
+repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/ffi-panic-lint"
+publish = false
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4", features = ["derive", "env"] }
+regex = "1"

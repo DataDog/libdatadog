@@ -106,6 +106,7 @@ mod unix {
             .demangle_names(true)
             .endpoint_url(output_url)
             .resolve_frames(stacktrace_collection)
+            .unwind_from_ucontext(env::var_os("DD_TEST_UNWIND_FROM_UCONTEXT").is_some())
             .signals(crashtracker::default_signals())
             .timeout(TEST_COLLECTOR_TIMEOUT)
             .unix_socket_path("".to_string())

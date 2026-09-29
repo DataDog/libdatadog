@@ -728,6 +728,48 @@ impl<
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
+    /// Force an immediate flush of client-computed stats if stats computation is currently
+    /// enabled.
+    ///
+    /// # Returns
+    ///
+    /// `true` when client-side stats computation is enabled and a flush was requested.
+    /// `false` when stats computation is disabled. A `true` return does not guarantee that
+    /// the flush completed: if the stats worker was concurrently shut down (during forks
+    /// for instance), no flush is performed.
+    pub async fn flush_client_side_stats_async(&self) -> bool {
+        let status = self.client_side_stats.status.load_full();
+        if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
+            if let Some(exporter) = flush_handle.upgrade() {
+                exporter.force_flush().await;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sync call over [`Self::flush_client_side_stats_async`]
+    ///
+    /// # Panics
+    ///
+    /// Panics if called inside an existing tokio context.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn flush_client_side_stats(&self) -> bool
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.flush_client_side_stats_async())
+            .unwrap_or_else(|e| {
+                debug!(
+                    ?e,
+                    "Failed to run client-side stats flush on the shared runtime"
+                );
+                false
+            })
+    }
+
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
     async fn send_agentless_traces_inner<T: TraceData>(
         &self,
@@ -969,11 +1011,13 @@ impl<
                 .await;
         }
 
-        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
-        // Unlike the agent path, there is no downstream agent to drop unsampled traces,
-        // so drop_chunks is always called here regardless of whether stats are enabled.
         if let Some(otlp) = &self.otlp {
-            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            // Unlike the agent path, there is no downstream agent to drop unsampled traces,
+            // if client-side-stats is enabled, we have already dropped chunks after performing stat
+            // computations otherwise drop here
+            if !client_side_stats {
+                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            }
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
@@ -1571,9 +1615,9 @@ mod tests {
             Self(NativeCapabilities::new_client())
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
-            Self(NativeCapabilities::new_without_connection_pooling())
+            Self(NativeCapabilities::new_periodic())
         }
 
         fn request(
@@ -2602,6 +2646,7 @@ mod tests {
             BytesString::from_static("http.url"),
             BytesString::from_static("http://foo.com/path?secret=bar"),
         );
+        span.dedup();
         let traces: Vec<Vec<SpanBytes>> = vec![vec![span]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());

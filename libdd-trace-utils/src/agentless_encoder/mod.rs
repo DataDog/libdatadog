@@ -656,9 +656,13 @@ fn collect_attrs_v1<'a, T: TraceData>(
 /// context (`trace_id`, `origin`, `priority`, `sampling_mechanism`, `dropped_trace`, chunk
 /// attributes) is propagated into every span, matching the [`v1::TraceChunk`]-level granularity v1
 /// operates at.
+///
+/// `client_side_stats` has the same meaning as in [`encode_payload`]: when `true`, the encoder
+/// will **not** inject `meta["_dd.compute_stats"]="1"` on the first span of each chunk.
 pub fn encode_payload_from_v1<T: TraceData>(
     chunks: &[v1::TraceChunk<T>],
     metadata: &TracerMetadata,
+    client_side_stats: bool,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let mut bytes = Vec::new();
     let mut serializer = serde_json::Serializer::new(&mut bytes);
@@ -666,11 +670,11 @@ pub fn encode_payload_from_v1<T: TraceData>(
     let mut map_ser = serializer.serialize_map(Some(1))?;
     map_ser.serialize_entry(
         "traces",
-        &ser_fn!(<T: TraceData> |ser, chunks: &'a [v1::TraceChunk<T>], metadata: &'a TracerMetadata| {
+        &ser_fn!(<T: TraceData> |ser, chunks: &'a [v1::TraceChunk<T>], metadata: &'a TracerMetadata, client_side_stats: bool| {
             let mut traces_serializer = ser.serialize_seq(Some(chunks.len()))?;
             for chunk in chunks {
-                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, metadata: &'a TracerMetadata| {
-                    encode_trace_v1(ser, chunk, metadata)
+                traces_serializer.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, metadata: &'a TracerMetadata, client_side_stats: bool| {
+                    encode_trace_v1(ser, chunk, metadata, client_side_stats)
                 }))?;
             }
             traces_serializer.end()
@@ -684,6 +688,7 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     ser: S,
     chunk: &v1::TraceChunk<T>,
     metadata: &TracerMetadata,
+    client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
     let container_id = libdd_common::entity_id::get_container_id();
     let len = 2 // hostname + spans
@@ -717,12 +722,12 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "spans",
-        &ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>| {
+        &ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, client_side_stats: bool| {
             let mut seq = ser.serialize_seq(Some(chunk.spans.len()))?;
             for (i, span) in chunk.spans.iter().enumerate() {
                 let is_first = i == 0;
-                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, span: &'a v1::Span<T>, is_first: bool| {
-                    encode_span_v1(ser, chunk, span, is_first)
+                seq.serialize_element(&ser_fn!(<T: TraceData> |ser, chunk: &'a v1::TraceChunk<T>, span: &'a v1::Span<T>, is_first: bool, client_side_stats: bool| {
+                    encode_span_v1(ser, chunk, span, is_first, client_side_stats)
                 }))?;
             }
             seq.end()
@@ -737,6 +742,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
     chunk: &'a v1::TraceChunk<T>,
     span: &'a v1::Span<T>,
     is_first_in_trace: bool,
+    client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
     let mut map = ser.serialize_map(None)?;
 
@@ -789,7 +795,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
 
     map.serialize_entry(
         "meta",
-        &ser_fn!(<T: TraceData> |ser, span: &'a v1::Span<T>, chunk: &'a v1::TraceChunk<T>, meta_leaves: &'a Vec<(Cow<'a, str>, Cow<'a, str>)>, is_first_in_trace: bool, trace_id_high: u64| {
+        &ser_fn!(<T: TraceData> |ser, span: &'a v1::Span<T>, chunk: &'a v1::TraceChunk<T>, meta_leaves: &'a Vec<(Cow<'a, str>, Cow<'a, str>)>, is_first_in_trace: bool, trace_id_high: u64, client_side_stats: bool| {
             let mut meta = ser.serialize_map(None)?;
 
             let env: &str = span.env.borrow();
@@ -843,7 +849,7 @@ fn encode_span_v1<'a, T: TraceData, S: Serializer>(
                     meta.serialize_entry("events", &s)?;
                 }
             }
-            if !compute_stats_seen && is_first_in_trace {
+            if !compute_stats_seen && is_first_in_trace && !client_side_stats {
                 meta.serialize_entry("_dd.compute_stats", "1")?;
             }
             meta.end()

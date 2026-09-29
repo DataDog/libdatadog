@@ -2,6 +2,15 @@
 
 
 
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v4.0.0..libdd-trace-normalization-v4.1.0) - 2026-09-24
+
+### Changed
+
+- Solve cargo deny [APMSP-3884] ([#2318](https://github.com/datadog/libdatadog/issues/2318)) - ([b3be49d](https://github.com/datadog/libdatadog/commit/b3be49db79f93ac282e49e1b88f81d24d32040b6))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v3.0.1..libdd-trace-normalization-v4.0.0) - 2026-08-25
 
 ### Changed

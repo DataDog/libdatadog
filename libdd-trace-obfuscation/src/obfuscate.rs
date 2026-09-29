@@ -16,13 +16,13 @@ use crate::{
     credit_cards::{is_card_number, obfuscate_card_number},
     http::{obfuscate_url, obfuscate_url_string},
     memcached::{obfuscate_memcached, obfuscate_memcached_string},
-    obfuscation_config::ObfuscationConfig,
+    obfuscation_config::{DbmsKind, ObfuscationConfig, SqlConfig, SqlObfuscationMode},
     redis::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
     },
     replacer::{replace_span_tags, replace_span_tags_v04},
-    sql::{obfuscate_sql_opt, DbmsKind, SqlObfuscationMode},
+    sql::obfuscate_sql_resource,
 };
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
@@ -51,6 +51,10 @@ const TAG_DBMS: &str = "db.type";
 /// - `"redis"`, `"valkey"`: Redis quantization (command names only)
 ///
 /// Returns `Some(obfuscated)` if the resource was modified, `None` if no obfuscation was needed.
+///
+/// A non-empty SQL resource always yields `Some`: on obfuscation failure that is
+/// [`crate::sql::SQL_NON_PARSABLE_REPLACEMENT`], never the resource as sent, so aggregation cannot
+/// fall back to unobfuscated SQL. An exactly empty resource is left untouched.
 #[must_use]
 pub fn obfuscate_resource_for_stats(
     span_type: &str,
@@ -63,11 +67,11 @@ pub fn obfuscate_resource_for_stats(
             let dbms: DbmsKind = dbms_hint
                 .and_then(|d| d.try_into().ok())
                 .unwrap_or_default();
-            let config = &crate::sql::SqlObfuscateConfig {
+            let config = SqlConfig {
                 obfuscation_mode: sql_obfuscation_mode,
                 ..Default::default()
             };
-            Some(crate::sql::obfuscate_sql(resource, config, dbms))
+            Some(obfuscate_sql_resource(resource, &config, dbms))
         }
         "redis" | "valkey" => Some(quantize_redis_string(resource)),
         _ => None,
@@ -97,7 +101,7 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 *url = obfuscate_url_string(
                     url,
                     config.http.remove_query_string,
-                    config.http.remove_paths_with_digits,
+                    config.http.remove_path_digits,
                 );
             }
         }
@@ -141,7 +145,9 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 .map(String::as_str)
                 .and_then(|dbms| TryInto::try_into(dbms).ok())
                 .unwrap_or_default();
-            let obfuscated_query = crate::sql::obfuscate_sql(&span.resource, &config.sql, dbms);
+            // On failure the resource is discarded for the Agent's marker rather than forwarded
+            // as sent; see `obfuscate_sql_resource`.
+            let obfuscated_query = obfuscate_sql_resource(&span.resource, &config.sql, dbms);
             span.resource.clone_from(&obfuscated_query);
             span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
         }
@@ -167,9 +173,7 @@ pub fn obfuscate_pb_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
         _ => {}
     }
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags(span, tag_replace_rules, &mut String::new());
-    }
+    replace_span_tags(span, &config.tag_replace_rules, &mut String::new());
 }
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
@@ -265,7 +269,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
                     obfuscate_url(
                         u,
                         config.http.remove_query_string,
-                        config.http.remove_paths_with_digits,
+                        config.http.remove_path_digits,
                     )
                 });
             }
@@ -308,13 +312,14 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
                 .map(as_str)
                 .and_then(|dbms| TryInto::try_into(dbms).ok())
                 .unwrap_or_default();
-            if let Some(query) = obfuscate_sql_opt(as_str(&span.resource), &config.sql, dbms) {
-                span.resource = T::Text::from_owned(query.clone());
-                span.meta.insert(
-                    T::Text::from_static_str(TAG_SQLQUERY),
-                    T::Text::from_owned(query),
-                );
-            }
+            // On failure the resource is discarded for the Agent's marker rather than forwarded
+            // as sent; see `obfuscate_sql_resource`.
+            let query = obfuscate_sql_resource(as_str(&span.resource), &config.sql, dbms);
+            span.resource = T::Text::from_owned(query.clone());
+            span.meta.insert(
+                T::Text::from_static_str(TAG_SQLQUERY),
+                T::Text::from_owned(query),
+            );
         }
         "elasticsearch" if config.elasticsearch.config().enabled => {
             if let Some(elastic_query) = span.meta.get_mut(TAG_ELASTIC_BODY) {
@@ -334,9 +339,7 @@ pub fn obfuscate_v04_span<T: TraceData>(span: &mut v04::Span<T>, config: &Obfusc
         _ => {}
     }
 
-    if let Some(tag_replace_rules) = &config.tag_replace_rules {
-        replace_span_tags_v04(span, tag_replace_rules);
-    }
+    replace_span_tags_v04(span, &config.tag_replace_rules);
 }
 
 /// Obfuscates credit-card numbers inside the attributes of a [`v04::SpanEvent`].
@@ -435,18 +438,28 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{obfuscate_pb_span, obfuscate_resource_for_stats};
-    use crate::{obfuscation_config, replacer};
+    use super::{obfuscate_pb_span, obfuscate_resource_for_stats, pb};
+    use crate::{
+        obfuscation_config::{self, SqlObfuscationMode},
+        replacer,
+        sql::SQL_NON_PARSABLE_REPLACEMENT,
+    };
     use libdd_trace_utils::test_utils;
+
+    /// Non-empty SQL resources that tokenize to nothing, so obfuscation fails and the Agent's
+    /// `Non-parsable SQL query` marker has to replace them. The comment-only cases carry text no
+    /// test expects to see again, so a resource forwarded as sent instead of discarded fails
+    /// loudly.
+    pub(super) const UNOBFUSCATABLE_SQL: &[&str] = &[
+        "   ",
+        "\n\t \r\n",
+        "-- SELECT secret-hunter2-must-not-leak",
+        "/* SELECT secret-hunter2-must-not-leak */",
+    ];
 
     // test helper with default params
     fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
-        obfuscate_resource_for_stats(
-            span_type,
-            resource,
-            None,
-            crate::sql::SqlObfuscationMode::default(),
-        )
+        obfuscate_resource_for_stats(span_type, resource, None, SqlObfuscationMode::default())
     }
 
     #[test]
@@ -487,6 +500,22 @@ mod tests {
         assert!(obfuscate_stats("sql", "").is_none());
     }
 
+    /// A stats resource that cannot be obfuscated has to aggregate under the Agent's marker.
+    /// `None` would make the concentrator keep the resource as sent, forwarding the SQL text.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn test_obfuscate_resource_for_stats_unobfuscatable_sql() {
+        for resource in UNOBFUSCATABLE_SQL {
+            for span_type in ["sql", "cassandra"] {
+                assert_eq!(
+                    obfuscate_stats(span_type, resource).as_deref(),
+                    Some(SQL_NON_PARSABLE_REPLACEMENT),
+                    "{span_type} resource: {resource:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_obfuscates_span_url_strings() {
         let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
@@ -498,7 +527,7 @@ mod tests {
         let obf_config = obfuscation_config::ObfuscationConfig {
             http: obfuscation_config::HttpConfig {
                 remove_query_string: true,
-                remove_paths_with_digits: true,
+                remove_path_digits: true,
             },
             ..Default::default()
         };
@@ -521,7 +550,7 @@ mod tests {
         )
         .unwrap();
         let obf_config = obfuscation_config::ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 
@@ -610,15 +639,62 @@ mod tests {
         obfuscate_pb_span(&mut span, &obf_config);
         assert_eq!(span.meta.get("env").unwrap(), "4111111111111111");
     }
+
+    fn sql_pb_span(span_type: &str, resource: &str) -> pb::Span {
+        let mut span = test_utils::create_test_span(111, 222, 0, 1, true);
+        span.r#type = span_type.to_string();
+        span.resource = resource.to_string();
+        obfuscate_pb_span(&mut span, &obfuscation_config::ObfuscationConfig::default());
+        span
+    }
+
+    #[test]
+    fn obfuscate_sql_resource_and_query() {
+        let span = sql_pb_span("sql", "SELECT * FROM users WHERE id = 42");
+        assert_eq!(span.resource, "SELECT * FROM users WHERE id = ?");
+        assert_eq!(
+            span.meta.get("sql.query").map(String::as_str),
+            Some("SELECT * FROM users WHERE id = ?")
+        );
+    }
+
+    /// SQL that cannot be obfuscated is discarded for the Agent's marker in both the resource and
+    /// `sql.query`, rather than reaching the backend as sent.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn obfuscate_unobfuscatable_sql_resource_is_replaced() {
+        for resource in UNOBFUSCATABLE_SQL {
+            for span_type in ["sql", "cassandra"] {
+                let span = sql_pb_span(span_type, resource);
+                assert_eq!(
+                    span.resource, SQL_NON_PARSABLE_REPLACEMENT,
+                    "{span_type} resource: {resource:?}"
+                );
+                assert_eq!(
+                    span.meta.get("sql.query").map(String::as_str),
+                    Some(SQL_NON_PARSABLE_REPLACEMENT),
+                    "{span_type} resource: {resource:?}"
+                );
+            }
+        }
+    }
+
+    /// An exactly empty SQL resource stays empty and gains no `sql.query`, matching the Agent.
+    #[test]
+    fn obfuscate_empty_sql_resource_is_untouched() {
+        let span = sql_pb_span("sql", "");
+        assert_eq!(span.resource, "");
+        assert!(!span.meta.contains_key("sql.query"));
+    }
 }
 
 #[cfg(test)]
 mod v04_tests {
-    use super::obfuscate_v04_span;
+    use super::{obfuscate_v04_span, tests::UNOBFUSCATABLE_SQL};
     use crate::obfuscation_config::{
         CreditCardConfig, HttpConfig, MemcachedConfig, ObfuscationConfig, RedisConfig,
     };
-    use crate::replacer;
+    use crate::{replacer, sql::SQL_NON_PARSABLE_REPLACEMENT};
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::{
         AttributeAnyValue, AttributeArrayValue, SpanBytes, SpanEventBytes,
@@ -649,7 +725,7 @@ mod v04_tests {
         let obf_config = ObfuscationConfig {
             http: HttpConfig {
                 remove_query_string: true,
-                remove_paths_with_digits: true,
+                remove_path_digits: true,
             },
             ..Default::default()
         };
@@ -671,7 +747,7 @@ mod v04_tests {
         )
         .unwrap();
         let obf_config = ObfuscationConfig {
-            tag_replace_rules: Some(parsed_rules),
+            tag_replace_rules: parsed_rules,
             ..Default::default()
         };
 
@@ -729,15 +805,50 @@ mod v04_tests {
 
     #[test]
     fn obfuscate_sql_resource_and_query() {
-        let mut span = test_span();
-        span.r#type = bs("sql");
-        span.resource = bs("SELECT * FROM users WHERE id = 42");
-        obfuscate_v04_span(&mut span, &ObfuscationConfig::default());
+        let span = sql_v04_span("sql", "SELECT * FROM users WHERE id = 42");
         assert_eq!(span.resource.as_str(), "SELECT * FROM users WHERE id = ?");
         assert_eq!(
-            span.meta.get("sql.query").unwrap().as_str(),
-            "SELECT * FROM users WHERE id = ?"
+            span.meta.get("sql.query").map(BytesString::as_str),
+            Some("SELECT * FROM users WHERE id = ?")
         );
+    }
+
+    fn sql_v04_span(span_type: &str, resource: &str) -> SpanBytes {
+        let mut span = test_span();
+        span.r#type = bs(span_type);
+        span.resource = bs(resource);
+        obfuscate_v04_span(&mut span, &ObfuscationConfig::default());
+        span
+    }
+
+    /// SQL that cannot be obfuscated is discarded for the Agent's marker in both the resource and
+    /// `sql.query`, rather than reaching the backend as sent.
+    /// See <https://github.com/DataDog/libdatadog/issues/2541>.
+    #[test]
+    fn obfuscate_unobfuscatable_sql_resource_is_replaced() {
+        for resource in UNOBFUSCATABLE_SQL {
+            for span_type in ["sql", "cassandra"] {
+                let span = sql_v04_span(span_type, resource);
+                assert_eq!(
+                    span.resource.as_str(),
+                    SQL_NON_PARSABLE_REPLACEMENT,
+                    "{span_type} resource: {resource:?}"
+                );
+                assert_eq!(
+                    span.meta.get("sql.query").map(BytesString::as_str),
+                    Some(SQL_NON_PARSABLE_REPLACEMENT),
+                    "{span_type} resource: {resource:?}"
+                );
+            }
+        }
+    }
+
+    /// An exactly empty SQL resource stays empty and gains no `sql.query`, matching the Agent.
+    #[test]
+    fn obfuscate_empty_sql_resource_is_untouched() {
+        let span = sql_v04_span("sql", "");
+        assert_eq!(span.resource.as_str(), "");
+        assert!(!span.meta.contains_key("sql.query"));
     }
 
     #[test]

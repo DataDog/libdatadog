@@ -9,6 +9,7 @@
 #
 # Usage: ./release-version-bumps.sh --commits-by-crate FILE --out FILE --branch BRANCH
 #                                   [--hotfix] [--bypass-standard-checks]
+#                                   [--level-overrides CRATE=LEVEL,...]
 #
 # For every crate in the input, one of four things happens:
 #
@@ -17,8 +18,16 @@
 #             major-bump check can pull it back into the release, or drop it.
 #   skipped   its tag is not the latest for that crate, so a newer release already
 #             exists elsewhere. Overridden by --hotfix and --bypass-standard-checks.
-#   released  semver-level.sh picks the level, cargo-release applies it.
+#   released  semver-level.sh picks the level unless --level-overrides names the crate,
+#             in which case that level is used and semver-level.sh is not run.
+#             cargo-release applies whichever level won.
 #   initial   no tag at all: released at 0.1.0, or the run fails.
+#
+# --level-overrides exists so a reviewer who spots a wrong level can correct it by
+# re-dispatching the workflow, rather than checking the proposal branch out and running
+# cargo-release by hand. Overriding the input rather than patching the branch keeps the
+# cascade, the changelogs and the publication order consistent with the new level -- a
+# level corrected to major can pull further crates into the release.
 #
 # Diagnostics go to stdout (they are the caller's job log); the JSON result is written
 # to --out. semver-level.sh is resolved next to this script, so it always comes from
@@ -33,6 +42,7 @@ OUT_FILE=""
 BRANCH_NAME=""
 IS_HOTFIX=false
 BYPASS_STANDARD_CHECKS=false
+LEVEL_OVERRIDES=""
 
 usage() {
     echo "Usage: $0 --commits-by-crate FILE --out FILE --branch BRANCH [--hotfix] [--bypass-standard-checks]"
@@ -43,6 +53,8 @@ usage() {
     echo "  --branch BRANCH           Branch cargo-release is allowed to operate on (required)"
     echo "  --hotfix                  Release even when the crate's tag is not the latest"
     echo "  --bypass-standard-checks  Same, for testing runs"
+    echo "  --level-overrides SPEC    Comma-separated CRATE=LEVEL forcing a crate's bump"
+    echo "                            level (major|minor|patch) instead of computing it"
     echo "  --help, -h                Show this message"
 }
 
@@ -53,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --branch)           BRANCH_NAME="${2:?--branch needs a value}"; shift 2 ;;
         --hotfix)                 IS_HOTFIX=true; shift ;;
         --bypass-standard-checks) BYPASS_STANDARD_CHECKS=true; shift ;;
+        --level-overrides)  LEVEL_OVERRIDES="${2:?--level-overrides needs a value}"; shift 2 ;;
         --help|-h)          usage; exit 0 ;;
         *)                  echo "Unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -64,6 +77,27 @@ done
 [ -f "$COMMITS_BY_CRATE" ] || { echo "ERROR: not a file: $COMMITS_BY_CRATE" >&2; exit 1; }
 jq -e 'type == "array"' "$COMMITS_BY_CRATE" >/dev/null \
     || { echo "ERROR: $COMMITS_BY_CRATE is not a JSON array" >&2; exit 1; }
+
+# Parse --level-overrides into a lookup. Whitespace is stripped per entry, matching how
+# the workflow normalizes its `crates` input, so "a=minor, b=major" is accepted.
+declare -A OVERRIDE_LEVEL=()
+if [ -n "$LEVEL_OVERRIDES" ]; then
+    while IFS= read -r OV_ENTRY; do
+        [ -n "$OV_ENTRY" ] || continue
+        case "$OV_ENTRY" in
+            *=*) ;;
+            *) echo "ERROR: --level-overrides entry '$OV_ENTRY' is not CRATE=LEVEL" >&2; exit 1 ;;
+        esac
+        OV_CRATE="${OV_ENTRY%%=*}"
+        OV_LEVEL="${OV_ENTRY#*=}"
+        [ -n "$OV_CRATE" ] || { echo "ERROR: --level-overrides entry '$OV_ENTRY' has no crate name" >&2; exit 1; }
+        case "$OV_LEVEL" in
+            major|minor|patch) ;;
+            *) echo "ERROR: --level-overrides level for '$OV_CRATE' must be major, minor or patch, got '$OV_LEVEL'" >&2; exit 1 ;;
+        esac
+        OVERRIDE_LEVEL["$OV_CRATE"]="$OV_LEVEL"
+    done <<< "$(printf '%s\n' "$LEVEL_OVERRIDES" | tr ',' '\n' | sed 's/[[:space:]]//g')"
+fi
 
 echo "Release version bumps..."
 
@@ -84,6 +118,21 @@ append_row() {
 # script would exit 0 having released nothing.
 CRATE_ROWS=$(jq -c '.[]' "$COMMITS_BY_CRATE")
 
+# Every override must name a candidate. A name that is not one is a typo, or a crate the
+# dependency closure never pulled in; ignoring it silently would ship the computed level
+# while the operator believed they had corrected it.
+if [ ${#OVERRIDE_LEVEL[@]} -gt 0 ]; then
+    CANDIDATE_NAMES=$(jq -r '.[].name' "$COMMITS_BY_CRATE")
+    for OV_CRATE in "${!OVERRIDE_LEVEL[@]}"; do
+        if ! grep -qxF -- "$OV_CRATE" <<< "$CANDIDATE_NAMES"; then
+            echo "ERROR: --level-overrides names '$OV_CRATE', which is not in this release." >&2
+            echo "Candidates are:" >&2
+            sed 's/^/  /' <<< "$CANDIDATE_NAMES" >&2
+            exit 1
+        fi
+    done
+fi
+
 # iterate over the commits and execute cargo release for each crate
 while read -r crate; do
     # $ROWS is empty when there are no candidates; <<< still feeds one blank line.
@@ -98,12 +147,20 @@ while read -r crate; do
     TAG_COMMIT=""
     RANGE=""
     LEVEL=""
+    # The level --level-overrides asked for, recorded so the PR body can say the level was
+    # set by hand. Kept as the requested level rather than a flag: the libdd-* major-bump
+    # cascade may raise it afterwards, and then the row shows both what was asked and what
+    # the release landed on.
+    LEVEL_OVERRIDE_REQUESTED=""
 
     # if there are no commits and there is an existing tag, do not release the crate here.
     # but record it as a pending candidate
     if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then
         VERSION=$(echo "$crate" | jq -r '.version')
         echo "No commits since last release for $NAME; deferring to the libdd-* major-bump check"
+        if [ -n "${OVERRIDE_LEVEL[$NAME]:-}" ]; then
+            echo "WARNING: --level-overrides asked for ${OVERRIDE_LEVEL[$NAME]} on $NAME, but it has no commits and is deferred; the override does not apply" >&2
+        fi
         append_row --arg name "$NAME" \
             --arg tag "$TAG" \
             --arg version "$VERSION" \
@@ -143,17 +200,23 @@ while read -r crate; do
             fi
         fi
 
-        echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-        # stderr is folded in so the reason travels with a failure; without this the
-        # capture swallows it and the run aborts with nothing to go on.
-        if ! SEMVER_LEVEL=$("${SCRIPT_DIR}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1); then
-            echo "ERROR: semver-level.sh failed for $NAME:" >&2
-            echo "$SEMVER_LEVEL" >&2
-            exit 1
-        fi
-        echo "Semver level: $SEMVER_LEVEL"
+        if [ -n "${OVERRIDE_LEVEL[$NAME]:-}" ]; then
+            LEVEL="${OVERRIDE_LEVEL[$NAME]}"
+            LEVEL_OVERRIDE_REQUESTED="$LEVEL"
+            echo "Semver level for $NAME overridden to $LEVEL; not running semver-level.sh"
+        else
+            echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
+            # stderr is folded in so the reason travels with a failure; without this the
+            # capture swallows it and the run aborts with nothing to go on.
+            if ! SEMVER_LEVEL=$("${SCRIPT_DIR}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1); then
+                echo "ERROR: semver-level.sh failed for $NAME:" >&2
+                echo "$SEMVER_LEVEL" >&2
+                exit 1
+            fi
+            echo "Semver level: $SEMVER_LEVEL"
 
-        LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+            LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
+        fi
 
         echo "Executing cargo release for $NAME since $TAG with level $LEVEL..."
         cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x "$LEVEL" --no-confirm
@@ -166,6 +229,10 @@ while read -r crate; do
         LEVEL="major"
         TAG=""
         RANGE=""
+
+        if [ -n "${OVERRIDE_LEVEL[$NAME]:-}" ]; then
+            echo "WARNING: --level-overrides asked for ${OVERRIDE_LEVEL[$NAME]} on $NAME, but it has no previous tag; an initial release is 0.1.0 regardless" >&2
+        fi
 
         # fail when the version is not an initial release
         if [ "$VERSION" != "0.1.0" ]; then
@@ -195,7 +262,8 @@ while read -r crate; do
         --argjson commits "$COMMITS" \
         --arg path "$CRATE_PATH" \
         --arg initial_release "$INITIAL_RELEASE" \
-        '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]'
+        --arg level_override "$LEVEL_OVERRIDE_REQUESTED" \
+        '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release, "level_override": $level_override}]'
 done <<< "$CRATE_ROWS"
 
 # Output the results

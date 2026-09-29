@@ -1516,7 +1516,7 @@ mod tests {
             NativeAgentlessFetcher::new(
                 cfg,
                 endpoint,
-                <libdd_capabilities_impl::NativeCapabilities as libdd_capabilities::HttpClientCapability>::new_without_connection_pooling(),
+                <libdd_capabilities_impl::NativeCapabilities as libdd_capabilities::HttpClientCapability>::new_periodic(),
             )
             .await
             .unwrap_or_else(|e| panic!("failed to instantiate fetcher for site {site}: {e}"));

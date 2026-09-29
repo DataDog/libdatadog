@@ -6,5 +6,7 @@ members = [
     "ci-shared",
     "crates-reporter",
     "clippy-annotation-reporter",
+    "ffi-panic-lint",
+    "workspace-deps-lint",
 ]
 resolver = "2"
