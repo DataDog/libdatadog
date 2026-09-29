@@ -179,7 +179,7 @@ mod std_api {
     impl LibraryConfig {
         fn rs_vec_to_ffi(
             configs: Vec<lib_config::LibraryConfig>,
-        ) -> Result<ffi::Vec<Self>, alloc::ffi::NulError> {
+        ) -> anyhow::Result<ffi::Vec<Self>> {
             let cfg: Vec<LibraryConfig> = configs
                 .into_iter()
                 .map(|c| {
@@ -211,7 +211,7 @@ mod std_api {
                                 logs: cstring_logs,
                             })
                         }
-                        Err(err) => LibraryConfigLoggedResult::Err(Error::from(err.to_string())),
+                        Err(err) => LibraryConfigLoggedResult::Err(err.into()),
                     }
                 }
                 libdd_library_config::LoggedResult::Err(err) => {

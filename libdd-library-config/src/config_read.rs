@@ -16,7 +16,7 @@ pub const MAX_CONFIG_FILE_SIZE: usize = 100 * 1024 * 1024;
 /// - [`TooLarge`](Self::TooLarge) — the file exceeds [`MAX_CONFIG_FILE_SIZE`]; skipped with a debug
 ///   log.
 /// - [`Io`](Self::Io) — any other I/O or access error; aborts config loading.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum ConfigReadError<E: core::fmt::Display + core::fmt::Debug> {
     /// File does not exist at the given path.
     #[error("file not found")]
@@ -56,21 +56,17 @@ impl ConfigRead for StdConfigRead {
     fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<std::io::Error>> {
         use std::{fs, io};
 
-        let file = match fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ConfigReadError::NotFound),
-            Err(e) => return Err(ConfigReadError::Io(e)),
-        };
-        // Compare as u64 first so 32-bit targets can't truncate an oversized length down
-        // into the allowed range.
-        let len = match file.metadata() {
-            Ok(m) if m.len() > MAX_CONFIG_FILE_SIZE as u64 => {
-                return Err(ConfigReadError::TooLarge)
-            }
-            Ok(m) => m.len() as usize,
-            Err(e) => return Err(ConfigReadError::Io(e)),
-        };
-        let mut buf = Vec::with_capacity(len);
+        let file = fs::File::open(path).map_err(|e| match e.kind() {
+            io::ErrorKind::NotFound => ConfigReadError::NotFound,
+            _ => ConfigReadError::Io(e),
+        })?;
+        let len = file.metadata().map_err(ConfigReadError::Io)?.len();
+        // Compare as u64 so 32-bit targets can't truncate an oversized length.
+        if len > MAX_CONFIG_FILE_SIZE as u64 {
+            return Err(ConfigReadError::TooLarge);
+        }
+        // `len` is bounded by MAX_CONFIG_FILE_SIZE, so it fits in usize.
+        let mut buf = Vec::with_capacity(len as usize);
         io::Read::read_to_end(&mut &file, &mut buf).map_err(ConfigReadError::Io)?;
         // TOCTOU: the file may have grown between metadata() and read_to_end().
         if buf.len() > MAX_CONFIG_FILE_SIZE {

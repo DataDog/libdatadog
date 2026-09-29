@@ -38,9 +38,7 @@ impl SliceConversionError {
 
 impl core::fmt::Display for SliceConversionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // SAFETY: every arm of `message()` is a c-str literal — valid UTF-8 by construction.
-        let s = unsafe { core::str::from_utf8_unchecked(self.message().to_bytes()) };
-        f.write_str(s)
+        f.write_str(self.message().to_str().unwrap_or_default())
     }
 }
 

@@ -535,25 +535,17 @@ impl Configurator {
         label: &str,
         debug_messages: &mut Vec<String>,
     ) -> Result<StableConfig, anyhow::Error> {
-        // Safety net per the `ConfigRead` trait contract: a custom reader that fails to enforce
-        // `MAX_CONFIG_FILE_SIZE` is downgraded to `TooLarge` so we can't be pushed into a multi-GB
-        // parse.
-        let result = reader.read(path).and_then(|b| {
-            if b.len() > MAX_CONFIG_FILE_SIZE {
-                Err(ConfigReadError::TooLarge)
-            } else {
-                Ok(b)
-            }
-        });
-        let bytes = match result {
-            Ok(bytes) => bytes,
-            Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
-            Err(ConfigReadError::TooLarge) => {
+        let bytes = match reader.read(path) {
+            // Safety net per the `ConfigRead` trait contract: oversized output from a custom
+            // reader is treated like `TooLarge`.
+            Ok(bytes) if bytes.len() <= MAX_CONFIG_FILE_SIZE => bytes,
+            Ok(_) | Err(ConfigReadError::TooLarge) => {
                 debug_messages.push(format!(
                     "failed to read {label} config file: file is too large (> 100mb)"
                 ));
                 return Ok(StableConfig::default());
             }
+            Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
             Err(ConfigReadError::Io(e)) => {
                 anyhow::bail!("failed to read {label} config file: {e}")
             }
@@ -1437,13 +1429,10 @@ mod config_read_tests {
         type IoError = String;
 
         fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<String>> {
-            match self.files.get(path) {
-                Some(Ok(bytes)) => Ok(bytes.clone()),
-                Some(Err(ConfigReadError::NotFound)) => Err(ConfigReadError::NotFound),
-                Some(Err(ConfigReadError::TooLarge)) => Err(ConfigReadError::TooLarge),
-                Some(Err(ConfigReadError::Io(e))) => Err(ConfigReadError::Io(e.clone())),
-                None => Err(ConfigReadError::NotFound),
-            }
+            self.files
+                .get(path)
+                .cloned()
+                .unwrap_or(Err(ConfigReadError::NotFound))
         }
     }
 
