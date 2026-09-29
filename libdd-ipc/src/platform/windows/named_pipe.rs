@@ -6,7 +6,6 @@ use std::mem::MaybeUninit;
 use std::os::raw::c_void;
 use std::os::windows::io::RawHandle;
 use std::ptr::{addr_of_mut, null_mut};
-use winapi::um::winnt::WCHAR;
 use windows_sys::Win32::Foundation::{HANDLE, UNICODE_STRING};
 use windows_sys::Win32::System::WindowsProgramming::{NtQueryObject, OBJECT_INFORMATION_CLASS};
 
@@ -17,7 +16,7 @@ const ObjectNameInformation: OBJECT_INFORMATION_CLASS = 1i32;
 #[allow(non_snake_case)]
 struct OBJECT_NAME_INFORMATION {
     Name: UNICODE_STRING,
-    NameBuffer: [WCHAR; 1000],
+    NameBuffer: [u16; 1000],
 }
 
 pub const PIPE_PATH: &str = r"\\.\pipe\";

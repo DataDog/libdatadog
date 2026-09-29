@@ -1,3 +1,6 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
 edition = "2021"
 name = "spawn_worker"
@@ -31,11 +34,12 @@ features = [
 version = "0.51.1"
 
 [target.'cfg(windows)'.dependencies]
-# allow(workspace-deps): the legacy winapi 0.2 API (used together with
-# kernel32-sys) is a different, incompatible surface from the 0.3 line the
-# workspace entry pins.
-winapi = { version = "=0.2.8" }
-kernel32-sys.workspace = true
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(not(windows))'.dependencies]
 memfd.workspace = true
@@ -50,4 +54,3 @@ rlimit.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
-

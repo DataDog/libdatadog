@@ -7,6 +7,7 @@ use libc::getpid;
 use libdd_ipc::platform::PIPE_PATH;
 use libdd_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
 use std::io;
+use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
 pub type IpcClient = AsyncConn;
 pub type IpcServer = SeqpacketListener;
@@ -23,12 +24,7 @@ impl Liaison for NamedPipeLiaison {
     fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
         match SeqpacketListener::bind(&self.socket_path) {
             Ok(listener) => Ok(Some(listener)),
-            Err(ref e)
-                if e.raw_os_error()
-                    == Some(winapi::shared::winerror::ERROR_ACCESS_DENIED as i32) =>
-            {
-                Ok(None)
-            }
+            Err(ref e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => Ok(None),
             Err(e) => Err(e),
         }
     }

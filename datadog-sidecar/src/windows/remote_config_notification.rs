@@ -10,12 +10,11 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr;
 use std::sync::{Arc, Mutex};
-use winapi::shared::minwindef::TRUE;
-use winapi::um::synchapi::CreateEventW;
-use winapi::um::threadpoolapiset::{
-    CloseThreadpoolWait, CreateThreadpoolWait, SetThreadpoolWait, WaitForThreadpoolWaitCallbacks,
+use windows_sys::Win32::Foundation::{HANDLE, TRUE};
+use windows_sys::Win32::System::Threading::{
+    CloseThreadpoolWait, CreateEventW, CreateThreadpoolWait, SetThreadpoolWait,
+    WaitForThreadpoolWaitCallbacks, PTP_CALLBACK_INSTANCE, PTP_WAIT,
 };
-use winapi::um::winnt::{PTP_CALLBACK_INSTANCE, PTP_WAIT, TP_WAIT_RESULT};
 
 /// Owns a wait registered on the process's shared Windows thread pool.
 ///
@@ -36,26 +35,23 @@ impl RemoteConfigNotification {
         callback: unsafe extern "C" fn(*mut c_void),
         context: *mut c_void,
     ) -> io::Result<Self> {
-        let event = CreateEventW(ptr::null_mut(), 0, 0, ptr::null());
-        if event.is_null() {
+        let event = CreateEventW(ptr::null(), 0, 0, ptr::null());
+        if event == 0 {
             return Err(io::Error::last_os_error());
         }
         let mut state = Box::new(CallbackState {
-            event: PlatformHandle::from_raw_handle(event.cast()),
+            event: PlatformHandle::from_raw_handle(event as *mut c_void),
             id: rand::random(),
             callback,
             context,
             enabled: Arc::new(Mutex::new(true)),
         });
-        let wait = CreateThreadpoolWait(
-            Some(notify),
-            ptr::from_mut(&mut *state).cast(),
-            ptr::null_mut(),
-        );
-        if wait.is_null() {
+        let wait =
+            CreateThreadpoolWait(Some(notify), ptr::from_mut(&mut *state).cast(), ptr::null());
+        if wait == 0 {
             return Err(io::Error::last_os_error());
         }
-        SetThreadpoolWait(wait, state.event.as_raw_handle().cast(), ptr::null_mut());
+        SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
         Ok(Self { state, wait })
     }
 
@@ -76,7 +72,7 @@ impl Drop for RemoteConfigNotification {
             // The callback holds this mutex while deciding whether to rearm the wait. Disarming
             // it before releasing the mutex prevents the callback from rearming it after shutdown
             // has begun.
-            unsafe { SetThreadpoolWait(self.wait, ptr::null_mut(), ptr::null_mut()) };
+            unsafe { SetThreadpoolWait(self.wait, 0, ptr::null()) };
         }
         // A callback already in progress may need to acquire `enabled` before it can finish, so
         // release the mutex before waiting for active callbacks to drain.
@@ -98,9 +94,9 @@ struct CallbackState {
 
 unsafe extern "system" fn notify(
     _instance: PTP_CALLBACK_INSTANCE,
-    context: *mut winapi::ctypes::c_void,
+    context: *mut c_void,
     wait: PTP_WAIT,
-    _result: TP_WAIT_RESULT,
+    _result: u32,
 ) {
     // Release artifacts use panic=abort, so this system callback needs no unwind guard.
     let state = &*context.cast::<CallbackState>();
@@ -111,6 +107,6 @@ unsafe extern "system" fn notify(
     let enabled = state.enabled.lock().unwrap_or_else(|e| e.into_inner());
     if *enabled {
         // Waits are one-shot. Rearming only after client work coalesces concurrent signals.
-        SetThreadpoolWait(wait, state.event.as_raw_handle().cast(), ptr::null_mut());
+        SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
     }
 }

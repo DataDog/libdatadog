@@ -76,8 +76,9 @@ impl NotifyTarget for RemoteConfigNotifyTarget {
     #[cfg(windows)]
     fn notify(&self) {
         use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::HANDLE, System::Threading::SetEvent};
         unsafe {
-            if winapi::um::synchapi::SetEvent(self.event.as_raw_handle().cast()) == 0 {
+            if SetEvent(self.event.as_raw_handle() as HANDLE) == 0 {
                 tracing::warn!(
                     "Failed to signal remote config event: {}",
                     std::io::Error::last_os_error()
