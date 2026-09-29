@@ -2768,6 +2768,7 @@ name = "libdd-common"
 version = "7.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "cc",
  "const_format",
@@ -2957,6 +2958,7 @@ dependencies = [
  "build_common",
  "httpmock",
  "libdd-capabilities-impl",
+ "libdd-common",
  "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-shared-runtime",

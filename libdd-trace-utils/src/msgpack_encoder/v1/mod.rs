@@ -325,6 +325,7 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces, metadata);
+    let mutable_metadata = metadata.mutable_metadata.load();
 
     let attr_count =
         payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
@@ -334,7 +335,7 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
         + (!metadata.language.is_empty()) as u32
         + (!metadata.language_version.is_empty()) as u32
         + (!metadata.tracer_version.is_empty()) as u32
-        + (!metadata.runtime_id.is_empty()) as u32
+        + (!mutable_metadata.runtime_id.is_empty()) as u32
         + (!metadata.container_id.is_empty()) as u32
         + payload_attrs.env.is_some() as u32
         + payload_attrs.hostname.is_some() as u32
@@ -364,9 +365,9 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
         table.write_interned(writer, &metadata.tracer_version)?;
     }
 
-    if !metadata.runtime_id.is_empty() {
+    if !mutable_metadata.runtime_id.is_empty() {
         write_uint8(writer, trace_key::RUNTIME_ID)?;
-        table.write_interned(writer, &metadata.runtime_id)?;
+        table.write_interned(writer, &mutable_metadata.runtime_id)?;
     }
 
     if !metadata.container_id.is_empty() {
@@ -1032,9 +1033,11 @@ mod tests {
             language: "python".to_string(),
             language_version: "3.11".to_string(),
             tracer_version: "2.0.0".to_string(),
-            runtime_id: "abc-123-uuid".to_string(),
             ..Default::default()
         };
+        metadata
+            .mutable_metadata
+            .set_runtime_id("abc-123-uuid".into());
         let encoded = to_vec_from_v04(&[vec![span]], &metadata);
 
         for s in &[b"python" as &[u8], b"3.11", b"2.0.0", b"abc-123-uuid"] {

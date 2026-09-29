@@ -266,11 +266,12 @@ fn build_resource_attributes(info: &OtlpResourceInfo) -> Vec<Value> {
     .map(|(k, v)| kv_str(k, v))
     .collect();
 
-    if !info.runtime_id.is_empty() {
-        attrs.push(kv_str("datadog.runtime_id", &info.runtime_id));
+    let mutable_metadata = info.mutable_metadata.load();
+    if !mutable_metadata.runtime_id.is_empty() {
+        attrs.push(kv_str("datadog.runtime_id", &mutable_metadata.runtime_id));
     }
     // Keep this representation aligned with v0.6 stats export.
-    let process_tags: Vec<&str> = info
+    let process_tags: Vec<&str> = mutable_metadata
         .process_tags
         .split(',')
         .map(str::trim)
@@ -515,8 +516,9 @@ mod tests {
         let mut r = resource();
         r.app_version = "1.2.3".to_string();
         r.hostname = "my-host".to_string();
-        r.runtime_id = "abc-123".to_string();
-        r.process_tags = "entrypoint.name:server".to_string();
+        r.mutable_metadata.set_runtime_id("abc-123".into());
+        r.mutable_metadata
+            .set_process_tags("entrypoint.name:server".into());
         r.tracer_tags = vec!["team:apm".to_string(), "tier:backend".to_string()];
         let req = map_stats_to_otlp_metrics(&buckets(vec![one_ok_group()]), &r).unwrap();
         let m = metric(&req);
