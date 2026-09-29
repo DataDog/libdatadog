@@ -4,7 +4,7 @@
 use anyhow::ensure;
 use function_name::named;
 
-use libdd_common_ffi::{wrap_with_ffi_result, Result};
+use libdd_common_ffi::{Result, wrap_with_ffi_result};
 use libdd_ffe::rules_based::{Configuration, UniversalFlagConfig};
 
 use crate::{BorrowedStr, Handle};

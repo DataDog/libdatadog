@@ -1,13 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::pin::Pin;
 
 use libdd_ffe::rules_based as ffe;
 use libdd_ffe::rules_based::{
-    now, Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
-    EvaluationError, Str,
+    Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
+    EvaluationError, Str, now,
 };
 
 use crate::Handle;
