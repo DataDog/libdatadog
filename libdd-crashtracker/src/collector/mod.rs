@@ -21,7 +21,7 @@ pub use additional_tags::{
     remove_additional_tag,
 };
 pub use api::*;
-pub use counters::{begin_op, end_op, reset_counters, OpTypes};
+pub use counters::{OpTypes, begin_op, end_op, reset_counters};
 pub use crash_handler::{
     disable, enable, get_expected_receiver_pid, report_unhandled_exception,
     set_expected_receiver_pid, update_config, update_metadata,

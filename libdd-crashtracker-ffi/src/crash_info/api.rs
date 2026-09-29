@@ -3,7 +3,7 @@
 
 use function_name::named;
 use libdd_common::Endpoint;
-use libdd_common_ffi::{wrap_with_void_ffi_result, Handle, ToInner, VoidResult};
+use libdd_common_ffi::{Handle, ToInner, VoidResult, wrap_with_void_ffi_result};
 use libdd_crashtracker::CrashInfo;
 
 /// # Safety
@@ -14,23 +14,27 @@ use libdd_crashtracker::CrashInfo;
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_demangle_names(
     mut crash_info: *mut Handle<CrashInfo>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.demangle_names()?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.demangle_names()?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Frame
 /// made by this module, which has not previously been dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashInfo>) { unsafe {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !builder.is_null() {
-        drop((*builder).take())
+pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashInfo>) {
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !builder.is_null() {
+            drop((*builder).take())
+        }
     }
-}}
+}
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
@@ -42,11 +46,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_drop(builder: *mut Handle<CrashIn
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.normalize_ips(pid)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.normalize_ips(pid)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
@@ -58,11 +64,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_normalize_ips(
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.resolve_names(pid)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.resolve_names(pid)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
@@ -83,11 +91,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_resolve_names(
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_enrich_callstacks(
     mut crash_info: *mut Handle<CrashInfo>,
     pid: u32,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        crash_info.to_inner_mut()?.enrich_callstacks(pid)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info.to_inner_mut()?.enrich_callstacks(pid)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `crash_info` can be null, but if non-null it must point to a Builder made by this module,
@@ -99,10 +109,12 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfo_enrich_callstacks(
 pub unsafe extern "C" fn ddog_crasht_CrashInfo_upload_to_endpoint(
     mut crash_info: *mut Handle<CrashInfo>,
     endpoint: Option<&Endpoint>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        crash_info
-            .to_inner_mut()?
-            .upload_to_endpoint(&endpoint.cloned())?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            crash_info
+                .to_inner_mut()?
+                .upload_to_endpoint(&endpoint.cloned())?;
+        })
+    }
+}

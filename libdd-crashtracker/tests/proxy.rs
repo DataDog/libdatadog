@@ -55,10 +55,12 @@ async fn direct_crash_requests_use_https_proxy() -> anyhow::Result<()> {
 
     unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
     unsafe { std::env::set_var("DD_API_KEY", "test-api-key") };
-    unsafe { std::env::set_var(
-        "DD_APM_TELEMETRY_DD_URL",
-        "https://telemetry.example.invalid",
-    ) };
+    unsafe {
+        std::env::set_var(
+            "DD_APM_TELEMETRY_DD_URL",
+            "https://telemetry.example.invalid",
+        )
+    };
     unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "https://telemetry.example.invalid") };
     unsafe { std::env::set_var("DD_ERRORS_INTAKE_DD_URL", "https://errors.example.invalid") };
     unsafe { std::env::set_var("HTTPS_PROXY", format!("http://{proxy_address}")) };

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use libdd_common_ffi::{wrap_with_void_ffi_result, Error, Handle, ToInner, VoidResult};
+use libdd_common_ffi::{Error, Handle, ToInner, VoidResult, wrap_with_void_ffi_result};
 use libdd_crashtracker::{StackFrame, StackTrace};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -29,13 +29,15 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_new() -> StackTraceNewResult {
 /// The `frame` can be null, but if non-null it must point to a Frame
 /// made by this module, which has not previously been dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTrace>) { unsafe {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !trace.is_null() {
-        drop((*trace).take())
+pub unsafe extern "C" fn ddog_crasht_StackTrace_drop(trace: *mut Handle<StackTrace>) {
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !trace.is_null() {
+            drop((*trace).take())
+        }
     }
-}}
+}
 
 /// # Safety
 /// The `stacktrace` can be null, but if non-null it must point to a StackTrace made by this module,
@@ -50,13 +52,15 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
     mut trace: *mut Handle<StackTrace>,
     mut frame: *mut Handle<StackFrame>,
     incomplete: bool,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        trace
-            .to_inner_mut()?
-            .push_frame(*frame.take()?, incomplete)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            trace
+                .to_inner_mut()?
+                .push_frame(*frame.take()?, incomplete)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `stacktrace` can be null, but if non-null it must point to a StackTrace made by this module,
@@ -66,8 +70,10 @@ pub unsafe extern "C" fn ddog_crasht_StackTrace_push_frame(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_StackTrace_set_complete(
     mut trace: *mut Handle<StackTrace>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        trace.to_inner_mut()?.set_complete()?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            trace.to_inner_mut()?.set_complete()?;
+        })
+    }
+}

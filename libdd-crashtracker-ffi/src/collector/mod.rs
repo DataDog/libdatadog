@@ -11,8 +11,8 @@ pub use counters::*;
 pub use datatypes::*;
 use function_name::named;
 use libdd_common_ffi::slice::AsBytes;
-use libdd_common_ffi::{wrap_with_void_ffi_result, CharSlice, Handle, Slice, ToInner, VoidResult};
-use libdd_crashtracker::{CrashtrackerReceiverConfig, StackTrace, DEFAULT_SYMBOLS};
+use libdd_common_ffi::{CharSlice, Handle, Slice, ToInner, VoidResult, wrap_with_void_ffi_result};
+use libdd_crashtracker::{CrashtrackerReceiverConfig, DEFAULT_SYMBOLS, StackTrace};
 pub use spans::*;
 
 #[unsafe(no_mangle)]
@@ -218,19 +218,21 @@ pub unsafe extern "C" fn ddog_crasht_report_unhandled_exception(
     error_type: CharSlice,
     error_message: CharSlice,
     mut runtime_stack: *mut Handle<StackTrace>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let error_type_opt = error_type.try_to_string_option()?;
-        let error_message_opt = error_message.try_to_string_option()?;
-        let stack = *runtime_stack.take()?;
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let error_type_opt = error_type.try_to_string_option()?;
+            let error_message_opt = error_message.try_to_string_option()?;
+            let stack = *runtime_stack.take()?;
 
-        libdd_crashtracker::report_unhandled_exception(
-            error_type_opt.as_deref(),
-            error_message_opt.as_deref(),
-            stack,
-        )?;
-    })
-}}
+            libdd_crashtracker::report_unhandled_exception(
+                error_type_opt.as_deref(),
+                error_message_opt.as_deref(),
+                stack,
+            )?;
+        })
+    }
+}
 
 #[unsafe(no_mangle)]
 /// Register the expected PID of the socket-based crash receiver

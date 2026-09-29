@@ -5,8 +5,8 @@ use super::{Metadata, OsInfo, ProcInfo, SigInfo, Span, ThreadData};
 use function_name::named;
 use libdd_common::Endpoint;
 use libdd_common_ffi::{
-    slice::AsBytes, wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Error, Handle,
-    Slice, Timespec, ToInner, VoidResult,
+    CharSlice, Error, Handle, Slice, Timespec, ToInner, VoidResult, slice::AsBytes,
+    wrap_with_ffi_result, wrap_with_void_ffi_result,
 };
 use libdd_crashtracker::{CrashInfo, CrashInfoBuilder, ErrorKind, StackTrace};
 
@@ -34,13 +34,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_new() -> CrashInfoBuilderN
 /// The `builder` can be null, but if non-null it must point to a Frame
 /// made by this module, which has not previously been dropped.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<CrashInfoBuilder>) { unsafe {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !builder.is_null() {
-        drop((*builder).take())
+pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_drop(builder: *mut Handle<CrashInfoBuilder>) {
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !builder.is_null() {
+            drop((*builder).take())
+        }
     }
-}}
+}
 
 // Name the type so it's prettier for the consumer
 pub type CrashInfoNewResult = libdd_common_ffi::Result<Handle<CrashInfo>>;
@@ -53,9 +55,9 @@ pub type CrashInfoNewResult = libdd_common_ffi::Result<Handle<CrashInfo>>;
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_build(
     mut builder: *mut Handle<CrashInfoBuilder>,
-) -> CrashInfoNewResult { unsafe {
-    wrap_with_ffi_result!({ anyhow::Ok(builder.take()?.build()?.into()) })
-}}
+) -> CrashInfoNewResult {
+    unsafe { wrap_with_ffi_result!({ anyhow::Ok(builder.take()?.build()?.into()) }) }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -68,13 +70,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_counter(
     mut builder: *mut Handle<CrashInfoBuilder>,
     name: CharSlice,
     value: i64,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_counter(name.try_to_string()?, value)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_counter(name.try_to_string()?, value)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -86,11 +90,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_counter(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_kind(
     mut builder: *mut Handle<CrashInfoBuilder>,
     kind: ErrorKind,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_kind(kind)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_kind(kind)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -102,15 +108,17 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_kind(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file(
     mut builder: *mut Handle<CrashInfoBuilder>,
     filename: CharSlice,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_file(
-            filename
-                .try_to_string_option()?
-                .context("filename cannot be empty string")?,
-        )?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_file(
+                filename
+                    .try_to_string_option()?
+                    .context("filename cannot be empty string")?,
+            )?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -123,25 +131,27 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file_and_contents(
     mut builder: *mut Handle<CrashInfoBuilder>,
     filename: CharSlice,
     contents: Slice<CharSlice>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let filename = filename
-            .try_to_string_option()?
-            .context("filename cannot be empty string")?;
-        let contents = {
-            let mut accum = Vec::with_capacity(contents.len());
-            for line in contents.iter() {
-                let line = line.try_to_string()?;
-                accum.push(line);
-            }
-            accum
-        };
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let filename = filename
+                .try_to_string_option()?
+                .context("filename cannot be empty string")?;
+            let contents = {
+                let mut accum = Vec::with_capacity(contents.len());
+                for line in contents.iter() {
+                    let line = line.try_to_string()?;
+                    accum.push(line);
+                }
+                accum
+            };
 
-        builder
-            .to_inner_mut()?
-            .with_file_and_contents(filename, contents)?;
-    })
-}}
+            builder
+                .to_inner_mut()?
+                .with_file_and_contents(filename, contents)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -153,13 +163,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_file_and_contents(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_fingerprint(
     mut builder: *mut Handle<CrashInfoBuilder>,
     fingerprint: CharSlice,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_fingerprint(fingerprint.try_to_string()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_fingerprint(fingerprint.try_to_string()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -171,11 +183,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_fingerprint(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_incomplete(
     mut builder: *mut Handle<CrashInfoBuilder>,
     incomplete: bool,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_incomplete(incomplete)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_incomplete(incomplete)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -188,13 +202,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_log_message(
     mut builder: *mut Handle<CrashInfoBuilder>,
     message: CharSlice,
     also_print: bool,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_log_message(message.try_to_string()?, also_print)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_log_message(message.try_to_string()?, also_print)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -206,13 +222,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_log_message(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_metadata(
     mut builder: *mut Handle<CrashInfoBuilder>,
     metadata: Metadata,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_metadata(metadata.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_metadata(metadata.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -224,11 +242,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_metadata(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     os_info: OsInfo,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_os_info(os_info.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_os_info(os_info.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -239,11 +259,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(
     mut builder: *mut Handle<CrashInfoBuilder>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_os_info_this_machine()?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_os_info_this_machine()?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -255,13 +277,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_os_info_this_machine(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_proc_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     proc_info: ProcInfo,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_proc_info(proc_info.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_proc_info(proc_info.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -273,13 +297,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_proc_info(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_sig_info(
     mut builder: *mut Handle<CrashInfoBuilder>,
     sig_info: SigInfo,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_sig_info(sig_info.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_sig_info(sig_info.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -291,11 +317,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_sig_info(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_span_id(
     mut builder: *mut Handle<CrashInfoBuilder>,
     span_id: Span,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_span_id(span_id.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_span_id(span_id.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -308,11 +336,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_span_id(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
     mut builder: *mut Handle<CrashInfoBuilder>,
     mut stack: *mut Handle<StackTrace>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_stack(*stack.take()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_stack(*stack.take()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -325,15 +355,17 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread(
     mut builder: *mut Handle<CrashInfoBuilder>,
     mut thread: ThreadData,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        if thread.crashed {
-            let stack = (thread.stack.to_inner_mut())?.clone();
-            builder.to_inner_mut()?.with_stack(stack)?;
-        }
-        builder.to_inner_mut()?.with_thread(thread.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            if thread.crashed {
+                let stack = (thread.stack.to_inner_mut())?.clone();
+                builder.to_inner_mut()?.with_stack(stack)?;
+            }
+            builder.to_inner_mut()?.with_thread(thread.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -345,11 +377,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp(
     mut builder: *mut Handle<CrashInfoBuilder>,
     ts: Timespec,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_timestamp(ts.into())?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_timestamp(ts.into())?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -360,11 +394,13 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp_now(
     mut builder: *mut Handle<CrashInfoBuilder>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder.to_inner_mut()?.with_timestamp_now()?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder.to_inner_mut()?.with_timestamp_now()?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -376,13 +412,15 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_timestamp_now(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
     mut builder: *mut Handle<CrashInfoBuilder>,
     trace_id: Span,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        builder
-            .to_inner_mut()?
-            .with_trace_id(trace_id.try_into()?)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            builder
+                .to_inner_mut()?
+                .with_trace_id(trace_id.try_into()?)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -394,14 +432,16 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_trace_id(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
     mut builder: *mut Handle<CrashInfoBuilder>,
     message: CharSlice,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let message = message
-            .try_to_string_option()?
-            .context("message cannot be empty string")?;
-        builder.to_inner_mut()?.with_message(message)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let message = message
+                .try_to_string_option()?
+                .context("message cannot be empty string")?;
+            builder.to_inner_mut()?.with_message(message)?;
+        })
+    }
+}
 
 /// # Safety
 /// The `builder` can be null, but if non-null it must point to a Builder made by this module,
@@ -413,12 +453,14 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_message(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
     mut builder: *mut Handle<CrashInfoBuilder>,
     thread_name: CharSlice,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let thread_name = thread_name.try_to_string()?;
-        builder.to_inner_mut()?.with_thread_name(thread_name)?;
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let thread_name = thread_name.try_to_string()?;
+            builder.to_inner_mut()?.with_thread_name(thread_name)?;
+        })
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                            Crash Ping                                          //
@@ -440,9 +482,11 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread_name(
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(
     mut builder: *mut Handle<CrashInfoBuilder>,
     endpoint: Option<&Endpoint>,
-) -> VoidResult { unsafe {
-    wrap_with_void_ffi_result!({
-        let crash_ping = builder.to_inner_mut()?.build_crash_ping()?;
-        crash_ping.upload_to_endpoint(&endpoint.cloned())?
-    })
-}}
+) -> VoidResult {
+    unsafe {
+        wrap_with_void_ffi_result!({
+            let crash_ping = builder.to_inner_mut()?.build_crash_ping()?;
+            crash_ping.upload_to_endpoint(&endpoint.cloned())?
+        })
+    }
+}

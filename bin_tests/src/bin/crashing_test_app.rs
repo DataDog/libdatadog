@@ -11,11 +11,11 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 mod unix {
-    use anyhow::ensure;
     use anyhow::Context;
+    use anyhow::ensure;
     use std::env;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
     use libdd_common::tag;
@@ -43,17 +43,19 @@ mod unix {
     }
 
     #[inline(always)]
-    unsafe fn cause_segfault() { unsafe {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            std::arch::asm!("mov eax, [0]", options(nostack));
-        }
+    unsafe fn cause_segfault() {
+        unsafe {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                std::arch::asm!("mov eax, [0]", options(nostack));
+            }
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            #[cfg(target_arch = "aarch64")]
+            {
+                std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            }
         }
-    }}
+    }
 
     #[inline(never)]
     fn fn3(crash_type: CrashType) {
@@ -96,10 +98,12 @@ mod unix {
         // In Debug builds the collector is slow, so the default 4s receiver timeout
         // can expire before DD_CRASHTRACK_DONE is sent.
         if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
-            unsafe { env::set_var(
-                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
-                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
-            ) };
+            unsafe {
+                env::set_var(
+                    "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                    TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+                )
+            };
         }
 
         let config = CrashtrackerConfiguration::builder()

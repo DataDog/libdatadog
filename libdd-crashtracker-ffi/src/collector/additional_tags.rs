@@ -3,7 +3,7 @@
 
 use function_name::named;
 use libdd_common_ffi::{
-    wrap_with_ffi_result, wrap_with_void_ffi_result, CharSlice, Result, VoidResult,
+    CharSlice, Result, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result,
 };
 /// Removes all existing additional tags
 /// Expected to be used after a fork, to reset the additional tags on the child

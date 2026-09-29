@@ -9,7 +9,7 @@
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::{
-    clear_runtime_callback, register_runtime_stacktrace_string_callback, CrashtrackerConfiguration,
+    CrashtrackerConfiguration, clear_runtime_callback, register_runtime_stacktrace_string_callback,
 };
 use std::ffi::c_char;
 use std::path::Path;
@@ -43,10 +43,12 @@ impl Behavior for Test {
 // Signal-safe test callback that emits mock runtime stacktrace string
 unsafe extern "C" fn test_runtime_callback_string(
     emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
-) { unsafe {
-    static STACKTRACE_STRING: &[u8] = b"test_stacktrace_string\0";
-    emit_stacktrace_string(STACKTRACE_STRING.as_ptr() as *const c_char);
-}}
+) {
+    unsafe {
+        static STACKTRACE_STRING: &[u8] = b"test_stacktrace_string\0";
+        emit_stacktrace_string(STACKTRACE_STRING.as_ptr() as *const c_char);
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use function_name::named;
-use libdd_common_ffi::{wrap_with_ffi_result, wrap_with_void_ffi_result, Result, VoidResult};
+use libdd_common_ffi::{Result, VoidResult, wrap_with_ffi_result, wrap_with_void_ffi_result};
 /// Resets all stored spans to 0.
 /// Expected to be used after a fork, to reset the spans on the child
 /// ATOMICITY:
