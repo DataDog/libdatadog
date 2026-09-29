@@ -57,7 +57,10 @@ never updated in place.
 This model entirely prevents the leak mentioned above. It's ok if a context
 remains attached when a thread is exited: what's important is that eventually,
 the owning `managedContext` will go out of scope and be reclaimed by the GC,
-and the corresponding Rust object will be cleaned up.
+and the corresponding Rust object will be cleaned up. This requires the
+`thread-exit-autoclean` feature to be disabled (which is the default): with it
+enabled, the auto-cleaner frees still-attached contexts on thread exit, and the
+finalizer would free them a second time.
 
 Once the contexts are created, repeatedly swapping in and out an existing
 context is fast (an atomic write to the TLS slot).
