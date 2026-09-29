@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use tokio::runtime;
 
-use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 use libdd_ipc::SeqpacketConn;
+use libdd_ipc::example_interface::{ExampleInterfaceChannel, ExampleServer};
 
 #[test]
 #[cfg_attr(miri, ignore)]

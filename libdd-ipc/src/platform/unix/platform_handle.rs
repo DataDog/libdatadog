@@ -3,8 +3,8 @@
 
 use crate::platform::PlatformHandle;
 use io_lifetimes::{
-    views::{SocketlikeView, SocketlikeViewType},
     AsSocketlike,
+    views::{SocketlikeView, SocketlikeViewType},
 };
 use std::io;
 use std::marker::PhantomData;
@@ -16,14 +16,16 @@ impl<T> FromRawFd for PlatformHandle<T> {
     ///
     /// # Safety caller must ensure the RawFd is valid and open, and that the resulting PlatformHandle will
     /// # have exclusive ownership of the file descriptor
-    unsafe fn from_raw_fd(fd: RawFd) -> Self { unsafe {
-        let inner = Some(Arc::new(OwnedFd::from_raw_fd(fd)));
-        Self {
-            fd,
-            inner,
-            phantom: PhantomData,
+    unsafe fn from_raw_fd(fd: RawFd) -> Self {
+        unsafe {
+            let inner = Some(Arc::new(OwnedFd::from_raw_fd(fd)));
+            Self {
+                fd,
+                inner,
+                phantom: PhantomData,
+            }
         }
-    }}
+    }
 }
 
 impl<T> From<T> for PlatformHandle<T>

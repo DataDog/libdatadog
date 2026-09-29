@@ -7,9 +7,9 @@ use crate::platform::{
 use libc::off_t;
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
-use nix::sys::mman::{mmap, munmap, shm_open, shm_unlink, MapFlags, ProtFlags};
+use nix::sys::mman::{MapFlags, ProtFlags, mmap, munmap, shm_open, shm_unlink};
 use nix::sys::stat::Mode;
-use nix::unistd::{fchown, ftruncate, Uid};
+use nix::unistd::{Uid, fchown, ftruncate};
 use std::ffi::{CStr, CString};
 use std::io;
 use std::num::NonZeroUsize;
@@ -83,11 +83,7 @@ pub fn set_shm_owner_uid(uid: u32) {
 
 fn shm_owner_uid() -> Option<u32> {
     let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
-    if uid == NO_OWNER_UID {
-        None
-    } else {
-        Some(uid)
-    }
+    if uid == NO_OWNER_UID { None } else { Some(uid) }
 }
 
 impl ShmHandle {

@@ -4,7 +4,7 @@
 use heck::{ToPascalCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{FnArg, Ident, ItemTrait, ReturnType, TraitItem, Type};
 
 fn is_unit_type(ty: &Type) -> bool {

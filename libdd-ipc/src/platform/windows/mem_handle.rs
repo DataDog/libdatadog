@@ -8,16 +8,16 @@ use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
-use std::ptr::{null_mut, NonNull};
+use std::ptr::{NonNull, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{io, mem};
-use windows_sys::core::PCSTR;
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Memory::{
-    CreateFileMappingA, MapViewOfFile, OpenFileMappingA, UnmapViewOfFile, VirtualAlloc,
-    VirtualQuery, FILE_MAP_WRITE, MEMORY_BASIC_INFORMATION, MEMORY_MAPPED_VIEW_ADDRESS, MEM_COMMIT,
-    PAGE_READWRITE, SEC_RESERVE,
+    CreateFileMappingA, FILE_MAP_WRITE, MEM_COMMIT, MEMORY_BASIC_INFORMATION,
+    MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile, OpenFileMappingA, PAGE_READWRITE, SEC_RESERVE,
+    UnmapViewOfFile, VirtualAlloc, VirtualQuery,
 };
+use windows_sys::core::PCSTR;
 
 const MAPPING_MAX_SIZE: usize = 100_000_000; // 100 MB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);

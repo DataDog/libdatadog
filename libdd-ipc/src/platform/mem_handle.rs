@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::handles::{HandlesTransport, TransferHandles};
-use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use crate::AtomicOption;
+use crate::handles::{HandlesTransport, TransferHandles};
+use crate::platform::{OwnedFileHandle, PlatformHandle, mmap_handle, munmap_handle};
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
@@ -46,12 +46,14 @@ pub struct NamedShmHandle {
 impl NamedShmHandle {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
-    pub unsafe fn get_path(&self) -> &[u8] { unsafe {
-        match self.path.as_option() {
-            Some(shm_path) => shm_path.name.to_bytes(),
-            None => b"",
+    pub unsafe fn get_path(&self) -> &[u8] {
+        unsafe {
+            match self.path.as_option() {
+                Some(shm_path) => shm_path.name.to_bytes(),
+                None => b"",
+            }
         }
-    }}
+    }
 }
 
 fn page_aligned_size(size: usize) -> usize {
@@ -190,9 +192,9 @@ impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
 impl MappedMem<NamedShmHandle> {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
-    pub unsafe fn get_path(&self) -> &[u8] { unsafe {
-        self.mem.get_path()
-    }}
+    pub unsafe fn get_path(&self) -> &[u8] {
+        unsafe { self.mem.get_path() }
+    }
 }
 
 impl<T: FileBackedHandle> From<MappedMem<T>> for ShmHandle {

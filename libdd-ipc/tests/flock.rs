@@ -10,7 +10,7 @@ use std::{
 
 use libdd_ipc::platform::locks::FLock;
 use spawn_worker::{
-    assert_child_exit, entrypoint, fork::set_default_child_panic_handler, Stdio, TrampolineData,
+    Stdio, TrampolineData, assert_child_exit, entrypoint, fork::set_default_child_panic_handler,
 };
 use tempfile::tempdir;
 
