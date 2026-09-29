@@ -15,7 +15,7 @@ use core::ptr::NonNull;
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 
 use crate::slice::{AsBytes, CharSlice};
-use crate::{wrap_with_void_ffi_result, Error, VoidResult};
+use crate::{Error, VoidResult, wrap_with_void_ffi_result};
 
 /// Creates a shared, updatable metadata handle initialized with default values.
 ///

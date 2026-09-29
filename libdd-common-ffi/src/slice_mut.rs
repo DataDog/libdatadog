@@ -7,8 +7,8 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::slice;
-use serde::ser::Error;
 use serde::Serializer;
+use serde::ser::Error;
 use std::os::raw::c_char;
 
 #[repr(C)]

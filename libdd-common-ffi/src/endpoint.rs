@@ -1,12 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::AsBytes;
 use crate::Error;
+use crate::slice::AsBytes;
 use alloc::borrow::Cow;
 use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
-use libdd_common::{parse_uri, Endpoint};
+use libdd_common::{Endpoint, parse_uri};
 
 #[unsafe(no_mangle)]
 #[must_use]

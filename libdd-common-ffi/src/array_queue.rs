@@ -99,13 +99,15 @@ pub extern "C" fn ddog_ArrayQueue_new(
 /// # Safety
 /// The pointer is null or points to a valid memory location allocated by ArrayQueue_new.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue: *mut ArrayQueue) { unsafe {
-    // Technically, this function has been designed so if it's double-dropped
-    // then it's okay, but it's not something that should be relied on.
-    if !queue.is_null() {
-        drop(Box::from_raw(queue));
+pub unsafe extern "C" fn ddog_ArrayQueue_drop(queue: *mut ArrayQueue) {
+    unsafe {
+        // Technically, this function has been designed so if it's double-dropped
+        // then it's okay, but it's not something that should be relied on.
+        if !queue.is_null() {
+            drop(Box::from_raw(queue));
+        }
     }
-}}
+}
 
 /// Data structure for the result of the push() and force_push() functions.
 /// force_push() replaces the oldest element if the queue is full, while push() returns the given
@@ -302,9 +304,11 @@ mod tests {
     use bolero::TypeGenerator;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    unsafe extern "C" fn drop_item(item: *mut c_void) { unsafe {
-        _ = Box::from_raw(item as *mut i32);
-    }}
+    unsafe extern "C" fn drop_item(item: *mut c_void) {
+        unsafe {
+            _ = Box::from_raw(item as *mut i32);
+        }
+    }
 
     #[test]
     fn test_new_drop() {

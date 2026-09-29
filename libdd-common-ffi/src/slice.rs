@@ -9,8 +9,8 @@ use core::marker::PhantomData;
 use core::slice;
 use core::str::Utf8Error;
 use libdd_common::error::FfiSafeErrorMessage;
-use serde::ser::Error;
 use serde::Serializer;
+use serde::ser::Error;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -126,9 +126,9 @@ pub trait AsBytes<'a> {
     #[inline]
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
-    unsafe fn assume_utf8(&self) -> &'a str { unsafe {
-        core::str::from_utf8_unchecked(self.as_bytes())
-    }}
+    unsafe fn assume_utf8(&self) -> &'a str {
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+    }
 }
 
 impl<'a> AsBytes<'a> for Slice<'a, u8> {

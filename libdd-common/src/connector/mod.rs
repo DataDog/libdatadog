@@ -4,7 +4,7 @@
 #[cfg(feature = "http-client")]
 use futures::future::BoxFuture;
 #[cfg(feature = "http-client")]
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 #[cfg(feature = "http-client")]
 use hyper_util::client::legacy::connect;
 
