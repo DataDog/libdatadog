@@ -13,7 +13,7 @@ pub use builder::TraceExporterBuilder;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
-use self::log_writer::write_log_traces;
+use self::log_writer::{write_log_traces, write_log_traces_v1};
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
@@ -1263,13 +1263,24 @@ impl<
     /// v0.4 msgpack (via [`msgpack_encoder::v04::to_vec_from_v1`]) and sent to `/v0.4/traces`
     /// instead of failing outright. This is a one-way downgrade for the wire format only — it
     /// does not turn this function into a general v0.4↔v1 conversion path.
-    ///
-    /// Log-output export is not implemented for v1-native input in this pass; if configured,
-    /// this path silently skips the log-output destination.
     async fn send_trace_chunks_inner_v1<T: TraceData>(
         &self,
         payload: libdd_trace_utils::span::v1::TracerPayload<T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
+        // mirroring `send_trace_chunks_inner`. The builder should reject conflicting
+        // destinations at build time instead.
+        if let Some(max_line_size) = self.log_output {
+            let stats = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
+                .map_err(TraceExporterError::Io)?;
+            debug!(
+                spans_written = stats.spans_written,
+                spans_dropped = stats.spans_dropped,
+                "Wrote traces to log exporter"
+            );
+            return Ok(AgentResponse::Unchanged);
+        }
+
         let libdd_trace_utils::span::v1::TracerPayload {
             container_id,
             language_name,
@@ -1990,6 +2001,48 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(line).expect("valid json line");
         // Forwarder is_trace contract + the span actually round-tripped through
         // msgpack decode -> log encode with hex ids.
+        assert!(v["traces"][0][0]["trace_id"].is_string());
+        assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
+        assert_eq!(v["traces"][0][0]["name"], "aws.lambda");
+    }
+
+    // V1-native counterpart of `test_log_mode_send_writes_forwarder_json`: the real `send`
+    // entry point decodes v1 msgpack, hits the log branch in `send_trace_chunks_inner_v1`,
+    // and writes Forwarder-format JSON bytes through the log-output capability.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_mode_send_v1_writes_forwarder_json() {
+        use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V1)
+            .set_output_format(TraceExporterOutputFormat::V1)
+            .set_output_to_log(None);
+        let exporter = builder.build::<CapturingCapabilities>().unwrap();
+
+        let payload = libdd_trace_utils::span::v1::TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: [0; 16],
+                spans: vec![SpanBytesV1 {
+                    name: BytesString::from_slice(b"aws.lambda").unwrap(),
+                    span_id: 2,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let data = msgpack_encoder::v1::to_vec_from_v1(&payload);
+
+        let resp = exporter.send(data.as_ref()).unwrap();
+        assert!(matches!(resp, AgentResponse::Unchanged));
+
+        let text = String::from_utf8(captured_log()).unwrap();
+        assert!(text.ends_with('\n'), "line must be newline-terminated");
+        let line = text.trim_end();
+        let v: serde_json::Value = serde_json::from_str(line).expect("valid json line");
         assert!(v["traces"][0][0]["trace_id"].is_string());
         assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
         assert_eq!(v["traces"][0][0]["name"], "aws.lambda");
