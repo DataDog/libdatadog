@@ -8,8 +8,8 @@ mod otlp_protobuf_tests {
     use libdd_trace_utils::test_utils::create_test_json_span;
     use prost::Message;
     use serde_json::json;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::task;
 
     #[cfg_attr(miri, ignore)]

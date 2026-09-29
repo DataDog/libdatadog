@@ -9,12 +9,12 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::stats::CardinalityLimitConfig;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
-use libdd_data_pipeline::OtlpProtocol;
 
 // FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
 // don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
@@ -106,14 +106,16 @@ pub struct TraceExporterConfig {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_config_new(
     out_handle: NonNull<Box<TraceExporterConfig>>,
-) { unsafe {
-    catch_panic!(
-        out_handle
-            .as_ptr()
-            .write(Box::<TraceExporterConfig>::default()),
-        ()
-    )
-}}
+) {
+    unsafe {
+        catch_panic!(
+            out_handle
+                .as_ptr()
+                .write(Box::<TraceExporterConfig>::default()),
+            ()
+        )
+    }
+}
 
 /// Frees TraceExporterConfig handle internal resources.
 #[unsafe(no_mangle)]
@@ -515,22 +517,24 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
     handle: Option<NonNull<ForkSafeRuntime>>,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        match (config, handle) {
-            (Some(config), Some(handle)) => {
-                // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-                // Increment the strong count before reconstructing so the config's Arc
-                // is independent from the caller's handle.
-                Arc::increment_strong_count(handle.as_ptr());
-                config.shared_runtime = Some(Arc::from_raw(handle.as_ptr()));
-                None
-            }
-            _ => gen_error!(ErrorCode::InvalidArgument),
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            match (config, handle) {
+                (Some(config), Some(handle)) => {
+                    // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                    // Increment the strong count before reconstructing so the config's Arc
+                    // is independent from the caller's handle.
+                    Arc::increment_strong_count(handle.as_ptr());
+                    config.shared_runtime = Some(Arc::from_raw(handle.as_ptr()));
+                    None
+                }
+                _ => gen_error!(ErrorCode::InvalidArgument),
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Enables OTLP trace export and sets the endpoint URL.
 ///
@@ -650,8 +654,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
 
 /// Returns a `CardinalityLimitConfig` with default values
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit(
-) -> CardinalityLimitConfig {
+pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit()
+-> CardinalityLimitConfig {
     CardinalityLimitConfig::default()
 }
 
@@ -736,7 +740,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_obfuscation_config(
                     return Some(Box::new(ExporterError::new(
                         ErrorCode::InvalidInput,
                         &ErrorCode::InvalidInput.to_string(),
-                    )))
+                    )));
                 }
             };
             match serde_json::from_str::<
@@ -805,125 +809,129 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
 pub unsafe extern "C" fn ddog_trace_exporter_new(
     out_handle: NonNull<Box<TraceExporter>>,
     config: Option<&TraceExporterConfig>,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        if let Some(config) = config {
-            let mut builder = TraceExporter::builder();
-            // Only forward the agent URL when one was explicitly provided. Calling
-            // `set_url("")` would mark the agent URL as configured and conflict with
-            // agentless trace export, which rejects any caller-supplied agent URL at build
-            // time. Leaving `url` unset lets the builder fall back to its default agent URL
-            // when no transport override is configured.
-            if let Some(url) = config.url.as_ref() {
-                builder.set_url(url);
-            }
-            builder
-                .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
-                .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
-                .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
-                .set_language_interpreter(
-                    config
-                        .language_interpreter
-                        .as_ref()
-                        .unwrap_or(&"".to_string()),
-                )
-                .set_hostname(config.hostname.as_ref().unwrap_or(&"".to_string()))
-                .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
-                .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
-                .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
-                .set_input_format(config.input_format)
-                .set_output_format(config.output_format)
-                .set_connection_timeout(config.connection_timeout);
-
-            if let Some(limit) = config.stats_cardinality_limits {
-                builder.set_stats_cardinality_limit(limit);
-            }
-
-            if config.compute_stats {
-                builder.enable_stats(Duration::from_secs(10));
-            } else if config.client_computed_stats {
-                builder.set_client_computed_stats();
-            }
-
-            if let Some(cfg) = &config.telemetry_cfg {
-                builder.enable_telemetry(cfg.clone());
-            }
-
-            if let Some(handle) = &config.mutable_metadata {
-                builder.set_mutable_metadata(handle.clone());
-            } else {
-                if let Some(process_tags) = &config.process_tags {
-                    builder.set_process_tags(process_tags);
-                };
-                if let Some(runtime_id) = &config.runtime_id {
-                    builder.set_runtime_id(runtime_id);
-                };
-            }
-
-            builder.set_telemetry_instrumentation_sessions(
-                config.telemetry_instrumentation_sessions.clone(),
-            );
-
-            if let Some(token) = &config.test_session_token {
-                builder.set_test_session_token(token);
-            }
-
-            if config.health_metrics_enabled {
-                builder.enable_health_metrics();
-            }
-
-            if let Some(runtime) = config.shared_runtime.clone() {
-                builder.set_shared_runtime(runtime);
-            }
-
-            if let Some(ref url) = config.otlp_endpoint {
-                builder.set_otlp_endpoint(url);
-                if let Some(protocol) = config.otlp_protocol {
-                    builder.set_otlp_protocol(protocol);
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            if let Some(config) = config {
+                let mut builder = TraceExporter::builder();
+                // Only forward the agent URL when one was explicitly provided. Calling
+                // `set_url("")` would mark the agent URL as configured and conflict with
+                // agentless trace export, which rejects any caller-supplied agent URL at build
+                // time. Leaving `url` unset lets the builder fall back to its default agent URL
+                // when no transport override is configured.
+                if let Some(url) = config.url.as_ref() {
+                    builder.set_url(url);
                 }
-                builder.set_otlp_instrumentation_scope(
-                    config
-                        .otlp_instrumentation_scope_name
-                        .as_deref()
-                        .unwrap_or(""),
-                    config
-                        .otlp_instrumentation_scope_version
-                        .as_deref()
-                        .unwrap_or(""),
+                builder
+                    .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
+                    .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
+                    .set_language_version(
+                        config.language_version.as_ref().unwrap_or(&"".to_string()),
+                    )
+                    .set_language_interpreter(
+                        config
+                            .language_interpreter
+                            .as_ref()
+                            .unwrap_or(&"".to_string()),
+                    )
+                    .set_hostname(config.hostname.as_ref().unwrap_or(&"".to_string()))
+                    .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
+                    .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
+                    .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
+                    .set_input_format(config.input_format)
+                    .set_output_format(config.output_format)
+                    .set_connection_timeout(config.connection_timeout);
+
+                if let Some(limit) = config.stats_cardinality_limits {
+                    builder.set_stats_cardinality_limit(limit);
+                }
+
+                if config.compute_stats {
+                    builder.enable_stats(Duration::from_secs(10));
+                } else if config.client_computed_stats {
+                    builder.set_client_computed_stats();
+                }
+
+                if let Some(cfg) = &config.telemetry_cfg {
+                    builder.enable_telemetry(cfg.clone());
+                }
+
+                if let Some(handle) = &config.mutable_metadata {
+                    builder.set_mutable_metadata(handle.clone());
+                } else {
+                    if let Some(process_tags) = &config.process_tags {
+                        builder.set_process_tags(process_tags);
+                    };
+                    if let Some(runtime_id) = &config.runtime_id {
+                        builder.set_runtime_id(runtime_id);
+                    };
+                }
+
+                builder.set_telemetry_instrumentation_sessions(
+                    config.telemetry_instrumentation_sessions.clone(),
                 );
-            }
 
-            if config.output_to_log {
-                builder.set_output_to_log(config.log_max_line_size);
-            }
-
-            // Agentless export path (enables span obfuscation). Mutually exclusive with an
-            // agent URL and an OTLP endpoint; the builder validates this and returns an
-            // error we map to ExporterError below.
-            if let Some(ref url) = config.agentless_endpoint {
-                let api_key = config.agentless_api_key.as_deref().unwrap_or("");
-                builder.set_agentless_endpoint(url, api_key);
-                if let Some(timeout_ms) = config.agentless_timeout_ms {
-                    builder.set_agentless_timeout(Duration::from_millis(timeout_ms));
+                if let Some(token) = &config.test_session_token {
+                    builder.set_test_session_token(token);
                 }
-            }
-            if let Some(ref cfg) = config.obfuscation_config {
-                builder.set_span_obfuscation_config(cfg.clone());
-            }
 
-            match builder.build() {
-                Ok(exporter) => {
-                    out_handle.as_ptr().write(Box::new(exporter));
-                    None
+                if config.health_metrics_enabled {
+                    builder.enable_health_metrics();
                 }
-                Err(err) => Some(Box::new(ExporterError::from(err))),
-            }
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+
+                if let Some(runtime) = config.shared_runtime.clone() {
+                    builder.set_shared_runtime(runtime);
+                }
+
+                if let Some(ref url) = config.otlp_endpoint {
+                    builder.set_otlp_endpoint(url);
+                    if let Some(protocol) = config.otlp_protocol {
+                        builder.set_otlp_protocol(protocol);
+                    }
+                    builder.set_otlp_instrumentation_scope(
+                        config
+                            .otlp_instrumentation_scope_name
+                            .as_deref()
+                            .unwrap_or(""),
+                        config
+                            .otlp_instrumentation_scope_version
+                            .as_deref()
+                            .unwrap_or(""),
+                    );
+                }
+
+                if config.output_to_log {
+                    builder.set_output_to_log(config.log_max_line_size);
+                }
+
+                // Agentless export path (enables span obfuscation). Mutually exclusive with an
+                // agent URL and an OTLP endpoint; the builder validates this and returns an
+                // error we map to ExporterError below.
+                if let Some(ref url) = config.agentless_endpoint {
+                    let api_key = config.agentless_api_key.as_deref().unwrap_or("");
+                    builder.set_agentless_endpoint(url, api_key);
+                    if let Some(timeout_ms) = config.agentless_timeout_ms {
+                        builder.set_agentless_timeout(Duration::from_millis(timeout_ms));
+                    }
+                }
+                if let Some(ref cfg) = config.obfuscation_config {
+                    builder.set_span_obfuscation_config(cfg.clone());
+                }
+
+                match builder.build() {
+                    Ok(exporter) => {
+                        out_handle.as_ptr().write(Box::new(exporter));
+                        None
+                    }
+                    Err(err) => Some(Box::new(ExporterError::from(err))),
+                }
+            } else {
+                gen_error!(ErrorCode::InvalidArgument)
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Free the TraceExporter instance.
 ///
@@ -950,34 +958,36 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
-) -> Option<Box<ExporterError>> { unsafe {
-    let exporter = match handle {
-        Some(exp) => exp,
-        None => return gen_error!(ErrorCode::InvalidArgument),
-    };
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        let exporter = match handle {
+            Some(exp) => exp,
+            None => return gen_error!(ErrorCode::InvalidArgument),
+        };
 
-    catch_panic!(
-        match exporter.send(&trace) {
-            Ok(resp) => {
-                if let Some(result) = response_out {
-                    result
-                        .as_ptr()
-                        .write(Box::new(ExporterResponse::from(resp)));
+        catch_panic!(
+            match exporter.send(&trace) {
+                Ok(resp) => {
+                    if let Some(result) = response_out {
+                        result
+                            .as_ptr()
+                            .write(Box::new(ExporterResponse::from(resp)));
+                    }
+                    None
                 }
-                None
-            }
-            Err(e) => Some(Box::new(ExporterError::from(e))),
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+                Err(e) => Some(Box::new(ExporterError::from(e))),
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_trace_utils::span::v04::SpanSlice;
     use std::{borrow::Borrow, mem::MaybeUninit};
 

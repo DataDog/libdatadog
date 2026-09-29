@@ -47,9 +47,9 @@ impl Bytes {
         ptr: NonNull<u8>,
         len: usize,
         refcount: RefCountedCell,
-    ) -> Self { unsafe {
-        Self::from_raw(ptr, len, Some(refcount))
-    }}
+    ) -> Self {
+        unsafe { Self::from_raw(ptr, len, Some(refcount)) }
+    }
 
     #[inline]
     /// Creates a new `Bytes` from the given slice data and the refcount. Can be used after calling
@@ -408,46 +408,50 @@ struct CustomArc<T> {
 /// The data passed to this cell will only be dopped when the last
 /// clone of the cell is dropped.
 fn make_refcounted<T: Send + Sync + 'static>(data: T) -> RefCountedCell {
-    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell { unsafe {
-        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
-        custom_arc
-            .rc
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        RefCountedCell::from_raw(
-            data,
-            &RefCountedCellVTable {
-                clone: custom_arc_clone::<T>,
-                drop: custom_arc_drop::<T>,
-            },
-        )
-    }}
-
-    unsafe fn custom_arc_drop<T>(data: NonNull<()>) { unsafe {
-        let custom_arc = data.cast::<CustomArc<T>>().as_ref();
-        if custom_arc
-            .rc
-            .fetch_sub(1, std::sync::atomic::Ordering::Release)
-            != 1
-        {
-            return;
+    unsafe fn custom_arc_clone<T>(data: NonNull<()>) -> RefCountedCell {
+        unsafe {
+            let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+            custom_arc
+                .rc
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            RefCountedCell::from_raw(
+                data,
+                &RefCountedCellVTable {
+                    clone: custom_arc_clone::<T>,
+                    drop: custom_arc_drop::<T>,
+                },
+            )
         }
+    }
 
-        // Run drop + free memory on the data manually rather than casting back to a box
-        // because otherwise miri complains
+    unsafe fn custom_arc_drop<T>(data: NonNull<()>) {
+        unsafe {
+            let custom_arc = data.cast::<CustomArc<T>>().as_ref();
+            if custom_arc
+                .rc
+                .fetch_sub(1, std::sync::atomic::Ordering::Release)
+                != 1
+            {
+                return;
+            }
 
-        // See standard library documentation for std::sync::Arc to see why this is needed.
-        // https://github.com/rust-lang/rust/blob/2a5da7acd4c3eae638aa1c46f3a537940e60a0e4/library/alloc/src/sync.rs#L2647-L2675
-        std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
-        {
-            let custom_arc = data.cast::<CustomArc<T>>().as_mut();
-            std::ptr::drop_in_place(custom_arc);
+            // Run drop + free memory on the data manually rather than casting back to a box
+            // because otherwise miri complains
+
+            // See standard library documentation for std::sync::Arc to see why this is needed.
+            // https://github.com/rust-lang/rust/blob/2a5da7acd4c3eae638aa1c46f3a537940e60a0e4/library/alloc/src/sync.rs#L2647-L2675
+            std::sync::atomic::fence(std::sync::atomic::Ordering::Acquire);
+            {
+                let custom_arc = data.cast::<CustomArc<T>>().as_mut();
+                std::ptr::drop_in_place(custom_arc);
+            }
+
+            std::alloc::dealloc(
+                data.as_ptr() as *mut u8,
+                std::alloc::Layout::new::<CustomArc<T>>(),
+            );
         }
-
-        std::alloc::dealloc(
-            data.as_ptr() as *mut u8,
-            std::alloc::Layout::new::<CustomArc<T>>(),
-        );
-    }}
+    }
 
     let rc = Box::leak(Box::new(CustomArc {
         rc: AtomicUsize::new(1),

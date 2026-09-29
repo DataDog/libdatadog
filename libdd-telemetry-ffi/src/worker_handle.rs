@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use ffi::slice::AsBytes;
 use ffi::MaybeError;
+use ffi::slice::AsBytes;
 use function_name::named;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;

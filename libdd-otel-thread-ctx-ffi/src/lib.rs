@@ -52,9 +52,9 @@ mod linux {
         /// `handle` must come from a prior [`Self::from_context`] call and must not have been
         /// reclaimed yet.
         #[inline]
-        unsafe fn into_context(handle: NonNull<Self>) -> OwnedThreadContext { unsafe {
-            OwnedThreadContext::from_opaque_ptr(handle.cast())
-        }}
+        unsafe fn into_context(handle: NonNull<Self>) -> OwnedThreadContext {
+            unsafe { OwnedThreadContext::from_opaque_ptr(handle.cast()) }
+        }
     }
 
     /// Maximum size in bytes of the `attrs_data` field of a thread context record.
@@ -109,11 +109,13 @@ mod linux {
     /// `ctx` must be a valid non-null pointer obtained from `ddog_otel_thread_ctx_new` or
     /// `ddog_otel_thread_ctx_detach`, and must not be used after this call.
     #[unsafe(no_mangle)]
-    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) { unsafe {
-        if let Some(ctx) = NonNull::new(ctx) {
-            let _ = ThreadContextHandle::into_context(ctx);
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
+        unsafe {
+            if let Some(ctx) = NonNull::new(ctx) {
+                let _ = ThreadContextHandle::into_context(ctx);
+            }
         }
-    }}
+    }
 
     /// Attach `ctx` to the current thread. Returns the previously attached context if any, or null
     /// otherwise.
@@ -127,11 +129,13 @@ mod linux {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
         ctx: *mut ThreadContextHandle,
-    ) -> Option<NonNull<ThreadContextHandle>> { unsafe {
-        ThreadContextHandle::into_context(NonNull::new(ctx)?)
-            .attach()
-            .map(ThreadContextHandle::from_context)
-    }}
+    ) -> Option<NonNull<ThreadContextHandle>> {
+        unsafe {
+            ThreadContextHandle::into_context(NonNull::new(ctx)?)
+                .attach()
+                .map(ThreadContextHandle::from_context)
+        }
+    }
 
     /// Remove the currently attached context from the TLS slot.
     ///

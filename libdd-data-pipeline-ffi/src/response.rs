@@ -44,11 +44,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_response_get_body<'a>(
 /// Free `response` and all its contents. After being called response will not point to a valid
 /// memory address so any further actions on it could lead to undefined behavior.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut ExporterResponse) { unsafe {
-    if !response.is_null() {
-        drop(Box::from_raw(response));
+pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut ExporterResponse) {
+    unsafe {
+        if !response.is_null() {
+            drop(Box::from_raw(response));
+        }
     }
-}}
+}
 
 #[cfg(test)]
 mod tests {

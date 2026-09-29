@@ -3,7 +3,7 @@
 
 use crate::catch_panic;
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, SharedRuntimeError};
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -96,35 +96,39 @@ pub unsafe extern "C" fn ddog_shared_runtime_error_free(error: Option<Box<Shared
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_shared_runtime_new(
     out_handle: NonNull<*const ForkSafeRuntime>,
-) -> Option<Box<SharedRuntimeFFIError>> { unsafe {
-    catch_panic!(
-        match ForkSafeRuntime::new() {
-            Ok(runtime) => {
-                out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
-                None
-            }
-            Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
-        },
-        panic_error!()
-    )
-}}
+) -> Option<Box<SharedRuntimeFFIError>> {
+    unsafe {
+        catch_panic!(
+            match ForkSafeRuntime::new() {
+                Ok(runtime) => {
+                    out_handle.as_ptr().write(Arc::into_raw(Arc::new(runtime)));
+                    None
+                }
+                Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+            },
+            panic_error!()
+        )
+    }
+}
 
 /// Free a handle, decrementing the `Arc` strong count.
 ///
 /// The underlying runtime may not be dropped if other components are still using it.
 /// Use [`ddog_shared_runtime_shutdown`] to cleanly stop workers.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const ForkSafeRuntime) { unsafe {
-    catch_panic!(
-        {
-            if !handle.is_null() {
-                // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
-                drop(Arc::from_raw(handle));
-            }
-        },
-        ()
-    )
-}}
+pub unsafe extern "C" fn ddog_shared_runtime_free(handle: *const ForkSafeRuntime) {
+    unsafe {
+        catch_panic!(
+            {
+                if !handle.is_null() {
+                    // SAFETY: handle was produced by Arc::into_raw; this call takes ownership.
+                    drop(Arc::from_raw(handle));
+                }
+            },
+            ()
+        )
+    }
+}
 
 /// Must be called in the parent process before `fork()`.
 ///

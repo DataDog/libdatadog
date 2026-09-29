@@ -109,14 +109,14 @@ pub(crate) use c_setters;
 #[cfg(test)]
 mod tests {
     use crate::{builder::*, worker_handle::*};
-    use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
     use ffi::MaybeError;
+    use ffi::tags::{PushTagResult, ddog_Vec_Tag_new, ddog_Vec_Tag_push};
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::{
-            metrics::{MetricNamespace, MetricType},
             LogLevel,
+            metrics::{MetricNamespace, MetricType},
         },
         worker::TelemetryWorkerBuilder,
     };
@@ -128,37 +128,39 @@ mod tests {
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.
-    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) { unsafe {
-        let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
-        ddog_telemetry_builder_instantiate(
-            NonNull::new(&mut builder).unwrap().cast(),
-            ffi::CharSlice::from("test-service"),
-            ffi::CharSlice::from("rust"),
-            ffi::CharSlice::from("1.0"),
-            ffi::CharSlice::from("0.0.1"),
-        )
-        .unwrap_none();
-        let mut builder = builder.assume_init();
-
-        let f = tempfile::NamedTempFile::new().unwrap();
-        let url = format!("file://{}", f.path().to_str().unwrap());
-        ddog_telemetry_builder_with_endpoint_config_endpoint(
-            &mut builder,
-            ffi::CharSlice::from(url.as_str()),
-            ffi::CharSlice::from(""),
-            0,
-            ffi::CharSlice::from(""),
-            false,
-        )
-        .unwrap_none();
-
-        let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
-        ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
+    unsafe fn start_file_backed_worker() -> (Box<TelemetryWorkerHandle>, tempfile::NamedTempFile) {
+        unsafe {
+            let mut builder: MaybeUninit<Box<TelemetryWorkerBuilder>> = MaybeUninit::uninit();
+            ddog_telemetry_builder_instantiate(
+                NonNull::new(&mut builder).unwrap().cast(),
+                ffi::CharSlice::from("test-service"),
+                ffi::CharSlice::from("rust"),
+                ffi::CharSlice::from("1.0"),
+                ffi::CharSlice::from("0.0.1"),
+            )
             .unwrap_none();
-        let handle = handle.assume_init();
-        ddog_telemetry_handle_start(&handle).unwrap_none();
-        (handle, f)
-    }}
+            let mut builder = builder.assume_init();
+
+            let f = tempfile::NamedTempFile::new().unwrap();
+            let url = format!("file://{}", f.path().to_str().unwrap());
+            ddog_telemetry_builder_with_endpoint_config_endpoint(
+                &mut builder,
+                ffi::CharSlice::from(url.as_str()),
+                ffi::CharSlice::from(""),
+                0,
+                ffi::CharSlice::from(""),
+                false,
+            )
+            .unwrap_none();
+
+            let mut handle: MaybeUninit<Box<TelemetryWorkerHandle>> = MaybeUninit::uninit();
+            ddog_telemetry_builder_run(builder, NonNull::new(&mut handle).unwrap().cast())
+                .unwrap_none();
+            let handle = handle.assume_init();
+            ddog_telemetry_handle_start(&handle).unwrap_none();
+            (handle, f)
+        }
+    }
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -207,13 +209,15 @@ mod tests {
             );
             assert_eq!(builder.host.kernel_version.as_deref(), Some("ダタドグ"));
 
-            assert!(ddog_telemetry_builder_with_str_named_property(
-                &mut builder,
-                ffi::CharSlice::from("doesnt exist"),
-                ffi::CharSlice::from("abc")
-            )
-            .to_std()
-            .is_none(),);
+            assert!(
+                ddog_telemetry_builder_with_str_named_property(
+                    &mut builder,
+                    ffi::CharSlice::from("doesnt exist"),
+                    ffi::CharSlice::from("abc")
+                )
+                .to_std()
+                .is_none(),
+            );
         }
     }
 

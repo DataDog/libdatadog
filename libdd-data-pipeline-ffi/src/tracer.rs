@@ -11,11 +11,11 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
-use crate::structured_value::{encode_value, TracerValueToken};
+use crate::structured_value::{TracerValueToken, encode_value};
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, Slice};
 use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::v04::{
@@ -108,42 +108,44 @@ pub struct TracerSpanLink<'a> {
 pub unsafe extern "C" fn ddog_tracer_span_new(
     out_handle: NonNull<Box<TracerSpan>>,
     fields: Option<&TracerSpanFields>,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        if let Some(fields) = fields {
-            let inner = || -> Result<(), Option<Box<ExporterError>>> {
-                let service = charslice_to_bytesstring(fields.service)?;
-                let name = charslice_to_bytesstring(fields.name)?;
-                let resource = charslice_to_bytesstring(fields.resource)?;
-                let span_type = charslice_to_bytesstring(fields.span_type)?;
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            if let Some(fields) = fields {
+                let inner = || -> Result<(), Option<Box<ExporterError>>> {
+                    let service = charslice_to_bytesstring(fields.service)?;
+                    let name = charslice_to_bytesstring(fields.name)?;
+                    let resource = charslice_to_bytesstring(fields.resource)?;
+                    let span_type = charslice_to_bytesstring(fields.span_type)?;
 
-                let trace_id: u128 =
-                    ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
+                    let trace_id: u128 =
+                        ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
 
-                let span = SpanBytes {
-                    service,
-                    name,
-                    resource,
-                    r#type: span_type,
-                    trace_id,
-                    span_id: fields.span_id,
-                    parent_id: fields.parent_id,
-                    start: fields.start,
-                    duration: fields.duration,
-                    error: fields.error,
-                    ..Default::default()
+                    let span = SpanBytes {
+                        service,
+                        name,
+                        resource,
+                        r#type: span_type,
+                        trace_id,
+                        span_id: fields.span_id,
+                        parent_id: fields.parent_id,
+                        start: fields.start,
+                        duration: fields.duration,
+                        error: fields.error,
+                        ..Default::default()
+                    };
+
+                    out_handle.as_ptr().write(Box::new(TracerSpan(span)));
+                    Ok(())
                 };
-
-                out_handle.as_ptr().write(Box::new(TracerSpan(span)));
-                Ok(())
-            };
-            inner().err().flatten()
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+                inner().err().flatten()
+            } else {
+                gen_error!(ErrorCode::InvalidArgument)
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Free a `TracerSpan` and all its contents.
 ///
@@ -379,24 +381,26 @@ pub unsafe extern "C" fn ddog_tracer_span_event_new(
     out_handle: NonNull<Box<TracerSpanEvent>>,
     name: CharSlice,
     time_unix_nano: u64,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        match charslice_to_bytesstring(name) {
-            Ok(name) => {
-                out_handle
-                    .as_ptr()
-                    .write(Box::new(TracerSpanEvent(SpanEventBytes {
-                        time_unix_nano,
-                        name,
-                        ..Default::default()
-                    })));
-                None
-            }
-            Err(e) => e,
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            match charslice_to_bytesstring(name) {
+                Ok(name) => {
+                    out_handle
+                        .as_ptr()
+                        .write(Box::new(TracerSpanEvent(SpanEventBytes {
+                            time_unix_nano,
+                            name,
+                            ..Default::default()
+                        })));
+                    None
+                }
+                Err(e) => e,
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Free a detached span event.
 #[unsafe(no_mangle)]
@@ -617,18 +621,20 @@ pub struct TracerTraceChunks(Vec<Vec<SpanBytes>>);
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
     capacity: usize,
     out_handle: NonNull<Box<TracerTraceChunks>>,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        {
-            let chunks = Vec::with_capacity(capacity);
-            out_handle
-                .as_ptr()
-                .write(Box::new(TracerTraceChunks(chunks)));
-            None
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            {
+                let chunks = Vec::with_capacity(capacity);
+                out_handle
+                    .as_ptr()
+                    .write(Box::new(TracerTraceChunks(chunks)));
+                None
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Free a trace chunks container and all its contents.
 ///
@@ -768,35 +774,37 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
     cancel: Option<&TokioCancellationToken>,
-) -> Option<Box<ExporterError>> { unsafe {
-    let Some(exporter) = exporter else {
-        return gen_error!(ErrorCode::InvalidArgument);
-    };
-    let Some(chunks) = chunks else {
-        return gen_error!(ErrorCode::InvalidArgument);
-    };
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        let Some(exporter) = exporter else {
+            return gen_error!(ErrorCode::InvalidArgument);
+        };
+        let Some(chunks) = chunks else {
+            return gen_error!(ErrorCode::InvalidArgument);
+        };
 
-    catch_panic!(
-        match exporter.send_trace_chunks(PooledChunks::unpooled(chunks.0), cancel) {
-            Ok(resp) => {
-                if let Some(out) = response_out {
-                    out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+        catch_panic!(
+            match exporter.send_trace_chunks(PooledChunks::unpooled(chunks.0), cancel) {
+                Ok(resp) => {
+                    if let Some(out) = response_out {
+                        out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+                    }
+                    None
                 }
-                None
-            }
-            Err(e) => Some(Box::new(ExporterError::from(e))),
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+                Err(e) => Some(Box::new(ExporterError::from(e))),
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::ddog_trace_exporter_error_free;
     use crate::structured_value::{
-        ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
-        ddog_tracer_encoded_value_free, TracerEncodedValue,
+        TracerEncodedValue, ddog_tracer_encode_value, ddog_tracer_encoded_value_as_slice,
+        ddog_tracer_encoded_value_free,
     };
     use std::mem::MaybeUninit;
 
@@ -1379,30 +1387,38 @@ mod tests {
             let bools = [true, false];
             let ints = [-1, 2];
             let doubles = [1.25, 2.5];
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             assert_eq!(event.0.name.as_ref(), "exception");
             assert_eq!(event.0.time_unix_nano, 123);
@@ -1472,30 +1488,38 @@ mod tests {
             let ints: [i64; 0] = [];
             let doubles: [f64; 0] = [];
 
-            assert!(ddog_tracer_span_event_set_string_array(
-                Some(&mut event),
-                cs("strings"),
-                Slice::from(&strings[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_bool_array(
-                Some(&mut event),
-                cs("bools"),
-                Slice::from(&bools[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("ints"),
-                Slice::from(&ints[..])
-            )
-            .is_none());
-            assert!(ddog_tracer_span_event_set_double_array(
-                Some(&mut event),
-                cs("doubles"),
-                Slice::from(&doubles[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_string_array(
+                    Some(&mut event),
+                    cs("strings"),
+                    Slice::from(&strings[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_bool_array(
+                    Some(&mut event),
+                    cs("bools"),
+                    Slice::from(&bools[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("ints"),
+                    Slice::from(&ints[..])
+                )
+                .is_none()
+            );
+            assert!(
+                ddog_tracer_span_event_set_double_array(
+                    Some(&mut event),
+                    cs("doubles"),
+                    Slice::from(&doubles[..])
+                )
+                .is_none()
+            );
 
             for key in ["strings", "bools", "ints", "doubles"] {
                 assert_eq!(
@@ -1732,12 +1756,14 @@ mod tests {
                     .is_none()
             );
             let codes = [1i64, 2];
-            assert!(ddog_tracer_span_event_set_int_array(
-                Some(&mut event),
-                cs("codes"),
-                Slice::from(&codes[..])
-            )
-            .is_none());
+            assert!(
+                ddog_tracer_span_event_set_int_array(
+                    Some(&mut event),
+                    cs("codes"),
+                    Slice::from(&codes[..])
+                )
+                .is_none()
+            );
 
             assert!(ddog_tracer_span_add_event(Some(&mut span), Some(event)).is_none());
 

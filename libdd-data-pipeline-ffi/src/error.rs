@@ -4,7 +4,7 @@
 use libdd_data_pipeline::trace_exporter::error::{
     AgentErrorKind, BuilderErrorKind, InternalErrorKind, NetworkErrorKind, TraceExporterError,
 };
-use std::ffi::{c_char, CString};
+use std::ffi::{CString, c_char};
 use std::fmt::Display;
 use std::io::ErrorKind as IoErrorKind;
 

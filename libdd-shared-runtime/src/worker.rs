@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use async_trait::async_trait;
-use libdd_capabilities::{maybe_send::MaybeSync, MaybeSend};
+use libdd_capabilities::{MaybeSend, maybe_send::MaybeSync};
 
 /// A background worker meant to be spawned on a [`SharedRuntime`](crate::SharedRuntime).
 ///

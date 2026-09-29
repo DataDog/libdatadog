@@ -152,7 +152,7 @@ fn encode_one(
         _ => {
             return Err(invalid_input(
                 "structured value contains an unknown token kind",
-            ))
+            ));
         }
     }
     Ok(())
@@ -192,21 +192,23 @@ pub(crate) fn encode_value(
 pub unsafe extern "C" fn ddog_tracer_encode_value(
     tokens: Slice<TracerValueToken<'_>>,
     out_handle: NonNull<Box<TracerEncodedValue>>,
-) -> Option<Box<ExporterError>> { unsafe {
-    catch_panic!(
-        {
-            let inner = || -> Result<(), Box<ExporterError>> {
-                let output = encode_value(tokens)?;
-                out_handle
-                    .as_ptr()
-                    .write(Box::new(TracerEncodedValue(output)));
-                Ok(())
-            };
-            inner().err()
-        },
-        gen_error!(ErrorCode::Panic)
-    )
-}}
+) -> Option<Box<ExporterError>> {
+    unsafe {
+        catch_panic!(
+            {
+                let inner = || -> Result<(), Box<ExporterError>> {
+                    let output = encode_value(tokens)?;
+                    out_handle
+                        .as_ptr()
+                        .write(Box::new(TracerEncodedValue(output)));
+                    Ok(())
+                };
+                inner().err()
+            },
+            gen_error!(ErrorCode::Panic)
+        )
+    }
+}
 
 /// Borrow the bytes in an encoded value. The slice is valid until the blob is
 /// freed.
@@ -242,25 +244,29 @@ mod tests {
         }
     }
 
-    unsafe fn encode(tokens: &[TracerValueToken<'_>]) -> Result<Vec<u8>, Box<ExporterError>> { unsafe {
-        let blob = encode_blob(tokens)?;
-        let bytes = ddog_tracer_encoded_value_as_slice(Some(&blob))
-            .as_bytes()
-            .to_vec();
-        ddog_tracer_encoded_value_free(Some(blob));
-        Ok(bytes)
-    }}
+    unsafe fn encode(tokens: &[TracerValueToken<'_>]) -> Result<Vec<u8>, Box<ExporterError>> {
+        unsafe {
+            let blob = encode_blob(tokens)?;
+            let bytes = ddog_tracer_encoded_value_as_slice(Some(&blob))
+                .as_bytes()
+                .to_vec();
+            ddog_tracer_encoded_value_free(Some(blob));
+            Ok(bytes)
+        }
+    }
 
     unsafe fn encode_blob(
         tokens: &[TracerValueToken<'_>],
-    ) -> Result<Box<TracerEncodedValue>, Box<ExporterError>> { unsafe {
-        let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
-        let out = NonNull::new(handle.as_mut_ptr()).unwrap();
-        if let Some(error) = ddog_tracer_encode_value(Slice::from(tokens), out) {
-            return Err(error);
+    ) -> Result<Box<TracerEncodedValue>, Box<ExporterError>> {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            if let Some(error) = ddog_tracer_encode_value(Slice::from(tokens), out) {
+                return Err(error);
+            }
+            Ok(handle.assume_init())
         }
-        Ok(handle.assume_init())
-    }}
+    }
 
     #[test]
     fn encodes_all_supported_values() {

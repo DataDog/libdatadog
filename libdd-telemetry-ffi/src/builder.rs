@@ -37,20 +37,22 @@ pub unsafe extern "C" fn ddog_telemetry_builder_instantiate(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> MaybeError { unsafe {
-    let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-        service_name.to_utf8_lossy().into_owned(),
-        language_name.to_utf8_lossy().into_owned(),
-        language_version.to_utf8_lossy().into_owned(),
-        tracer_version.to_utf8_lossy().into_owned(),
-    );
-    // This is not great but maintains compatibility code remove in Builder::run
-    builder.config = libdd_telemetry::config::Config::from_env();
+) -> MaybeError {
+    unsafe {
+        let mut builder = TelemetryWorkerBuilder::new_fetch_host(
+            service_name.to_utf8_lossy().into_owned(),
+            language_name.to_utf8_lossy().into_owned(),
+            language_version.to_utf8_lossy().into_owned(),
+            tracer_version.to_utf8_lossy().into_owned(),
+        );
+        // This is not great but maintains compatibility code remove in Builder::run
+        builder.config = libdd_telemetry::config::Config::from_env();
 
-    let new = Box::new(builder);
-    out_builder.as_ptr().write(new);
-    MaybeError::None
-}}
+        let new = Box::new(builder);
+        out_builder.as_ptr().write(new);
+        MaybeError::None
+    }
+}
 
 /// # Safety
 /// * builder should be a non null pointer to a null pointer to a builder
@@ -62,21 +64,23 @@ pub unsafe extern "C" fn ddog_telemetry_builder_instantiate_with_hostname(
     language_name: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
-) -> MaybeError { unsafe {
-    let mut builder = TelemetryWorkerBuilder::new(
-        hostname.to_utf8_lossy().into_owned(),
-        service_name.to_utf8_lossy().into_owned(),
-        language_name.to_utf8_lossy().into_owned(),
-        language_version.to_utf8_lossy().into_owned(),
-        tracer_version.to_utf8_lossy().into_owned(),
-    );
-    // This is not great but maintains compatibility code remove in Builder::run
-    builder.config = libdd_telemetry::config::Config::from_env();
+) -> MaybeError {
+    unsafe {
+        let mut builder = TelemetryWorkerBuilder::new(
+            hostname.to_utf8_lossy().into_owned(),
+            service_name.to_utf8_lossy().into_owned(),
+            language_name.to_utf8_lossy().into_owned(),
+            language_version.to_utf8_lossy().into_owned(),
+            tracer_version.to_utf8_lossy().into_owned(),
+        );
+        // This is not great but maintains compatibility code remove in Builder::run
+        builder.config = libdd_telemetry::config::Config::from_env();
 
-    let new = Box::new(builder);
-    out_builder.as_ptr().write(new);
-    MaybeError::None
-}}
+        let new = Box::new(builder);
+        out_builder.as_ptr().write(new);
+        MaybeError::None
+    }
+}
 
 #[allow(clippy::missing_safety_doc)]
 #[unsafe(no_mangle)]
@@ -134,12 +138,14 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_config(
 pub unsafe extern "C" fn ddog_telemetry_builder_run(
     builder: Box<TelemetryWorkerBuilder>,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
-) -> MaybeError { unsafe {
-    out_handle
-        .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
-    MaybeError::None
-}}
+) -> MaybeError {
+    unsafe {
+        out_handle
+            .as_ptr()
+            .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
+        MaybeError::None
+    }
+}
 
 #[unsafe(no_mangle)]
 /// Builds the telemetry worker and return a handle to it. The worker will only process and send
@@ -151,13 +157,15 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run(
 pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
     mut builder: Box<TelemetryWorkerBuilder>,
     out_handle: NonNull<Box<TelemetryWorkerHandle>>,
-) -> MaybeError { unsafe {
-    builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
-    out_handle
-        .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
-    MaybeError::None
-}}
+) -> MaybeError {
+    unsafe {
+        builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+        out_handle
+            .as_ptr()
+            .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
+        MaybeError::None
+    }
+}
 
 /// C-facing companion to [`libdd_telemetry::config::TelemetryEndpoint`]: the same
 /// shape, but with caller-owned [`ffi::CharSlice`] strings instead of `String`s,
@@ -201,9 +209,11 @@ fn set_builder_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
     endpoint: TelemetryEndpoint,
 ) -> ffi::MaybeError {
-    try_c!(telemetry_builder
-        .config
-        .set_endpoint(endpoint.into_config()));
+    try_c!(
+        telemetry_builder
+            .config
+            .set_endpoint(endpoint.into_config())
+    );
     ffi::MaybeError::None
 }
 
