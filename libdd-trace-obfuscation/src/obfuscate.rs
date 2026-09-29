@@ -430,7 +430,12 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     if key.starts_with('_') {
         return false;
     }
-    if config.credit_cards.keep_values.contains(key) {
+    if config
+        .credit_cards
+        .keep_values
+        .as_ref()
+        .is_some_and(|keep_values| keep_values.contains(key))
+    {
         return false;
     }
     true
@@ -438,6 +443,8 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::{obfuscate_pb_span, obfuscate_resource_for_stats, pb};
     use crate::{
         obfuscation_config::{self, SqlObfuscationMode},
@@ -621,7 +628,7 @@ mod tests {
             credit_cards: obfuscation_config::CreditCardConfig {
                 enabled: true,
                 luhn: false,
-                keep_values: core::iter::once("protected.key".to_string()).collect(),
+                keep_values: Some(HashSet::from_iter(["protected.key".to_string()])),
             },
             ..Default::default()
         };
@@ -699,7 +706,7 @@ mod v04_tests {
     use libdd_trace_utils::span::v04::{
         AttributeAnyValue, AttributeArrayValue, SpanBytes, SpanEventBytes,
     };
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_string(s.to_string())
@@ -906,7 +913,7 @@ mod v04_tests {
             credit_cards: CreditCardConfig {
                 enabled: true,
                 luhn: false,
-                keep_values: core::iter::once("protected.key".to_string()).collect(),
+                keep_values: Some(HashSet::from_iter(["protected.key".to_string()])),
             },
             ..Default::default()
         };

@@ -35,7 +35,7 @@ impl Default for MemcachedConfig {
 pub struct CreditCardConfig {
     pub enabled: bool,
     pub luhn: bool,
-    pub keep_values: HashSet<String>,
+    pub keep_values: Option<HashSet<String>>,
 }
 
 /// Mirrors the Datadog Agent defaults
@@ -45,7 +45,7 @@ impl Default for CreditCardConfig {
         Self {
             enabled: true,
             luhn: false,
-            keep_values: HashSet::new(),
+            keep_values: None,
         }
     }
 }
@@ -61,7 +61,7 @@ pub struct JsonObfuscatorConfig {
     /// not be obfuscated.
     // Accept both `/info`'s `keep_keys` and the Agent config's `keep_values`.
     #[serde(alias = "keep_values")]
-    pub keep_keys: HashSet<String>,
+    pub keep_keys: Option<HashSet<String>>,
     /// `transform_keys` will specify a set of keys whose string values are passed to the
     /// transform callback given to [`JsonObfuscator::obfuscate_with`] or
     /// [`JsonObfuscator::obfuscate_into`]. Entry points that take no callback obfuscate these
@@ -87,7 +87,7 @@ impl JsonObfuscatorConfig {
     pub fn disabled() -> Self {
         Self {
             enabled: false,
-            keep_keys: HashSet::new(),
+            keep_keys: None,
             transform_keys: HashSet::new(),
         }
     }
@@ -96,7 +96,7 @@ impl JsonObfuscatorConfig {
     pub fn enabled() -> Self {
         Self {
             enabled: true,
-            keep_keys: HashSet::new(),
+            keep_keys: None,
             transform_keys: HashSet::new(),
         }
     }
@@ -202,7 +202,7 @@ impl ObfuscationConfig {
             credit_cards: CreditCardConfig {
                 enabled: true,
                 luhn: true,
-                keep_values: HashSet::new(),
+                keep_values: None,
             },
             redis: RedisConfig {
                 enabled: obfuscation_redis_enabled,
@@ -293,14 +293,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(from_info.keep_keys.contains("id"));
+        assert!(from_info.keep_keys.as_ref().unwrap().contains("id"));
         assert!(from_info.transform_keys.is_empty());
         assert_eq!(from_info.keep_keys, from_agent_config.keep_keys);
         assert!(from_agent_config.transform_keys.contains("query"));
 
         // An `/info` payload from a newer Agent carries fields this config does not have.
         let forward: JsonObfuscatorConfig =
-            serde_json::from_str(r#"{"enabled":true,"keep_keys":[],"some_new_thing":3}"#).unwrap();
+            serde_json::from_str(r#"{"enabled":true,"keep_keys":null,"some_new_thing":3}"#)
+                .unwrap();
         assert!(forward.enabled);
     }
 }
