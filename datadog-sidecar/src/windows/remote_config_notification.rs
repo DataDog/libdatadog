@@ -4,6 +4,7 @@
 //! Windows client-owned remote configuration notifications.
 
 use crate::service::RemoteConfigNotifyTarget;
+use libdd_common::MutexExt;
 use libdd_ipc::platform::PlatformHandle;
 use std::ffi::c_void;
 use std::io;
@@ -100,11 +101,11 @@ unsafe extern "system" fn notify(
 ) {
     // Release artifacts use panic=abort, so this system callback needs no unwind guard.
     let state = &*context.cast::<CallbackState>();
-    if !*state.enabled.lock().unwrap_or_else(|e| e.into_inner()) {
+    if !*state.enabled.lock_or_panic() {
         return;
     }
     (state.callback)(state.context);
-    let enabled = state.enabled.lock().unwrap_or_else(|e| e.into_inner());
+    let enabled = state.enabled.lock_or_panic();
     if *enabled {
         // Waits are one-shot. Rearming only after client work coalesces concurrent signals.
         SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
