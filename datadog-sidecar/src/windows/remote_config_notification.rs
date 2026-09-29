@@ -36,24 +36,26 @@ impl RemoteConfigNotification {
         callback: unsafe extern "C" fn(*mut c_void),
         context: *mut c_void,
     ) -> io::Result<Self> {
-        let event = CreateEventW(ptr::null(), 0, 0, ptr::null());
-        if event == 0 {
-            return Err(io::Error::last_os_error());
+        unsafe {
+            let event = CreateEventW(ptr::null(), 0, 0, ptr::null());
+            if event == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let mut state = Box::new(CallbackState {
+                event: PlatformHandle::from_raw_handle(event as *mut c_void),
+                id: rand::random(),
+                callback,
+                context,
+                enabled: Arc::new(Mutex::new(true)),
+            });
+            let wait =
+                CreateThreadpoolWait(Some(notify), ptr::from_mut(&mut *state).cast(), ptr::null());
+            if wait == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
+            Ok(Self { state, wait })
         }
-        let mut state = Box::new(CallbackState {
-            event: PlatformHandle::from_raw_handle(event as *mut c_void),
-            id: rand::random(),
-            callback,
-            context,
-            enabled: Arc::new(Mutex::new(true)),
-        });
-        let wait =
-            CreateThreadpoolWait(Some(notify), ptr::from_mut(&mut *state).cast(), ptr::null());
-        if wait == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
-        Ok(Self { state, wait })
     }
 
     /// Return an event reference for IPC handle transfer. Clones retain a stable identity.
@@ -99,15 +101,17 @@ unsafe extern "system" fn notify(
     wait: PTP_WAIT,
     _result: u32,
 ) {
-    // Release artifacts use panic=abort, so this system callback needs no unwind guard.
-    let state = &*context.cast::<CallbackState>();
-    if !*state.enabled.lock_or_panic() {
-        return;
-    }
-    (state.callback)(state.context);
-    let enabled = state.enabled.lock_or_panic();
-    if *enabled {
-        // Waits are one-shot. Rearming only after client work coalesces concurrent signals.
-        SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
+    unsafe {
+        // Release artifacts use panic=abort, so this system callback needs no unwind guard.
+        let state = &*context.cast::<CallbackState>();
+        if !*state.enabled.lock_or_panic() {
+            return;
+        }
+        (state.callback)(state.context);
+        let enabled = state.enabled.lock_or_panic();
+        if *enabled {
+            // Waits are one-shot. Rearming only after client work coalesces concurrent signals.
+            SetThreadpoolWait(wait, state.event.as_raw_handle() as HANDLE, ptr::null());
+        }
     }
 }

@@ -37,12 +37,14 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
     context: *mut c_void,
     out: *mut *mut RemoteConfigNotification,
 ) -> MaybeError {
-    let out = try_c!(out.as_mut().ok_or("notification output is null"));
-    *out = std::ptr::null_mut();
-    let callback = try_c!(callback.ok_or("notification callback is null"));
-    let inner = try_c!(Notification::new(callback, context));
-    *out = Box::into_raw(Box::new(RemoteConfigNotification { inner }));
-    MaybeError::None
+    unsafe {
+        let out = try_c!(out.as_mut().ok_or("notification output is null"));
+        *out = std::ptr::null_mut();
+        let callback = try_c!(callback.ok_or("notification callback is null"));
+        let inner = try_c!(Notification::new(callback, context));
+        *out = Box::into_raw(Box::new(RemoteConfigNotification { inner }));
+        MaybeError::None
+    }
 }
 
 /// Disable a remote configuration notification and release it.
@@ -64,7 +66,9 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_drop(
     notification: *mut RemoteConfigNotification,
 ) {
-    if !notification.is_null() {
-        drop(Box::from_raw(notification));
+    unsafe {
+        if !notification.is_null() {
+            drop(Box::from_raw(notification));
+        }
     }
 }

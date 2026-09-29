@@ -34,8 +34,10 @@ pub unsafe extern "C" fn ddog_sidecar_prepare_signal_flush(
 /// `flush` must be null or an owned pointer returned by prepare. Any raw worker must have exited.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_signal_flush_drop(flush: *mut SignalFlush) {
-    if !flush.is_null() {
-        drop(Box::from_raw(flush));
+    unsafe {
+        if !flush.is_null() {
+            drop(Box::from_raw(flush));
+        }
     }
 }
 
@@ -49,5 +51,5 @@ pub unsafe extern "C" fn ddog_sidecar_signal_flush_drop(flush: *mut SignalFlush)
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub unsafe extern "C-unwind" fn ddog_sidecar_signal_flush_run(flush: &SignalFlush) -> i32 {
-    flush.run()
+    unsafe { flush.run() }
 }

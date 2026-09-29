@@ -51,6 +51,6 @@ impl SignalFlush {
     /// and block all worker signals. Do not use an inherited object after fork.
     #[inline(always)]
     pub unsafe fn run(&self) -> i32 {
-        self.request.exchange()
+        unsafe { self.request.exchange() }
     }
 }
