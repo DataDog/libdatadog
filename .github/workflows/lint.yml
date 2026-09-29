@@ -99,6 +99,10 @@ jobs:
               - '**/Cargo.toml'
             ci_helpers:
               - '.github/actions/**'
+              - '.github/workflows/lint.yml'
+              - 'nightly-toolchain.toml'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
 
   rustfmt:
     needs: setup
