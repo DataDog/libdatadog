@@ -665,7 +665,10 @@ fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
 }
 
 #[cfg(target_os = "linux")]
-fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<Ucontext, EmitterError> {
+fn emit_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<Ucontext, EmitterError> {
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
     }
@@ -695,7 +698,12 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<Ucon
             ("r15", libc::REG_R15),
         ]
         .into_iter()
-        .map(|(name, index)| (name.to_string(), format!("0x{:016x}", gregs[index as usize])))
+        .map(|(name, index)| {
+            (
+                name.to_string(),
+                format!("0x{:016x}", gregs[index as usize]),
+            )
+        })
         .collect()
     };
 
@@ -704,7 +712,12 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<Ucon
         let mc = &uc.uc_mcontext;
         [("pc".to_string(), mc.pc), ("sp".to_string(), mc.sp)]
             .into_iter()
-            .chain(mc.regs.iter().enumerate().map(|(i, value)| (format!("x{i}"), *value)))
+            .chain(
+                mc.regs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, value)| (format!("x{i}"), *value)),
+            )
             .map(|(name, value)| (name, format!("0x{value:016x}")))
             .collect()
     };
@@ -1241,7 +1254,7 @@ mod tests {
         }
 
         let mut buf = Vec::new();
-        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
+        let context = emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
 
         let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
 
@@ -1252,7 +1265,7 @@ mod tests {
         // Check architecture is correct
         #[cfg(target_arch = "x86_64")]
         {
-            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert_eq!(context.arch, "x86_64");
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1269,7 +1282,7 @@ mod tests {
 
         #[cfg(target_arch = "aarch64")]
         {
-            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert_eq!(context.arch, "aarch64");
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1296,6 +1309,7 @@ mod tests {
 
         let parsed: serde_json::Value =
             serde_json::from_str(json_part).expect("JSON between markers should be valid");
+        assert_eq!(parsed, serde_json::to_value(context).unwrap());
 
         // Verify the JSON structure
         assert!(parsed.is_object());

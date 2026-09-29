@@ -27,11 +27,7 @@ pub fn set_shm_owner_uid(uid: u32) {
 
 pub(crate) fn shm_owner_uid() -> Option<u32> {
     let uid = SHM_OWNER_UID.load(Ordering::Relaxed);
-    if uid == NO_OWNER_UID {
-        None
-    } else {
-        Some(uid)
-    }
+    if uid == NO_OWNER_UID { None } else { Some(uid) }
 }
 
 /// Refuse a segment that some other user could have created.

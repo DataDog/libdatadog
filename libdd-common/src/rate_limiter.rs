@@ -15,9 +15,8 @@ pub trait Limiter {
 }
 
 /// A thread-safe limiter built on Atomics.
-/// It's base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
-/// Internally the limiter works with the system time granularity, i.e. nanoseconds on unix and
-/// milliseconds on windows.
+/// Its base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
+/// Internally the limiter measures elapsed time in nanoseconds.
 /// The implementation is a sliding window: every time the limiter is increased, the amount of time
 /// that has passed is also refilled.
 #[repr(C)]
@@ -36,7 +35,8 @@ const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
 #[cfg(test)]
 static MOCK_NOW: AtomicU64 = AtomicU64::new(0);
 
-fn now() -> u64 {
+/// Monotonic nanoseconds from a system-wide clock, comparable across processes.
+pub fn now() -> u64 {
     #[cfg(test)]
     {
         let mock = MOCK_NOW.load(Ordering::Relaxed);
@@ -58,7 +58,8 @@ fn now() -> u64 {
 
         let mut perf_counter = 0;
         windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
-        perf_counter as u64 * frequency / TIME_PER_SECOND as u64
+        // Nanoseconds fit in u64 for centuries, but the intermediate product needs u128.
+        (perf_counter as u128 * TIME_PER_SECOND as u128 / u128::from(frequency)) as u64
     };
     #[cfg(not(windows))]
     let now = {
@@ -235,10 +236,6 @@ mod tests {
         set_mock_time(0);
     }
 
-    /// Validates the real clock implementation (MOCK_NOW is 0, so `now()` hits the actual
-    /// platform clock).
-    // We normally shouldn't test private functions directly, but is necessary here since
-    // now() is mocked for the other tests.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_now_monotonic() {

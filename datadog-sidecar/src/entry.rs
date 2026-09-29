@@ -35,13 +35,13 @@ use crate::{ddog_daemon_entry_point, setup_daemon_process};
 pub struct MainLoopConfig {
     pub enable_ctrl_c_handler: bool,
     pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
-    /// Set to false in thread mode so the worker's UID can be obtained on the
-    /// first connection and used to fchown the SHM.
+    /// Set to false for Unix thread mode: authenticate and adopt the first worker's
+    /// identity before initializing SHM.
     pub init_shm_eagerly: bool,
     /// Decides which peers may be served. The default expects an out-of-process sidecar
     /// spawned by a PHP process; in-process listeners must supply
     /// [`ConnectionAuthorizer::for_in_process_listener`] instead.
-    pub authorizer: Arc<ConnectionAuthorizer>,
+    pub authorizer: ConnectionAuthorizer,
 }
 
 impl Default for MainLoopConfig {
@@ -50,7 +50,7 @@ impl Default for MainLoopConfig {
             enable_ctrl_c_handler: true,
             external_shutdown_rx: None,
             init_shm_eagerly: true,
-            authorizer: Arc::new(ConnectionAuthorizer::for_spawned_sidecar()),
+            authorizer: ConnectionAuthorizer::for_spawned_sidecar(),
         }
     }
 }
@@ -106,7 +106,7 @@ where
     }
 
     if loop_config.init_shm_eagerly {
-        crate::tracer::init_shm_limiter();
+        crate::tracer::init_shm_limiters();
     }
 
     let server = SidecarServer::default();
@@ -139,36 +139,38 @@ where
     let telemetry_handle = self_telemetry(server.clone(), watchdog_handle);
 
     let authorizer = loop_config.authorizer;
+    #[cfg(unix)]
+    let defer_shm_init = !loop_config.init_shm_eagerly;
     let listener_result = listener(Box::new({
         let shutdown_complete_tx = shutdown_complete_tx.clone();
         let server = server.clone();
         move |socket| {
+            let peer = match socket.peer_credentials() {
+                Ok(peer) => peer,
+                Err(e) => {
+                    tracing::warn!(
+                        "IPC: rejected connection with unreadable peer credentials: {e}"
+                    );
+                    return;
+                }
+            };
+            let decision = authorizer.authorize(&peer);
+            authorizer.log_denied(&peer, decision);
+            if decision == Decision::Deny {
+                return;
+            }
+            #[cfg(unix)]
+            if defer_shm_init {
+                setup::thread_listener::initialize_worker(&peer);
+            }
+
             let connection = connections.accept();
             tracing::info!("connection accepted");
 
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
-            let authorizer = authorizer.clone();
             tokio::spawn(async move {
-                // The peer is authenticated before a single request is decoded: the socket
-                // itself does not restrict who may connect (see crate::auth).
-                match socket.peer_credentials() {
-                    Ok(peer) => {
-                        let decision = authorizer.authorize(&peer);
-                        authorizer.log_denied(&peer, decision);
-                        match decision {
-                            Decision::Allow => server.accept_connection(socket).await,
-                            // Dropping `socket` closes the connection.
-                            Decision::Deny => {}
-                        }
-                    }
-                    Err(e) => {
-                        // Without credentials there is no basis to authorize; refuse.
-                        tracing::warn!(
-                            "IPC: rejected connection with unreadable peer credentials: {e}"
-                        );
-                    }
-                }
+                server.accept_connection(socket).await;
                 drop(connection);
                 tracing::info!("connection closed");
 
@@ -362,6 +364,8 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     cfg: Config,
     daemon_entrypoint: Entrypoint,
 ) -> anyhow::Result<SidecarTransport> {
+    #[cfg(unix)]
+    crate::use_thread_sidecar_shm_namespace(None);
     // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
     // attempt_listen so that the initial server pipe (created by this process and handed to the
     // daemon) uses the configured size.  The daemon restores the same value at startup so that

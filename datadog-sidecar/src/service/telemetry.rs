@@ -8,7 +8,6 @@ use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::primary_sidecar_identifier;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_ipc::one_way_shared_memory::OneWayShmWriter;
@@ -458,7 +457,7 @@ impl TelemetryCachedClient {
                 .ok();
         });
 
-        Self {
+        let client = Self {
             worker: handle,
             shm_writer: {
                 #[allow(clippy::unwrap_used)]
@@ -467,7 +466,10 @@ impl TelemetryCachedClient {
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
-        }
+        };
+        // Reset acknowledgements even if the first batch adds no cacheable data.
+        client.write_shm_file();
+        client
     }
 
     pub fn write_shm_file(&self) {
@@ -546,26 +548,29 @@ impl TelemetryCachedClient {
             let mut cache = COMPOSER_CACHE.lock().await;
             // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
             // and contents come from the same file.
-            let file = {
-                #[cfg(unix)]
-                if libdd_common::unix_utils::worker_file_outputs_restricted() {
-                    libdd_common::unix_utils::open_regular_for_read(&path)
-                        .map(tokio::fs::File::from_std)
-                        .map_err(std::io::Error::from)
-                } else {
+            let opened = async {
+                let file = {
+                    #[cfg(unix)]
+                    if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                        libdd_common::unix_utils::open_regular_for_read(&path)
+                            .map(tokio::fs::File::from_std)
+                            .map_err(std::io::Error::from)
+                    } else {
+                        tokio::fs::File::open(&path).await
+                    }
+                    #[cfg(not(unix))]
                     tokio::fs::File::open(&path).await
-                }
-                #[cfg(not(unix))]
-                tokio::fs::File::open(&path).await
-            };
-            let modified = match &file {
-                Ok(file) => file.metadata().await.and_then(|m| m.modified()),
-                Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
-            };
-            let (file, modification) = match (file, modified) {
-                (Ok(file), Ok(modification)) => (file, modification),
-                (_, Err(e)) | (Err(e), _) => {
-                    warn!("Failed to report dependencies from {path:?}, could not read modification time: {e:?}");
+                }?;
+                let modification = file.metadata().await?.modified()?;
+                Ok::<_, std::io::Error>((file, modification))
+            }
+            .await;
+            let (file, modification) = match opened {
+                Ok(opened) => opened,
+                Err(e) => {
+                    warn!(
+                        "Failed to report dependencies from {path:?}, could not read modification time: {e:?}"
+                    );
                     completer.complete(Arc::new(vec![])).await;
                     return;
                 }
@@ -700,11 +705,19 @@ impl TelemetryCachedClientSet {
     where
         F: FnOnce() -> Config,
     {
-        if let Some(existing) = self.get_existing_client(service, env) {
-            return existing;
+        if let Some(client) = self.get_existing_client(service, env) {
+            return client;
         }
-
-        let new_client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+        let mut map = self.inner.lock_or_panic();
+        let key = (service.to_string(), env.to_string());
+        if let Some(entry) = map.get_mut(&key) {
+            // Stop retires the client before removing its cache entry.
+            if entry.client.lock_or_panic().is_some() {
+                entry.last_used = Instant::now();
+                return entry.client.clone();
+            }
+        }
+        let client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
             service,
             env,
             instance_id,
@@ -712,20 +725,15 @@ impl TelemetryCachedClientSet {
             get_config,
             process_tags,
         ))));
-
-        let mut map = self.inner.lock_or_panic();
-        let key = (service.to_string(), env.to_string());
         map.insert(
-            key.clone(),
+            key,
             TelemetryCachedEntry {
                 last_used: Instant::now(),
-                client: new_client.clone(),
+                client: client.clone(),
             },
         );
-
-        info!("Created new telemetry client for {key:?}");
-
-        new_client
+        info!("Created new telemetry client for service={service}, env={env}");
+        client
     }
 
     pub fn remove_telemetry_client(
@@ -754,7 +762,7 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 
     let mut path = format!(
         "/ddtl{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
     path.truncate(31);
@@ -825,6 +833,85 @@ fn get_telemetry_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn a_new_client_replaces_old_acknowledgements() {
+        let service = format!("telemetry-replacement-{}", std::process::id());
+        let path = path_for_telemetry(&service, "test");
+        let old = OneWayShmWriter::<NamedShmHandle>::new(path.clone()).unwrap();
+        let acknowledged = TelemetryCachedClientShmData {
+            config_sent: true,
+            last_endpoints_push: SystemTime::now(),
+            ..Default::default()
+        };
+        let bytes = bincode::serialize(&acknowledged).unwrap();
+        assert!(old.write(&bytes));
+        assert!(old.write(&bytes));
+        let mut reader =
+            OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
+                open_named_shm(path).ok()
+            });
+        assert!(reader.read().0);
+        let generation = reader.last_read_generation();
+
+        let _new = TelemetryCachedClient::new(
+            &service,
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            Config::default,
+            vec![],
+        );
+        let (changed, bytes) = reader.read();
+        assert!(changed, "creating the client must reset acknowledgements");
+        let shared: TelemetryCachedClientShmData = bincode::deserialize(bytes).unwrap();
+        assert!(!shared.config_sent);
+        assert!(shared.integrations.is_empty());
+        assert!(shared.composer_paths.is_empty());
+        assert_eq!(shared.last_endpoints_push, SystemTime::UNIX_EPOCH);
+        assert!(reader.last_read_generation() > generation);
+        assert!(!old.write(&[]), "the old writer must stay retired");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn concurrent_creation_shares_one_telemetry_client() {
+        let clients = TelemetryCachedClientSet::default();
+        let service = format!("telemetry-concurrent-{}", std::process::id());
+        let start = std::sync::Barrier::new(4);
+        let creations = AtomicU64::new(0);
+        let runtime = tokio::runtime::Handle::current();
+        let opened = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let _entered = runtime.enter();
+                        start.wait();
+                        clients.get_or_create(
+                            &service,
+                            "test",
+                            &InstanceId::new("session", "runtime"),
+                            &RuntimeMetadata::new("php", "8", "test"),
+                            || {
+                                creations.fetch_add(1, Ordering::Relaxed);
+                                std::thread::sleep(Duration::from_millis(20));
+                                Config::default()
+                            },
+                            vec![],
+                        )
+                    })
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(creations.load(Ordering::Relaxed), 1);
+        assert!(opened.iter().all(|client| Arc::ptr_eq(client, &opened[0])));
+    }
 
     /// A delayed removal must not evict a newer client stored under the same key.
     #[test]

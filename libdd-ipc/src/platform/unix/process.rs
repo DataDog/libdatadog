@@ -100,7 +100,7 @@ fn proc_info(pid: u32) -> Option<ProcInfo> {
 
     const PROC_PIDT_SHORTBSDINFO: libc::c_int = 13;
 
-    extern "C" {
+    unsafe extern "C" {
         fn proc_pidinfo(
             pid: libc::c_int,
             flavor: libc::c_int,
@@ -182,28 +182,78 @@ mod tests {
         assert!(is_descendant_of(pid, pid), "a pid is its own ancestor");
 
         let parent = unsafe { libc::getppid() } as u32;
-        // A process that is its own init - pid 1, as in a container started without one - has
-        // no chain to walk: `getppid()` reports 0, and "pid 1 is not a descendant of self" is
-        // not even true of it. Only the self-ancestor case above is meaningful there.
-        if pid == 1 || parent == 0 {
-            eprintln!(
-                "skipping the rest of descendant_chain_is_walked: \
-                 running as pid 1, which has no parent to walk to"
+        if parent != 0 {
+            assert!(
+                is_descendant_of(pid, parent),
+                "self must be a descendant of its parent"
             );
-            return;
         }
 
+        // The top of our own chain. That is pid 1 on a plain host, or in a container whose init
+        // started us - but not for a process entered into a pid namespace from outside (`docker
+        // exec`, `nsenter`, `kubectl exec`): its parent lives outside the namespace and reads as
+        // 0, so the chain ends there without ever passing pid 1.
+        let mut root = pid;
+        for _ in 0..64 {
+            match parent_pid_of(root) {
+                Some(next) if next != 0 && root != 1 => root = next,
+                _ => break,
+            }
+        }
         assert!(
-            is_descendant_of(pid, parent),
-            "self must be a descendant of its parent"
+            is_descendant_of(pid, root),
+            "self must descend from the top of its own chain (pid {root})"
         );
-        assert!(
-            is_descendant_of(pid, 1),
-            "every process descends from pid 1"
-        );
-        assert!(
-            !is_descendant_of(1, pid),
-            "pid 1 must not be a descendant of self"
-        );
+        if pid != 1 {
+            assert!(
+                !is_descendant_of(1, pid),
+                "pid 1 must not be a descendant of self"
+            );
+        }
+    }
+
+    /// A chain this test controls: grandchild -> child -> this process, whatever the
+    /// environment above it looks like.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_grandchild_descends_from_its_grandparent_only() {
+        let grandparent = std::process::id();
+        // SAFETY: the forked processes only query the process table, fork, wait and _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => unsafe {
+                let child = std::process::id();
+                let status = match libc::fork() {
+                    -1 => 2,
+                    0 => {
+                        let me = std::process::id();
+                        let ok = is_descendant_of(me, child)
+                            && is_descendant_of(me, grandparent)
+                            && !is_descendant_of(child, me)
+                            && !is_descendant_of(grandparent, me);
+                        libc::_exit(if ok { 0 } else { 1 })
+                    }
+                    grandchild => {
+                        let mut status = 0;
+                        libc::waitpid(grandchild, &mut status, 0);
+                        libc::WEXITSTATUS(status)
+                    }
+                };
+                libc::_exit(status)
+            },
+            child => {
+                let mut status = 0;
+                assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+                assert_eq!(
+                    libc::WEXITSTATUS(status),
+                    0,
+                    "the grandchild's chain must lead through its parent to this process"
+                );
+                assert!(
+                    !is_descendant_of(grandparent, child as u32),
+                    "a parent does not descend from its child"
+                );
+            }
+        }
     }
 }

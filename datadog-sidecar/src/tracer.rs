@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::primary_sidecar_identifier;
 use http::uri::PathAndQuery;
 use libdd_common::Endpoint;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
@@ -35,12 +34,11 @@ pub static SHM_LIMITER: LazyLock<Option<Mutex<ManuallyDrop<ShmLimiterMemory<()>>
     },
 );
 
-/// Force the limiter to initialize now, so a failure is reported at a predictable point rather
-/// than on whichever request first needs it.
-pub fn init_shm_limiter() {
-    if let Some(limiter) = SHM_LIMITER.as_ref() {
-        drop(limiter.lock());
-    }
+/// Replace both arenas before serving requests, even if clients only find cached hashes.
+/// Requires a Tokio runtime for the exception limiter's cleanup task.
+pub fn init_shm_limiters() {
+    LazyLock::force(&SHM_LIMITER);
+    LazyLock::force(&crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER);
 }
 
 extern "C" fn drop_shm_limiter() {
@@ -104,5 +102,5 @@ impl Config {
 
 pub fn shm_limiter_path() -> CString {
     #[allow(clippy::unwrap_used)]
-    CString::new(format!("/ddlimiters-{}", primary_sidecar_identifier())).unwrap()
+    CString::new(format!("/ddlimiters-{}", crate::shm_namespace())).unwrap()
 }

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[cfg(target_os = "linux")]
-use crate::ptrace_collector::crash_site_registers;
-#[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
+#[cfg(target_os = "linux")]
+use crate::ptrace_collector::crash_site_registers;
 use crate::{
     CrashtrackerConfiguration, StackTrace,
     crash_info::{CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, Ucontext},
@@ -635,13 +635,8 @@ fn collect_and_add_thread_contexts(
         crashing_context.as_ref(),
         |tid, captured| {
             let used_saved_context = captured.as_ref().is_some_and(|ctx| ctx.used_saved_context);
-            let thread = thread_data_from_capture(
-                parent_pid,
-                crashing_tid,
-                crash_site,
-                tid,
-                captured,
-            );
+            let thread =
+                thread_data_from_capture(parent_pid, crashing_tid, crash_site, tid, captured);
             if thread.crashed
                 && should_promote_crashing_stack(config, used_saved_context)
                 && !thread.stack.frames.is_empty()
@@ -671,7 +666,6 @@ fn should_promote_crashing_stack(
         && config.resolve_frames() == StacktraceCollection::EnabledWithSymbolsInReceiver
         && used_saved_context
 }
-
 
 #[cfg(target_os = "linux")]
 fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {

@@ -53,20 +53,21 @@
 //!    arrived before workers noticed the reload flag.
 //! 4. Drops the old concentrator after that grace period.
 
+use arc_swap::ArcSwapOption;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
 use std::hint;
 use std::io;
-use std::sync::atomic::{fence, AtomicI64, AtomicU32, AtomicU64, AtomicU8, Ordering::*};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU32, AtomicU64, Ordering::*, fence};
 use std::thread;
 use zwohash::ZwoHasher;
 
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    cardinality_limit_telemetry::CollapsedFieldsMetrics, FixedAggregationKey, FlushResult,
-    FlushableConcentrator,
+    FixedAggregationKey, FlushResult, FlushableConcentrator,
+    cardinality_limit_telemetry::CollapsedFieldsMetrics,
 };
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -343,7 +344,7 @@ struct ShmHeader {
 /// flush loop's bound and its slot addresses both come from it.
 #[derive(Clone, Copy)]
 struct Layout {
-    /// Nonzero: [`ShmSpanConcentrator::drain_bucket`] divides by it.
+    /// Nonzero: flushing divides by it.
     bucket_size_nanos: u64,
     /// Nonzero: [`ShmSpanConcentrator::add_span`] takes a remainder by it.
     slot_count: u32,
@@ -573,10 +574,8 @@ pub struct ShmSpanInput<'a> {
 
 /// Owned (serializable) version of [`ShmSpanInput`].
 ///
-/// Used as the IPC fallback payload when the PHP side cannot open the SHM concentrator yet
-/// (e.g. on the very first request, before the sidecar has processed
-/// `set_universal_service_tags` and created the SHM file).  The sidecar handler receives
-/// this struct, writes to the now-existing SHM concentrator, and the span is counted.
+/// The IPC fallback sends this to the sidecar, which creates the concentrator if needed
+/// and adds the span.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct OwnedShmSpanInput {
     pub fixed: FixedAggregationKey<String>,
@@ -610,23 +609,135 @@ impl OwnedShmSpanInput {
 
 /// Shared-memory span stats concentrator.
 ///
-/// Created once by the sidecar; opened (read-write) by each PHP worker.
-#[derive(Clone)]
+/// Sidecar owners stay on their mapping; workers follow replacements by name.
 pub struct ShmSpanConcentrator {
-    mem: Arc<MappedMem<NamedShmHandle>>,
-    /// Established once - from its own parameters when creating, from a validated snapshot of
-    /// the header when opening - and never refreshed from the segment afterwards.
+    mem: ArcSwapOption<ShmStatsMapping>,
+    path: Option<CString>,
+}
+
+struct ShmStatsMapping {
+    mem: MappedMem<NamedShmHandle>,
+    /// Validated once for this mapping, never reread from the shared header.
     layout: Layout,
 }
 
-unsafe impl Send for ShmSpanConcentrator {}
-unsafe impl Sync for ShmSpanConcentrator {}
+impl Clone for ShmSpanConcentrator {
+    fn clone(&self) -> Self {
+        Self {
+            mem: ArcSwapOption::new(self.mem.load_full()),
+            path: self.path.clone(),
+        }
+    }
+}
 
 impl ShmSpanConcentrator {
-    /// Create a new SHM concentrator (sidecar side).
-    ///
-    /// Unlinks any pre-existing SHM file at `path` before creating the new one.
+    /// Create a fresh segment, then signal workers to reopen it.
     pub fn create(
+        path: CString,
+        bucket_size_nanos: u64,
+        slot_count: usize,
+        string_pool_bytes: usize,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            mem: ArcSwapOption::from_pointee(ShmStatsMapping::create(
+                path,
+                bucket_size_nanos,
+                slot_count,
+                string_pool_bytes,
+            )?),
+            path: None,
+        })
+    }
+
+    /// Open a segment and follow replacements on subsequent operations.
+    pub fn open(path: &CStr) -> io::Result<Self> {
+        Ok(Self {
+            mem: ArcSwapOption::from_pointee(ShmStatsMapping::open(path)?),
+            path: Some(path.to_owned()),
+        })
+    }
+
+    /// Open on first use, retrying failed opens and following replacements.
+    pub fn new_reader(path: CString) -> Self {
+        Self {
+            mem: ArcSwapOption::empty(),
+            path: Some(path),
+        }
+    }
+
+    fn with_current<R>(&self, f: impl FnOnce(&ShmStatsMapping) -> R) -> Option<R> {
+        let current = self.mem.load();
+        if let Some(mem) = current
+            .as_ref()
+            .filter(|mem| self.path.is_none() || !mem.needs_reload())
+        {
+            return Some(f(mem));
+        }
+        let mem = Arc::new(ShmStatsMapping::open(self.path.as_ref()?).ok()?);
+        // A slow opener must not overwrite another thread's replacement.
+        self.mem.compare_and_swap(&current, Some(mem));
+        let current = self.mem.load();
+        current
+            .as_ref()
+            .filter(|mem| !mem.needs_reload())
+            .map(|mem| f(mem))
+    }
+
+    /// Whether the cached mapping is absent or retired.
+    pub fn needs_reload(&self) -> bool {
+        self.mem
+            .load()
+            .as_ref()
+            .is_none_or(|mem| mem.needs_reload())
+    }
+
+    /// Unlink the cached mapping only while its name still refers to it.
+    pub fn unlink(&self) {
+        if let Some(mem) = self.mem.load().as_ref() {
+            mem.mem.unlink();
+        }
+    }
+
+    /// Submit a span to shared memory. Returns false if no current mapping is available.
+    pub fn add_span(&self, input: &ShmSpanInput<'_>) -> bool {
+        self.with_current(|mem| mem.add_span(input)).is_some()
+    }
+
+    /// Return `(used_slots, total_slots)` for the active bucket, or `(0, 0)` if unavailable.
+    pub fn slot_usage(&self) -> (usize, usize) {
+        self.with_current(ShmStatsMapping::slot_usage)
+            .unwrap_or_default()
+    }
+
+    /// Tell workers to reopen after the replacement is ready.
+    pub fn signal_reload(&self) {
+        if let Some(mem) = self.mem.load().as_ref() {
+            mem.header().ready.store(0, Release);
+        }
+    }
+
+    /// Drain the inactive bucket, or both buckets if `force` is true.
+    pub fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
+        self.with_current(|mem| mem.drain_buckets(force))
+            .unwrap_or_default()
+    }
+
+    /// Flush the inactive bucket (both on `force`), returning `None` if empty or unavailable.
+    pub fn flush(
+        &self,
+        force: bool,
+        hostname: String,
+        env: String,
+        version: String,
+        service: String,
+        runtime_id: String,
+    ) -> Option<pb::ClientStatsPayload> {
+        self.with_current(|mem| mem.flush(force, hostname, env, version, service, runtime_id))?
+    }
+}
+
+impl ShmStatsMapping {
+    fn create(
         path: CString,
         bucket_size_nanos: u64,
         slot_count: usize,
@@ -642,25 +753,10 @@ impl ShmSpanConcentrator {
                 )
             })?;
 
-        // Remove any stale mapping at this path (ignore errors).
-        #[cfg(unix)]
-        unsafe {
-            libc::shm_unlink(path.as_ptr());
-        }
+        let (handle, replaced) = NamedShmHandle::create_replacing(path, total)?;
+        let mem = handle.map()?;
 
-        let handle = NamedShmHandle::create(path, total)?;
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut mem = handle.map()?;
-
-        // On Windows the named mapping may persist from a previous concentrator lifetime
-        // (workers still hold handles after the sidecar retired it). Hence explicitly reset it.
-        #[cfg(windows)]
-        mem.as_slice_mut().fill(0);
-
-        let this = ShmSpanConcentrator {
-            mem: Arc::new(mem),
-            layout,
-        };
+        let this = Self { mem, layout };
 
         let hdr = this.header();
         hdr.version.store(SHM_VERSION, Relaxed);
@@ -674,15 +770,23 @@ impl ShmSpanConcentrator {
         // to IPC, preventing writes to a partially-initialized concentrator.
         hdr.ready.store(1, Release);
 
+        // Retire old segments only after the replacement is ready.
+        for old in replaced {
+            if let Ok(old) = old.map() {
+                if old.as_slice().len() >= size_of::<ShmHeader>() {
+                    // SAFETY: page-aligned, in bounds, and all fields are integer atomics.
+                    // Touch only `ready`; the old segment's layout is untrusted.
+                    let hdr = unsafe { &*(old.as_slice().as_ptr() as *const ShmHeader) };
+                    hdr.ready.store(0, Release);
+                }
+            }
+        }
+
         Ok(this)
     }
 
-    /// Open an existing SHM concentrator (PHP worker side).
-    ///
-    /// Everything this reads out of the segment is a peer's to write, so the dimensions are
-    /// taken once, here, and accepted only if they describe a segment that fits within what
-    /// was actually mapped.
-    pub fn open(path: &CStr) -> io::Result<Self> {
+    /// Validate dimensions against the mapped length before using them.
+    fn open(path: &CStr) -> io::Result<Self> {
         let handle = NamedShmHandle::open(path)?;
         let mem = handle.map()?;
         let mapped_len = mem.as_slice().len();
@@ -712,10 +816,7 @@ impl ShmSpanConcentrator {
         )
         .ok_or_else(|| invalid("SHM span concentrator: header does not describe this mapping"))?;
 
-        Ok(ShmSpanConcentrator {
-            mem: Arc::new(mem),
-            layout,
-        })
+        Ok(Self { mem, layout })
     }
 
     fn header(&self) -> &ShmHeader {
@@ -752,29 +853,12 @@ impl ShmSpanConcentrator {
         }
     }
 
-    /// Returns `true` when the sidecar has signalled that workers should
-    /// re-open the SHM at the same path (a larger mapping has been created).
-    ///
-    /// Workers should call this before every `add_span`; when it returns `true`
-    /// they should drop this handle, call `open(path)`, and retry.
-    pub fn needs_reload(&self) -> bool {
+    fn needs_reload(&self) -> bool {
         self.header().ready.load(Acquire) == 0
     }
 
-    /// Unlink the SHM file from the filesystem so that new PHP workers cannot open it.
-    /// Existing mappings (including this one and any already open in PHP workers) remain
-    /// valid.  Call this *before* `signal_reload` when retiring a concentrator.
-    ///
-    /// Uses `Arc::get_mut` to take the path out (preventing a double-unlink on `Drop`).
-    /// If multiple `Arc` clones are alive the path cannot be taken; the unlink still
-    /// happens but `Drop` may attempt a harmless second unlink (which returns `ENOENT`).
-    pub fn unlink(&self) {
-        #[cfg(unix)]
-        self.mem.unlink();
-    }
-
     /// Add a span to the currently-active bucket.  Thread-safe.
-    pub fn add_span(&self, input: &ShmSpanInput<'_>) {
+    fn add_span(&self, input: &ShmSpanInput<'_>) {
         let hdr = self.header();
 
         // Claim in-flight on the active bucket, with double-check against swap.
@@ -932,10 +1016,7 @@ impl ShmSpanConcentrator {
         }
     }
 
-    /// Returns `(used_slots, total_slots)` for the currently-active bucket.
-    ///
-    /// The sidecar uses this to decide when to recreate with more slots.
-    pub fn slot_usage(&self) -> (usize, usize) {
+    fn slot_usage(&self) -> (usize, usize) {
         let bucket = self.bucket(self.header().active_idx.load(Acquire));
         let used = bucket
             .entries
@@ -949,16 +1030,7 @@ impl ShmSpanConcentrator {
         (used, bucket.entries.len())
     }
 
-    /// Signal workers to re-open the SHM (call before creating a new, larger one).
-    pub fn signal_reload(&self) {
-        self.header().ready.store(0, Release);
-    }
-
-    /// Drain the inactive (or both, if `force`) bucket(s) and return raw stat buckets.
-    ///
-    /// This is the low-level building block used by both [`flush`] and the
-    /// [`FlushableConcentrator`] impl.
-    pub fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
+    fn drain_buckets(&self, force: bool) -> Vec<pb::ClientStatsBucket> {
         let mut stat_buckets: Vec<pb::ClientStatsBucket> = Vec::new();
 
         if force {
@@ -977,11 +1049,7 @@ impl ShmSpanConcentrator {
         stat_buckets
     }
 
-    /// Flush and return a serialised `ClientStatsPayload`, or `None` if empty.
-    ///
-    /// * `force = false` – swap the active bucket, drain the previously-active one.
-    /// * `force = true`  – drain both buckets without swapping (shutdown).
-    pub fn flush(
+    fn flush(
         &self,
         force: bool,
         hostname: String,
@@ -1110,10 +1178,18 @@ impl ShmSpanConcentrator {
         let k = &entry.key;
         let scalars = k.scalars()?;
         // In fixed_strs order.
-        let [resource, service, name, span_type, span_kind, http_method, http_endpoint, source] =
-            std::array::from_fn::<String, FIXED_STRS, _>(|i| {
-                pool_string(pool, k.strs[i].snapshot(), budget)
-            });
+        let [
+            resource,
+            service,
+            name,
+            span_type,
+            span_kind,
+            http_method,
+            http_endpoint,
+            source,
+        ] = std::array::from_fn::<String, FIXED_STRS, _>(|i| {
+            pool_string(pool, k.strs[i].snapshot(), budget)
+        });
 
         let peer_tags: Vec<String> = k
             .peer_tag_keys
@@ -1173,6 +1249,10 @@ impl FlushableConcentrator for ShmSpanConcentrator {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU32;
+
+    fn mapping(c: &ShmSpanConcentrator) -> Arc<ShmStatsMapping> {
+        c.mem.load_full().unwrap()
+    }
 
     fn test_path() -> CString {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -1272,6 +1352,101 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn workers_follow_replacements_while_owners_keep_the_old_mapping() {
+        let path = test_path();
+        let old = default_concentrator(path.clone());
+        let old_flusher = old.clone();
+        let worker = ShmSpanConcentrator::open(path.as_c_str()).unwrap();
+        worker.add_span(&span("svc", "old", 1_000));
+
+        let new = ShmSpanConcentrator::create(path.clone(), 20_000_000_000, 8, 4096).unwrap();
+        assert!(
+            worker.needs_reload(),
+            "the old concentrator's workers must be told to reopen"
+        );
+        assert!(!new.needs_reload());
+
+        assert!(
+            new.flush(
+                true,
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new()
+            )
+            .is_none(),
+            "the new concentrator must not have inherited the old one's buckets"
+        );
+        worker.add_span(&span("svc", "new", 1_000));
+        let flushed = flush_one(&new);
+        assert_eq!(
+            flushed.stats.iter().map(|b| b.stats.len()).sum::<usize>(),
+            1
+        );
+        assert_eq!(flushed.stats[0].stats[0].resource, "new");
+        assert_eq!(flushed.stats[0].duration, 20_000_000_000);
+        assert_eq!(worker.slot_usage().1, 8);
+
+        let flushed = flush_one(&old_flusher);
+        assert_eq!(flushed.stats[0].stats.len(), 1);
+        assert_eq!(flushed.stats[0].stats[0].resource, "old");
+        assert_eq!(flushed.stats[0].duration, 10_000_000_000);
+
+        // The retired owner cleaning up late must not take the name from its successor.
+        old.unlink();
+        drop(old);
+        assert!(ShmSpanConcentrator::open(path.as_c_str()).is_ok());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_reader_retries_missing_and_retired_mappings() {
+        let path = test_path();
+        let worker = ShmSpanConcentrator::new_reader(path.clone());
+        let input = span("svc", "res", 1_000);
+        assert!(!worker.add_span(&input));
+
+        let old = default_concentrator(path.clone());
+        assert!(worker.add_span(&input));
+        assert_eq!(flush_one(&old).stats[0].stats[0].hits, 1);
+
+        old.signal_reload();
+        assert!(!worker.add_span(&input));
+        old.unlink();
+        assert!(!worker.add_span(&input));
+
+        let new = default_concentrator(path);
+        assert!(worker.add_span(&input));
+        assert_eq!(flush_one(&new).stats[0].stats[0].hits, 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_workers_follow_a_replacement() {
+        let path = test_path();
+        let _old = default_concentrator(path.clone());
+        let worker = ShmSpanConcentrator::open(&path).unwrap();
+        let new = ShmSpanConcentrator::create(path, 20_000_000_000, 8, 4096).unwrap();
+        let start = std::sync::Barrier::new(4);
+
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    start.wait();
+                    for _ in 0..100 {
+                        assert!(worker.add_span(&span("svc", "res", 1_000)));
+                    }
+                });
+            }
+        });
+        let flushed = flush_one(&new);
+        assert_eq!(flushed.stats[0].stats.len(), 1);
+        assert_eq!(flushed.stats[0].stats[0].hits, 400);
+    }
+
+    #[test]
     fn test_histogram_bins() {
         assert_eq!(bin_for_duration(0), 0);
         assert_eq!(bin_for_duration(-1), 0);
@@ -1290,8 +1465,8 @@ mod tests {
             DEFAULT_STRING_POOL_BYTES,
         )
         .unwrap();
-        assert!(c
-            .flush(
+        assert!(
+            c.flush(
                 false,
                 "h".into(),
                 "e".into(),
@@ -1299,7 +1474,8 @@ mod tests {
                 "s".into(),
                 "r".into()
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -1388,15 +1564,16 @@ mod tests {
         let path = test_path();
         let c = default_concentrator(path.clone());
 
-        c.header().slot_count.store(1 << 20, Relaxed);
+        mapping(&c).header().slot_count.store(1 << 20, Relaxed);
         assert!(ShmSpanConcentrator::open(path.as_c_str()).is_err());
 
-        c.header()
+        mapping(&c)
+            .header()
             .slot_count
             .store(DEFAULT_SLOT_COUNT as u32, Relaxed);
         assert!(ShmSpanConcentrator::open(path.as_c_str()).is_ok());
 
-        c.header().bucket_size_nanos.store(0, Relaxed);
+        mapping(&c).header().bucket_size_nanos.store(0, Relaxed);
         assert!(ShmSpanConcentrator::open(path.as_c_str()).is_err());
     }
 
@@ -1411,7 +1588,8 @@ mod tests {
         let worker = ShmSpanConcentrator::open(path.as_c_str()).unwrap();
         worker.add_span(&span("svc", "res", 1_000_000));
 
-        let hdr = c.header();
+        let mem = mapping(&c);
+        let hdr = mem.header();
         hdr.slot_count.store(1 << 20, Relaxed);
         hdr.bucket_region_size.store(!7, Relaxed);
         hdr.string_pool_size.store(u32::MAX, Relaxed);
@@ -1445,7 +1623,8 @@ mod tests {
             c.add_span(&span("svc", resource, 1_000_000));
         }
 
-        let bucket = c.bucket(0);
+        let mem = mapping(&c);
+        let bucket = mem.bucket(0);
         let entries = occupied(&bucket);
         assert_eq!(entries.len(), 5);
         entries[0].key.is_trace_root.store(7, Relaxed);
@@ -1472,7 +1651,8 @@ mod tests {
         c.add_span(&span("svc", "res", 1_000_000));
 
         {
-            let bucket = c.bucket(0);
+            let mem = mapping(&c);
+            let bucket = mem.bucket(0);
             let entries = occupied(&bucket);
             // strs[0] is resource_name and strs[1] service_name; see fixed_strs.
             entries[0].key.strs[0]
@@ -1519,10 +1699,12 @@ mod tests {
         assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
         cursor.store(u32::MAX, Relaxed);
         assert_eq!(alloc_str(pool, &cursor, "!").len, 0);
-        assert!(storage[..9]
-            .iter()
-            .chain(&storage[12..])
-            .all(|b| b.load(Relaxed) == b'?'));
+        assert!(
+            storage[..9]
+                .iter()
+                .chain(&storage[12..])
+                .all(|b| b.load(Relaxed) == b'?')
+        );
     }
 
     /// Bounding each reference to the pool still leaves a peer free to repeat one large
@@ -1536,7 +1718,8 @@ mod tests {
         c.add_span(&span("svc", "res", 1_000_000));
 
         {
-            let bucket = c.bucket(0);
+            let mem = mapping(&c);
+            let bucket = mem.bucket(0);
             let entries = occupied(&bucket);
             let key = &entries[0].key;
             for wire in key
@@ -1583,7 +1766,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn a_permanent_slot_marker_does_not_trap_add_span() {
         let c = default_concentrator(test_path());
-        for entry in c.bucket(0).entries {
+        for entry in mapping(&c).bucket(0).entries {
             entry.key_hash.store(SLOT_INIT, Relaxed);
         }
 

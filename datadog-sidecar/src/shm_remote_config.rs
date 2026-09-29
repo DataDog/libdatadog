@@ -1,7 +1,6 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
 use base64::Engine;
@@ -96,7 +95,7 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
     target.hash(&mut hasher);
     let mut path = format!(
         "/ddrc{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
     // datadog remote config, on macos we're restricted to 31 chars
@@ -131,6 +130,11 @@ impl RemoteConfigReader {
 
     pub fn read(&mut self) -> (bool, &[u8]) {
         self.0.read()
+    }
+
+    /// See [`OneWayShmReader::take_replaced`].
+    pub fn take_replaced(&mut self) -> bool {
+        self.0.take_replaced()
     }
 }
 
@@ -229,11 +233,11 @@ fn store_shm(
     path: &RemoteConfigPath,
     file: Vec<u8>,
 ) -> anyhow::Result<NamedShmHandle> {
-    let name = format!("ddrc{}-{}", primary_sidecar_identifier(), version,);
+    let name = format!("ddrc{}-{}", crate::shm_namespace(), version,);
     // as much signal as possible to be collision free
     let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()));
     #[cfg(target_os = "macos")]
-    let sliced_path = &hashed_path[..30 - name.len()];
+    let sliced_path = &hashed_path[..30usize.saturating_sub(name.len()).min(hashed_path.len())];
     #[cfg(not(target_os = "macos"))]
     let sliced_path = &hashed_path;
     let name = format!("/{name}-{sliced_path}");
@@ -606,6 +610,8 @@ pub struct RemoteConfigManager {
     active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
     check_configs: Vec<String>,
+    /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
+    reapply_all: bool,
     pub current_runtime_id: String,
 }
 
@@ -643,6 +649,7 @@ impl RemoteConfigManager {
             active_configs: Default::default(),
             last_read_configs: Default::default(),
             check_configs: vec![],
+            reapply_all: false,
             current_runtime_id: "".to_string(),
         }
     }
@@ -703,6 +710,15 @@ impl RemoteConfigManager {
                     self.last_read_configs = configs;
                     self.check_configs = self.active_configs.keys().cloned().collect();
                 }
+                if self
+                    .active_reader
+                    .as_mut()
+                    .is_some_and(|r| r.take_replaced())
+                {
+                    debug!("The remote config directory was replaced; re-applying all configs");
+                    self.check_configs = self.active_configs.keys().cloned().collect();
+                    self.reapply_all = true;
+                }
 
                 let expiry = Instant::now().checked_sub(Duration::from_secs(3666));
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
@@ -718,13 +734,14 @@ impl RemoteConfigManager {
         }
 
         while let Some(config) = self.check_configs.pop() {
-            if !self.last_read_configs.contains(&config) {
+            if self.reapply_all || !self.last_read_configs.contains(&config) {
                 trace!("Removing remote config file {config}");
                 if let Some(path) = self.active_configs.remove(&config) {
                     return RemoteConfigUpdate::Remove(path);
                 }
             }
         }
+        self.reapply_all = false;
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
@@ -794,6 +811,10 @@ impl RemoteConfigManager {
         self.set_target(None);
         self.check_configs.clear();
         self.active_configs.clear();
+        self.reapply_all = false;
+        // set_target() cached the active reader; discard it too.
+        self.encountered_targets.clear();
+        self.unexpired_targets.clear();
     }
 
     /// Can be used to fast-remove configs temporarily. Will be re-applied on next fetch_update().
@@ -868,6 +889,78 @@ mod tests {
                 channel.send(()).await.unwrap();
             });
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            // The file scheme disables background fetching for this registration test.
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "file:///rc-generation-{}",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let old = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        for _ in 0..3 {
+            assert!(old.write(b"old-runtime\n"));
+        }
+
+        let sidecar =
+            ShmRemoteConfigs::new(invariants.clone(), Box::new(|| {}), Duration::from_secs(60));
+        let mut client = RemoteConfigManager::new(invariants.clone());
+        client.track_target(&DUMMY_TARGET);
+        assert!(matches!(client.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(client.current_runtime_id, "old-runtime");
+        let old_generation = client.current_remote_config_generation();
+
+        let new = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert!(new.write(b"new-runtime\n"));
+        sidecar
+            .0
+            .storage
+            .storage
+            .writers
+            .lock_or_panic()
+            .insert(DUMMY_TARGET.clone(), new);
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let register = |generation| {
+            sidecar.add_runtime(
+                InstanceId::new("session", "runtime"),
+                generation,
+                NotifyDummy(Arc::new(sender.clone())),
+                DUMMY_TARGET.env().to_string(),
+                DUMMY_TARGET.service().to_string(),
+                DUMMY_TARGET.app_version().to_string(),
+                vec![],
+                ProductCapabilities {
+                    products: vec![],
+                    capabilities: vec![],
+                },
+                DynamicInstrumentationConfigState::Disabled,
+                vec![],
+            )
+        };
+        let _registration = register(old_generation);
+        tokio::time::timeout(Duration::from_millis(200), receiver.recv())
+            .await
+            .expect("the old directory generation must trigger a notification")
+            .unwrap();
+        assert!(matches!(client.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(client.current_runtime_id, "new-runtime");
+        let generation = client.current_remote_config_generation();
+        assert!(generation > old_generation);
+
+        let _registration = register(generation);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), receiver.recv())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -1135,5 +1228,103 @@ mod tests {
         } else {
             unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
         }
+    }
+
+    /// Identical config files and limiter indices still refer to a new arena after restart.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_replaced_directory_is_reapplied_even_when_identical() {
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "http://replaced-{}.invalid",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let publish = |writer: &RemoteConfigWriter, file: &NamedShmHandle| {
+            let mut directory = b"runtime\n".to_vec();
+            directory.extend_from_slice(unsafe { file.get_path() });
+            directory.extend_from_slice(b":8:");
+            directory.extend_from_slice(
+                BASE64_URL_SAFE_NO_PAD
+                    .encode(PATH_FIRST.to_string())
+                    .as_bytes(),
+            );
+            directory.push(b'\n');
+            assert!(writer.write(&directory));
+        };
+        let content = serde_json::to_vec(&dummy_dynamic_config(true)).unwrap();
+
+        let old_file = store_shm(1, &PATH_FIRST, content.clone()).unwrap();
+        let old_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&old_writer, &old_file);
+
+        let mut manager = RemoteConfigManager::new(invariants.clone());
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add {
+                limiter_index: 8,
+                ..
+            }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        let old_generation = manager.current_remote_config_generation();
+        assert_ne!(old_generation, 0);
+
+        // Republish identical content under the same names, then drop the old owners.
+        let new_file = store_shm(1, &PATH_FIRST, content).unwrap();
+        assert_eq!(unsafe { new_file.get_path() }, unsafe {
+            old_file.get_path()
+        });
+        let new_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(manager.current_remote_config_generation(), old_generation);
+        publish(&new_writer, &new_file);
+        drop(old_writer);
+        drop(old_file);
+
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Remove(path) => assert_eq!(&path, &*PATH_FIRST),
+            other => panic!("expected the old config to be removed first, got {other:?}"),
+        }
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add {
+                value,
+                limiter_index,
+            } => {
+                assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+                assert_eq!(limiter_index, 8);
+            }
+            other => panic!("expected the config to be re-added, got {other:?}"),
+        }
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert!(manager.current_remote_config_generation() > old_generation);
+
+        // Unchanged content from the same writer needs no reapplication.
+        publish(&new_writer, &new_file);
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        // Inactive targets keep their readers and follow replacements when used again.
+        manager.reset_target();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        let newest_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&newest_writer, &new_file);
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add {
+                limiter_index: 8,
+                ..
+            }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
     }
 }

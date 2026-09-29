@@ -1214,9 +1214,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         exception_hash: u64,
         granularity: Duration,
     ) {
-        EXCEPTION_HASH_LIMITER
-            .lock_or_panic()
-            .add(exception_hash, granularity);
+        if let Some(limiter) = EXCEPTION_HASH_LIMITER.as_ref() {
+            limiter.lock_or_panic().add(exception_hash, granularity);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

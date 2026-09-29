@@ -12,7 +12,15 @@
 //!   reaches the listener.
 
 use libdd_ipc::PeerCredentials;
+#[cfg(unix)]
+use std::sync::LazyLock;
+use std::sync::{Arc, OnceLock};
 use tracing::warn;
+
+/// Shared by listener instances and the threads that must adopt the worker's credentials.
+#[cfg(unix)]
+pub(crate) static THREAD_WORKER_IDENTITY: LazyLock<Arc<OnceLock<(u32, u32)>>> =
+    LazyLock::new(Arc::default);
 
 /// uid 0 is always accepted: a root peer can already read this process's memory and signal it,
 /// so refusing its IPC connection protects nothing.
@@ -45,7 +53,7 @@ pub struct ConnectionAuthorizer {
     own_uid: u32,
     /// Identity chosen by the first worker. Later workers must match because the listener runs
     /// every request with these credentials.
-    served: std::sync::OnceLock<(u32, u32)>,
+    served: Arc<OnceLock<(u32, u32)>>,
 }
 
 impl ConnectionAuthorizer {
@@ -72,14 +80,21 @@ impl ConnectionAuthorizer {
         };
         #[cfg(not(unix))]
         let policy = AuthPolicy::OsEnforced;
-        Self::new(policy)
+        Self {
+            policy,
+            own_uid: current_uid(),
+            #[cfg(unix)]
+            served: THREAD_WORKER_IDENTITY.clone(),
+            #[cfg(not(unix))]
+            served: Arc::default(),
+        }
     }
 
     pub fn new(policy: AuthPolicy) -> Self {
         Self {
             policy,
             own_uid: current_uid(),
-            served: std::sync::OnceLock::new(),
+            served: Arc::default(),
         }
     }
 
@@ -172,11 +187,7 @@ mod tests {
 
     fn other_uid() -> u32 {
         // Any uid that is neither ours nor root, so it must be rejected.
-        if current_uid() == 12345 {
-            12346
-        } else {
-            12345
-        }
+        if current_uid() == 12345 { 12346 } else { 12345 }
     }
 
     #[test]

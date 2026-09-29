@@ -226,7 +226,7 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
     data: &mut ffi::CharSlice<'a>,
 ) -> bool
 where
-    T: FileBackedHandle + From<MappedMem<T>>,
+    T: FileBackedHandle,
 {
     let (new, contents) = reader.read();
     *data = CharSlice::from_bytes(contents);

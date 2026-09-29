@@ -1,15 +1,16 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::platform::{unlink_shm_name, FileBackedHandle, MappedMem, NamedShmHandle};
+use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use arc_swap::ArcSwapOption;
 use libdd_common::rate_limiter::{Limiter, LocalLimiter};
 use std::cell::UnsafeCell;
 use std::ffi::CString;
 use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 #[repr(C)]
 #[derive(Default)]
@@ -18,7 +19,7 @@ struct ShmLimiterData<'a, Inner> {
     rc: AtomicI32,
     limiter: LocalLimiter,
     inner: UnsafeCell<Inner>,
-    _phantom: PhantomData<&'a ShmLimiterMemory<Inner>>,
+    _phantom: PhantomData<&'a ShmLimiterArena<Inner>>,
 }
 
 impl<Inner> ShmLimiterData<'_, Inner> {
@@ -38,41 +39,138 @@ impl<Inner> ShmLimiterData<'_, Inner> {
 }
 
 pub struct ShmLimiterMemory<Inner> {
-    mem: Arc<MappedMem<NamedShmHandle>>,
+    mem: ArcSwapOption<ShmLimiterArena<Inner>>,
+    path: Option<CString>,
+}
+
+struct ShmLimiterArena<Inner> {
+    mem: MappedMem<NamedShmHandle>,
     _phantom: PhantomData<Inner>,
 }
 
 impl<Inner> Clone for ShmLimiterMemory<Inner> {
     fn clone(&self) -> Self {
         ShmLimiterMemory {
-            mem: self.mem.clone(),
-            _phantom: Default::default(),
+            mem: ArcSwapOption::new(self.mem.load_full()),
+            path: self.path.clone(),
         }
     }
 }
 
 impl<Inner> ShmLimiterMemory<Inner> {
-    const START_OFFSET: u32 = align_of::<ShmLimiterData<Inner>>() as u32;
-    const STRIDE: u32 = size_of::<ShmLimiterData<Inner>>() as u32;
-
+    /// Create a fresh arena at `path`.
+    ///
+    /// Retire previous arenas after initialization. This owner stays on its arena;
+    /// readers follow replacements by name.
     pub fn create(path: CString) -> io::Result<Self> {
-        // Clean leftover shm
-        unlink_shm_name(path.as_c_str());
-        let mem = Self::new(NamedShmHandle::create(path, 0x1000)?.map()?);
+        let (handle, replaced) = NamedShmHandle::create_replacing(path, 0x1000)?;
+        let mem = ShmLimiterArena::new(handle.map()?);
         mem.first_free_ref()
-            .store(Self::START_OFFSET, Ordering::Relaxed);
-        Ok(mem)
+            .store(ShmLimiterArena::<Inner>::START_OFFSET, Ordering::Relaxed);
+        for old in replaced {
+            if let Ok(old) = old.map() {
+                if let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(old.as_slice()) {
+                    retired.store(1, Ordering::Release);
+                }
+            }
+        }
+        Ok(Self {
+            mem: ArcSwapOption::from_pointee(mem),
+            path: None,
+        })
     }
 
-    /// Opens the shared limiter. Users are expected to re-open this if their sidecar connection
-    /// breaks.
+    /// Open an arena and follow replacements on subsequent lookups.
     pub fn open(path: &CString) -> io::Result<Self> {
-        Ok(Self::new(NamedShmHandle::open(path)?.map()?))
+        Ok(Self {
+            mem: ArcSwapOption::from_pointee(ShmLimiterArena::new(
+                NamedShmHandle::open(path)?.map()?,
+            )),
+            path: Some(path.clone()),
+        })
+    }
+
+    /// Open on the first lookup, retrying failed opens and following replacements.
+    pub fn new_reader(path: CString) -> Self {
+        Self {
+            mem: ArcSwapOption::empty(),
+            path: Some(path),
+        }
+    }
+
+    /// Whether the cached arena was replaced. Existing slots remain valid.
+    pub fn is_retired(&self) -> bool {
+        self.mem.load().as_ref().is_some_and(|mem| mem.is_retired())
+    }
+
+    fn with_current<R>(
+        &self,
+        f: impl FnOnce(&Arc<ShmLimiterArena<Inner>>) -> Option<R>,
+    ) -> Option<R> {
+        let current = self.mem.load();
+        if let Some(mem) = current.as_ref().filter(|mem| !mem.is_retired()) {
+            return f(mem);
+        }
+        let path = self.path.as_ref()?;
+        let mem = Arc::new(ShmLimiterArena::new(
+            NamedShmHandle::open(path).ok()?.map().ok()?,
+        ));
+        // A slow opener must not overwrite another thread's replacement.
+        self.mem.compare_and_swap(&current, Some(mem));
+        let current = self.mem.load();
+        current.as_ref().filter(|mem| !mem.is_retired()).and_then(f)
+    }
+
+    /// Allocate a slot whose payload needs no initialization.
+    pub fn alloc(&mut self) -> Option<ShmLimiter<Inner>> {
+        self.alloc_with_granularity(1, |_| ())
+    }
+
+    /// Initialize a slot before publishing it to readers. Returns `None` if the arena
+    /// is retired or has no room.
+    pub fn alloc_with_granularity(
+        &mut self,
+        seconds: u32,
+        init: impl FnOnce(&Inner),
+    ) -> Option<ShmLimiter<Inner>> {
+        self.with_current(|mem| mem.alloc_with_granularity(seconds, init))
+    }
+
+    pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
+        self.with_current(|mem| mem.get(idx))
+    }
+
+    pub fn find(&self, cond: impl Fn(&Inner) -> bool) -> Option<ShmLimiter<Inner>> {
+        self.with_current(|mem| mem.find(cond))
+    }
+}
+
+impl<Inner> ShmLimiterArena<Inner> {
+    /// Slot alignment must leave room for the free-list head and retirement flag.
+    const START_OFFSET: u32 = {
+        assert!(align_of::<ShmLimiterData<Inner>>() >= 2 * size_of::<AtomicU32>());
+        align_of::<ShmLimiterData<Inner>>() as u32
+    };
+    const STRIDE: u32 = size_of::<ShmLimiterData<Inner>>() as u32;
+    const RETIRED_OFFSET: usize = size_of::<AtomicU32>();
+
+    fn is_retired(&self) -> bool {
+        Self::retired_flag(self.mem.as_slice())
+            .is_some_and(|retired| retired.load(Ordering::Acquire) != 0)
+    }
+
+    fn retired_flag(slice: &[u8]) -> Option<&AtomicU32> {
+        if slice.len() < Self::RETIRED_OFFSET + size_of::<AtomicU32>() {
+            return None;
+        }
+        // SAFETY: in bounds as just checked, and the offset is a multiple of the word size in a
+        // page-aligned mapping.
+        Some(unsafe { &*slice.as_ptr().add(Self::RETIRED_OFFSET).cast() })
     }
 
     fn new(handle: MappedMem<NamedShmHandle>) -> Self {
         Self {
-            mem: Arc::new(handle),
+            mem: handle,
             _phantom: Default::default(),
         }
     }
@@ -106,16 +204,11 @@ impl<Inner> ShmLimiterMemory<Inner> {
         Some(unsafe { &*slice.as_ptr().add(idx as usize).cast() })
     }
 
-    /// The bytes currently backed by the segment.
-    fn with_mapping<R>(&self, f: impl FnOnce(&[u8]) -> Option<R>) -> Option<R> {
-        f(self.mem.as_slice())
-    }
-
     /// Never extends the mapping. Scans rely on this refusing the first slot past the end in
     /// order to terminate, and no access other than an explicit lookup should enlarge
     /// anything.
     fn with_slot<R>(&self, idx: u32, f: impl FnOnce(&ShmLimiterData<Inner>) -> R) -> Option<R> {
-        self.with_mapping(|slice| Self::slot(slice, idx).map(f))
+        Self::slot(self.mem.as_slice(), idx).map(f)
     }
 
     /// As [`Self::with_slot`], but first extends this process's view to reach `idx`.
@@ -130,7 +223,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         f: impl FnOnce(&ShmLimiterData<Inner>) -> R,
     ) -> Option<R> {
         let end = idx.checked_add(Self::STRIDE)? as usize;
-        if self.with_mapping(|slice| Some(slice.len()))? < end {
+        if self.mem.as_slice().len() < end {
             self.ensure_mapped(end)?;
         }
         self.with_slot(idx, f)
@@ -156,17 +249,11 @@ impl<Inner> ShmLimiterMemory<Inner> {
         self.mem.ensure_space(needed).then_some(())
     }
 
-    fn next_free(&mut self) -> Option<u32> {
+    fn next_free(&self) -> Option<u32> {
         let mut first_free = self.first_free_ref().load(Ordering::Relaxed);
         loop {
             let mut target_next_free =
-                match self.with_slot(first_free, |l| l.next_free.load(Ordering::Relaxed)) {
-                    Some(next) => next,
-                    None => {
-                        self.ensure_mapped(first_free.checked_add(Self::STRIDE)? as usize)?;
-                        self.with_slot(first_free, |l| l.next_free.load(Ordering::Relaxed))?
-                    }
-                };
+                self.with_slot_extending(first_free, |l| l.next_free.load(Ordering::Relaxed))?;
             // Not yet used memory will always be 0. The next free entry will then be just above.
             if target_next_free == 0 {
                 target_next_free = first_free.checked_add(Self::STRIDE)?;
@@ -187,21 +274,8 @@ impl<Inner> ShmLimiterMemory<Inner> {
         }
     }
 
-    /// Allocate a slot whose payload needs no initialisation.
-    pub fn alloc(&mut self) -> Option<ShmLimiter<Inner>> {
-        self.alloc_with_granularity(1, |_| ())
-    }
-
-    /// Allocate a slot, initialise it, and publish it, in that order.
-    ///
-    /// `init` writes the payload while the slot is reserved but not yet visible: it is off
-    /// the free list, so no other allocation can take it, and its reference count is still
-    /// zero, so no scan will match it. Publishing is the single release-store that raises
-    /// the count, after everything a searcher may observe is already in place.
-    ///
-    /// Returns `None` when no memory left.
-    pub fn alloc_with_granularity(
-        &mut self,
+    fn alloc_with_granularity(
+        self: &Arc<Self>,
         seconds: u32,
         init: impl FnOnce(&Inner),
     ) -> Option<ShmLimiter<Inner>> {
@@ -210,7 +284,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         Some(reference)
     }
 
-    pub fn get(&self, idx: u32) -> Option<ShmLimiter<Inner>> {
+    fn get(self: &Arc<Self>, idx: u32) -> Option<ShmLimiter<Inner>> {
         let acquired = self.with_slot_extending(idx, |limiter| {
             let mut rc = limiter.rc.load(Ordering::Acquire);
             loop {
@@ -234,7 +308,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
         acquired.then(|| ShmLimiter::owning(idx, self.clone()))
     }
 
-    pub fn find<F>(&self, cond: F) -> Option<ShmLimiter<Inner>>
+    fn find<F>(self: &Arc<Self>, cond: F) -> Option<ShmLimiter<Inner>>
     where
         F: Fn(&Inner) -> bool,
     {
@@ -279,7 +353,8 @@ pub struct ShmLimiter<Inner> {
     /// two destructors. Recording who took it is what lets the other one decline to give it
     /// back. See [`Drop`].
     owner_pid: u32,
-    memory: ShmLimiterMemory<Inner>,
+    // Slot indices and reference counts belong to this arena, even after replacement.
+    memory: Arc<ShmLimiterArena<Inner>>,
 }
 
 impl<Inner> Debug for ShmLimiter<Inner> {
@@ -290,7 +365,7 @@ impl<Inner> Debug for ShmLimiter<Inner> {
 
 impl<Inner> ShmLimiter<Inner> {
     /// A handle owning one reference to `idx`, stamped with the process taking it.
-    fn owning(idx: u32, memory: ShmLimiterMemory<Inner>) -> Self {
+    fn owning(idx: u32, memory: Arc<ShmLimiterArena<Inner>>) -> Self {
         ShmLimiter {
             idx,
             owner_pid: std::process::id(),
@@ -337,24 +412,23 @@ impl<Inner> ShmLimiter<Inner> {
         // Header, slot link and compare-exchange all against one view of the segment, so a
         // growth between the steps cannot leave the link and the head describing different
         // extents.
-        self.memory.with_mapping(|slice| {
-            let header = ShmLimiterMemory::<Inner>::header(slice)?;
-            let limiter = ShmLimiterMemory::<Inner>::slot(slice, self.idx)?;
-            let mut next_free = header.load(Ordering::Relaxed);
-            loop {
-                // Whatever ends up in the link is bounds-checked before it is ever followed.
-                limiter.next_free.store(next_free, Ordering::Relaxed);
-                match header.compare_exchange(
-                    next_free,
-                    self.idx,
-                    Ordering::SeqCst,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => return Some(()),
-                    Err(found) => next_free = found,
-                }
+        let slice = self.memory.mem.as_slice();
+        let (Some(header), Some(limiter)) = (
+            ShmLimiterArena::<Inner>::header(slice),
+            ShmLimiterArena::<Inner>::slot(slice, self.idx),
+        ) else {
+            return;
+        };
+        let mut next_free = header.load(Ordering::Relaxed);
+        loop {
+            // Whatever ends up in the link is bounds-checked before it is ever followed.
+            limiter.next_free.store(next_free, Ordering::Relaxed);
+            match header.compare_exchange(next_free, self.idx, Ordering::SeqCst, Ordering::Relaxed)
+            {
+                Ok(_) => return,
+                Err(found) => next_free = found,
             }
-        });
+        }
     }
 }
 
@@ -421,15 +495,20 @@ impl Limiter for AnyLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{ShmLimiter, ShmLimiterData, ShmLimiterMemory};
+    use crate::rate_limiter::{ShmLimiter, ShmLimiterArena, ShmLimiterData, ShmLimiterMemory};
     use libdd_common::rate_limiter::Limiter;
     use std::ffi::CString;
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread::sleep;
     use std::time::Duration;
 
     fn path() -> CString {
         CString::new("/ddlimiters-test".to_string()).unwrap()
+    }
+
+    fn arena<Inner>(memory: &ShmLimiterMemory<Inner>) -> Arc<ShmLimiterArena<Inner>> {
+        memory.mem.load_full().unwrap()
     }
 
     /// The mapping's first word is the free-list head, and every peer holding the segment can
@@ -442,14 +521,16 @@ mod tests {
         let mut limiters = ShmLimiterMemory::<()>::create(path).unwrap();
 
         // An offset well past the end of the one-page segment.
-        limiters.first_free_ref().store(8192, Ordering::Relaxed);
+        arena(&limiters)
+            .first_free_ref()
+            .store(8192, Ordering::Relaxed);
 
         // The offset may be honoured - it is the segment's own accounting, and the worker owns
         // that - but only ever by extending the mapping to cover it. What must not happen is
         // an access landing outside.
         let stride = size_of::<ShmLimiterData<()>>();
         if let Some(limiter) = limiters.alloc() {
-            let mapped = limiters.mem.as_slice().len();
+            let mapped = arena(&limiters).mem.as_slice().len();
             assert!(
                 limiter.idx as usize + stride <= mapped,
                 "slot at {} escapes the {mapped}-byte mapping",
@@ -459,7 +540,7 @@ mod tests {
         }
 
         // Far past the reservation: nothing to honour, and nothing allocated either.
-        limiters
+        arena(&limiters)
             .first_free_ref()
             .store(u32::MAX - 64, Ordering::Relaxed);
         assert!(
@@ -476,9 +557,9 @@ mod tests {
         let path = CString::new("/ddlimiters-scan".to_string()).unwrap();
         let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
 
-        let before = limiters.with_mapping(|slice| Some(slice.len())).unwrap();
+        let before = arena(&limiters).mem.as_slice().len();
         assert!(limiters.find(|_| false).is_none(), "nothing to find");
-        let after = limiters.with_mapping(|slice| Some(slice.len())).unwrap();
+        let after = arena(&limiters).mem.as_slice().len();
 
         assert_eq!(
             before, after,
@@ -523,7 +604,7 @@ mod tests {
     fn indices_outside_the_mapping_are_refused() {
         let path = CString::new("/ddlimiters-bounds".to_string()).unwrap();
         let limiters = ShmLimiterMemory::<()>::create(path).unwrap();
-        let start = ShmLimiterMemory::<()>::START_OFFSET;
+        let start = ShmLimiterArena::<()>::START_OFFSET;
         for idx in [0, 1, start - 1, start + 1, 8192, u32::MAX] {
             assert!(
                 limiters.get(idx).is_none(),
@@ -667,7 +748,7 @@ mod tests {
         const NEW: u64 = 0x900d;
 
         fn payload(mem: &ShmLimiterMemory<AtomicU64>, idx: u32) -> Option<u64> {
-            mem.with_slot(idx, |slot| {
+            arena(mem).with_slot(idx, |slot| {
                 unsafe { &*slot.inner.get() }.load(Ordering::Relaxed)
             })
         }
@@ -741,7 +822,8 @@ mod tests {
     fn a_handle_inherited_through_fork_is_not_released_twice() {
         fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
             #[allow(clippy::unwrap_used)]
-            mem.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
+            arena(mem)
+                .with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
                 .unwrap()
         }
 
@@ -798,39 +880,34 @@ mod tests {
     /// A worker that creates the arena must get a pristine one, even when an earlier worker
     /// left its segment behind by dying without running a destructor.
     ///
-    /// Creation resets the free-list head and nothing else, so an adopted segment keeps its
-    /// old slots: counts, links, limiter state and payloads all survive into an arena that
-    /// believes it is empty, and the first allocation stores `rc = 1` over a slot an older
-    /// process may still hold a handle to. Adoption is deliberate for segments in general -
-    /// see `test_named_shm_recreate_adopts_our_own` - which is exactly why the arena that
-    /// cannot survive it has to remove the name itself.
-    ///
-    /// Windows has no name to remove and no adoption to prevent: a section lives exactly as
-    /// long as the handles to it, so one whose owner died is already gone.
+    /// Adopting the segment would keep its old slots: counts, links, limiter state and payloads
+    /// would all survive into an arena that believes it is empty, and the first allocation
+    /// would store `rc = 1` over a slot an older process may still hold a handle to.
     #[test]
-    #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn a_restarted_owner_does_not_adopt_a_stale_arena() {
         fn payload(mem: &ShmLimiterMemory<AtomicU64>, idx: u32) -> Option<u64> {
-            mem.with_slot(idx, |slot| {
+            arena(mem).with_slot(idx, |slot| {
                 unsafe { &*slot.inner.get() }.load(Ordering::Relaxed)
             })
         }
 
-        let path = CString::new("/ddlimiters-restart".to_string()).unwrap();
+        let path = CString::new(format!("/ddlimiters-restart-{}", std::process::id())).unwrap();
 
         let mut first = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
         let stale = first
             .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
             .unwrap();
         let idx = stale.index();
+        let client = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        assert!(!client.is_retired());
 
         // The replacement worker starts while the old segment is still there and still
         // mapped, which is what an abrupt exit leaves behind.
-        let replacement = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+        let replacement = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
 
         assert_eq!(
-            replacement.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst)),
+            arena(&replacement).with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst)),
             Some(0),
             "a fresh arena must not inherit an owner count"
         );
@@ -845,15 +922,231 @@ mod tests {
                 .is_none(),
             "and the stale entry must not be findable in it"
         );
+        assert!(!replacement.is_retired());
 
-        // Unlinking removes the name, not the object: whoever still holds the old arena
-        // keeps a working one, rather than sharing slots with the new owner.
+        // Whoever still holds the old arena is told to move on...
+        assert!(
+            client.is_retired(),
+            "a client of the old arena must see it retired"
+        );
+        assert!(first.is_retired());
+        // ... but keeps a working one meanwhile, rather than sharing slots with the new owner.
         assert_eq!(
             stale.with_data(|hash| hash.load(Ordering::Relaxed)),
             Some(42),
             "the old arena must be undisturbed"
         );
         assert!(stale.inc(1), "and its limiter must still work");
+
+        let reopened = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        assert!(
+            !reopened.is_retired(),
+            "reopening by name reaches the replacement"
+        );
+        assert!(
+            reopened
+                .find(|hash| hash.load(Ordering::Relaxed) == 42)
+                .is_none()
+        );
+    }
+
+    /// Dropping a client of an arena rewrites the free-list head, so that word cannot double as
+    /// the retirement signal: a client that let go of its last slot must not make the arena
+    /// look retired.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn releasing_a_slot_does_not_retire_the_arena() {
+        let path = CString::new(format!("/ddlimiters-release-{}", std::process::id())).unwrap();
+        let mut limiters = ShmLimiterMemory::<()>::create(path.clone()).unwrap();
+        let client = ShmLimiterMemory::<()>::open(&path).unwrap();
+        let limiter = limiters.alloc().unwrap();
+        let shared = client.get(limiter.index()).unwrap();
+        drop(limiter);
+        drop(shared);
+        assert!(!client.is_retired());
+        assert!(!limiters.is_retired());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_reader_follows_replacement_without_moving_existing_slots() {
+        let path = CString::new(format!("/ddlim-swap-{}", std::process::id())).unwrap();
+        let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let old_slot = old
+            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .unwrap();
+        let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        let pinned = reader.get(old_slot.index()).unwrap();
+
+        let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+        let new_slot = new
+            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .unwrap();
+        assert_eq!(old_slot.index(), new_slot.index());
+        let current = reader.get(new_slot.index()).unwrap();
+        assert_eq!(
+            current.with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(22)
+        );
+        assert_eq!(
+            pinned.with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(11)
+        );
+
+        assert!(new_slot.inc(10));
+        let new_rate = new_slot.rate();
+        assert!(pinned.inc(1));
+        assert_eq!(new_slot.rate(), new_rate);
+        assert!(old_slot.rate() > 0.0);
+        drop(pinned);
+        assert_eq!(
+            old_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(1)
+        );
+        assert_eq!(
+            new_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(2)
+        );
+        drop(current);
+        assert_eq!(
+            new_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(1)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_reader_follows_replacement_when_searching() {
+        let path = CString::new(format!("/ddlim-find-{}", std::process::id())).unwrap();
+        let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let old_slot = old
+            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .unwrap();
+        let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        assert!(
+            reader
+                .find(|hash| hash.load(Ordering::Relaxed) == 11)
+                .is_some()
+        );
+
+        let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+        let new_slot = new
+            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .unwrap();
+        assert!(
+            reader
+                .find(|hash| hash.load(Ordering::Relaxed) == 11)
+                .is_none()
+        );
+        assert_eq!(
+            reader
+                .find(|hash| hash.load(Ordering::Relaxed) == 22)
+                .map(|slot| slot.index()),
+            Some(new_slot.index())
+        );
+        assert_eq!(
+            old_slot.with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(11)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_reader_retries_after_a_failed_open() {
+        let path = CString::new(format!("/ddlim-late-{}", std::process::id())).unwrap();
+        let reader = ShmLimiterMemory::<()>::new_reader(path.clone());
+        assert!(reader.get(ShmLimiterArena::<()>::START_OFFSET).is_none());
+        assert!(reader.find(|_| true).is_none());
+
+        let mut owner = ShmLimiterMemory::<()>::create(path).unwrap();
+        let slot = owner.alloc().unwrap();
+        assert_eq!(reader.get(slot.index()).unwrap().index(), slot.index());
+        assert_eq!(reader.find(|_| true).unwrap().index(), slot.index());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn a_search_keeps_one_arena_when_replaced_mid_scan() {
+        let path = CString::new(format!("/ddlim-scan-{}", std::process::id())).unwrap();
+        let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let old_slot = old
+            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .unwrap();
+        let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        let replacement = std::cell::RefCell::new(None);
+
+        let found = reader
+            .find(|hash| {
+                let mut replacement = replacement.borrow_mut();
+                if replacement.is_none() {
+                    let mut new = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+                    let slot = new
+                        .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+                        .unwrap();
+                    *replacement = Some((new, slot));
+                }
+                hash.load(Ordering::Relaxed) == 11
+            })
+            .unwrap();
+
+        assert_eq!(
+            found.with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(11)
+        );
+        assert_eq!(
+            reader
+                .get(old_slot.index())
+                .unwrap()
+                .with_data(|hash| hash.load(Ordering::Relaxed)),
+            Some(22)
+        );
+        assert!(
+            old.alloc().is_none(),
+            "a retired owner must not allocate in its successor"
+        );
+        drop(found);
+        assert_eq!(
+            old_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(1)
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn concurrent_readers_follow_replacement() {
+        let path = CString::new(format!("/ddlim-race-{}", std::process::id())).unwrap();
+        let mut old = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let old_slot = old
+            .alloc_with_granularity(1, |hash| hash.store(11, Ordering::Relaxed))
+            .unwrap();
+        let reader = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
+        let mut new = ShmLimiterMemory::<AtomicU64>::create(path).unwrap();
+        let new_slot = new
+            .alloc_with_granularity(1, |hash| hash.store(22, Ordering::Relaxed))
+            .unwrap();
+        let barrier = std::sync::Barrier::new(8);
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    let slot = reader.get(new_slot.index()).unwrap();
+                    assert_eq!(
+                        slot.with_data(|hash| hash.load(Ordering::Relaxed)),
+                        Some(22)
+                    );
+                });
+            }
+        });
+        assert!(!reader.is_retired());
+        assert_eq!(
+            old_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(1)
+        );
+        assert_eq!(
+            new_slot.with_limiter(|slot| slot.rc.load(Ordering::Relaxed)),
+            Some(1)
+        );
     }
 
     /// A scan must cover the arena as it is now, not as it was when this process mapped it.
@@ -875,7 +1168,7 @@ mod tests {
         // A second opener maps the arena while it is still one page long, and keeps that
         // view - it never allocates, so nothing on its side ever extends it.
         let observer = ShmLimiterMemory::<AtomicU64>::open(&path).unwrap();
-        let mapped_at_open = observer.with_mapping(|slice| Some(slice.len())).unwrap();
+        let mapped_at_open = arena(&observer).mem.as_slice().len();
 
         // The owner grows it past that. Every handle is held, so nothing is recycled and the
         // slot below is reached from untouched tail space.
@@ -922,7 +1215,8 @@ mod tests {
     fn a_refused_acquisition_leaves_the_refcount_alone() {
         fn rc(mem: &ShmLimiterMemory<()>, idx: u32) -> i32 {
             #[allow(clippy::unwrap_used)]
-            mem.with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
+            arena(mem)
+                .with_slot(idx, |slot| slot.rc.load(Ordering::SeqCst))
                 .unwrap()
         }
 

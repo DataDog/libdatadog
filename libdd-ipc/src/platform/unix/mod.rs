@@ -7,6 +7,17 @@ pub mod locks;
 pub mod private_dir;
 pub mod process;
 pub mod shm_guard;
+mod shm_names;
+pub(crate) use shm_names::NameOwnership;
+
+/// Open an existing named segment exactly as its creator named it - with this platform's name
+/// normalization and the filesystem fallback - refusing one another user could have created.
+///
+/// For readers that do their own mapping rather than going through
+/// [`crate::platform::NamedShmHandle`].
+pub fn open_named_shm_fd(name: &std::ffi::CStr) -> std::io::Result<std::os::fd::OwnedFd> {
+    Ok(sys_open_existing(name)?)
+}
 pub mod sockets;
 pub use shm_guard::set_shm_owner_uid;
 pub use sockets::*;

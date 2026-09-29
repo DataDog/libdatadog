@@ -535,15 +535,14 @@ pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -
     Ok(())
 }
 
-/// IPC fallback: send a span directly to the sidecar's SHM concentrator for (env, version).
+/// IPC fallback. Returns whether the span was sent, so callers can retry a failed bootstrap.
 pub fn add_span_to_concentrator(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
     span: libdd_ipc::shm_stats::OwnedShmSpanInput,
-) -> io::Result<()> {
-    lock_sender(transport)?.add_span_to_concentrator(env, version, span);
-    Ok(())
+) -> io::Result<bool> {
+    Ok(lock_sender(transport)?.add_span_to_concentrator(env, version, span))
 }
 
 /// Starts the AppSec backend in the sidecar and waits for initialization to
@@ -615,10 +614,52 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
-    use crate::service::blocking::SidecarTransport;
+    use crate::service::blocking::{SidecarTransport, add_span_to_concentrator};
+    use crate::service::sidecar_interface::SidecarInterfaceRequest;
     use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+    use std::time::Duration;
 
     use tempfile::tempdir;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stats_fallback_reports_whether_the_span_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_span_to_concentrator(
+                transport,
+                "env".into(),
+                "v1".into(),
+                libdd_ipc::shm_stats::OwnedShmSpanInput {
+                    fixed: Default::default(),
+                    peer_tags: vec![("db.hostname".into(), "db".into())],
+                    duration_ns: 42,
+                    is_error: false,
+                    is_top_level: true,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddSpanToConcentrator { env, version, span } => {
+                assert_eq!(env, "env");
+                assert_eq!(version, "v1");
+                assert_eq!(span.duration_ns, 42);
+                assert_eq!(span.peer_tags, [("db.hostname".into(), "db".into())]);
+            }
+            _ => panic!("expected a span"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
 
     #[test]
     #[cfg_attr(miri, ignore)]

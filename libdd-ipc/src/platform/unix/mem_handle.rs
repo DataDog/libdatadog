@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::shm_names;
 use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::private_dir;
 use crate::platform::shm_guard::{self, shm_owner_uid};
@@ -100,12 +101,34 @@ fn check_fallback_dir(creating: bool) -> nix::Result<()> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Take the filesystem fallback and the `ftruncate` fallback on this thread, as a host
+    /// without POSIX shared memory or `fallocate` would.
+    pub(crate) static FORCE_FALLBACKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn forced_fallbacks() -> bool {
+    FORCE_FALLBACKS.with(|forced| forced.get())
+}
+
+#[cfg(not(test))]
+fn forced_fallbacks() -> bool {
+    false
+}
+
 fn shm_open<P: ?Sized + NixPath>(
     name: &P,
     flag: OFlag,
     mode: Mode,
 ) -> nix::Result<std::os::unix::io::OwnedFd> {
-    mman::shm_open(name, flag, mode).or_else(|e| {
+    let result = if forced_fallbacks() {
+        Err(Errno::ENOSYS)
+    } else {
+        mman::shm_open(name, flag, mode)
+    };
+    result.or_else(|e| {
         // This can happen on AWS lambda
         if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT || e == Errno::EACCES {
             // The path has a leading slash
@@ -120,31 +143,44 @@ fn shm_open<P: ?Sized + NixPath>(
     })
 }
 
-/// Open a segment we intend to own, refusing one another user got to first.
-///
-/// `O_EXCL` is what makes the difference: without it `O_CREAT` silently adopts an existing
-/// segment and ignores `mode`, so a pre-planted one would be used as if we had made it. With
-/// it, pre-existence becomes visible and can be checked - and a segment that is legitimately
-/// ours already (left behind by an earlier sidecar, since shm outlives the process) is still
-/// adopted, so no state is lost across restarts.
-fn shm_open_exclusive(name: &CStr, mode: Mode) -> nix::Result<std::os::unix::io::OwnedFd> {
-    match shm_open(name, OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR, mode) {
-        Ok(fd) => Ok(fd),
-        Err(Errno::EEXIST) => {
-            let fd = shm_open(name, OFlag::O_RDWR, mode)?;
-            shm_guard::verify_owner(&fd, || name.to_string_lossy().into_owned())?;
-            Ok(fd)
-        }
-        Err(e) => Err(e),
-    }
+/// Create exclusively; [`super::shm_names`] handles replacement.
+pub(crate) fn sys_create_exclusive(
+    name: &CStr,
+    mode: Mode,
+) -> nix::Result<std::os::unix::io::OwnedFd> {
+    shm_open(name, OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR, mode)
 }
 
-pub(crate) fn unlink_shm_name(name: &CStr) {
-    _ = shm_unlink(name);
+/// Open an existing segment for replacing it, refusing one another user could have created.
+pub(crate) fn sys_open_existing(name: &CStr) -> nix::Result<std::os::unix::io::OwnedFd> {
+    let fd = shm_open(name, OFlag::O_RDWR, Mode::empty())?;
+    shm_guard::verify_owner(&fd, || name.to_string_lossy().into_owned())?;
+    Ok(fd)
+}
+
+/// Device and inode identify the segment while its descriptor stays open.
+pub(crate) fn sys_identity(fd: &impl AsRawFd) -> Option<shm_names::SegmentIdentity> {
+    let stat = nix::sys::stat::fstat(fd.as_raw_fd()).ok()?;
+    #[allow(clippy::unnecessary_cast)] // the field widths differ between platforms
+    Some((stat.st_dev as u64, stat.st_ino as u64))
+}
+
+/// Nothing to stamp: a new file already has an identity of its own.
+pub(crate) fn sys_stamp_identity(fd: &impl AsRawFd) -> Option<shm_names::SegmentIdentity> {
+    sys_identity(fd)
+}
+
+pub(crate) fn sys_shm_unlink(name: &CStr) -> nix::Result<()> {
+    shm_unlink(name)
 }
 
 pub fn shm_unlink<P: ?Sized + NixPath>(name: &P) -> nix::Result<()> {
-    mman::shm_unlink(name).or_else(|e| {
+    let result = if forced_fallbacks() {
+        Err(Errno::ENOSYS)
+    } else {
+        mman::shm_unlink(name)
+    };
+    result.or_else(|e| {
         if e == Errno::ENOSYS || e == Errno::ENOTSUP || e == Errno::ENOENT {
             let path = fallback_path(name)?;
             unlink(path.as_c_str())
@@ -163,7 +199,9 @@ const MAPPING_RESERVED_SIZE: usize = 1 << 27;
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
     let Some(size) = NonZeroUsize::new(handle.get_shm().size) else {
-        return Err(io::Error::other("Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file."));
+        return Err(io::Error::other(
+            "Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file.",
+        ));
     };
     // A segment that already exceeds the standard reservation keeps its own size as one: it
     // cannot grow in place beyond that, but it must at least be wholly mappable.
@@ -206,19 +244,20 @@ impl ShmHandle {
     }
 
     fn open_anon_shm_generic(name: &str) -> anyhow::Result<OwnedFd> {
-        let path = format!(
-            "/libdatadog-shm-{name}-{}-{}",
-            unsafe { libc::getpid() },
-            ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
-        );
-        // Exclusive, and 0600: the name embeds only pid and a counter, so another user can
-        // pre-create it. The segment is unlinked immediately afterwards, but that does not help
-        // if we adopted somebody else's to begin with.
-        #[allow(clippy::unwrap_used)] // a formatted path contains no interior NUL
-        let cpath = CString::new(path.as_bytes()).unwrap();
-        let result = shm_open_exclusive(cpath.as_c_str(), Mode::S_IRUSR | Mode::S_IWUSR);
-        _ = shm_unlink(path.as_bytes());
-        Ok(result?)
+        // Predictable names may already exist; skip them without touching their segments.
+        let fd = shm_names::create_anonymous(
+            || {
+                #[allow(clippy::unwrap_used)] // a formatted path contains no interior NUL
+                CString::new(format!(
+                    "/libdatadog-shm-{name}-{}-{}",
+                    unsafe { libc::getpid() },
+                    ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
+                ))
+                .unwrap()
+            },
+            Mode::S_IRUSR | Mode::S_IWUSR,
+        )?;
+        Ok(fd)
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -264,62 +303,62 @@ impl ShmHandle {
 }
 
 impl NamedShmHandle {
-    pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
-    }
-
-    pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
-        let fd = shm_open_exclusive(path.as_c_str(), mode)?;
-        // Try to use fallocate on Linux to eagerly commit pages: if /dev/shm is full we get ENOSPC
-        // here (recoverable) rather than SIGBUS mid-execution when a worker writes a slot.
-        #[cfg(target_os = "linux")]
-        match fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t) {
-            Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
-                ftruncate(&fd, size as off_t)?
+    pub fn create_mode_replacing(
+        path: CString,
+        size: usize,
+        mode: Mode,
+    ) -> io::Result<(NamedShmHandle, Vec<NamedShmHandle>)> {
+        let (fd, shm_path, replaced) = shm_names::create_replacing(path.as_c_str(), mode, |fd| {
+            // Allocate eagerly so a full /dev/shm returns ENOSPC here instead of SIGBUS later.
+            // The ftruncate fallback is safe because this segment is fresh.
+            #[cfg(target_os = "linux")]
+            match if forced_fallbacks() {
+                Err(nix::Error::ENOTSUP)
+            } else {
+                fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t)
+            } {
+                Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
+                    ftruncate(fd, size as off_t)?
+                }
+                Err(e) => return Err(e.into()),
+                Ok(_) => {}
             }
-            Err(e) => return Err(e.into()),
-            Ok(_) => {}
-        }
-        #[cfg(not(target_os = "linux"))]
-        ftruncate(&fd, size as off_t)?;
-        if let Some(uid) = shm_owner_uid() {
-            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
-        }
-        Self::new(fd, Some(path), size)
+            #[cfg(not(target_os = "linux"))]
+            ftruncate(fd, size as off_t)?;
+            if let Some(uid) = shm_owner_uid() {
+                let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
+            }
+            Ok(())
+        })?;
+        let replaced = replaced
+            .into_iter()
+            .filter_map(|fd| {
+                let file: File = fd.into();
+                let size = file.metadata().ok()?.size() as usize;
+                Some(Self::new(file.into(), None, size))
+            })
+            .collect();
+        Ok((Self::new(fd, Some(shm_path), size), replaced))
     }
 
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path, OFlag::O_RDWR, Mode::empty())?;
-        // A reader is the more exposed side: it maps whatever is under the name and trusts the
-        // contents. Check the descriptor before mapping it.
-        shm_guard::verify_owner(&fd, || path.to_string_lossy().into_owned())?;
-        let file: File = fd.into();
+        let file: File = sys_open_existing(path)?.into();
         let size = file.metadata()?.size() as usize;
-        Self::new(file.into(), None, size)
+        Ok(Self::new(file.into(), None, size))
     }
 
-    /// Unlink the SHM file from the filesystem without unmapping it.
-    pub fn unlink(&self) {
-        let _ = self.path.take(); // Drop of Box<ShmPath> calls shm_unlink exactly once
-    }
-
-    fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
-        Ok(NamedShmHandle {
+    fn new(fd: OwnedFd, path: Option<ShmPath>, size: usize) -> NamedShmHandle {
+        NamedShmHandle {
             inner: ShmHandle {
                 handle: fd.into(),
                 size,
             },
-            path: path.map(|path| Box::new(ShmPath { name: path })).into(),
-        })
+            path: path.map(Box::new).into(),
+        }
     }
 }
 
 impl<T: FileBackedHandle> MappedMem<T> {
-    /// Back `expected_size` bytes of the reservation, leaving the mapping where it is, and
-    /// report whether that many bytes are now usable.
-    ///
-    /// `false` means the segment is still too short - the request exceeds the reservation, or
-    /// there was no space to allocate - and nothing may be written past what it already has.
     /// Pick up backing that somebody else committed, without committing any.
     ///
     /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a
@@ -338,6 +377,11 @@ impl<T: FileBackedHandle> MappedMem<T> {
         self.get_size()
     }
 
+    /// Back `expected_size` bytes of the reservation, leaving the mapping where it is, and
+    /// report whether that many bytes are now usable.
+    ///
+    /// `false` means the segment is still too short - the request exceeds the reservation, or
+    /// there was no space to allocate - and nothing may be written past what it already has.
     #[must_use = "a segment that could not be grown is still too short to write to"]
     pub fn ensure_space(&self, expected_size: usize) -> bool {
         if expected_size <= self.get_size() {
@@ -390,8 +434,62 @@ fn grow_with_ftruncate(fd: &OwnedFd, size: usize) -> bool {
     }
 }
 
-impl Drop for ShmPath {
-    fn drop(&mut self) {
-        _ = shm_unlink(self.name.as_c_str());
+#[cfg(test)]
+mod tests {
+    use super::FORCE_FALLBACKS;
+    use crate::platform::{FileBackedHandle, NamedShmHandle};
+    use std::ffi::CString;
+    use std::io::Write;
+
+    /// Replacement has to work the same through the filesystem fallback - where names live in
+    /// a directory of our own rather than in the shm namespace - and on filesystems without
+    /// `fallocate`, where sizing a segment is an `ftruncate` that could just as well shrink one.
+    /// A fresh segment is the only kind that path may ever size.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn replacement_through_the_filesystem_and_ftruncate_fallbacks() {
+        FORCE_FALLBACKS.with(|forced| forced.set(true));
+        let path = CString::new(format!("/ddtest-fallback-{}", std::process::id())).unwrap();
+
+        let old = NamedShmHandle::create(path.clone(), 3 * 4096).unwrap();
+        let mut old = old.map().unwrap();
+        _ = old.as_slice_mut().write(&[1, 2, 3]).unwrap();
+        let reader = NamedShmHandle::open(&path).unwrap().map().unwrap();
+
+        let (new, replaced) = NamedShmHandle::create_replacing(path.clone(), 4096).unwrap();
+        let new = new.map().unwrap();
+        assert_eq!(
+            replaced.len(),
+            1,
+            "the fallback file is replaced, not adopted"
+        );
+        assert_eq!(&new.as_slice()[..3], &[0, 0, 0]);
+        assert_eq!(
+            reader.as_slice().len(),
+            3 * 4096,
+            "sizing the replacement must not have shrunk the old segment"
+        );
+        assert_eq!(&reader.as_slice()[..3], &[1, 2, 3]);
+        assert_eq!(
+            &NamedShmHandle::open(&path)
+                .unwrap()
+                .map()
+                .unwrap()
+                .as_slice()[..3],
+            &[0, 0, 0],
+            "the name refers to the replacement"
+        );
+
+        drop(old);
+        assert!(
+            NamedShmHandle::open(&path).is_ok(),
+            "the replaced owner leaves the name"
+        );
+        drop(new);
+        assert!(
+            NamedShmHandle::open(&path).is_err(),
+            "the current owner removes it"
+        );
+        FORCE_FALLBACKS.with(|forced| forced.set(false));
     }
 }

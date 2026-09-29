@@ -1,13 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use super::shm_names;
 use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::shm_guard::{self, shm_owner_uid};
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, ShmHandle, ShmPath,
 };
 use libc::off_t;
-use nix::errno::Errno;
 use nix::fcntl::OFlag;
 use nix::sys::mman::{MapFlags, ProtFlags, mmap, munmap, shm_open, shm_unlink};
 use nix::sys::stat::Mode;
@@ -18,7 +18,7 @@ use std::num::NonZeroUsize;
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::io::AsRawFd;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 const MAPPING_MAX_SIZE: usize = 1 << 27; // 128 MiB ought to be enough for everybody?
 const NOT_COMMITTED: usize = 1 << (usize::BITS - 1);
@@ -37,12 +37,14 @@ fn usable_max() -> usize {
 /// # Safety
 /// `ptr` must be the base of a `MAPPING_MAX_SIZE`-byte mapping of such a segment.
 unsafe fn committed_len<'a>(ptr: NonNull<libc::c_void>) -> &'a AtomicUsize {
-    AtomicUsize::from_ptr(
-        ptr.as_ptr()
-            .cast::<u8>()
-            .add(MAPPING_MAX_SIZE - page_size::get())
-            .cast(),
-    )
+    unsafe {
+        AtomicUsize::from_ptr(
+            ptr.as_ptr()
+                .cast::<u8>()
+                .add(MAPPING_MAX_SIZE - page_size::get())
+                .cast(),
+        )
+    }
 }
 
 pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<MappedMem<T>> {
@@ -113,16 +115,20 @@ static ANON_SHM_ID: AtomicI32 = AtomicI32::new(0);
 
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
-        let path = format!(
-            "ddshm-anon-{}-{}",
-            unsafe { libc::getpid() },
-            ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
-        );
-        let fd = shm_open_exclusive(path.as_bytes(), Mode::S_IRUSR | Mode::S_IWUSR, || {
-            path.clone()
-        })?;
+        // Predictable names may already exist; skip them without touching their segments.
+        let fd = shm_names::create_anonymous(
+            || {
+                #[allow(clippy::unwrap_used)] // a formatted path contains no interior NUL
+                CString::new(format!(
+                    "/ddshm-anon-{}-{}",
+                    unsafe { libc::getpid() },
+                    ANON_SHM_ID.fetch_add(1, Ordering::SeqCst)
+                ))
+                .unwrap()
+            },
+            Mode::S_IRUSR | Mode::S_IWUSR,
+        )?;
         ftruncate(&fd, MAPPING_MAX_SIZE as off_t)?;
-        _ = shm_unlink(path.as_bytes());
         Ok(ShmHandle {
             handle: fd.into(),
             size: size | NOT_COMMITTED,
@@ -133,81 +139,115 @@ impl ShmHandle {
         Self::new(size)
     }
 }
-/// Open a segment we intend to own, refusing one another user got to first.
-///
-/// `O_EXCL` is what makes the difference: without it `O_CREAT` silently adopts an existing
-/// segment and ignores `mode`, so a pre-planted one would be used as if we had made it. With
-/// it, pre-existence becomes visible and can be checked - and a segment that is legitimately
-/// ours already (left behind by an earlier sidecar, since shm outlives the process) is still
-/// adopted, so no state is lost across restarts.
-fn shm_open_exclusive<F>(name: &[u8], mode: Mode, display: F) -> nix::Result<OwnedFd>
-where
-    F: FnOnce() -> String,
-{
-    match shm_open(name, OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR, mode) {
-        Ok(fd) => Ok(fd),
-        Err(Errno::EEXIST) => {
-            let fd = shm_open(name, OFlag::O_RDWR, mode)?;
-            shm_guard::verify_owner(&fd, display)?;
-            Ok(fd)
-        }
-        Err(e) => Err(e),
-    }
+
+/// Create exclusively; [`super::shm_names`] handles replacement.
+pub(crate) fn sys_create_exclusive(name: &CStr, mode: Mode) -> nix::Result<OwnedFd> {
+    shm_open(
+        path_slice(name),
+        OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_RDWR,
+        mode,
+    )
 }
 
+/// Open an existing segment for replacing it, refusing one another user could have created.
+pub(crate) fn sys_open_existing(name: &CStr) -> nix::Result<OwnedFd> {
+    let fd = shm_open(path_slice(name), OFlag::O_RDWR, Mode::empty())?;
+    shm_guard::verify_owner(&fd, || name.to_string_lossy().into_owned())?;
+    Ok(fd)
+}
+
+/// macOS SHM has no device/inode identity. Store a token after the committed length in the
+/// reserved metadata page, outside the payload.
+const IDENTITY_OFFSET: usize = size_of::<usize>();
+
+/// Access the identity token only if the backing is large enough to hold the metadata page.
+fn with_identity_token<R>(fd: &impl AsFd, f: impl FnOnce(&AtomicU64) -> R) -> Option<R> {
+    let stat = nix::sys::stat::fstat(fd.as_fd().as_raw_fd()).ok()?;
+    if (stat.st_size as u64) < MAPPING_MAX_SIZE as u64 {
+        return None;
+    }
+    let page = page_size::get();
+    #[allow(clippy::unwrap_used)] // a page size is non-zero
+    let len = NonZeroUsize::new(page).unwrap();
+    // SAFETY: a fresh shared mapping of one page within the object's size, as just checked.
+    let ptr = unsafe {
+        mmap(
+            None,
+            len,
+            ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+            MapFlags::MAP_SHARED,
+            fd,
+            (MAPPING_MAX_SIZE - page) as off_t,
+        )
+    }
+    .ok()?;
+    // SAFETY: in bounds of the page just mapped, and suitably aligned.
+    let result = f(unsafe { &*ptr.as_ptr().cast::<u8>().add(IDENTITY_OFFSET).cast() });
+    unsafe { _ = munmap(ptr, page) };
+    Some(result)
+}
+
+static IDENTITY_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Give a segment just created and sized a token of its own; see [`sys_identity`].
+pub(crate) fn sys_stamp_identity(fd: &impl AsFd) -> Option<shm_names::SegmentIdentity> {
+    // Unique among the processes alive at a time, and never 0: the pid is not.
+    let token = (u64::from(std::process::id()) << 32)
+        | u64::from(IDENTITY_COUNTER.fetch_add(1, Ordering::Relaxed));
+    with_identity_token(fd, |word| word.store(token, Ordering::Release))?;
+    Some((0, token))
+}
+
+/// Read the creator's identity token.
+pub(crate) fn sys_identity(fd: &impl AsFd) -> Option<shm_names::SegmentIdentity> {
+    let token = with_identity_token(fd, |word| word.load(Ordering::Acquire))?;
+    (token != 0).then_some((0, token))
+}
+
+pub(crate) fn sys_shm_unlink(name: &CStr) -> nix::Result<()> {
+    shm_unlink(path_slice(name))
+}
+
+/// Use the same spelling for create, open and unlink: macOS distinguishes the leading slash.
 fn path_slice(path: &CStr) -> &[u8] {
-    assert_eq!(path.to_bytes()[0], b'/');
-    &path.to_bytes()[1..]
+    let bytes = path.to_bytes();
+    bytes.strip_prefix(b"/").unwrap_or(bytes)
 }
 
 impl NamedShmHandle {
-    pub fn create(path: CString, size: usize) -> io::Result<NamedShmHandle> {
-        Self::create_mode(path, size, Mode::S_IWUSR | Mode::S_IRUSR)
-    }
-
-    pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
-        let fd = shm_open_exclusive(path_slice(&path), mode, || {
-            path.to_string_lossy().into_owned()
-        })?;
-        let truncate = ftruncate(&fd, MAPPING_MAX_SIZE as off_t);
-        if let Err(error) = truncate {
-            // ignore if already exists
-            if error != Errno::EINVAL {
-                truncate?;
+    pub fn create_mode_replacing(
+        path: CString,
+        size: usize,
+        mode: Mode,
+    ) -> io::Result<(NamedShmHandle, Vec<NamedShmHandle>)> {
+        let (fd, shm_path, replaced) = shm_names::create_replacing(path.as_c_str(), mode, |fd| {
+            // Fresh, so sized exactly once: this is the whole reservation, see `mmap_handle`.
+            ftruncate(fd, MAPPING_MAX_SIZE as off_t)?;
+            if let Some(uid) = shm_owner_uid() {
+                let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
             }
-        }
-        if let Some(uid) = shm_owner_uid() {
-            let _ = fchown(fd.as_raw_fd(), Some(Uid::from_raw(uid)), None);
-        }
-        Self::new(fd, Some(path), size)
+            Ok(())
+        })?;
+        let replaced = replaced
+            .into_iter()
+            .map(|fd| Self::new(fd, None, 0))
+            .collect();
+        Ok((Self::new(fd, Some(shm_path), size), replaced))
     }
 
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
-        let fd = shm_open(path_slice(path), OFlag::O_RDWR, Mode::empty())?;
-        // A reader is the more exposed side: it maps whatever is under the name and trusts the
-        // contents. Check the descriptor before mapping it.
-        shm_guard::verify_owner(&fd, || path.to_string_lossy().into_owned())?;
-        Self::new(fd, None, 0)
+        Ok(Self::new(sys_open_existing(path)?, None, 0))
     }
 
-    /// Unlink the SHM name from the filesystem without unmapping existing mappings.
-    pub fn unlink(&self) {
-        let _ = self.path.take(); // Drop of Box<ShmPath> calls shm_unlink exactly once
-    }
-
-    fn new(fd: OwnedFd, path: Option<CString>, size: usize) -> io::Result<NamedShmHandle> {
-        Ok(NamedShmHandle {
+    fn new(fd: OwnedFd, path: Option<ShmPath>, size: usize) -> NamedShmHandle {
+        NamedShmHandle {
             inner: ShmHandle {
                 handle: fd.into(),
                 size: size | NOT_COMMITTED,
             },
-            path: path.map(|path| Box::new(ShmPath { name: path })).into(),
-        })
+            path: path.map(Box::new).into(),
+        }
     }
-}
-
-pub(crate) fn unlink_shm_name(name: &CStr) {
-    _ = shm_unlink(path_slice(name));
 }
 
 impl<T: FileBackedHandle> MappedMem<T> {
@@ -262,11 +302,5 @@ impl ShmHandle {
     pub fn adjust_to_file_size(&mut self) -> io::Result<()> {
         self.size = NOT_COMMITTED;
         Ok(())
-    }
-}
-
-impl Drop for ShmPath {
-    fn drop(&mut self) {
-        _ = shm_unlink(path_slice(self.name.as_c_str()));
     }
 }

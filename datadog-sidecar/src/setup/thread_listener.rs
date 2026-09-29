@@ -10,7 +10,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
-use crate::auth::{ConnectionAuthorizer, Decision};
+use crate::auth::{ConnectionAuthorizer, THREAD_WORKER_IDENTITY};
 use crate::config::Config;
 use crate::entry::MainLoopConfig;
 use crate::service::blocking::SidecarTransport;
@@ -19,16 +19,9 @@ use crate::setup::AbstractUnixSocketLiaison;
 use crate::setup::Liaison;
 #[cfg(not(target_os = "linux"))]
 use crate::setup::SharedDirLiaison;
-use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+use libdd_ipc::{PeerCredentials, SeqpacketConn, SeqpacketListener};
 
 static MASTER_LISTENER: OnceLock<Mutex<Option<MasterListener>>> = OnceLock::new();
-
-/// Ensures first-connection SHM initialization runs exactly once across all threads.
-static FIRST_CONNECTION_INIT: OnceLock<()> = OnceLock::new();
-
-/// The uid and gid this listener settled on: for spotting a second uid later, and so that
-/// threads started afterwards can drop themselves. See [`drop_listener_thread_privileges`].
-static SERVED_IDS: OnceLock<(u32, u32)> = OnceLock::new();
 
 /// Run this thread as the worker it serves, including when creating shared memory.
 ///
@@ -39,15 +32,14 @@ static SERVED_IDS: OnceLock<(u32, u32)> = OnceLock::new();
 fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: none of these take pointers, and none can fail in a way that matters here.
-        let (euid, pid) = unsafe { (libc::geteuid(), libc::getpid()) };
-        // The gettid wrapper requires glibc 2.30.
-        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
-
+        let euid = unsafe { libc::geteuid() };
         // Nothing to drop, or nothing to drop *to*.
         if euid != 0 || uid == 0 {
             return;
         }
+        // The gettid wrapper requires glibc 2.30.
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
         if tid == pid {
             error!(
                 "Refusing to drop privileges: this is the process's main thread (tid {tid}), not a sidecar thread. The host process must keep its own credentials."
@@ -74,7 +66,7 @@ fn drop_listener_thread_privileges(uid: u32, gid: u32) {
     {
         // Public in <unistd.h> and part of libSystem, but absent from the `libc` crate's Apple
         // bindings.
-        extern "C" {
+        unsafe extern "C" {
             fn pthread_setugid_np(uid: libc::uid_t, gid: libc::gid_t) -> libc::c_int;
         }
 
@@ -119,9 +111,23 @@ fn drop_listener_thread_privileges(uid: u32, gid: u32) {
 ///
 /// The watchdog starts before a worker's identity is known and calls this again each tick.
 pub(crate) fn drop_thread_privileges_if_known() {
-    if let Some((uid, gid)) = SERVED_IDS.get() {
+    if let Some((uid, gid)) = THREAD_WORKER_IDENTITY.get() {
         drop_listener_thread_privileges(*uid, *gid);
     }
+}
+
+/// Called on the listener thread after authentication, before dispatching requests.
+pub(crate) fn initialize_worker(peer: &PeerCredentials) {
+    let &(uid, gid) = THREAD_WORKER_IDENTITY.get_or_init(|| {
+        let host_uid = unsafe { libc::geteuid() };
+        libdd_ipc::platform::set_shm_owner_uid(peer.uid);
+        if host_uid != peer.uid {
+            libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
+        }
+        (peer.uid, peer.gid)
+    });
+    drop_listener_thread_privileges(uid, gid);
+    crate::tracer::init_shm_limiters();
 }
 
 pub struct MasterListener {
@@ -158,6 +164,7 @@ impl MasterListener {
     /// Only one listener can be active per process.
     pub fn start(config: Config) -> io::Result<()> {
         let pid = std::process::id();
+        crate::use_thread_sidecar_shm_namespace(Some(pid));
 
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
@@ -319,7 +326,6 @@ async fn accept_socket_loop_thread(
     async_listener: AsyncFd<SeqpacketListener>,
     handler: Box<dyn Fn(SeqpacketConn)>,
     mut shutdown_rx: oneshot::Receiver<()>,
-    authorizer: Arc<ConnectionAuthorizer>,
 ) -> io::Result<()> {
     loop {
         tokio::select! {
@@ -332,34 +338,6 @@ async fn accept_socket_loop_thread(
                     Ok(mut guard) => {
                         match guard.try_io(|inner| inner.get_ref().try_accept()) {
                             Ok(Ok(conn)) => {
-                                let cred = match conn.peer_credentials() {
-                                    Ok(cred) => cred,
-                                    Err(e) => {
-                                        warn!("IPC: rejected connection with unreadable peer credentials: {e}");
-                                        continue;
-                                    }
-                                };
-                                let decision = authorizer.authorize(&cred);
-                                authorizer.log_denied(&cred, decision);
-                                if decision == Decision::Deny {
-                                    continue;
-                                }
-
-                                // Initialize SHM under the first authenticated worker's UID.
-                                FIRST_CONNECTION_INIT.get_or_init(|| {
-                                    #[cfg(unix)]
-                                    let host_uid = unsafe { libc::geteuid() };
-                                    libdd_ipc::platform::set_shm_owner_uid(cred.uid);
-                                    // Create the limiter with the worker's credentials.
-                                    drop_listener_thread_privileges(cred.uid, cred.gid);
-                                    #[cfg(unix)]
-                                    if host_uid != cred.uid {
-                                        libdd_common::unix_utils::set_restrict_worker_file_outputs(true);
-                                    }
-                                    let _ = SERVED_IDS.set((cred.uid, cred.gid));
-                                    authorizer.set_served_identity(cred.uid, cred.gid);
-                                    crate::tracer::init_shm_limiter();
-                                });
                                 handler(conn);
                             }
                             Ok(Err(e)) => {
@@ -390,13 +368,12 @@ fn run_listener(
     info!("Listener thread running, entering IPC server loop");
 
     let cancel = || {};
-    let authorizer = Arc::new(ConnectionAuthorizer::for_in_process_listener());
+    let authorizer = ConnectionAuthorizer::for_in_process_listener();
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
         external_shutdown_rx: None,
-        // Defer SHM init to first connection so we can fchown using the worker's UID.
         init_shm_eagerly: false,
-        authorizer: authorizer.clone(),
+        authorizer,
     };
 
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -411,9 +388,7 @@ fn run_listener(
         .block_on(async {
             let async_listener = listener.into_async_listener()?;
             crate::entry::main_loop(
-                move |handler| {
-                    accept_socket_loop_thread(async_listener, handler, shutdown_rx, authorizer)
-                },
+                move |handler| accept_socket_loop_thread(async_listener, handler, shutdown_rx),
                 Arc::new(cancel),
                 loop_config,
             )
@@ -428,6 +403,7 @@ fn run_listener(
 /// Connect to the master listener as a worker.
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
+    crate::use_thread_sidecar_shm_namespace(Some(pid as u32));
 
     #[cfg(target_os = "linux")]
     let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);

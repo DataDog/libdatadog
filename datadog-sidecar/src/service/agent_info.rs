@@ -8,7 +8,6 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
-use crate::primary_sidecar_identifier;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::FutureExt;
@@ -171,7 +170,7 @@ fn info_path(endpoint: &Endpoint) -> CString {
     endpoint.hash(&mut hasher);
     let mut path = format!(
         "/ddinf{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
     // datadog agent info, on macOS we're restricted to 31 chars

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use datadog_sidecar::auth::{AuthPolicy, ConnectionAuthorizer};
-use datadog_sidecar::entry::{enter_listener_loop_with_config, MainLoopConfig};
+use datadog_sidecar::entry::{MainLoopConfig, enter_listener_loop_with_config};
 use datadog_sidecar::service::blocking::{self, SidecarTransport};
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 use tokio::sync::Notify;
@@ -39,7 +39,7 @@ impl Sidecar {
                 enable_ctrl_c_handler: false,
                 external_shutdown_rx: None,
                 init_shm_eagerly: true,
-                authorizer: Arc::new(ConnectionAuthorizer::new(policy)),
+                authorizer: ConnectionAuthorizer::new(policy),
             };
             let acquire = move || {
                 let async_listener = listener.into_async_listener()?;

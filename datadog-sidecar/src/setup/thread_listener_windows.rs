@@ -148,7 +148,7 @@ fn run_listener_windows(
         init_shm_eagerly: true,
         // Resolves to AuthPolicy::OsEnforced on Windows: the pipe's DACL already refuses
         // cross-user connects.
-        authorizer: std::sync::Arc::new(ConnectionAuthorizer::for_in_process_listener()),
+        authorizer: ConnectionAuthorizer::for_in_process_listener(),
     };
 
     crate::entry::enter_listener_loop_with_config(

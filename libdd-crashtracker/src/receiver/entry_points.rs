@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 
-use super::receive_report::{receive_report_from_stream, ReceiverFileAccess};
-use crate::crash_info::CrashInfo;
+use super::receive_report::{ReceiverFileAccess, receive_report_from_stream};
 use crate::CrashtrackerConfiguration;
 #[cfg(target_os = "linux")]
 use crate::StacktraceCollection;
