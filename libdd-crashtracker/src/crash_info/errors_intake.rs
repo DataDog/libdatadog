@@ -313,7 +313,9 @@ impl ExtractedMetadata {
                     "library_version" | "profiler_version" => {
                         result.tracer_version = Some(value.to_string())
                     }
-                    "process_tags" => result.process_tags = Some(value.to_string()),
+                    "process_tags" => {
+                        result.process_tags = Some(value.to_string());
+                    }
                     _ => {}
                 }
             }
@@ -344,10 +346,16 @@ impl ExtractedMetadata {
         }
     }
 
+    // Process tags don't get a key because they are already formated as a
+    // key1:value1,key2:value2,... string
     fn append_process_tags(&self, tags: &mut String) {
         if let Some(process_tags) = &self.process_tags {
-            tags.push(',');
-            tags.push_str(process_tags);
+            // Pushing empty string as a tag value is okay, but pushing just a comma is not
+            // TODO(gyuheon0h): clean up mtag parsing and building logic
+            if !process_tags.is_empty() {
+                tags.push(',');
+                tags.push_str(process_tags);
+            }
         }
     }
 }
