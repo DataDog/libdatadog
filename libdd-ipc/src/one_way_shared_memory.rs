@@ -22,8 +22,8 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use std::time::Duration;
 
 pub struct OneWayShmWriter<T>
@@ -86,8 +86,10 @@ impl From<&[u64]> for &RawData {
 
 // Safety: Caller needs to ensure the u8 is 8 byte aligned
 unsafe fn reinterpret_u8_as_u64_slice(slice: &[u8]) -> &[u64] {
-    // Safety: given 8 byte alignment, it's guaranteed to be readable
-    std::slice::from_raw_parts(slice.as_ptr() as *const u64, slice.len().div_ceil(8))
+    unsafe {
+        // Safety: given 8 byte alignment, it's guaranteed to be readable
+        std::slice::from_raw_parts(slice.as_ptr() as *const u64, slice.len().div_ceil(8))
+    }
 }
 
 // The `futex`-based wakeup is gated behind the `one_way_shm_futex` feature (and

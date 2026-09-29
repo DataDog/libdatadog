@@ -31,18 +31,20 @@ use std::ffi::c_void;
 /// - If creation succeeds, the callback code and any data reached through `context` must remain
 ///   valid until `ddog_sidecar_remote_config_notification_drop` returns.
 /// - The callback must not drop its own notification.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
     callback: Option<unsafe extern "C" fn(*mut c_void)>,
     context: *mut c_void,
     out: *mut *mut RemoteConfigNotification,
 ) -> MaybeError {
-    let out = try_c!(out.as_mut().ok_or("notification output is null"));
-    *out = std::ptr::null_mut();
-    let callback = try_c!(callback.ok_or("notification callback is null"));
-    let inner = try_c!(Notification::new(callback, context));
-    *out = Box::into_raw(Box::new(RemoteConfigNotification { inner }));
-    MaybeError::None
+    unsafe {
+        let out = try_c!(out.as_mut().ok_or("notification output is null"));
+        *out = std::ptr::null_mut();
+        let callback = try_c!(callback.ok_or("notification callback is null"));
+        let inner = try_c!(Notification::new(callback, context));
+        *out = Box::into_raw(Box::new(RemoteConfigNotification { inner }));
+        MaybeError::None
+    }
 }
 
 /// Disable a remote configuration notification and release it.
@@ -60,11 +62,13 @@ pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_new(
 /// - A non-NULL pointer may be passed to this function only once and must not be used concurrently
 ///   by another call, including `ddog_sidecar_session_set_config`.
 /// - This function must not be called from the notification's callback.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_sidecar_remote_config_notification_drop(
     notification: *mut RemoteConfigNotification,
 ) {
-    if !notification.is_null() {
-        drop(Box::from_raw(notification));
+    unsafe {
+        if !notification.is_null() {
+            drop(Box::from_raw(notification));
+        }
     }
 }

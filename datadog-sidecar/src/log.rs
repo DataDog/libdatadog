@@ -539,8 +539,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
     // Set initial log level if provided
     if let Ok(env) = env::var("DD_TRACE_LOG_LEVEL") {
         MULTI_LOG_FILTER.add(env); // this also immediately drops it, but will retain it for
-                                   // few
-                                   // seconds during startup
+        // few
+        // seconds during startup
     }
     if !config.log_level.is_empty() {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
@@ -556,15 +556,15 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, is_sidecar_log_path, AppSecLogFormatter, AppSecLogWriter,
-        TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+        AppSecLogFormatter, AppSecLogWriter, MULTI_LOG_FILTER, TemporarilyRetainedKeyParser,
+        TemporarilyRetainedMap, enable_logging, is_sidecar_log_path,
     };
     use crate::log::MultiEnvFilter;
-    use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::LazyLock;
+    use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
     use tracing::subscriber::NoSubscriber;
-    use tracing::{debug, error, warn, Level};
+    use tracing::{Level, debug, error, warn};
     use tracing_subscriber::layer::Filter;
 
     static ENABLED: LazyLock<AtomicI32> = LazyLock::new(AtomicI32::default);

@@ -117,9 +117,11 @@ mod tests {
 
     #[test]
     fn encode_with_filename_and_content_type() {
-        let form = MultipartFormData::encode(vec![MultipartPart::new("file", b"data".to_vec())
-            .filename("test.bin")
-            .content_type("application/octet-stream")]);
+        let form = MultipartFormData::encode(vec![
+            MultipartPart::new("file", b"data".to_vec())
+                .filename("test.bin")
+                .content_type("application/octet-stream"),
+        ]);
 
         let body = String::from_utf8(form.into_body()).unwrap();
         assert!(body.contains("filename=\"test.bin\""));

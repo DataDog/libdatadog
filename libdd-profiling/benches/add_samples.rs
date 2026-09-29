@@ -102,24 +102,92 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     // This is root-to-leaf, instead of leaf-to-root. We'll reverse it below.
     // Taken from a Ruby app, everything here is source-available.
     let mut frames = [
-        Frame::new("/usr/local/bundle/gems/logging-2.4.0/lib/logging/diagnostic_context.rb", 474, "create_with_logging_context"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", 155, "spawn_thread"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", 245, "run"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb", 464, "process_client"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", 99, "handle_request"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb", 378, "with_force_shutdown"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb", 100, "handle_request"),
-        Frame::new("/usr/local/bundle/gems/puma-6.4.3/lib/puma/configuration.rb", 272, "call"),
-        Frame::new("/usr/local/bundle/gems/railties-7.0.8.7/lib/rails/engine.rb", 530, "call"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", 474, "call"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/trace_proxy_middleware.rb", 17, "call"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb", 70, "call"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", 82, "call"),
+        Frame::new(
+            "/usr/local/bundle/gems/logging-2.4.0/lib/logging/diagnostic_context.rb",
+            474,
+            "create_with_logging_context",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb",
+            155,
+            "spawn_thread",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb",
+            245,
+            "run",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/server.rb",
+            464,
+            "process_client",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb",
+            99,
+            "handle_request",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/thread_pool.rb",
+            378,
+            "with_force_shutdown",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/request.rb",
+            100,
+            "handle_request",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/puma-6.4.3/lib/puma/configuration.rb",
+            272,
+            "call",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/railties-7.0.8.7/lib/rails/engine.rb",
+            530,
+            "call",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb",
+            474,
+            "call",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/trace_proxy_middleware.rb",
+            17,
+            "call",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/tracing/contrib/rack/middlewares.rb",
+            70,
+            "call",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb",
+            82,
+            "call",
+        ),
         Frame::new("/usr/local/lib/libruby.so.3.3", 0, "catch"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb", 85, "catch"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", 41, "push"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb", 37, "push"),
-        Frame::new("/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway/middleware.rb", 18, "call"),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/contrib/rack/request_middleware.rb",
+            85,
+            "catch",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb",
+            41,
+            "push",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway.rb",
+            37,
+            "push",
+        ),
+        Frame::new(
+            "/usr/local/bundle/gems/datadog-2.18.0/lib/datadog/appsec/instrumentation/gateway/middleware.rb",
+            18,
+            "call",
+        ),
     ];
     frames.reverse();
 

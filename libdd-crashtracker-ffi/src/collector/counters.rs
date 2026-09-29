@@ -3,7 +3,7 @@
 
 use super::datatypes::OpTypes;
 use ::function_name::named;
-use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
+use libdd_common_ffi::{VoidResult, wrap_with_void_ffi_result};
 
 /// Resets all counters to 0.
 /// Expected to be used after a fork, to reset the counters on the child
@@ -13,14 +13,14 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 ///     e.g. after a fork but before profiling ops start on the child.
 /// # Safety
 /// No safety concerns.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_crasht_reset_counters() -> VoidResult {
     wrap_with_void_ffi_result!({ libdd_crashtracker::reset_counters()? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically increments the count associated with `op`.
@@ -32,7 +32,7 @@ pub unsafe extern "C" fn ddog_crasht_begin_op(op: OpTypes) -> VoidResult {
     wrap_with_void_ffi_result!({ libdd_crashtracker::begin_op(op)? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Atomically decrements the count associated with `op`.

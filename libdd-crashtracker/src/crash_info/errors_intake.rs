@@ -8,13 +8,13 @@ use std::time::SystemTime;
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
-    telemetry::CrashPing, CrashInfo, ErrorKind, Experimental, Metadata, ProcInfo, StackTrace,
-    ThreadData, TARGET_TRIPLE,
+    CrashInfo, ErrorKind, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE, ThreadData,
+    telemetry::CrashPing,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use http::{Uri, uri::PathAndQuery};
+use libdd_common::{Endpoint, config::parse_env, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -628,16 +628,16 @@ mod tests {
     static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn clear_errors_intake_env() {
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_TRACE_PIPE_NAME");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("DD_SITE");
-        std::env::remove_var("DD_ERRORS_INTAKE_DD_URL");
-        std::env::remove_var("_DD_SHARED_LIB_DEBUG");
-        std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED");
+        unsafe { std::env::remove_var("DD_TRACE_AGENT_URL") };
+        unsafe { std::env::remove_var("DD_AGENT_HOST") };
+        unsafe { std::env::remove_var("DD_TRACE_AGENT_PORT") };
+        unsafe { std::env::remove_var("DD_TRACE_PIPE_NAME") };
+        unsafe { std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED") };
+        unsafe { std::env::remove_var("DD_API_KEY") };
+        unsafe { std::env::remove_var("DD_SITE") };
+        unsafe { std::env::remove_var("DD_ERRORS_INTAKE_DD_URL") };
+        unsafe { std::env::remove_var("_DD_SHARED_LIB_DEBUG") };
+        unsafe { std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED") };
     }
 
     #[cfg_attr(miri, ignore)]
@@ -889,8 +889,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test direct submission configuration
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -914,9 +914,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test direct submission with custom site
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
-        std::env::set_var("DD_SITE", "us3.datadoghq.com");
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
+        unsafe { std::env::set_var("DD_SITE", "us3.datadoghq.com") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -937,7 +937,7 @@ mod tests {
 
         clear_errors_intake_env();
 
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -957,8 +957,8 @@ mod tests {
 
         // API key is set but direct submission is NOT enabled
         // Should still use agent proxy
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
-        std::env::set_var("DD_API_KEY", "test-key");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -986,7 +986,7 @@ mod tests {
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
 
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
+        unsafe { std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false") };
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(!uploader.is_enabled());
     }
@@ -1028,7 +1028,7 @@ mod tests {
         clear_errors_intake_env();
 
         // Test named pipe configuration
-        std::env::set_var("DD_TRACE_PIPE_NAME", "my_custom_pipe");
+        unsafe { std::env::set_var("DD_TRACE_PIPE_NAME", "my_custom_pipe") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1050,7 +1050,7 @@ mod tests {
         clear_errors_intake_env();
 
         // Test unix:// URL in DD_TRACE_AGENT_URL
-        std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/custom.socket");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/custom.socket") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1071,9 +1071,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test 1: DD_TRACE_AGENT_URL takes highest priority
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://priority-url:9999");
-        std::env::set_var("DD_AGENT_HOST", "ignored-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "1111");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://priority-url:9999") };
+        unsafe { std::env::set_var("DD_AGENT_HOST", "ignored-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "1111") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1084,8 +1084,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test 2: DD_AGENT_HOST + DD_TRACE_AGENT_PORT used when no DD_TRACE_AGENT_URL
-        std::env::set_var("DD_AGENT_HOST", "custom-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "7777");
+        unsafe { std::env::set_var("DD_AGENT_HOST", "custom-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "7777") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1110,9 +1110,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that direct submission takes priority over agent configuration
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1129,8 +1129,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that without direct submission enabled, agent URL is used
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
-        std::env::set_var("DD_API_KEY", "test-key");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
         // _DD_DIRECT_SUBMISSION_ENABLED not set (defaults to false)
 
         let cfg = ErrorsIntakeConfig::from_env();
@@ -1151,8 +1151,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that UDS socket takes priority over DD_AGENT_HOST/DD_TRACE_AGENT_PORT
-        std::env::set_var("DD_AGENT_HOST", "ignored-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "9999");
+        unsafe { std::env::set_var("DD_AGENT_HOST", "ignored-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "9999") };
 
         let settings = ErrorsIntakeSettings {
             agent_host: Some("ignored-host".to_string()),

@@ -248,10 +248,12 @@ impl AtomicString {
 
     // Safety: This should only be called on pointers that came from `ptr_from_inner`.
     unsafe fn inner_from_ptr(v: *mut String) -> Option<String> {
-        if v.is_null() {
-            None
-        } else {
-            Some(*Box::from_raw(v))
+        unsafe {
+            if v.is_null() {
+                None
+            } else {
+                Some(*Box::from_raw(v))
+            }
         }
     }
 }
@@ -290,13 +292,15 @@ impl Atomic for AtomicString {
     /// SAFETY: This is only safe to use in a single threaded context
     #[cfg(test)]
     unsafe fn load(&self) -> Option<Self::Item> {
-        let v = self.inner.load(SeqCst);
-        if v.is_null() {
-            None
-        } else {
-            // Safety: the pointer is non-null, and was created from a box by the insert functions.
-            // We need to clone here since the set owns the original.
-            Some((*v).clone())
+        unsafe {
+            let v = self.inner.load(SeqCst);
+            if v.is_null() {
+                None
+            } else {
+                // Safety: the pointer is non-null, and was created from a box by the insert
+                // functions. We need to clone here since the set owns the original.
+                Some((*v).clone())
+            }
         }
     }
 

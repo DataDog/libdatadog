@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::handles::{HandlesTransport, TransferHandles};
-use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
 use crate::AtomicOption;
+use crate::handles::{HandlesTransport, TransferHandles};
+use crate::platform::{OwnedFileHandle, PlatformHandle, mmap_handle, munmap_handle};
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
@@ -47,9 +47,11 @@ impl NamedShmHandle {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
-        match self.path.as_option() {
-            Some(shm_path) => shm_path.name.to_bytes(),
-            None => b"",
+        unsafe {
+            match self.path.as_option() {
+                Some(shm_path) => shm_path.name.to_bytes(),
+                None => b"",
+            }
         }
     }
 }
@@ -191,7 +193,7 @@ impl MappedMem<NamedShmHandle> {
     /// # Safety
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
-        self.mem.get_path()
+        unsafe { self.mem.get_path() }
     }
 }
 

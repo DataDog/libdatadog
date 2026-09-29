@@ -13,7 +13,7 @@ criterion::criterion_main!(linux_bench::benches);
 
 #[cfg(target_os = "linux")]
 mod linux_bench {
-    use criterion::{criterion_group, BenchmarkId, Criterion};
+    use criterion::{BenchmarkId, Criterion, criterion_group};
     use libdd_profiling_heap_allocator::SampledAllocator;
     use libdd_profiling_heap_sampler::{dd_test_set_profiler_active, dd_tl_state_get_or_init};
     use std::alloc::{GlobalAlloc, Layout, System};

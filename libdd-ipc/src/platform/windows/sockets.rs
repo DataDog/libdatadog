@@ -38,30 +38,30 @@ use std::{
     pin::Pin,
     ptr::{null, null_mut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, DuplicateHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS,
+    CloseHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, DuplicateHandle,
     ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
-};
-use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
-    SetNamedPipeHandleState, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES,
-    PIPE_WAIT,
-};
-use windows_sys::Win32::System::Threading::{
-    CreateEventA, GetCurrentProcess, GetCurrentProcessId, OpenProcess, SetEvent,
-    WaitForMultipleObjects, WaitForSingleObject, INFINITE, PROCESS_DUP_HANDLE,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 use windows_sys::Win32::System::IO::{
     CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0,
+};
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeA, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
+    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    SetNamedPipeHandleState,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventA, GetCurrentProcess, GetCurrentProcessId, INFINITE, OpenProcess,
+    PROCESS_DUP_HANDLE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
 
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.
