@@ -155,19 +155,13 @@ pub struct SpawnWorker {
     shared_lib_dependencies: Vec<LibDependency>,
 }
 
-impl Default for SpawnWorker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl SpawnWorker {
-    pub fn new() -> Self {
+    pub fn new<T: Into<Target>>(target: T) -> Self {
         Self {
             stdin: None,
             stdout: None,
             stderr: None,
-            target: Target::Noop,
+            target: target.into(),
             env: env::vars_os().collect(),
             process_name: None,
             passed_handle: None,
@@ -177,11 +171,6 @@ impl SpawnWorker {
 
     pub fn shared_lib_dependencies(&mut self, deps: Vec<LibDependency>) -> &mut Self {
         self.shared_lib_dependencies = deps;
-        self
-    }
-
-    pub fn target<T: Into<Target>>(&mut self, target: T) -> &mut Self {
-        self.target = target.into();
         self
     }
 
@@ -306,7 +295,6 @@ impl SpawnWorker {
                 args.push(path.clone());
                 symbol_name.clone()
             }
-            Target::Noop => todo!(),
         };
 
         for dep in &self.shared_lib_dependencies {

@@ -39,8 +39,7 @@ fn test_file_locking_works_as_expected() {
     let (mut local, remote) = UnixStream::pair().unwrap();
     local.set_nonblocking(false).ok();
 
-    let child = unsafe { spawn_worker::SpawnWorker::new() }
-        .target(entrypoint!(flock_test_entrypoint))
+    let child = unsafe { spawn_worker::SpawnWorker::new(entrypoint!(flock_test_entrypoint)) }
         .pass_fd(remote.try_clone().unwrap())
         .stdin(Stdio::Null)
         .append_env(ENV_LOCK_PATH, lock_path.as_os_str())
@@ -63,7 +62,7 @@ fn test_file_locking_works_as_expected() {
 
     local.write_all(&[0]).unwrap(); // signal child to shut down
 
-    assert_child_exit!(child.pid.unwrap());
+    assert_child_exit!(child.pid);
     assert!(lock_path.exists()); // child exited abbruptly and lock file was left in place
 
     // must succeed as no other process is holding the lock

@@ -23,16 +23,17 @@ fn test_spawning_trampoline_worker() {
     let mut stdout = tempfile::tempfile().unwrap();
     let mut stderr = tempfile::tempfile().unwrap();
 
-    let child = unsafe { SpawnWorker::new() }
-        .target(Target::ManualTrampoline(
+    let child = unsafe {
+        SpawnWorker::new(Target::ManualTrampoline(
             "__dummy_mirror_test".to_string(),
             "symbol_name".to_string(),
         ))
-        .stdin(Stdio::Null)
-        .stdout(&stdout)
-        .stderr(&stderr)
-        .spawn()
-        .unwrap();
+    }
+    .stdin(Stdio::Null)
+    .stdout(&stdout)
+    .stderr(&stderr)
+    .spawn()
+    .unwrap();
 
     //wait for process exit
     let status = child.wait().unwrap();
