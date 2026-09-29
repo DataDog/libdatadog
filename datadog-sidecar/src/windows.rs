@@ -20,17 +20,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::select;
 use tracing::{error, info};
-use winapi::um::winnt::HANDLE;
-use winapi::{
-    shared::{sddl::ConvertSidToStringSidA, winerror::ERROR_INSUFFICIENT_BUFFER},
-    um::{
-        handleapi::CloseHandle,
-        processthreadsapi::{GetCurrentProcess, OpenProcessToken},
-        securitybaseapi::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation},
-        winbase::LocalFree,
-        winnt::{TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER},
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, LocalFree, ERROR_INSUFFICIENT_BUFFER, HANDLE},
+    Security::{
+        Authorization::ConvertSidToStringSidA, GetSidSubAuthority, GetSidSubAuthorityCount,
+        GetTokenInformation, TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+        TOKEN_USER,
     },
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
+
+pub mod remote_config_notification;
 
 /// cbindgen:ignore
 #[no_mangle]
@@ -147,7 +147,7 @@ static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identi
 
 fn fetch_sidecar_identifier() -> String {
     unsafe {
-        let mut access_token = null_mut();
+        let mut access_token = 0;
 
         // Note that we do intentionally not use the thread token:
         // IIS impersonates request users at the thread level (e.g. IUSR for Anonymous
@@ -206,8 +206,9 @@ fn fetch_sidecar_identifier() -> String {
             return "".to_string();
         }
 
-        let user_sid = String::from_utf8_lossy(CStr::from_ptr(string_sid).to_bytes()).to_string();
-        LocalFree(string_sid as HANDLE);
+        let user_sid =
+            String::from_utf8_lossy(CStr::from_ptr(string_sid.cast()).to_bytes()).to_string();
+        LocalFree(string_sid.cast());
 
         // Also include the integrity level so that elevated (admin) and non-elevated processes
         // of the same user get different sidecar identifiers and thus different sidecars.

@@ -30,7 +30,7 @@ where
     #[cfg(unix)]
     pub(crate) ptr: NonNull<libc::c_void>,
     #[cfg(windows)]
-    pub(crate) ptr: NonNull<winapi::ctypes::c_void>,
+    pub(crate) ptr: NonNull<std::ffi::c_void>,
     pub(crate) mem: T,
 }
 
