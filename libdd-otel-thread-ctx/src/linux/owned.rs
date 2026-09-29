@@ -53,9 +53,9 @@ fn init_autoclean() {
 ///
 /// If the feature isn't enabled, there is no branch at all and the whole function call should be
 /// entirely eliminated.
-fn init_autoclean_if_null<T>(prev: *mut T) {
+fn init_autoclean_if_null<T>(_prev: *mut T) {
     #[cfg(feature = "thread-exit-autoclean")]
-    if prev.is_null() {
+    if _prev.is_null() {
         init_autoclean();
     }
 }
