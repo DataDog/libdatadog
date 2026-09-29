@@ -104,7 +104,9 @@ command CI uses; the first invocation downloads a pinned binary into `~/.cache` 
 New `pub extern "C"` entry points must wrap panics (`wrap_with_ffi_result!`, `catch_panic!`,
 `std::panic::catch_unwind`, …) or carry `// allow(ffi-panic-boundary): <justification>` on a line
 directly above the function. Existing accessors are grandfathered; only signatures added on the
-branch fail CI. See AGENTS.md "Reliability & integrability".
+branch fail CI. ast-grep does not expand macros, so containment belongs in the `macro_rules`
+template (or the allow above it). Adding a setter to `c_setters!` is a new export. See AGENTS.md
+"Reliability & integrability".
 
 ## Commit Message Guidelines
 

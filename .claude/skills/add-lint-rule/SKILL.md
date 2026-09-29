@@ -120,7 +120,9 @@ this rule cannot pass a whole-repo scan (see "Large existing hit set").
 
 1. Sketch the invariant as an AST pattern, not a regex. Worked example
    already in-tree: `.sg/rules/ffi-extern-c-panic-containment.yml`
-   (`kind: function_item` + `extern "C"` + `not` containment macros).
+   (`kind: function_item` + `extern "C"` + `not` containment macros)
+   and `.sg/rules/ffi-macro-emits-extern-c.yml` (`macro_definition`
+   token trees; ast-grep does not expand macros).
 2. Add `.sg/rules/<name>.yml` and `.sg/tests/<name>-test.yml` with both
    valid and invalid fixtures. Cover comments-vs-code (a name in a
    comment is not a match). Refresh snapshots with
@@ -144,10 +146,16 @@ FFI panic rule:
 - `severity: warning` so `ast-grep test` still covers it.
 - Add `--off=<rule-id>` to the whole-repo `scan` in
   `scripts/run-ast-grep.sh` (already done for
-  `ffi-extern-c-panic-containment`).
+  `ffi-extern-c-panic-containment` and `ffi-macro-emits-extern-c`).
 - Enforce **new signatures only** by intersecting ast-grep JSON hits
   with `git diff -U0` added lines (`scripts/run-ffi-panic-lint.sh`).
-  Git decides what is new; ast-grep decides what matched.
+  Git decides what is new; ast-grep decides what matched. On `push`
+  events, pass `github.event.before` as `FFI_PANIC_LINT_BASE` — after
+  checkout, `origin/main` is the new HEAD, so merge-base is empty.
+- ast-grep does not expand macros. If the invariant applies to
+  generated `extern "C"` items, also match the `macro_rules` template
+  (`ffi-macro-emits-extern-c`) and treat invocations of those macros
+  as generating sites (a new setter in `c_setters!` is a hit).
 - Prefer an explicit allow comment with a required justification
   (`// allow(ffi-panic-boundary): …`) over silent exceptions.
 

@@ -13,7 +13,8 @@ these over inventing a parallel job.
 | `[lints] workspace = true` | Opt-in to `[workspace.lints.*]`. Incomplete across members. | e.g. `libdd-trace-obfuscation/Cargo.toml` |
 | clippy-annotation-reporter | Reports `#[allow(clippy::…)]` count drift on PRs. **Not a merge gate** (`continue-on-error`). Matches attributes with regex — do not copy that for new syntactic rules. | `.github/actions/clippy-annotation-reporter`; `.github/workflows/clippy-annotation-reporter.yml` |
 | ast-grep | Structural / syntactic rules. Blocking. | `sgconfig.yml`, `.sg/rules/`, `scripts/run-ast-grep.sh`; `lint.yml` `ast-grep` job; pre-commit `ast-grep` |
-| ffi-extern-c-panic-containment | New `pub extern "C"` fns must contain panics (or a justified allow). Diff-scoped so ~400 legacy accessors stay. | `.sg/rules/ffi-extern-c-panic-containment.yml`; `scripts/run-ffi-panic-lint.sh` (called from `run-ast-grep.sh`) |
+| ffi-extern-c-panic-containment | `pub extern "C"` fns must contain panics (or a justified allow). Diff-scoped so ~400 legacy accessors stay. | `.sg/rules/ffi-extern-c-panic-containment.yml`; `scripts/run-ffi-panic-lint.sh` (called from `run-ast-grep.sh`) |
+| ffi-macro-emits-extern-c | `macro_rules` that emit `extern "C"` must contain panics in the template. Invocations of those macros (e.g. `c_setters!`) are generating sites. | `.sg/rules/ffi-macro-emits-extern-c.yml`; same script |
 
 ## Manifests, deps, licenses
 

@@ -1,0 +1,96 @@
+id: ffi-macro-emits-extern-c
+snapshots:
+  ? |
+    // allow(ffi-panic-boundary):
+    macro_rules! empty_allow {
+        ($name:ident) => {
+            pub extern "C" fn $name() {
+                risky();
+            }
+        };
+    }
+  : labels:
+    - source: |-
+        macro_rules! empty_allow {
+            ($name:ident) => {
+                pub extern "C" fn $name() {
+                    risky();
+                }
+            };
+        }
+      style: primary
+      start: 30
+      end: 155
+    - source: |-
+        ($name:ident) => {
+                pub extern "C" fn $name() {
+                    risky();
+                }
+            }
+      style: secondary
+      start: 61
+      end: 152
+  ? |
+    macro_rules! c_setters {
+        ($name:ident) => {
+            pub unsafe extern "C" fn $name() {
+                risky();
+            }
+        };
+    }
+  : labels:
+    - source: |-
+        macro_rules! c_setters {
+            ($name:ident) => {
+                pub unsafe extern "C" fn $name() {
+                    risky();
+                }
+            };
+        }
+      style: primary
+      start: 0
+      end: 130
+    - source: |-
+        ($name:ident) => {
+                pub unsafe extern "C" fn $name() {
+                    risky();
+                }
+            }
+      style: secondary
+      start: 29
+      end: 127
+  ? |
+    macro_rules! comment_is_not_containment {
+        ($name:ident) => {
+            pub extern "C" fn $name() {
+                // catch_unwind is intentionally absent
+                // wrap_with_ffi_result! is also absent
+                risky();
+            }
+        };
+    }
+  : labels:
+    - source: |-
+        macro_rules! comment_is_not_containment {
+            ($name:ident) => {
+                pub extern "C" fn $name() {
+                    // catch_unwind is intentionally absent
+                    // wrap_with_ffi_result! is also absent
+                    risky();
+                }
+            };
+        }
+      style: primary
+      start: 0
+      end: 244
+    - source: |-
+        ($name:ident) => {
+                pub extern "C" fn $name() {
+                    // catch_unwind is intentionally absent
+                    // wrap_with_ffi_result! is also absent
+                    risky();
+                }
+            }
+      style: secondary
+      start: 46
+      end: 241
