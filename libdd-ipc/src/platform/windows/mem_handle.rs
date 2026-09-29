@@ -15,7 +15,7 @@ use windows_sys::core::PCSTR;
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Memory::{
     CreateFileMappingA, MapViewOfFile, OpenFileMappingA, UnmapViewOfFile, VirtualAlloc,
-    VirtualQuery, FILE_MAP_WRITE, MEMORYMAPPEDVIEW_HANDLE, MEMORY_BASIC_INFORMATION, MEM_COMMIT,
+    VirtualQuery, FILE_MAP_WRITE, MEMORY_BASIC_INFORMATION, MEMORY_MAPPED_VIEW_ADDRESS, MEM_COMMIT,
     PAGE_READWRITE, SEC_RESERVE,
 };
 
@@ -33,7 +33,7 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
             MAPPING_MAX_SIZE,
         )
     };
-    let Some(ptr) = NonNull::new(raw_ptr as *mut std::ffi::c_void) else {
+    let Some(ptr) = NonNull::new(raw_ptr.Value) else {
         return Err(Error::last_os_error());
     };
     if shm.size & NOT_COMMITTED != 0 {
@@ -61,7 +61,9 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
 
 pub(crate) fn munmap_handle<T: MemoryHandle>(mapped: &mut MappedMem<T>) {
     unsafe {
-        UnmapViewOfFile(mapped.ptr.as_ptr() as MEMORYMAPPEDVIEW_HANDLE);
+        UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+            Value: mapped.ptr.as_ptr(),
+        });
     }
 }
 

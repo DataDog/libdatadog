@@ -3096,7 +3096,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
  "zwohash",
 ]
 
