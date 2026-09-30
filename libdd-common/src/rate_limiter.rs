@@ -156,7 +156,7 @@ impl Limiter for LocalLimiter {
     }
 
     fn update_rate(&self) -> f64 {
-        self.update(0, self.granularity.load(Ordering::Relaxed));
+        self.update(0, 0);
         self.rate()
     }
 }
@@ -231,6 +231,16 @@ mod tests {
         advance_mock_time(2 * TIME_PER_SECOND as u64);
 
         // Now 1 succeeds again
+        assert!(limiter.inc(1));
+
+        // Refreshing the rate must not count as another hit.
+        let limiter = LocalLimiter::default();
+        assert!(limiter.inc(1));
+        advance_mock_time(TIME_PER_SECOND as u64 / 2);
+        assert_eq!(0.5, limiter.update_rate());
+
+        advance_mock_time(60 * TIME_PER_SECOND as u64);
+        assert_eq!(0., limiter.update_rate());
         assert!(limiter.inc(1));
 
         set_mock_time(0);
