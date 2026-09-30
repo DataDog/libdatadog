@@ -3223,8 +3223,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk 0.32.1",
  "rustls",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -4231,7 +4229,6 @@ dependencies = [
  "js-sys",
  "pin-project-lite",
  "thiserror 2.0.17",
- "tracing",
 ]
 
 [[package]]
