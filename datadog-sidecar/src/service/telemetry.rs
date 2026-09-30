@@ -759,7 +759,9 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
         crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
-    path.truncate(31);
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
@@ -829,6 +831,13 @@ mod tests {
     use super::*;
     use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
     use libdd_telemetry::worker::LifecycleAction;
+
+    #[test]
+    fn shm_paths_distinguish_services_and_environments() {
+        let path = path_for_telemetry("service-a", "env-a");
+        assert_ne!(path, path_for_telemetry("service-b", "env-a"));
+        assert_ne!(path, path_for_telemetry("service-a", "env-b"));
+    }
 
     #[tokio::test(flavor = "current_thread")]
     #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.

@@ -26,7 +26,9 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     endpoint.test_token.hash(&mut hasher);
 
     let mut path = format!("/ddcfg-{}-{}", crate::shm_namespace(), hasher.finish());
-    path.truncate(31); // macOS limits shared memory names to 31 characters
+    if cfg!(unix) {
+        path.truncate(31); // macOS limits shared memory names to 31 bytes.
+    }
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
@@ -94,5 +96,18 @@ impl<T: FileBackedHandle> AgentRemoteConfigWriter<T> {
 
     pub fn size(&self) -> usize {
         self.0.size()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shm_paths_distinguish_endpoints() {
+        assert_ne!(
+            path_for_endpoint(&Endpoint::from_slice("http://agent-a:8126")),
+            path_for_endpoint(&Endpoint::from_slice("http://agent-b:8126")),
+        );
     }
 }

@@ -103,7 +103,9 @@ pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
         crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
-    path.truncate(31);
+    if cfg!(unix) {
+        path.truncate(31);
+    }
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
@@ -358,4 +360,17 @@ pub async fn flush_all_stats_now(
         })
     }))
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shm_paths_distinguish_concentrators() {
+        let path = env_stats_shm_path("env-a", "1.0", "service-a");
+        assert_ne!(path, env_stats_shm_path("env-b", "1.0", "service-a"));
+        assert_ne!(path, env_stats_shm_path("env-a", "2.0", "service-a"));
+        assert_ne!(path, env_stats_shm_path("env-a", "1.0", "service-b"));
+    }
 }

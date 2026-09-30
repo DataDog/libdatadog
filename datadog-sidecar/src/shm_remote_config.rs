@@ -98,8 +98,9 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
         crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
-    // datadog remote config, on macos we're restricted to 31 chars
-    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
@@ -866,6 +867,27 @@ mod tests {
             vec![],
         ))
     });
+
+    #[test]
+    fn shm_paths_distinguish_targets_and_endpoints() {
+        let mut invariants = ConfigInvariants {
+            language: "php".into(),
+            tracer_version: "1.0".into(),
+            endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
+            agentless: None,
+        };
+        let path = path_for_remote_config(&invariants, &DUMMY_TARGET);
+        let target = Arc::new(Target::new(
+            "other-service".into(),
+            "env".into(),
+            "1.3.5".into(),
+            vec![],
+            vec![],
+        ));
+        assert_ne!(path, path_for_remote_config(&invariants, &target));
+        invariants.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
+        assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
+    }
 
     #[derive(Debug, Clone)]
     struct NotifyDummy(Arc<tokio::sync::mpsc::Sender<()>>);
