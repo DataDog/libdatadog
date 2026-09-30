@@ -11,6 +11,17 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
+    #[cfg(feature = "trampoline-host-loader")]
+    if target_os == "linux" {
+        let target_pointer_width = std::env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap();
+        let target_endian = std::env::var("CARGO_CFG_TARGET_ENDIAN").unwrap();
+        assert!(
+            target_pointer_width == "64" && target_endian == "little",
+            "trampoline-host-loader only supports 64-bit little-endian Linux targets; \
+             got {target_pointer_width}-bit {target_endian}-endian"
+        );
+    }
+
     // Compile the ELF entry point for the shared library (direct exec by ld.so).
     if target_os == "linux" {
         let mut builder = cc::Build::new();
