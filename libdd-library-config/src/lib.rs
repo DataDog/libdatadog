@@ -812,12 +812,16 @@ mod std_api {
             path_managed: &Path,
             process_info: &ProcessInfo,
         ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
-            self.get_config_from_reader(
-                &StdConfigRead,
-                path_local.to_string_lossy(),
-                path_managed.to_string_lossy(),
-                process_info,
-            )
+            // A lossy conversion would silently read a different file (usually NotFound, which
+            // is treated as an empty config), so reject non-UTF-8 paths explicitly.
+            let (Some(path_local), Some(path_managed)) =
+                (path_local.to_str(), path_managed.to_str())
+            else {
+                return LoggedResult::Err(anyhow::anyhow!(
+                    "stable config paths must be valid UTF-8: local: {path_local:?}, fleet: {path_managed:?}"
+                ));
+            };
+            self.get_config_from_reader(&StdConfigRead, path_local, path_managed, process_info)
         }
     }
 }
