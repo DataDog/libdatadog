@@ -136,12 +136,13 @@ fn admit(deadline: &AtomicU64, interval_ns: u64, limit: u32, now: u64) -> bool {
     let Some(max_deadline) = now.checked_add(capacity_ns) else {
         return false;
     };
-    deadline
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous_deadline| {
-            let next_deadline = previous_deadline.max(now).checked_add(cost_ns)?;
-            (next_deadline <= max_deadline).then_some(next_deadline)
-        })
-        .is_ok()
+    // `try_update` is the new name, but is not available on the workspace MSRV.
+    #[allow(deprecated)]
+    let update = deadline.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |previous_deadline| {
+        let next_deadline = previous_deadline.max(now).checked_add(cost_ns)?;
+        (next_deadline <= max_deadline).then_some(next_deadline)
+    });
+    update.is_ok()
 }
 
 fn debt(deadline: &AtomicU64, granularity: u64, now: u64) -> f64 {
