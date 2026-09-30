@@ -8,9 +8,9 @@ use libdd_common::Endpoint;
 pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use libdd_ffe::telemetry::flagevaluation::{
-    AllocationKey, ContextDD, EvalError, FfeFlagEvaluationBatch, FfeFlagEvaluationEvent,
-    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH,
-    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
+    AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
+    FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, TargetingRuleKey,
+    VariantKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
 };
 pub use libdd_ffe::telemetry::FfeTelemetryContext;
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};

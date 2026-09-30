@@ -17,15 +17,14 @@ use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
-    AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
-    FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
-    FfeExposureBatch as SidecarFfeExposureBatch,
+    AllocationKey, ContextDD, ContextTruncationReason, DynamicInstrumentationConfigState,
+    EvalError, FfeEvaluationMetric as SidecarFfeEvaluationMetric,
+    FfeExposure as SidecarFfeExposure, FfeExposureBatch as SidecarFfeExposureBatch,
     FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
-    FfeTelemetryContext as SidecarFfeTelemetryContext, FlagEvalEventContext, FlagKey, InstanceId,
-    QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarFlushOptions, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS,
-    MAX_FIELD_LENGTH,
+    FfeTelemetryContext as SidecarFfeTelemetryContext, FieldOmissions, FlagEvalEventContext,
+    FlagKey, InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction, SidecarFlushOptions, TargetingRuleKey, VariantKey,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -1300,12 +1299,15 @@ pub struct FfeFlagEvaluation<'a> {
     pub allocation_key: CharSlice<'a>,
     pub targeting_rule_key: CharSlice<'a>,
     pub targeting_key: CharSlice<'a>,
-    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is omitted. Object
-    /// values are pruned to 256 leaf fields, 256-byte string values, and four
-    /// levels of nested context depth.
+    /// UTF-8 JSON object, ignored without consent. Empty, invalid, or non-object
+    /// JSON is omitted without rejecting the evaluation. Retained context has
+    /// at most 256 leaves, 256-character keys/strings, 256 entries per container,
+    /// and depth four. Legacy JSON parsing is not a bounded-cost producer API.
     pub evaluation_context_json: CharSlice<'a>,
     pub error_message: CharSlice<'a>,
     pub runtime_default_used: bool,
+    /// Consent captured from the configuration used for this evaluation.
+    pub observe_full_evaluation_data: bool,
 }
 
 /// Send structured FFE exposure events to the sidecar. The sidecar owns
@@ -1384,8 +1386,11 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// callers must aggregate and bound event cardinality before passing a batch.
 ///
 /// # Safety
-/// `context` and every element in `flag_evaluations` must contain valid UTF-8
-/// `CharSlice` values. Empty `flag_evaluations` is a no-op.
+/// All slices must reference valid memory under the CharSlice contract. Context
+/// metadata and flag/variant/allocation/rule fields must be UTF-8. Malformed
+/// targeting/context text is omitted; malformed error text becomes GENERAL.
+/// A null/zero targeting slice means missing; a non-null empty slice means empty.
+/// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
@@ -1520,7 +1525,30 @@ fn ffe_flag_evaluation_from_ffi(
     event: &FfeFlagEvaluation<'_>,
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
-    let evaluation = optional_json_object_string(event.evaluation_context_json)?;
+    let mut field_omissions = FieldOmissions::default();
+    let evaluation =
+        if event.observe_full_evaluation_data && !event.evaluation_context_json.is_empty() {
+            match event.evaluation_context_json.try_to_utf8() {
+                Ok(raw) => Some(raw.to_owned()),
+                Err(_) => {
+                    field_omissions.record_context(ContextTruncationReason::SnapshotError);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+    let targeting_key = if event.targeting_key.as_raw_parts().0.is_null() {
+        None
+    } else {
+        match event.targeting_key.try_to_utf8() {
+            Ok(key) => Some(key.to_owned()),
+            Err(_) => {
+                field_omissions.targeting_key_invalid = true;
+                None
+            }
+        }
+    };
     let dd = (!service.is_empty()).then(|| ContextDD {
         service: service.to_owned(),
     });
@@ -1530,7 +1558,7 @@ fn ffe_flag_evaluation_from_ffi(
         None
     };
 
-    Ok(SidecarFfeFlagEvaluationEvent {
+    let mut converted = SidecarFfeFlagEvaluationEvent {
         timestamp: event.timestamp_ms,
         flag: FlagKey {
             key: char_slice_to_string(event.flag_key)?,
@@ -1542,81 +1570,22 @@ fn ffe_flag_evaluation_from_ffi(
         allocation: optional_string(event.allocation_key)?.map(|key| AllocationKey { key }),
         targeting_rule: optional_string(event.targeting_rule_key)?
             .map(|key| TargetingRuleKey { key }),
-        targeting_key: optional_string(event.targeting_key)?,
+        targeting_key,
         context,
-        error: optional_string(event.error_message)?.map(|message| EvalError { message }),
+        error: (!event.error_message.is_empty()).then(|| EvalError {
+            message: event
+                .error_message
+                .try_to_utf8()
+                .unwrap_or("GENERAL")
+                .to_owned(),
+        }),
         runtime_default_used: event.runtime_default_used,
-        observe_full_evaluation_data: false,
+        observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
-    })
-}
-
-fn prune_evaluation_context_json(value: serde_json::Value) -> Option<String> {
-    let serde_json::Value::Object(attrs) = value else {
-        return None;
+        field_omissions,
     };
-
-    let mut remaining_fields = MAX_CONTEXT_FIELDS;
-    let pruned = prune_context_object(&attrs, 1, &mut remaining_fields);
-    Some(serde_json::Value::Object(pruned).to_string())
-}
-
-fn prune_context_object(
-    attrs: &serde_json::Map<String, serde_json::Value>,
-    depth: usize,
-    remaining_fields: &mut usize,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut keys: Vec<_> = attrs.keys().collect();
-    keys.sort();
-
-    let mut pruned = serde_json::Map::new();
-    for key in keys {
-        if *remaining_fields == 0 {
-            break;
-        }
-        let Some(value) = attrs
-            .get(key)
-            .and_then(|value| prune_context_value(value, depth, remaining_fields))
-        else {
-            continue;
-        };
-        pruned.insert(key.clone(), value);
-    }
-    pruned
-}
-
-fn prune_context_value(
-    value: &serde_json::Value,
-    depth: usize,
-    remaining_fields: &mut usize,
-) -> Option<serde_json::Value> {
-    match value {
-        serde_json::Value::String(s) if s.len() > MAX_FIELD_LENGTH => None,
-        serde_json::Value::Object(attrs) => {
-            if depth >= MAX_CONTEXT_DEPTH {
-                return None;
-            }
-            let pruned = prune_context_object(attrs, depth + 1, remaining_fields);
-            (!pruned.is_empty()).then_some(serde_json::Value::Object(pruned))
-        }
-        serde_json::Value::Array(values) => {
-            if depth >= MAX_CONTEXT_DEPTH {
-                return None;
-            }
-            let pruned: Vec<_> = values
-                .iter()
-                .filter_map(|value| prune_context_value(value, depth + 1, remaining_fields))
-                .collect();
-            (!pruned.is_empty()).then_some(serde_json::Value::Array(pruned))
-        }
-        _ => {
-            if *remaining_fields == 0 {
-                return None;
-            }
-            *remaining_fields -= 1;
-            Some(value.clone())
-        }
-    }
+    converted.normalize();
+    Ok(converted)
 }
 
 fn ffe_metric_from_ffi(
@@ -1637,17 +1606,6 @@ fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
     } else {
         char_slice_to_string(slice).map(Some)
     }
-}
-
-fn optional_json_object_string(slice: CharSlice) -> Result<Option<String>, String> {
-    let Some(raw) = optional_string(slice)? else {
-        return Ok(None);
-    };
-    let value = match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    Ok(prune_evaluation_context_json(value))
 }
 
 #[no_mangle]
@@ -2159,6 +2117,7 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datadog_sidecar::service::{MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
     use std::borrow::Cow;
 
     fn ffi_flag_evaluation<'a>(evaluation_context_json: &'a str) -> FfeFlagEvaluation<'a> {
@@ -2175,6 +2134,7 @@ mod tests {
             evaluation_context_json: CharSlice::from(evaluation_context_json),
             error_message: CharSlice::empty(),
             runtime_default_used: false,
+            observe_full_evaluation_data: true,
         }
     }
 
@@ -2261,6 +2221,82 @@ mod tests {
     }
 
     #[test]
+    fn ffe_flag_evaluation_carries_consent_and_sanitizes_errors() {
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation(r#"{"email":"context-canary"}"#);
+            event.observe_full_evaluation_data = consent;
+            event.error_message = CharSlice::from("raw-error-canary");
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.observe_full_evaluation_data, consent);
+            assert_eq!(converted.error.unwrap().message, "GENERAL");
+            assert_eq!(converted.context.unwrap().evaluation.is_some(), consent);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_malformed_optional_fields_preserve_siblings() {
+        let invalid = [0xffu8];
+        // SAFETY: the borrowed bytes outlive every conversion below.
+        let malformed = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        for consent in [false, true] {
+            let mut event = ffi_flag_evaluation("");
+            event.observe_full_evaluation_data = consent;
+            event.targeting_key = malformed;
+            event.evaluation_context_json = malformed;
+            event.error_message = malformed;
+            let events = [event, ffi_flag_evaluation("{}")];
+            let converted = events
+                .iter()
+                .map(|e| ffe_flag_evaluation_from_ffi(e, "svc"))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert_eq!(converted.len(), 2);
+            assert_eq!(converted[0].evaluation_count, 7);
+            assert!(converted[0].targeting_key.is_none());
+            assert!(converted[0].context.as_ref().unwrap().evaluation.is_none());
+            assert_eq!(converted[0].error.as_ref().unwrap().message, "GENERAL");
+            assert!(converted[0].field_omissions.targeting_key_invalid);
+            assert_eq!(
+                converted[0]
+                    .field_omissions
+                    .contains_context(ContextTruncationReason::SnapshotError),
+                consent
+            );
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_distinguishes_empty_missing_and_invalid_identity() {
+        let invalid = [0xffu8];
+        // SAFETY: the slices borrow live memory, or use the permitted null/zero pair.
+        let malformed =
+            unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), invalid.len()) };
+        let missing = unsafe { CharSlice::from_raw_parts(std::ptr::null(), 0) };
+        for (key, expected) in [
+            (CharSlice::from(""), Some("")),
+            (missing, None),
+            (malformed, None),
+        ] {
+            let mut event = ffi_flag_evaluation("{}");
+            event.targeting_key = key;
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(converted.targeting_key.as_deref(), expected);
+            assert_eq!(converted.evaluation_count, 7);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_keeps_multibyte_context_at_character_limit() {
+        let raw =
+            serde_json::json!({"short": "é".repeat(256), "long": "é".repeat(257)}).to_string();
+        let converted = ffe_flag_evaluation_from_ffi(&ffi_flag_evaluation(&raw), "svc").unwrap();
+        let raw = converted.context.unwrap().evaluation.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["short"], "é".repeat(256));
+        assert!(value.get("long").is_none());
+    }
+
+    #[test]
     fn ffe_flag_evaluation_prunes_context_field_count_and_long_strings() {
         let mut attrs = serde_json::Map::new();
         attrs.insert(
@@ -2279,10 +2315,11 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&evaluation).unwrap();
         let attrs = value.as_object().unwrap();
 
-        assert_eq!(attrs.len(), MAX_CONTEXT_FIELDS);
+        assert_eq!(attrs.len(), MAX_CONTEXT_FIELDS - 1);
         assert!(!attrs.contains_key("aaa_long"));
         assert!(attrs.contains_key("field_000"));
-        assert!(attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 1)));
+        assert!(attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 2)));
+        assert!(!attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 1)));
         assert!(!attrs.contains_key(&format!("field_{MAX_CONTEXT_FIELDS:03}")));
     }
 

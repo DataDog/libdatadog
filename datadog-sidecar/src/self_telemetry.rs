@@ -11,6 +11,7 @@ use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{tag, tag::Tag, MutexExt};
+use libdd_ffe::telemetry::flagevaluation::ContextTruncationReason;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
@@ -42,6 +43,8 @@ struct MetricData<'a> {
     flagevaluation_evaluations_dropped: ContextKey,
     flagevaluation_evaluations_degraded: ContextKey,
     flagevaluation_payload_splits: ContextKey,
+    flagevaluation_context_truncated: ContextKey,
+    flagevaluation_targeting_key_omitted: ContextKey,
 }
 impl MetricData<'_> {
     async fn send(&self, key: ContextKey, value: f64, tags: Vec<Tag>) {
@@ -205,6 +208,26 @@ impl MetricData<'_> {
             ));
         }
 
+        for reason in ContextTruncationReason::ALL {
+            let count = flagevaluation_writer_stats.context_truncated[reason as usize];
+            if count > 0 {
+                // Telemetry counters are f64, matching the existing writer counters above.
+                if let Ok(reason_tag) = Tag::new("reason", reason.as_str()) {
+                    futures.push(self.send(
+                        self.flagevaluation_context_truncated,
+                        count as f64,
+                        vec![reason_tag],
+                    ));
+                }
+            }
+        }
+        if flagevaluation_writer_stats.targeting_key_omitted > 0 {
+            futures.push(self.send(
+                self.flagevaluation_targeting_key_omitted,
+                flagevaluation_writer_stats.targeting_key_omitted as f64,
+                vec![tag!("reason", "invalid")],
+            ));
+        }
         futures::future::join_all(futures).await;
     }
 }
@@ -348,6 +371,20 @@ impl SelfTelemetry {
             ),
             flagevaluation_payload_splits: worker.register_metric_context(
                 FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC.to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            flagevaluation_context_truncated: worker.register_metric_context(
+                "flagevaluation.context.truncated".to_string(),
+                vec![],
+                MetricType::Count,
+                true,
+                MetricNamespace::Tracers,
+            ),
+            flagevaluation_targeting_key_omitted: worker.register_metric_context(
+                "flagevaluation.targeting_key.omitted".to_string(),
                 vec![],
                 MetricType::Count,
                 true,

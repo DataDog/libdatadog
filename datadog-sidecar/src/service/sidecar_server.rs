@@ -1620,6 +1620,7 @@ mod tests {
                 runtime_default_used: false,
                 observe_full_evaluation_data: false,
                 is_degraded: false,
+                field_omissions: Default::default(),
             }],
         }
     }
