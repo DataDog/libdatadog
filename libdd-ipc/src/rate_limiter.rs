@@ -312,34 +312,36 @@ impl<Inner> ShmLimiterArena<Inner> {
     where
         F: Fn(&Inner) -> bool,
     {
-        // Snapshot the extent once and stop there. Terminating on the slot accessor's
-        // refusal instead would let a miss extend the mapping slot by slot, and a `next_free`
-        // sentinel read out of the segment is a peer-writable stop condition.
-        let limit = u32::try_from(self.mem.refresh_size()).ok()?;
         let mut cur = Self::START_OFFSET;
-        while cur
-            .checked_add(Self::STRIDE)
-            .is_some_and(|end| end <= limit)
-        {
-            let hit = self.with_slot(cur, |data| {
-                // `rc` alone decides liveness. `next_free` is the free-list link, and a slot
-                // allocated from untouched tail space still has the zero it was mapped with,
-                // so gating on it would hide every slot that has not been recycled yet. It
-                // is not needed as a terminator either: `limit` bounds the scan.
-                //
-                // Acquire, to pair with the release-store that publishes an allocation: it
-                // is what makes "the count is positive" mean "the payload below is this
-                // allocation's, and not the one before it".
-                data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
-            })?;
-            if hit {
-                if let Some(limiter) = self.get(cur) {
-                    if limiter.with_data(&cond).unwrap_or(false) {
-                        return Some(limiter);
+        // Refresh only after a miss, then scan the newly backed range.
+        let limits = std::iter::once(self.mem.get_size())
+            .chain(std::iter::once_with(|| self.mem.refresh_size()));
+        for limit in limits {
+            let limit = u32::try_from(limit).ok()?;
+            while cur
+                .checked_add(Self::STRIDE)
+                .is_some_and(|end| end <= limit)
+            {
+                let hit = self.with_slot(cur, |data| {
+                    // `rc` alone decides liveness. `next_free` is the free-list link, and a slot
+                    // allocated from untouched tail space still has the zero it was mapped with,
+                    // so gating on it would hide every slot that has not been recycled yet. It
+                    // is not needed as a terminator either: `limit` bounds the scan.
+                    //
+                    // Acquire, to pair with the release-store that publishes an allocation: it
+                    // is what makes "the count is positive" mean "the payload below is this
+                    // allocation's, and not the one before it".
+                    data.rc.load(Ordering::Acquire) > 0 && cond(unsafe { &*data.inner.get() })
+                })?;
+                if hit {
+                    if let Some(limiter) = self.get(cur) {
+                        if limiter.with_data(&cond).unwrap_or(false) {
+                            return Some(limiter);
+                        }
                     }
                 }
+                cur = cur.checked_add(Self::STRIDE)?;
             }
-            cur = cur.checked_add(Self::STRIDE)?;
         }
         None
     }
@@ -1149,21 +1151,14 @@ mod tests {
         );
     }
 
-    /// A scan must cover the arena as it is now, not as it was when this process mapped it.
-    ///
-    /// The backed length is tracked per process and only this handle's own `ensure_space`
-    /// raises it, so an opener that mapped the arena at one page goes on scanning one page
-    /// however far a peer grows it. An index lookup catches up on its way to the slot it was
-    /// given; a predicate search has no index to aim at, so it has to ask first.
-    ///
-    /// Asking must stay free of side effects - see
-    /// `an_unsuccessful_scan_does_not_grow_the_arena`, which requires a miss to leave the
-    /// arena the size it was.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn find_sees_slots_another_opener_added() {
         let path = CString::new("/ddlimiters-grown".to_string()).unwrap();
         let mut owner = ShmLimiterMemory::<AtomicU64>::create(path.clone()).unwrap();
+        let near = owner
+            .alloc_with_granularity(1, |hash| hash.store(42, Ordering::Relaxed))
+            .unwrap();
 
         // A second opener maps the arena while it is still one page long, and keeps that
         // view - it never allocates, so nothing on its side ever extends it.
@@ -1184,6 +1179,18 @@ mod tests {
             .expect("the slot the owner just allocated is mapped");
         // (written after publication on purpose: this test is about scan extent, and the
         // owner is the only writer, so nothing else can observe the gap.)
+
+        assert_eq!(
+            observer
+                .find(|hash| hash.load(Ordering::Relaxed) == 42)
+                .map(|found| found.index()),
+            Some(near.index())
+        );
+        assert_eq!(
+            arena(&observer).mem.get_size(),
+            mapped_at_open,
+            "a match in the cached extent must not refresh the mapping"
+        );
 
         assert_eq!(
             observer
