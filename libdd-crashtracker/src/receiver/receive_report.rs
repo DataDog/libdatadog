@@ -611,13 +611,13 @@ fn collect_and_add_thread_contexts(
     builder: &mut CrashInfoBuilder,
     config: &CrashtrackerConfiguration,
     parent_pid: u32,
-    crashing_tid: Option<u32>,
+    crashing_tid: u32,
     budget: Duration,
 ) -> anyhow::Result<()> {
     use crate::ptrace_collector::{stream_thread_contexts, thread_data_from_capture};
 
     let parent_pid = parent_pid as i32;
-    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
+    let crashing_tid = crashing_tid as i32;
     let crash_site = builder.ucontext.as_ref().and_then(crash_site_registers);
     let mut threads = Vec::new();
     let crashing_context = if config.unwind_from_ucontext() {
@@ -677,9 +677,10 @@ fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     let Some(proc_info) = builder.proc_info.as_ref() else {
         return Ok(());
     };
-    let Some(tid) = proc_info.tid else {
+    let tid = proc_info.tid;
+    if tid == 0 {
         return Ok(());
-    };
+    }
     let pid = proc_info.pid;
     let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
     let Ok(comm) = fs::read_to_string(&path) else {

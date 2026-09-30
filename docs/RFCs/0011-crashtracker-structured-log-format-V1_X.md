@@ -18,9 +18,9 @@ As a structured format, it avoids the ambiguity of standard semi-structured stac
 Due to the use of native extensions, it is possible for a single stack-trace to include frames from multiple languages (e.g. python may call C code, which calls Rust code, etc).
 Having a single structured format allows us to work across languages.
 
-## Current Format (Version 1.8)
+## Current Format (Version 1.9)
 
-This section describes the current format (version 1.8), which incorporates all features from versions 1.0 through 1.8. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
+This section describes the current format (version 1.9), which incorporates all features from versions 1.0 through 1.9. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
 
 Any field not listed as "Required" is optional. Consumers MUST accept json with elided optional fields.
 
@@ -32,7 +32,7 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
 
 ### Version Compatibility
 
-Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.8. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
+Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.9. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
 - Version 1.0: Base format
 - Version 1.1+: Stacktraces may include an `incomplete` field
 - Version 1.2+: Root level may include an `experimental` field
@@ -42,6 +42,7 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
 - Version 1.6+: Root level may include a `ucontext` field for UNIX signal crashes
 - Version 1.7: `error.threads` is a `Threads` wrapper object (with nested `threads`, `count`, and `incomplete` fields) rather than a bare array
 - Version 1.8+: `error.threads` is a bare array of thread objects again; the wrapper is removed. Partial collection is indicated by `counters.threads_incomplete`
+- Version 1.9+: `proc_info.tid` is a required `uint32` (previously `Option<uint32>`); consumers MUST NOT send `null` for this field
 
 ### Fields
 
@@ -50,7 +51,7 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
   At present, this is used by the profiler to track which operations were active at the time of the crash.
   When multi-thread collection is enabled and stops before all eligible threads are visited, collectors MAY set `threads_incomplete` to `1`.
 - `data_schema_version`: **[required]**
-  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8".
+  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8", "1.9".
 - `experimental`: **[optional]** *[Added in v1.2]*
   Any valid JSON object can be used as the value here.
   Note that the object MUST be valid JSON.
@@ -129,6 +130,8 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
   In the future, this may have additional optional fields as more data is collected.
   - `pid`: **[required]**
     The PID of the crashing process.
+  - `tid`: **[required]** *[Added in v1.9]*
+    The thread ID of the crashing thread, as a `uint32`. `0` means unknown/unset (consistent with the C FFI convention). The emitter always provides a real tid. This field was `Option<uint32>` (nullable) in v1.0–v1.8; consumers receiving v1.9+ data MUST NOT send `null`.
 - `sig_info`: **[optional]**
   UNIX signal based collectors only: Useful information from the [siginfo_t](https://man7.org/linux/man-pages/man2/sigaction.2.html) structure.
   - `sid_addr`: **[optional]**
@@ -340,15 +343,24 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** The v1.7 nested `Threads` object broke downstream pipelines that expect `error.threads` to be a flat array of thread records. Restoring the array shape while moving completeness metadata to `counters` keeps the report compatible with existing consumers and still allows distinguishing partial collection from "collection disabled or empty".
 
+### Version 1.9
+*Required `proc_info.tid`*
+
+**Changes from v1.8:**
+- `proc_info.tid` is now a **required** `uint32` field. Previously it was `Option<uint32>` and could be omitted or serialized as `null`. Consumers receiving v1.9+ data MUST NOT send `null`; use `0` to indicate an unknown tid.
+- Updated `data_schema_version` to "1.9"
+
+**Motivation:** The emitter always provides a real thread ID. Representing it as nullable forced redundant sentinel-conversion boilerplate at every FFI boundary and diverged the type from the C FFI convention (which already uses `0` as the "unset" sentinel). Making it a required `uint32` removes the impedance mismatch.
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
 
-Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, (v1.7) `error.threads` as a `Threads` wrapper object, and (v1.8+) `error.threads` as a flat array of thread objects with `counters.threads_incomplete` for partial collection.
+Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, (v1.7) `error.threads` as a `Threads` wrapper object, (v1.8+) `error.threads` as a flat array of thread objects with `counters.threads_incomplete` for partial collection, and (v1.9+) `proc_info.tid` as a required `uint32`.
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.8) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json).
+The current JSON schema (version 1.9) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_9.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)
@@ -359,3 +371,4 @@ Historical schemas are also available:
 - [Version 1.5 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json)
 - [Version 1.6 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json)
 - [Version 1.7 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json)
+- [Version 1.8 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json)

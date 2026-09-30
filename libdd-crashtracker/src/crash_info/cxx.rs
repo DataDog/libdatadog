@@ -178,16 +178,10 @@ impl CrashInfoBuilder {
     }
 
     pub fn set_proc_info(&mut self, proc_info: ffi::ProcInfo) -> anyhow::Result<()> {
-        let tid = if proc_info.tid == 0 {
-            None
-        } else {
-            Some(proc_info.tid)
-        };
-        let internal_proc_info = crate::ProcInfo {
+        self.with_proc_info(crate::ProcInfo {
             pid: proc_info.pid,
-            tid,
-        };
-        self.with_proc_info(internal_proc_info)
+            tid: proc_info.tid,
+        })
     }
 
     pub fn set_os_info(&mut self, os_info: ffi::OsInfo) -> anyhow::Result<()> {
