@@ -5,9 +5,9 @@ use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::{
     buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
+use crate::span::DeserializableTraceData;
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
 use crate::span::vec_map::VecMap;
-use crate::span::DeserializableTraceData;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;

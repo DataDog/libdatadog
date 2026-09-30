@@ -41,6 +41,12 @@ impl<'a> CachedElfResolvers<'a> {
         }
     }
 
+    /// Resolve names without dropping the ELF cache between stacks.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn symbolizer(&self) -> &blazesym::symbolize::Symbolizer {
+        self.symbolizer
+    }
+
     pub fn get_or_insert(&mut self, file_path: &PathBuf) -> anyhow::Result<Rc<ElfResolver>> {
         use anyhow::Context;
         let entry = self.elf_resolvers.entry(file_path.clone());

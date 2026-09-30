@@ -18,7 +18,7 @@ impl<T> Option<T> {
 
     pub fn to_std_ref(&self) -> core::option::Option<&T> {
         match self {
-            Option::Some(ref s) => Some(s),
+            Option::Some(s) => Some(s),
             Option::None => None,
         }
     }
@@ -70,12 +70,12 @@ impl<T: Copy> From<&Option<T>> for core::option::Option<T> {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_Option_U32_some(v: u32) -> Option<u32> {
     Option::Some(v)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_Option_U32_none() -> Option<u32> {
     Option::None
 }

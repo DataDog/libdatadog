@@ -23,10 +23,14 @@ pub fn validate_std_outputs(output_dir: &Path) -> Result<()> {
     anyhow::ensure!(
         matches!(
             s.as_deref(),
-            Ok("") | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
-            | Ok("Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"),
+            Ok("")
+                | Ok("Failed to fully receive crash.  Exit state was: StackTrace([])\n")
+                | Ok(
+                    "Failed to fully receive crash.  Exit state was: InternalError(\"{\\\"ip\\\": \\\"\")\n"
+                ),
         ),
-        "Unexpected stderr: {:?}", s
+        "Unexpected stderr: {:?}",
+        s
     );
 
     anyhow::ensure!(

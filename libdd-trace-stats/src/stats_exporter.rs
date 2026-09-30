@@ -3,8 +3,8 @@
 
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time,
 };
@@ -15,16 +15,17 @@ use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
+    CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::stats_payload_encoder::{
-    build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
-    MAX_GROUPED_STATS_PER_PAYLOAD,
+    MAX_GROUPED_STATS_PER_PAYLOAD, build_stats_payload, encode_stats_payload_msgpack,
+    split_stats_buckets,
 };
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -83,14 +84,13 @@ pub struct StatsMetadata {
     pub hostname: String,
     pub env: String,
     pub app_version: String,
-    pub runtime_id: String,
+    pub mutable_metadata: MutableMetadataHandle,
     pub language: String,
     pub lang_version: String,
     pub lang_interpreter: String,
     pub lang_vendor: String,
     pub tracer_version: String,
     pub git_commit_sha: String,
-    pub process_tags: String,
     pub service: String,
     pub container_id: String,
 }
@@ -114,14 +114,13 @@ impl From<TracerMetadata> for StatsMetadata {
             hostname: m.hostname,
             env: m.env,
             app_version: m.app_version,
-            runtime_id: m.runtime_id,
+            mutable_metadata: m.mutable_metadata,
             language: m.language,
             lang_version: m.language_version,
             lang_interpreter: m.language_interpreter,
             lang_vendor: m.language_interpreter_vendor,
             tracer_version: m.tracer_version,
             git_commit_sha: m.git_commit_sha,
-            process_tags: m.process_tags,
             service: m.service,
             container_id: m.container_id,
         }
@@ -413,9 +412,9 @@ pub struct StatsExporter<
 }
 
 impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator,
-    > StatsExporter<Cap, Con>
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    Con: FlushableConcentrator,
+> StatsExporter<Cap, Con>
 {
     /// Return a new StatsExporter targeting the Datadog Agent's `/v0.6/stats`.
     ///
@@ -758,6 +757,7 @@ fn encode_stats_payload(
     sequence: u64,
     buckets: Vec<pb::ClientStatsBucket>,
 ) -> pb::ClientStatsPayload {
+    let mutable_metadata = meta.mutable_metadata.load();
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
         env: if meta.env.is_empty() {
@@ -766,12 +766,12 @@ fn encode_stats_payload(
             meta.env.clone()
         },
         version: meta.app_version.clone(),
-        runtime_id: meta.runtime_id.clone(),
+        runtime_id: mutable_metadata.runtime_id.clone(),
         sequence,
         service: meta.service.clone(),
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
-        process_tags: meta.process_tags.clone(),
+        process_tags: mutable_metadata.process_tags.clone(),
         // These fields will be set by the Agent
         container_id: String::new(),
         tags: Vec::new(),
@@ -793,8 +793,8 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
@@ -856,15 +856,17 @@ mod tests {
             exporter,
             Err(AgentlessStatsExporterError::InvalidBucketSize)
         ));
-        assert!(AgentlessStatsExporter::new(
-            Duration::from_nanos(1),
-            get_test_metadata(),
-            target(),
-            NativeCapabilities::new_client(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .is_ok());
+        assert!(
+            AgentlessStatsExporter::new(
+                Duration::from_nanos(1),
+                get_test_metadata(),
+                target(),
+                NativeCapabilities::new_client(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .is_ok()
+        );
     }
 
     #[cfg(feature = "stats-obfuscation")]
@@ -909,15 +911,39 @@ mod tests {
         mock.assert_calls_async(2).await;
     }
 
+    #[test]
+    fn mutable_metadata_updates_propagate_to_encoded_payloads() {
+        let meta = get_test_metadata();
+        let handle = meta.mutable_metadata.clone();
+
+        let buckets = vec![pb::ClientStatsBucket::default()];
+        let payload = encode_stats_payload(&meta, 1, buckets.clone());
+        assert_eq!(payload.runtime_id, "e39d6d12-0752-489f-b488-cf80006c0378");
+        assert_eq!(payload.process_tags, "key1:value1,key2:value2");
+
+        // Update the shared handle after the exporter was built: the next encode
+        // must pick up the new values.
+        handle.update(|mut metadata| {
+            metadata.runtime_id = "11111111-2222-3333-4444-555555555555".into();
+            metadata.process_tags = "k2:v2".into();
+            metadata
+        });
+        let payload = encode_stats_payload(&meta, 2, buckets);
+        assert_eq!(payload.runtime_id, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(payload.process_tags, "k2:v2");
+    }
+
     fn get_test_metadata() -> StatsMetadata {
+        let mutable_metadata = MutableMetadataHandle::default();
+        mutable_metadata.set_runtime_id("e39d6d12-0752-489f-b488-cf80006c0378".into());
+        mutable_metadata.set_process_tags("key1:value1,key2:value2".into());
         StatsMetadata {
             hostname: "libdatadog-test".into(),
             env: "test".into(),
             app_version: "0.0.0".into(),
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
-            runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
-            process_tags: "key1:value1,key2:value2".into(),
+            mutable_metadata,
             ..Default::default()
         }
     }

@@ -1,13 +1,13 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{CStr, c_char};
 use std::pin::Pin;
 
 use libdd_ffe::rules_based as ffe;
 use libdd_ffe::rules_based::{
-    now, Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
-    EvaluationError, Str,
+    Assignment, AssignmentReason, AssignmentValue, Configuration, EvaluationContext,
+    EvaluationError, Str, now,
 };
 
 use crate::Handle;
@@ -148,7 +148,7 @@ pub enum Reason {
 /// - `config` must be a valid `Configuration` handle
 /// - `flag_key` must be a valid C string
 /// - `context` must be a valid `EvaluationContext` handle
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub unsafe extern "C" fn ddog_ffe_get_assignment(
     config: Handle<Configuration>,
@@ -283,7 +283,7 @@ impl BorrowedStr {
 ///
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
     assignment: Handle<ResolutionDetails>,
 ) -> VariantValue {
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_value(
 ///
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
     assignment: Handle<ResolutionDetails>,
 ) -> BorrowedStr {
@@ -340,7 +340,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_variant(
 ///
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
     assignment: Handle<ResolutionDetails>,
 ) -> BorrowedStr {
@@ -357,7 +357,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_allocation_key(
 
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_reason(
     assignment: Handle<ResolutionDetails>,
 ) -> Reason {
@@ -387,7 +387,7 @@ impl From<AssignmentReason> for Reason {
 
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_error_code(
     assignment: Handle<ResolutionDetails>,
 ) -> ErrorCode {
@@ -421,7 +421,7 @@ impl From<&EvaluationError> for ErrorCode {
 
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
     assignment: Handle<ResolutionDetails>,
 ) -> BorrowedStr {
@@ -440,7 +440,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
 ///
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_serial_id(
     assignment: Handle<ResolutionDetails>,
 ) -> libdd_common_ffi::Option<i32> {
@@ -453,7 +453,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_serial_id(
 
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_get_do_log(
     assignment: Handle<ResolutionDetails>,
 ) -> bool {
@@ -466,7 +466,7 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_do_log(
 
 /// # Safety
 /// `assignment` must be a valid handle.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
     assignment: Handle<ResolutionDetails>,
 ) -> ArrayMap<BorrowedStr, BorrowedStr> {
@@ -480,7 +480,7 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
 ///
 /// # Safety
 /// - `assignment` must be a valid Assignment handle
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<ResolutionDetails>) {
     // SAFETY: the caller must ensure that assignment is valid
     unsafe { Handle::free(assignment) }

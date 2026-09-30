@@ -41,6 +41,28 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
 
+/// Parses a `key:value` tag iterator into named local `Option<&str>` variables.
+/// Each arm supports one or more literal keys (separated by `|`) mapping to a
+/// single variable
+#[doc(hidden)]
+#[macro_export]
+macro_rules! parse_tags {
+    ($tag_iterator:expr, $($($tag_name:literal)|+ => $var:ident),* $(,)?) => {
+        $(
+            let mut $var: Option<&str> = None;
+        )*
+        for tag in $tag_iterator {
+            let Some((name, value)) = tag.split_once(':') else {
+                continue;
+            };
+            match name {
+                $($($tag_name)|+ => { $var = Some(value); },)*
+                _ => {},
+            }
+        }
+    };
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -80,6 +102,28 @@ impl CrashInfo {
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         self.error.demangle_names()
     }
+
+    /// Returns a comma-separated ddtags string for this crash report.
+    /// The string begins without a leading comma and is safe to use standalone
+    /// or appended to an existing tag string with a separating comma.
+    pub fn ddtags(&self) -> String {
+        use core::fmt::Write;
+        let mut tags = format!("data_schema_version:{}", self.data_schema_version);
+        if let Some(fp) = &self.fingerprint {
+            write!(tags, ",fingerprint:{fp}").ok();
+        }
+        write!(tags, ",incomplete:{}", self.incomplete).ok();
+        write!(tags, ",is_crash:{}", self.error.is_crash).ok();
+        write!(tags, ",uuid:{}", self.uuid).ok();
+        for (k, v) in &self.counters {
+            write!(tags, ",{k}:{v}").ok();
+        }
+        if let Some(sig) = &self.sig_info {
+            sig.append_ddtags(&mut tags);
+        }
+        write!(tags, ",runtime_platform:{TARGET_TRIPLE}").ok();
+        tags
+    }
 }
 
 #[cfg(unix)]
@@ -114,7 +158,21 @@ impl CrashInfo {
 
 impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
+    ///
+    /// Apply worker path restrictions to `file://` outputs when enabled by the sidecar.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
+            libdd_common::unix_utils::open_regular_for_append(path)
+                .with_context(|| format!("Failed to create {}", path.display()))?
+        } else {
+            File::options()
+                .create(true)
+                .append(true)
+                .open(path)
+                .with_context(|| format!("Failed to create {}", path.display()))?
+        };
+        #[cfg(not(unix))]
         let file = File::options()
             .create(true)
             .append(true)

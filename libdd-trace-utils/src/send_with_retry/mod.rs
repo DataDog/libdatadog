@@ -11,7 +11,7 @@ pub(crate) mod compression;
 pub use compression::CompressionStrategy;
 
 use bytes::Bytes;
-use futures::future::{select, Either};
+use futures::future::{Either, select};
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;

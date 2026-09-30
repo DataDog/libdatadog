@@ -14,17 +14,28 @@ mod report_generator;
 use crate::config::ConfigBuilder;
 use crate::report_generator::generate_report;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let log_level = env::var("INPUT_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
 
-    // Set RUST_LOG if not already set
+    // Set RUST_LOG before starting the async runtime, while the process is still
+    // single-threaded. `env::set_var` is `unsafe` in the 2024 edition because a
+    // concurrent environment access from another thread would be a data race.
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", &log_level);
+        // SAFETY: this runs before the tokio runtime is built, so the process is
+        // single-threaded and nothing else can access the environment concurrently.
+        unsafe { env::set_var("RUST_LOG", &log_level) };
     }
 
     env_logger::init();
 
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("Failed to build the tokio runtime")?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     info!("Clippy Annotation Reporter starting...");
 
     let config = ConfigBuilder::new().build()?;
