@@ -33,7 +33,7 @@ use std::time::SystemTime;
 use libdd_telemetry::config::Config;
 use libdd_telemetry::data::{self, Integration};
 use libdd_telemetry::metrics::{ContextKey, MetricContext};
-use libdd_telemetry::worker::{LifecycleAction, TelemetryActions};
+use libdd_telemetry::worker::TelemetryActions;
 
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
@@ -448,14 +448,8 @@ impl TelemetryCachedClient {
 
         let (handle, _join) = builder.spawn();
         info!("spawned telemetry worker {config:?}");
-
-        let worker = handle.clone();
-        tokio::spawn(async move {
-            worker
-                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                .await
-                .ok();
-        });
+        // Queue Start before another batch can send Stop to this worker.
+        handle.send_start().ok();
 
         let client = Self {
             worker: handle,
@@ -834,6 +828,48 @@ fn get_telemetry_client(
 mod tests {
     use super::*;
     use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
+    use libdd_telemetry::worker::LifecycleAction;
+
+    #[tokio::test(flavor = "current_thread")]
+    #[cfg_attr(miri, ignore)] // Uses OS shared memory and file output.
+    async fn client_start_precedes_immediate_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("telemetry.json");
+        let mut config = Config::default();
+        config
+            .set_endpoint_uri(
+                libdd_common::parse_uri(&format!("file://{}", path.display())).unwrap(),
+            )
+            .unwrap();
+        let client = TelemetryCachedClient::new(
+            &format!("telemetry-start-stop-{}", std::process::id()),
+            "test",
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8", "test"),
+            || config,
+            vec![],
+        );
+
+        // Queue the request's data and Stop before allowing spawned tasks to run.
+        client
+            .worker
+            .try_send_msg(TelemetryActions::AddConfig(data::Configuration {
+                name: "startup-race".into(),
+                value: Some("value".into()),
+                origin: data::ConfigurationOrigin::Code,
+                config_id: None,
+                seq_id: None,
+            }))
+            .unwrap();
+        client.worker.send_stop().unwrap();
+        // The queued stats reply is dropped only after Stop finishes.
+        assert!(client.worker.stats().unwrap().await.is_err());
+
+        let output = std::fs::read_to_string(path).unwrap();
+        assert!(output.contains("app-started"));
+        assert!(output.contains("startup-race"));
+        assert!(output.contains("app-closing"));
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
