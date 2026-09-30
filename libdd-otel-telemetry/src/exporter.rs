@@ -27,7 +27,7 @@ use crate::error::BuildWarning;
 pub struct DatadogMetricExporter {
     inner: opentelemetry_otlp::MetricExporter,
     counters: Arc<Counters>,
-    runtime: Arc<dyn MetricExporterRuntime>,
+    runtime: Option<Arc<dyn MetricExporterRuntime>>,
 }
 
 trait MetricExporterRuntime: Send + Sync {
@@ -61,6 +61,17 @@ impl DatadogMetricExporter {
     pub(crate) fn counters_handle(&self) -> Arc<Counters> {
         Arc::clone(&self.counters)
     }
+
+}
+
+impl Drop for DatadogMetricExporter {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            let _ = thread::Builder::new()
+                .name("libdd-otel-metrics-drop".to_string())
+                .spawn(move || drop(runtime));
+        }
+    }
 }
 
 impl std::fmt::Debug for DatadogMetricExporter {
@@ -74,7 +85,12 @@ impl std::fmt::Debug for DatadogMetricExporter {
 impl PushMetricExporter for DatadogMetricExporter {
     async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
         self.counters.attempts.fetch_add(1, Ordering::Relaxed);
-        let result = self.runtime.export(&self.inner, metrics);
+        let result = match self.runtime.as_deref() {
+            Some(runtime) => runtime.export(&self.inner, metrics),
+            None => Err(OTelSdkError::InternalFailure(
+                "metrics exporter runtime is unavailable".to_string(),
+            )),
+        };
         match &result {
             Ok(()) => self.counters.successes.fetch_add(1, Ordering::Relaxed),
             Err(_) => self.counters.failures.fetch_add(1, Ordering::Relaxed),
@@ -123,6 +139,6 @@ where
     Ok(DatadogMetricExporter {
         inner,
         counters: Arc::new(Counters::default()),
-        runtime,
+        runtime: Some(runtime),
     })
 }
