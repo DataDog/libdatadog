@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 
 use libdd_shared_runtime::BlockingRuntime;
@@ -12,6 +13,10 @@ use opentelemetry::metrics::{
     ObservableUpDownCounter, UpDownCounter,
 };
 use opentelemetry::KeyValue;
+use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
+use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
+use opentelemetry_sdk::metrics::data::ResourceMetrics;
+use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::Resource;
 
@@ -23,9 +28,6 @@ use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind, Obse
 /// system. Deliberately a plain data struct rather than a callback: nothing that isn't a
 /// primitive crosses the aggregator's public boundary in either direction.
 ///
-/// NOTE: the counting exporter wrapper (`PushMetricExporter` decorator incrementing these on
-/// every export attempt, mirroring dd-trace-rs's `TelemetryTrackingExporter`) is not implemented
-/// yet — `export_counters()` currently always returns zeros. Follow-up before Phase 3.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportCounters {
     pub metrics_export_attempts: u64,
@@ -38,6 +40,91 @@ struct Counters {
     attempts: AtomicU64,
     successes: AtomicU64,
     failures: AtomicU64,
+}
+
+impl Counters {
+    fn snapshot(&self) -> ExportCounters {
+        ExportCounters {
+            metrics_export_attempts: self.attempts.load(Ordering::Relaxed),
+            metrics_export_successes: self.successes.load(Ordering::Relaxed),
+            metrics_export_failures: self.failures.load(Ordering::Relaxed),
+        }
+    }
+}
+
+trait MetricExporterRuntime: Send + Sync {
+    fn export(
+        &self,
+        exporter: &opentelemetry_otlp::MetricExporter,
+        metrics: &ResourceMetrics,
+    ) -> OTelSdkResult;
+}
+
+impl<R> MetricExporterRuntime for R
+where
+    R: BlockingRuntime + Send + Sync,
+{
+    fn export(
+        &self,
+        exporter: &opentelemetry_otlp::MetricExporter,
+        metrics: &ResourceMetrics,
+    ) -> OTelSdkResult {
+        self.block_on(async { exporter.export(metrics).await })
+            .map_err(|error| OTelSdkError::InternalFailure(error.to_string()))?
+    }
+}
+
+struct RuntimeMetricExporter {
+    inner: opentelemetry_otlp::MetricExporter,
+    counters: Arc<Counters>,
+    runtime: Option<Arc<dyn MetricExporterRuntime>>,
+}
+
+impl std::fmt::Debug for RuntimeMetricExporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeMetricExporter")
+            .field("counters", &self.counters.snapshot())
+            .finish()
+    }
+}
+
+impl Drop for RuntimeMetricExporter {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            let _ = thread::Builder::new()
+                .name("libdd-otel-metrics-drop".to_string())
+                .spawn(move || drop(runtime));
+        }
+    }
+}
+
+impl PushMetricExporter for RuntimeMetricExporter {
+    async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
+        self.counters.attempts.fetch_add(1, Ordering::Relaxed);
+        let result = match self.runtime.as_deref() {
+            Some(runtime) => runtime.export(&self.inner, metrics),
+            None => Err(OTelSdkError::InternalFailure(
+                "metrics exporter runtime is unavailable".to_string(),
+            )),
+        };
+        match &result {
+            Ok(()) => self.counters.successes.fetch_add(1, Ordering::Relaxed),
+            Err(_) => self.counters.failures.fetch_add(1, Ordering::Relaxed),
+        };
+        result
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        self.inner.force_flush()
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+
+    fn temporality(&self) -> SdkTemporality {
+        self.inner.temporality()
+    }
 }
 
 enum InstrumentHandle {
@@ -99,34 +186,31 @@ impl OtelMetricsAggregatorBuilder {
         self
     }
 
-    /// Builds the aggregator, driving exporter construction on `runtime` since the OTLP
-    /// exporters require an active async context to initialize their transport.
-    pub fn build<R: BlockingRuntime>(
-        self,
-        runtime: &R,
-    ) -> (OtelMetricsAggregator, Vec<BuildWarning>) {
+    /// Builds the aggregator, retaining `runtime` to drive exports from the SDK reader thread.
+    pub fn build<R>(self, runtime: Arc<R>) -> (OtelMetricsAggregator, Vec<BuildWarning>)
+    where
+        R: BlockingRuntime + Send + Sync + 'static,
+    {
         let mut warnings = Vec::new();
+        let counters = Arc::new(Counters::default());
 
         let reader = match &self.metrics_exporter {
-            Some(cfg) => {
-                match runtime.block_on(async { build_metric_exporter(cfg, self.temporality) }) {
-                    Ok(Ok(exporter)) => Some(
+            Some(cfg) => match build_runtime_metric_exporter(
+                cfg,
+                self.temporality,
+                Arc::clone(&runtime),
+                Arc::clone(&counters),
+            ) {
+                Ok(exporter) => Some(
                         PeriodicReader::builder(exporter)
                             .with_interval(self.export_interval)
                             .build(),
                     ),
-                    Ok(Err(warning)) => {
-                        warnings.push(warning);
-                        None
-                    }
-                    Err(_) => {
-                        warnings.push(BuildWarning::ExporterInitFailed(
-                            "runtime unavailable while building metrics exporter".to_string(),
-                        ));
-                        None
-                    }
+                Err(warning) => {
+                    warnings.push(warning);
+                    None
                 }
-            }
+            },
             None => None,
         };
 
@@ -141,10 +225,40 @@ impl OtelMetricsAggregatorBuilder {
             meters: Mutex::new(HashMap::new()),
             instruments: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
-            counters: Arc::new(Counters::default()),
+            counters,
         };
         (aggregator, warnings)
     }
+}
+
+fn build_runtime_metric_exporter<R>(
+    config: &OtlpExporterConfig,
+    temporality: Temporality,
+    runtime: Arc<R>,
+    counters: Arc<Counters>,
+) -> Result<RuntimeMetricExporter, BuildWarning>
+where
+    R: BlockingRuntime + Send + Sync + 'static,
+{
+    let build_config = config.clone();
+    let build_runtime = Arc::clone(&runtime);
+    let inner = thread::Builder::new()
+        .name("libdd-otel-metrics-init".to_string())
+        .spawn(move || {
+            build_runtime.block_on(async { build_metric_exporter(&build_config, temporality) })
+        })
+        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?
+        .join()
+        .map_err(|_| {
+            BuildWarning::ExporterInitFailed("metrics exporter build thread panicked".to_string())
+        })?
+        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))??;
+
+    Ok(RuntimeMetricExporter {
+        inner,
+        counters,
+        runtime: Some(runtime),
+    })
 }
 
 fn build_metric_exporter(

@@ -1,14 +1,16 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 use libdd_otel_telemetry::{InstrumentDescriptor, InstrumentKind, OtelMetricsAggregatorBuilder};
 use libdd_shared_runtime::BasicRuntime;
 use libdd_shared_runtime::SharedRuntime;
 
 #[test]
 fn register_and_record_without_an_exporter_never_panics() {
-    let runtime = BasicRuntime::new().expect("runtime");
-    let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new().build(&runtime);
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
+    let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new().build(runtime);
     assert!(
         warnings.is_empty(),
         "no exporter configured, expect no warnings"
@@ -40,19 +42,18 @@ fn register_and_record_without_an_exporter_never_panics() {
 #[test]
 fn observable_callback_runs_during_native_collection() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
     use std::time::Duration;
 
     use libdd_otel_telemetry::{ObservableMeasurement, OtlpExporterConfig, OtlpProtocol};
 
-    let runtime = BasicRuntime::new().expect("runtime");
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
     let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new()
         .with_metrics_exporter(
-            OtlpExporterConfig::new("http://127.0.0.1:9", OtlpProtocol::Grpc)
+            OtlpExporterConfig::new("http://127.0.0.1:1", OtlpProtocol::Grpc)
                 .with_timeout(Duration::from_millis(50)),
         )
         .with_export_interval(Duration::from_secs(60))
-        .build(&runtime);
+        .build(runtime);
     assert!(warnings.is_empty(), "gRPC exporter should build cleanly");
 
     let invocations = Arc::new(AtomicUsize::new(0));
@@ -70,7 +71,27 @@ fn observable_callback_runs_during_native_collection() {
 
     let _ = aggregator.force_flush();
     assert!(invocations.load(Ordering::Relaxed) > 0);
+    let counters = aggregator.export_counters();
+    assert_eq!(counters.metrics_export_attempts, 1);
+    assert_eq!(counters.metrics_export_failures, 1);
     let _ = aggregator.shutdown();
+}
+
+#[cfg(feature = "grpc")]
+#[tokio::test(flavor = "multi_thread")]
+async fn aggregator_can_build_and_drop_inside_tokio_runtime() {
+    use libdd_otel_telemetry::{OtlpExporterConfig, OtlpProtocol};
+
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
+    let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new()
+        .with_metrics_exporter(OtlpExporterConfig::new(
+            "http://127.0.0.1:1",
+            OtlpProtocol::Grpc,
+        ))
+        .build(runtime);
+
+    assert!(warnings.is_empty(), "gRPC exporter should build cleanly");
+    drop(aggregator);
 }
 
 // Without the `http` feature, http/protobuf is an *unsupported* protocol and must fall back to a
@@ -80,13 +101,13 @@ fn observable_callback_runs_during_native_collection() {
 fn unsupported_protocol_falls_back_to_a_warning_not_a_panic() {
     use libdd_otel_telemetry::{OtlpExporterConfig, OtlpProtocol};
 
-    let runtime = BasicRuntime::new().expect("runtime");
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
     let (_, _warnings) = OtelMetricsAggregatorBuilder::new()
         .with_metrics_exporter(OtlpExporterConfig::new(
             "http://localhost:4318",
             OtlpProtocol::HttpProtobuf,
         ))
-        .build(&runtime);
+        .build(runtime);
 
     // Built with default features (grpc only), so http/protobuf should warn, not panic.
     #[cfg(not(feature = "http"))]
@@ -100,13 +121,13 @@ fn unsupported_protocol_falls_back_to_a_warning_not_a_panic() {
 fn http_protobuf_exporter_builds_without_panicking() {
     use libdd_otel_telemetry::{OtlpExporterConfig, OtlpProtocol};
 
-    let runtime = BasicRuntime::new().expect("runtime");
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
     let (_, warnings) = OtelMetricsAggregatorBuilder::new()
         .with_metrics_exporter(OtlpExporterConfig::new(
             "http://localhost:4318",
             OtlpProtocol::HttpProtobuf,
         ))
-        .build(&runtime);
+        .build(runtime);
 
     assert!(warnings.is_empty(), "http exporter should build cleanly");
 }
@@ -116,13 +137,13 @@ fn http_protobuf_exporter_builds_without_panicking() {
 fn http_json_protocol_falls_back_to_a_warning() {
     use libdd_otel_telemetry::{OtlpExporterConfig, OtlpProtocol};
 
-    let runtime = BasicRuntime::new().expect("runtime");
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
     let (_, warnings) = OtelMetricsAggregatorBuilder::new()
         .with_metrics_exporter(OtlpExporterConfig::new(
             "http://localhost:4318",
             OtlpProtocol::HttpJson,
         ))
-        .build(&runtime);
+        .build(runtime);
 
     assert_eq!(warnings.len(), 1);
 }
