@@ -7,14 +7,17 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use libdd_shared_runtime::BlockingRuntime;
-use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider, UpDownCounter};
+use opentelemetry::metrics::{
+    Counter, Gauge, Histogram, MeterProvider, ObservableCounter, ObservableGauge,
+    ObservableUpDownCounter, UpDownCounter,
+};
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::Resource;
 
 use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
 use crate::error::{BuildWarning, OtelMetricsError};
-use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
+use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback};
 
 /// Snapshot of export attempt counters, polled by the host tracer to feed its own telemetry
 /// system. Deliberately a plain data struct rather than a callback: nothing that isn't a
@@ -42,6 +45,9 @@ enum InstrumentHandle {
     UpDownCounter(UpDownCounter<f64>),
     Histogram(Histogram<f64>),
     Gauge(Gauge<f64>),
+    ObservableCounter(ObservableCounter<f64>),
+    ObservableGauge(ObservableGauge<f64>),
+    ObservableUpDownCounter(ObservableUpDownCounter<f64>),
 }
 
 /// Builds a [`OtelMetricsAggregator`].
@@ -218,6 +224,20 @@ impl OtelMetricsAggregator {
         id
     }
 
+    pub fn register_observable_instrument(
+        &self,
+        descriptor: InstrumentDescriptor,
+        callback: ObservableCallback,
+    ) -> InstrumentId {
+        let id = InstrumentId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.create_observable_instrument(&descriptor, callback);
+        self.instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, handle);
+        id
+    }
+
     /// Returns the SDK `Meter` for the descriptor's instrumentation scope, creating and caching it
     /// on first use so every exported metric carries the host's `get_meter` identity.
     fn meter_for(&self, descriptor: &InstrumentDescriptor) -> opentelemetry::metrics::Meter {
@@ -286,6 +306,81 @@ impl OtelMetricsAggregator {
                 }
                 InstrumentHandle::Gauge(builder.build())
             }
+        }
+    }
+
+    fn create_observable_instrument(
+        &self,
+        descriptor: &InstrumentDescriptor,
+        callback: ObservableCallback,
+    ) -> InstrumentHandle {
+        let meter = self.meter_for(descriptor);
+        let name = descriptor.name.clone();
+        match descriptor.kind {
+            InstrumentKind::ObservableCounter => {
+                let mut builder = meter.f64_observable_counter(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableCounter(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            InstrumentKind::ObservableGauge => {
+                let mut builder = meter.f64_observable_gauge(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableGauge(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            InstrumentKind::ObservableUpDownCounter => {
+                let mut builder = meter.f64_observable_up_down_counter(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableUpDownCounter(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            _ => self.create_instrument(descriptor),
         }
     }
 

@@ -11,13 +11,12 @@
 //!
 //! # Design principle: primitives only
 //!
-//! [`OtelMetricsAggregator`]'s public API never accepts or returns an OTel SDK object, and never
-//! accepts a callback/closure. Consumers register an instrument once (getting back an opaque
-//! [`InstrumentId`]) and then push primitive values (`f64` + string key/value attributes) for it.
-//! This holds even for observable/async instruments (`ObservableGauge`, `ObservableCounter`):
-//! the host language keeps ownership of *when* to evaluate a user-registered callback (only it
-//! can execute that closure), and pushes the resolved value the same way a synchronous
-//! instrument would. The aggregator does not need to know which kind produced a given value.
+//! [`OtelMetricsAggregator`]'s public API never accepts or returns an OTel SDK object. Consumers
+//! register synchronous instruments once (getting back an opaque [`InstrumentId`]) and push
+//! primitive values (`f64` + string key/value attributes). Observable instruments instead
+//! register a host adapter callback that returns the same primitive measurements. The native
+//! metrics reader invokes that adapter during collection, so every language can use the same
+//! scheduling and aggregation mechanism.
 //!
 //! Keeping the boundary primitives-only is deliberate, not incidental: it's what makes this
 //! crate usable from Rust (dd-trace-rs, today) and, later, from other languages via a C-ABI
@@ -43,5 +42,7 @@ mod resource;
 pub use aggregator::{ExportCounters, OtelMetricsAggregator, OtelMetricsAggregatorBuilder};
 pub use config::{parse_otlp_headers, OtlpExporterConfig, OtlpProtocol, Temporality};
 pub use error::{BuildWarning, OtelMetricsError};
-pub use instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
+pub use instrument::{
+    InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback, ObservableMeasurement,
+};
 pub use resource::ResourceBuilder;
