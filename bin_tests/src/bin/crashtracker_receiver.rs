@@ -74,6 +74,7 @@ fn receive_with_sentinel_stack() -> anyhow::Result<()> {
     let stream = tokio::io::BufReader::new(std::io::Cursor::new(rewritten));
     runtime.block_on(libdd_crashtracker::async_receiver_entry_point_stream(
         stream,
+        libdd_crashtracker::ReceiverFileAccess::Trusted,
     ))?;
     Ok(())
 }
