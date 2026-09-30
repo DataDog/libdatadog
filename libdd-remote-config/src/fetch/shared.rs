@@ -218,8 +218,10 @@ where
     }
 
     pub fn stats(&self) -> RefcountingStorageStats {
+        // Release this lock before stats takes the file-state lock.
+        let inactive_files = self.inactive.lock_or_panic().len() as u32;
         RefcountingStorageStats {
-            inactive_files: self.inactive.lock_or_panic().len() as u32,
+            inactive_files,
             fetcher: self.state.stats(),
         }
     }
@@ -308,14 +310,12 @@ impl SharedFetcher {
 
             let clean_inactive = || {
                 let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
+                // Match expire_file's lock order.
+                let mut files = fetcher.file_storage.state.files_lock();
                 let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                 inactive.retain(|_, v| {
                     if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
-                        fetcher
-                            .file_storage
-                            .state
-                            .files_lock()
-                            .expire_file(&v.refcount().path);
+                        files.expire_file(&v.refcount().path);
                         false
                     } else {
                         true
@@ -449,6 +449,53 @@ pub mod tests {
             contents: Vec<u8>,
         ) -> anyhow::Result<()> {
             self.0.update(&file.store, version, contents)
+        }
+    }
+
+    #[tokio::test]
+    async fn stats_and_expiration_do_not_deadlock() {
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                ConfigInvariants {
+                    language: "php".into(),
+                    tracer_version: "test".into(),
+                    endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),
+                    agentless: None,
+                },
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let file = storage
+            .store(1, Arc::new(PATH_FIRST.clone()), b"config".to_vec())
+            .unwrap();
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let mut threads = Vec::new();
+        for expire in [false, true] {
+            let mut storage = storage.clone();
+            let file = file.clone();
+            let start = start.clone();
+            let done = done_tx.clone();
+            threads.push(std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..if cfg!(miri) { 100 } else { 100_000 } {
+                    if expire {
+                        storage.expire_file(file.clone());
+                    } else {
+                        storage.stats();
+                    }
+                }
+                done.send(()).unwrap();
+            }));
+        }
+        for _ in 0..2 {
+            done_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("stats and expiration deadlocked");
+        }
+        for thread in threads {
+            thread.join().unwrap();
         }
     }
 

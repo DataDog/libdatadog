@@ -8,7 +8,6 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
-use crate::primary_sidecar_identifier;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::FutureExt;
@@ -129,7 +128,9 @@ impl AgentInfoFetcher {
                                 };
                             }
                             if let Some(ref writer) = writer {
-                                writer.write(&serde_json::to_vec(&status.info).unwrap())
+                                // A payload that does not fit is logged and dropped by the
+                                // writer; the previously published info stays readable.
+                                _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));
@@ -169,11 +170,12 @@ fn info_path(endpoint: &Endpoint) -> CString {
     endpoint.hash(&mut hasher);
     let mut path = format!(
         "/ddinf{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
-    // datadog agent info, on macOS we're restricted to 31 chars
-    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
@@ -216,6 +218,14 @@ impl AgentInfoReader {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
+
+    #[test]
+    fn shm_paths_distinguish_endpoints() {
+        assert_ne!(
+            info_path(&Endpoint::from_slice("http://agent-a:8126")),
+            info_path(&Endpoint::from_slice("http://agent-b:8126")),
+        );
+    }
 
     const TEST_INFO: &str = r#"{
         "config": {

@@ -114,7 +114,21 @@ impl CrashInfo {
 
 impl CrashInfo {
     /// Emit the CrashInfo as structured json in file `path`.
+    ///
+    /// Apply worker path restrictions to `file://` outputs when enabled by the sidecar.
     pub fn to_file(&self, path: &Path) -> anyhow::Result<()> {
+        #[cfg(unix)]
+        let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
+            libdd_common::unix_utils::open_regular_for_append(path)
+                .with_context(|| format!("Failed to create {}", path.display()))?
+        } else {
+            File::options()
+                .create(true)
+                .append(true)
+                .open(path)
+                .with_context(|| format!("Failed to create {}", path.display()))?
+        };
+        #[cfg(not(unix))]
         let file = File::options()
             .create(true)
             .append(true)

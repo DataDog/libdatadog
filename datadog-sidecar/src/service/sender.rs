@@ -513,12 +513,12 @@ impl SidecarSender {
         env: String,
         version: String,
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
-    ) {
+    ) -> bool {
         if !self.try_drain_outbox() {
-            return;
+            return false;
         }
         self.channel
-            .try_send_add_span_to_concentrator(env, version, span);
+            .try_send_add_span_to_concentrator(env, version, span)
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {

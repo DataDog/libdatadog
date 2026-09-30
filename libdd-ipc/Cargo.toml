@@ -15,6 +15,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arc-swap.workspace = true
 zwohash.workspace = true
 bincode.workspace = true
 io-lifetimes = { workspace = true, features = ["close"] }

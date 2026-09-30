@@ -250,6 +250,11 @@ pub fn primary_sidecar_identifier() -> &'static str {
     &SIDECAR_IDENTIFIER
 }
 
+/// What shared-memory names are qualified by: one sidecar per user session.
+pub fn shm_namespace() -> &'static str {
+    primary_sidecar_identifier()
+}
+
 #[test]
 fn test_fetch_identifier() {
     assert!(primary_sidecar_identifier().starts_with("S-"));

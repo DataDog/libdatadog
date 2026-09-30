@@ -9,5 +9,10 @@ pub async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
-    crate::receiver::entry_points::receiver_entry_point(timeout, stream).await
+    crate::receiver::entry_points::receiver_entry_point(
+        timeout,
+        stream,
+        crate::receiver::ReceiverFileAccess::Trusted,
+    )
+    .await
 }

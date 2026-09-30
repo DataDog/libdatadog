@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::primary_sidecar_identifier;
 use http::uri::PathAndQuery;
 use libdd_common::Endpoint;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
@@ -11,19 +10,43 @@ use std::ffi::CString;
 use std::mem::ManuallyDrop;
 use std::str::FromStr;
 use std::sync::{LazyLock, Mutex};
+use tracing::error;
 
-pub static SHM_LIMITER: LazyLock<Mutex<ManuallyDrop<ShmLimiterMemory<()>>>> = LazyLock::new(|| {
-    unsafe { libc::atexit(drop_shm_limiter) };
-    #[allow(clippy::unwrap_used)]
-    Mutex::new(ManuallyDrop::new(
-        ShmLimiterMemory::create(shm_limiter_path()).unwrap(),
-    ))
-});
+/// The shared rate limiter, or `None` when it could not be created.
+///
+/// `None` is reachable: creating the segment fails if another user is squatting its name (see
+/// `libdd_ipc::platform::shm_guard`), and refusing to map somebody else's memory must not take
+/// the sidecar down with it - in thread mode this code runs inside PHP. Callers therefore treat
+/// a missing limiter as "no rate limiting" rather than as a fatal error.
+pub static SHM_LIMITER: LazyLock<Option<Mutex<ManuallyDrop<ShmLimiterMemory<()>>>>> = LazyLock::new(
+    || match ShmLimiterMemory::create(shm_limiter_path()) {
+        Ok(memory) => {
+            unsafe { libc::atexit(drop_shm_limiter) };
+            Some(Mutex::new(ManuallyDrop::new(memory)))
+        }
+        Err(e) => {
+            error!(
+                "Could not create the shared rate limiter at {}: {e}. Continuing without rate limiting.",
+                shm_limiter_path().to_string_lossy()
+            );
+            None
+        }
+    },
+);
+
+/// Replace both arenas before serving requests, even if clients only find cached hashes.
+/// Requires a Tokio runtime for the exception limiter's cleanup task.
+pub fn init_shm_limiters() {
+    LazyLock::force(&SHM_LIMITER);
+    LazyLock::force(&crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER);
+}
 
 extern "C" fn drop_shm_limiter() {
-    let mut guard = SHM_LIMITER.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
-    unsafe { ManuallyDrop::drop(&mut *guard) };
+    if let Some(limiter) = SHM_LIMITER.as_ref() {
+        let mut guard = limiter.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
+        unsafe { ManuallyDrop::drop(&mut *guard) };
+    }
 }
 
 #[derive(Default)]
@@ -79,5 +102,5 @@ impl Config {
 
 pub fn shm_limiter_path() -> CString {
     #[allow(clippy::unwrap_used)]
-    CString::new(format!("/ddlimiters-{}", primary_sidecar_identifier())).unwrap()
+    CString::new(format!("/ddlimiters-{}", crate::shm_namespace())).unwrap()
 }

@@ -52,7 +52,6 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
 /// `T` is the string representation:
 /// * `&'a str`   — borrowed references used in [`BorrowedAggregationKey`]
 /// * `String`    — owned values used in `OwnedAggregationKey`
-/// * `StringRef` — offset+len into a SHM string pool, used in `ShmKeyHeader`
 #[derive(
     Clone, Default, Hash, Eq, PartialEq, Debug, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
