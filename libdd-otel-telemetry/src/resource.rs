@@ -45,7 +45,7 @@ impl ResourceBuilder {
         self
     }
 
-    pub fn build(self) -> Resource {
+    pub(crate) fn build(self) -> Resource {
         let mut builder = Resource::builder();
         for (key, value) in self.attributes {
             builder = builder.with_attribute(opentelemetry::KeyValue::new(key, value));

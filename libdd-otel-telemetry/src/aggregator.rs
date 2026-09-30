@@ -12,12 +12,12 @@ use opentelemetry::metrics::{
     Counter, Gauge, Histogram, MeterProvider, ObservableCounter, ObservableGauge,
     ObservableUpDownCounter, UpDownCounter,
 };
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 
 use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
 use crate::error::{BuildWarning, OtelMetricsError};
 use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback};
+use crate::resource::ResourceBuilder;
 
 /// Snapshot of export attempt counters, polled by the host tracer to feed its own telemetry
 /// system. Deliberately a plain data struct rather than a callback: nothing that isn't a
@@ -67,7 +67,7 @@ enum InstrumentHandle {
 /// everything it's given instead — a misconfigured OTel pipeline must never prevent the host
 /// tracer from starting.
 pub struct OtelMetricsAggregatorBuilder {
-    resource: Resource,
+    resource: ResourceBuilder,
     metrics_exporter: Option<OtlpExporterConfig>,
     temporality: Temporality,
     export_interval: Duration,
@@ -76,7 +76,7 @@ pub struct OtelMetricsAggregatorBuilder {
 impl Default for OtelMetricsAggregatorBuilder {
     fn default() -> Self {
         Self {
-            resource: Resource::builder().build(),
+            resource: ResourceBuilder::new(),
             metrics_exporter: None,
             temporality: Temporality::default(),
             export_interval: Duration::from_secs(60),
@@ -89,7 +89,7 @@ impl OtelMetricsAggregatorBuilder {
         Self::default()
     }
 
-    pub fn with_resource(mut self, resource: Resource) -> Self {
+    pub fn with_resource(mut self, resource: ResourceBuilder) -> Self {
         self.resource = resource;
         self
     }
@@ -150,7 +150,7 @@ impl OtelMetricsAggregatorBuilder {
             None => None,
         };
 
-        let mut provider_builder = SdkMeterProvider::builder().with_resource(self.resource);
+        let mut provider_builder = SdkMeterProvider::builder().with_resource(self.resource.build());
         if let Some(reader) = reader {
             provider_builder = provider_builder.with_reader(reader);
         }
