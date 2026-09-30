@@ -67,6 +67,42 @@ fn exporter_uses_retained_runtime_from_reader_thread() {
     let _ = aggregator.shutdown();
 }
 
+#[cfg(feature = "grpc")]
+#[test]
+fn observable_callback_runs_during_native_collection() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use libdd_otel_telemetry::{ObservableMeasurement, OtlpExporterConfig, OtlpProtocol};
+
+    let runtime = Arc::new(BasicRuntime::new().expect("runtime"));
+    let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new()
+        .with_metrics_exporter(
+            OtlpExporterConfig::new("http://127.0.0.1:1", OtlpProtocol::Grpc)
+                .with_timeout(Duration::from_millis(50)),
+        )
+        .with_export_interval(Duration::from_secs(60))
+        .build(runtime);
+    assert!(warnings.is_empty(), "gRPC exporter should build cleanly");
+
+    let invocations = Arc::new(AtomicUsize::new(0));
+    let callback_invocations = Arc::clone(&invocations);
+    aggregator.register_observable_instrument(
+        InstrumentDescriptor::new("queue.depth", InstrumentKind::ObservableGauge),
+        Arc::new(move || {
+            callback_invocations.fetch_add(1, Ordering::Relaxed);
+            vec![ObservableMeasurement::new(
+                42.0,
+                vec![("pool".to_string(), "default".to_string())],
+            )]
+        }),
+    );
+
+    let _ = aggregator.force_flush();
+    assert!(invocations.load(Ordering::Relaxed) > 0);
+    let _ = aggregator.shutdown();
+}
+
 // Without the `http` feature, http/protobuf is an *unsupported* protocol and must fall back to a
 // warning rather than panic. With `http` enabled the protocol is supported and a real exporter is
 // built, so the "unsupported" scenario doesn't apply.

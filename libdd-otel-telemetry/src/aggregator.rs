@@ -8,13 +8,16 @@ use std::time::Duration;
 
 use libdd_shared_runtime::BlockingRuntime;
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider, UpDownCounter};
+use opentelemetry::metrics::{
+    Counter, Gauge, Histogram, MeterProvider, ObservableCounter, ObservableGauge,
+    ObservableUpDownCounter, UpDownCounter,
+};
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 
 use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
 use crate::error::{BuildWarning, OtelMetricsError};
-use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
+use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback};
 
 /// Snapshot of export attempt counters, polled by the host tracer to feed its own telemetry
 /// system. Deliberately a plain data struct rather than a callback: nothing that isn't a
@@ -52,6 +55,9 @@ enum InstrumentHandle {
     UpDownCounter(UpDownCounter<f64>),
     Histogram(Histogram<f64>),
     Gauge(Gauge<f64>),
+    ObservableCounter(ObservableCounter<f64>),
+    ObservableGauge(ObservableGauge<f64>),
+    ObservableUpDownCounter(ObservableUpDownCounter<f64>),
 }
 
 /// Builds a [`OtelMetricsAggregator`].
@@ -207,9 +213,8 @@ type MeterScope = (String, Option<String>, Option<String>);
 /// Aggregates primitive metric observations from a host tracer and exports them via OTLP.
 ///
 /// This is the entire public surface a host language binds to: register an instrument once, then
-/// push resolved primitive values for it. The aggregator does not know or care whether a value
-/// came from a synchronous instrument call or from a host-language-scheduled observable-instrument
-/// callback — both are just "a value for this instrument id."
+/// push synchronous primitive values or provide an observable callback that returns them. The
+/// native reader invokes observable callbacks as part of collection.
 pub struct OtelMetricsAggregator {
     provider: SdkMeterProvider,
     meters: Mutex<HashMap<MeterScope, opentelemetry::metrics::Meter>>,
@@ -222,6 +227,20 @@ impl OtelMetricsAggregator {
     pub fn register_instrument(&self, descriptor: InstrumentDescriptor) -> InstrumentId {
         let id = InstrumentId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let handle = self.create_instrument(&descriptor);
+        self.instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, handle);
+        id
+    }
+
+    pub fn register_observable_instrument(
+        &self,
+        descriptor: InstrumentDescriptor,
+        callback: ObservableCallback,
+    ) -> InstrumentId {
+        let id = InstrumentId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        let handle = self.create_observable_instrument(&descriptor, callback);
         self.instruments
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -300,6 +319,81 @@ impl OtelMetricsAggregator {
         }
     }
 
+    fn create_observable_instrument(
+        &self,
+        descriptor: &InstrumentDescriptor,
+        callback: ObservableCallback,
+    ) -> InstrumentHandle {
+        let meter = self.meter_for(descriptor);
+        let name = descriptor.name.clone();
+        match descriptor.kind {
+            InstrumentKind::ObservableCounter => {
+                let mut builder = meter.f64_observable_counter(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableCounter(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            InstrumentKind::ObservableGauge => {
+                let mut builder = meter.f64_observable_gauge(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableGauge(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            InstrumentKind::ObservableUpDownCounter => {
+                let mut builder = meter.f64_observable_up_down_counter(name);
+                if let Some(unit) = &descriptor.unit {
+                    builder = builder.with_unit(unit.clone());
+                }
+                if let Some(description) = &descriptor.description {
+                    builder = builder.with_description(description.clone());
+                }
+                InstrumentHandle::ObservableUpDownCounter(
+                    builder
+                        .with_callback(move |observer| {
+                            for measurement in callback() {
+                                observer.observe(
+                                    measurement.value,
+                                    &Self::attrs(&measurement.attributes),
+                                );
+                            }
+                        })
+                        .build(),
+                )
+            }
+            _ => self.create_instrument(descriptor),
+        }
+    }
+
     fn attrs(pairs: &[(String, String)]) -> Vec<KeyValue> {
         pairs
             .iter()
@@ -340,8 +434,7 @@ impl OtelMetricsAggregator {
         }
     }
 
-    /// Pushes a resolved value for an observable gauge. The host language is responsible for
-    /// deciding when to evaluate the user's callback; this only records the result.
+    /// Pushes a resolved value for a synchronous gauge.
     pub fn observe_gauge(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
         if let Some(InstrumentHandle::Gauge(gauge)) = self
             .instruments
@@ -353,7 +446,7 @@ impl OtelMetricsAggregator {
         }
     }
 
-    /// Pushes a resolved value for an observable counter, same caveat as [`Self::observe_gauge`].
+    /// Pushes a resolved value for a synchronous counter backed by the counter handle.
     pub fn observe_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
         self.record_counter(id, value, attrs);
     }
