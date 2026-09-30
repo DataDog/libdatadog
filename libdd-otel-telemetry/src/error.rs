@@ -14,6 +14,8 @@ pub enum BuildWarning {
     InvalidEndpoint(String),
     /// The requested wire protocol is not supported (e.g. `http/json`).
     UnsupportedProtocol(String),
+    /// A configured exporter header is not valid for the selected transport.
+    InvalidHeader(String),
     /// The underlying `opentelemetry-otlp` exporter failed to build.
     ExporterInitFailed(String),
 }
@@ -23,6 +25,7 @@ impl fmt::Display for BuildWarning {
         match self {
             BuildWarning::InvalidEndpoint(msg) => write!(f, "invalid OTLP endpoint: {msg}"),
             BuildWarning::UnsupportedProtocol(msg) => write!(f, "unsupported OTLP protocol: {msg}"),
+            BuildWarning::InvalidHeader(msg) => write!(f, "invalid OTLP header: {msg}"),
             BuildWarning::ExporterInitFailed(msg) => {
                 write!(f, "failed to initialize OTLP exporter: {msg}")
             }

@@ -103,6 +103,24 @@ fn observable_callback_runs_during_native_collection() {
     let _ = aggregator.shutdown();
 }
 
+#[cfg(feature = "grpc")]
+#[test]
+fn invalid_grpc_header_falls_back_to_a_warning() {
+    use libdd_otel_telemetry::{BuildWarning, OtlpExporterConfig, OtlpProtocol};
+
+    let (_, warnings) = OtelMetricsAggregatorBuilder::new()
+        .with_metrics_exporter(
+            OtlpExporterConfig::new("http://127.0.0.1:4317", OtlpProtocol::Grpc)
+                .with_header("invalid header", "value"),
+        )
+        .build_with_default_runtime();
+
+    assert!(matches!(
+        warnings.as_slice(),
+        [BuildWarning::InvalidHeader(_)]
+    ));
+}
+
 // Without the `http` feature, http/protobuf is an *unsupported* protocol and must fall back to a
 // warning rather than panic. With `http` enabled the protocol is supported and a real exporter is
 // built, so the "unsupported" scenario doesn't apply.

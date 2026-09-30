@@ -3218,6 +3218,7 @@ dependencies = [
 name = "libdd-otel-telemetry"
 version = "0.1.0"
 dependencies = [
+ "http 1.1.0",
  "libdd-shared-runtime",
  "opentelemetry 0.32.0",
  "opentelemetry-otlp",

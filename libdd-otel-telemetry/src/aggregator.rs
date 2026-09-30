@@ -12,9 +12,13 @@ use opentelemetry::metrics::{
     Counter, Gauge, Histogram, MeterProvider, ObservableCounter, ObservableGauge,
     ObservableUpDownCounter, UpDownCounter,
 };
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+#[cfg(any(feature = "grpc", feature = "http"))]
+use opentelemetry_sdk::metrics::PeriodicReader;
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 
-use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
+#[cfg(any(feature = "grpc", feature = "http"))]
+use crate::config::OtlpProtocol;
+use crate::config::{OtlpExporterConfig, Temporality};
 use crate::error::{BuildWarning, OtelMetricsError};
 use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback};
 use crate::resource::ResourceBuilder;
@@ -127,39 +131,52 @@ impl OtelMetricsAggregatorBuilder {
     }
 
     /// Builds the aggregator, retaining `runtime` to drive exports from the SDK reader thread.
-    pub fn build<R>(self, runtime: Arc<R>) -> (OtelMetricsAggregator, Vec<BuildWarning>)
+    pub fn build<R>(self, _runtime: Arc<R>) -> (OtelMetricsAggregator, Vec<BuildWarning>)
     where
         R: BlockingRuntime + Send + Sync + 'static,
     {
         let mut warnings = Vec::new();
-        let mut counters = Arc::new(Counters::default());
+        let counters = Arc::new(Counters::default());
 
-        let reader = match &self.metrics_exporter {
-            Some(cfg) => match crate::exporter::build_datadog_metric_exporter_with_runtime(
-                cfg,
-                self.temporality,
-                Arc::clone(&runtime),
-            ) {
-                Ok(exporter) => {
-                    counters = exporter.counters_handle();
-                    Some(
-                        PeriodicReader::builder(exporter)
-                            .with_interval(self.export_interval)
-                            .build(),
-                    )
+        #[cfg(any(feature = "grpc", feature = "http"))]
+        let (reader, counters) = match &self.metrics_exporter {
+            Some(cfg) => {
+                match crate::exporter::build_datadog_metric_exporter_with_runtime(
+                    cfg,
+                    self.temporality,
+                    Arc::clone(&_runtime),
+                ) {
+                    Ok(exporter) => {
+                        let counters = exporter.counters_handle();
+                        let reader = Some(
+                            PeriodicReader::builder(exporter)
+                                .with_interval(self.export_interval)
+                                .build(),
+                        );
+                        (reader, counters)
+                    }
+                    Err(warning) => {
+                        warnings.push(warning);
+                        (None, counters)
+                    }
                 }
-                Err(warning) => {
-                    warnings.push(warning);
-                    None
-                }
-            },
-            None => None,
+            }
+            None => (None, counters),
         };
 
-        let mut provider_builder = SdkMeterProvider::builder().with_resource(self.resource.build());
-        if let Some(reader) = reader {
-            provider_builder = provider_builder.with_reader(reader);
+        #[cfg(not(any(feature = "grpc", feature = "http")))]
+        if self.metrics_exporter.is_some() {
+            warnings.push(BuildWarning::UnsupportedProtocol(
+                "metrics export requires the 'grpc' or 'http' feature".to_string(),
+            ));
         }
+
+        let provider_builder = SdkMeterProvider::builder().with_resource(self.resource.build());
+        #[cfg(any(feature = "grpc", feature = "http"))]
+        let provider_builder = match reader {
+            Some(reader) => provider_builder.with_reader(reader),
+            None => provider_builder,
+        };
         let provider = provider_builder.build();
 
         let aggregator = OtelMetricsAggregator::new(provider, counters);
@@ -167,20 +184,38 @@ impl OtelMetricsAggregatorBuilder {
     }
 }
 
+#[cfg(any(feature = "grpc", feature = "http"))]
 pub(crate) fn build_metric_exporter(
     config: &OtlpExporterConfig,
     temporality: Temporality,
 ) -> Result<opentelemetry_otlp::MetricExporter, BuildWarning> {
     use opentelemetry_otlp::WithExportConfig;
+    #[cfg(feature = "http")]
+    use opentelemetry_otlp::WithHttpConfig;
+    #[cfg(feature = "grpc")]
+    use opentelemetry_otlp::WithTonicConfig;
 
     let result = match config.protocol {
         #[cfg(feature = "grpc")]
-        OtlpProtocol::Grpc => opentelemetry_otlp::MetricExporter::builder()
-            .with_tonic()
-            .with_endpoint(&config.endpoint)
-            .with_timeout(config.timeout)
-            .with_temporality(temporality.into())
-            .build(),
+        OtlpProtocol::Grpc => {
+            let mut headers = http::HeaderMap::new();
+            for (key, value) in &config.headers {
+                let name = http::header::HeaderName::from_bytes(key.as_bytes())
+                    .map_err(|error| BuildWarning::InvalidHeader(error.to_string()))?;
+                let value = http::header::HeaderValue::from_str(value)
+                    .map_err(|error| BuildWarning::InvalidHeader(error.to_string()))?;
+                headers.insert(name, value);
+            }
+            opentelemetry_otlp::MetricExporter::builder()
+                .with_tonic()
+                .with_endpoint(&config.endpoint)
+                .with_timeout(config.timeout)
+                .with_metadata(
+                    opentelemetry_otlp::tonic_types::metadata::MetadataMap::from_headers(headers),
+                )
+                .with_temporality(temporality.into())
+                .build()
+        }
         #[cfg(not(feature = "grpc"))]
         OtlpProtocol::Grpc => {
             return Err(BuildWarning::UnsupportedProtocol(
@@ -199,6 +234,7 @@ pub(crate) fn build_metric_exporter(
                 .with_http()
                 .with_endpoint(&config.endpoint)
                 .with_timeout(config.timeout)
+                .with_headers(config.headers.iter().cloned().collect())
                 .with_temporality(temporality.into())
                 .build()
         }
