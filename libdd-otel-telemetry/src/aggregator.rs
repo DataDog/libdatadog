@@ -114,23 +114,25 @@ impl OtelMetricsAggregatorBuilder {
         let mut warnings = Vec::new();
 
         let reader = match &self.metrics_exporter {
-            Some(cfg) => match runtime.block_on(build_metric_exporter(cfg, self.temporality)) {
-                Ok(Ok(exporter)) => Some(
-                    PeriodicReader::builder(exporter)
-                        .with_interval(self.export_interval)
-                        .build(),
-                ),
-                Ok(Err(warning)) => {
-                    warnings.push(warning);
-                    None
+            Some(cfg) => {
+                match runtime.block_on(async { build_metric_exporter(cfg, self.temporality) }) {
+                    Ok(Ok(exporter)) => Some(
+                        PeriodicReader::builder(exporter)
+                            .with_interval(self.export_interval)
+                            .build(),
+                    ),
+                    Ok(Err(warning)) => {
+                        warnings.push(warning);
+                        None
+                    }
+                    Err(_) => {
+                        warnings.push(BuildWarning::ExporterInitFailed(
+                            "runtime unavailable while building metrics exporter".to_string(),
+                        ));
+                        None
+                    }
                 }
-                Err(_) => {
-                    warnings.push(BuildWarning::ExporterInitFailed(
-                        "runtime unavailable while building metrics exporter".to_string(),
-                    ));
-                    None
-                }
-            },
+            }
             None => None,
         };
 
@@ -151,7 +153,7 @@ impl OtelMetricsAggregatorBuilder {
     }
 }
 
-pub(crate) async fn build_metric_exporter(
+pub(crate) fn build_metric_exporter(
     config: &OtlpExporterConfig,
     temporality: Temporality,
 ) -> Result<opentelemetry_otlp::MetricExporter, BuildWarning> {

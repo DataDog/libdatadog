@@ -69,13 +69,12 @@ impl PushMetricExporter for DatadogMetricExporter {
 /// Builds a [`DatadogMetricExporter`] from an [`OtlpExporterConfig`].
 ///
 /// Must be called from within a tokio runtime: the underlying `opentelemetry-otlp` exporter
-/// initializes its transport (tonic/reqwest) and requires an active async context. dd-trace-rs
-/// builds its provider inside tokio, so this is `async` rather than driving its own runtime.
-pub async fn build_datadog_metric_exporter(
+/// initializes its transport (tonic/reqwest) and retains that runtime for later exports.
+pub fn build_datadog_metric_exporter(
     config: &OtlpExporterConfig,
     temporality: Temporality,
 ) -> Result<DatadogMetricExporter, BuildWarning> {
-    let inner = build_metric_exporter(config, temporality).await?;
+    let inner = build_metric_exporter(config, temporality)?;
     Ok(DatadogMetricExporter {
         inner,
         counters: Arc::new(Counters::default()),
