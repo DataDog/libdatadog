@@ -24,7 +24,7 @@ rustls = { workspace = true, features = ["ring"], optional = true }
 [features]
 default = ["grpc"]
 grpc = ["opentelemetry-otlp/grpc-tonic"]
-http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-client", "dep:rustls"]
+http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-blocking-client", "dep:rustls"]
 test-utils = []
 
 [dev-dependencies]

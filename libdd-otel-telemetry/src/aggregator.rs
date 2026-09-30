@@ -21,9 +21,7 @@ use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
 /// primitive crosses the aggregator's public boundary in either direction.
 ///
 /// The counting is performed by [`crate::DatadogMetricExporter`], which increments these on every
-/// export attempt (mirroring dd-trace-rs's old `TelemetryTrackingExporter`). The in-process
-/// [`OtelMetricsAggregator`] builds its own reader directly and does not yet route through that
-/// exporter, so its [`OtelMetricsAggregator::export_counters`] still returns zeros for now.
+/// export attempt (mirroring dd-trace-rs's old `TelemetryTrackingExporter`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportCounters {
     pub metrics_export_attempts: u64,
@@ -105,34 +103,33 @@ impl OtelMetricsAggregatorBuilder {
         self
     }
 
-    /// Builds the aggregator, driving exporter construction on `runtime` since the OTLP
-    /// exporters require an active async context to initialize their transport.
-    pub fn build<R: BlockingRuntime>(
-        self,
-        runtime: &R,
-    ) -> (OtelMetricsAggregator, Vec<BuildWarning>) {
+    /// Builds the aggregator, retaining `runtime` to drive exports from the SDK reader thread.
+    pub fn build<R>(self, runtime: Arc<R>) -> (OtelMetricsAggregator, Vec<BuildWarning>)
+    where
+        R: BlockingRuntime + Send + Sync + 'static,
+    {
         let mut warnings = Vec::new();
+        let mut counters = Arc::new(Counters::default());
 
         let reader = match &self.metrics_exporter {
-            Some(cfg) => {
-                match runtime.block_on(async { build_metric_exporter(cfg, self.temporality) }) {
-                    Ok(Ok(exporter)) => Some(
+            Some(cfg) => match crate::build_datadog_metric_exporter(
+                cfg,
+                self.temporality,
+                Arc::clone(&runtime),
+            ) {
+                Ok(exporter) => {
+                    counters = exporter.counters_handle();
+                    Some(
                         PeriodicReader::builder(exporter)
                             .with_interval(self.export_interval)
                             .build(),
-                    ),
-                    Ok(Err(warning)) => {
-                        warnings.push(warning);
-                        None
-                    }
-                    Err(_) => {
-                        warnings.push(BuildWarning::ExporterInitFailed(
-                            "runtime unavailable while building metrics exporter".to_string(),
-                        ));
-                        None
-                    }
+                    )
                 }
-            }
+                Err(warning) => {
+                    warnings.push(warning);
+                    None
+                }
+            },
             None => None,
         };
 
@@ -147,7 +144,7 @@ impl OtelMetricsAggregatorBuilder {
             meters: Mutex::new(HashMap::new()),
             instruments: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
-            counters: Arc::new(Counters::default()),
+            counters,
         };
         (aggregator, warnings)
     }

@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use opentelemetry_sdk::error::OTelSdkResult;
+use libdd_shared_runtime::BlockingRuntime;
+use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
 use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
@@ -25,12 +26,39 @@ use crate::error::BuildWarning;
 pub struct DatadogMetricExporter {
     inner: opentelemetry_otlp::MetricExporter,
     counters: Arc<Counters>,
+    runtime: Arc<dyn MetricExporterRuntime>,
+}
+
+trait MetricExporterRuntime: Send + Sync {
+    fn export(
+        &self,
+        exporter: &opentelemetry_otlp::MetricExporter,
+        metrics: &ResourceMetrics,
+    ) -> OTelSdkResult;
+}
+
+impl<R> MetricExporterRuntime for R
+where
+    R: BlockingRuntime + Send + Sync,
+{
+    fn export(
+        &self,
+        exporter: &opentelemetry_otlp::MetricExporter,
+        metrics: &ResourceMetrics,
+    ) -> OTelSdkResult {
+        self.block_on(async { exporter.export(metrics).await })
+            .map_err(|error| OTelSdkError::InternalFailure(error.to_string()))?
+    }
 }
 
 impl DatadogMetricExporter {
     /// Snapshot of export telemetry counters accumulated so far.
     pub fn counters(&self) -> ExportCounters {
         self.counters.snapshot()
+    }
+
+    pub(crate) fn counters_handle(&self) -> Arc<Counters> {
+        Arc::clone(&self.counters)
     }
 }
 
@@ -45,7 +73,7 @@ impl std::fmt::Debug for DatadogMetricExporter {
 impl PushMetricExporter for DatadogMetricExporter {
     async fn export(&self, metrics: &ResourceMetrics) -> OTelSdkResult {
         self.counters.attempts.fetch_add(1, Ordering::Relaxed);
-        let result = self.inner.export(metrics).await;
+        let result = self.runtime.export(&self.inner, metrics);
         match &result {
             Ok(()) => self.counters.successes.fetch_add(1, Ordering::Relaxed),
             Err(_) => self.counters.failures.fetch_add(1, Ordering::Relaxed),
@@ -68,15 +96,22 @@ impl PushMetricExporter for DatadogMetricExporter {
 
 /// Builds a [`DatadogMetricExporter`] from an [`OtlpExporterConfig`].
 ///
-/// Must be called from within a tokio runtime: the underlying `opentelemetry-otlp` exporter
-/// initializes its transport (tonic/reqwest) and retains that runtime for later exports.
-pub fn build_datadog_metric_exporter(
+/// `runtime` drives every export because the upstream SDK invokes exporters from a plain worker
+/// thread with no async reactor.
+pub fn build_datadog_metric_exporter<R>(
     config: &OtlpExporterConfig,
     temporality: Temporality,
-) -> Result<DatadogMetricExporter, BuildWarning> {
-    let inner = build_metric_exporter(config, temporality)?;
+    runtime: Arc<R>,
+) -> Result<DatadogMetricExporter, BuildWarning>
+where
+    R: BlockingRuntime + Send + Sync + 'static,
+{
+    let inner = runtime
+        .block_on(async { build_metric_exporter(config, temporality) })
+        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))??;
     Ok(DatadogMetricExporter {
         inner,
         counters: Arc::new(Counters::default()),
+        runtime,
     })
 }
