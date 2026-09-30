@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::Arc;
+
 /// Opaque handle to an instrument registered on a [`crate::OtelMetricsAggregator`].
 ///
 /// This is the only thing consumers hold onto for an instrument — never the underlying SDK
@@ -26,10 +28,9 @@ pub type ObservableCallback = Arc<dyn Fn() -> Vec<ObservableMeasurement> + Send 
 
 /// The kind of instrument being registered.
 ///
-/// The aggregator does not distinguish synchronous instruments (`Counter`, `Histogram`,
-/// `UpDownCounter`) from observable/async ones (`ObservableGauge`, `ObservableCounter`) once
-/// registered — both just receive resolved primitive values via `record_*`/`observe_*`. The host
-/// language owns deciding *when* an observable instrument's callback runs.
+/// Observable instruments are registered with a host callback which the native reader invokes
+/// during collection. Synchronous instruments receive primitive values through `record_*` and
+/// `observe_*` methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstrumentKind {
     Counter,
@@ -93,4 +94,3 @@ impl InstrumentDescriptor {
         self
     }
 }
-use std::sync::Arc;

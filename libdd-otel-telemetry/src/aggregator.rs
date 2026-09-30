@@ -108,23 +108,25 @@ impl OtelMetricsAggregatorBuilder {
         let mut warnings = Vec::new();
 
         let reader = match &self.metrics_exporter {
-            Some(cfg) => match runtime.block_on(build_metric_exporter(cfg, self.temporality)) {
-                Ok(Ok(exporter)) => Some(
-                    PeriodicReader::builder(exporter)
-                        .with_interval(self.export_interval)
-                        .build(),
-                ),
-                Ok(Err(warning)) => {
-                    warnings.push(warning);
-                    None
+            Some(cfg) => {
+                match runtime.block_on(async { build_metric_exporter(cfg, self.temporality) }) {
+                    Ok(Ok(exporter)) => Some(
+                        PeriodicReader::builder(exporter)
+                            .with_interval(self.export_interval)
+                            .build(),
+                    ),
+                    Ok(Err(warning)) => {
+                        warnings.push(warning);
+                        None
+                    }
+                    Err(_) => {
+                        warnings.push(BuildWarning::ExporterInitFailed(
+                            "runtime unavailable while building metrics exporter".to_string(),
+                        ));
+                        None
+                    }
                 }
-                Err(_) => {
-                    warnings.push(BuildWarning::ExporterInitFailed(
-                        "runtime unavailable while building metrics exporter".to_string(),
-                    ));
-                    None
-                }
-            },
+            }
             None => None,
         };
 
@@ -145,7 +147,7 @@ impl OtelMetricsAggregatorBuilder {
     }
 }
 
-async fn build_metric_exporter(
+fn build_metric_exporter(
     config: &OtlpExporterConfig,
     temporality: Temporality,
 ) -> Result<opentelemetry_otlp::MetricExporter, BuildWarning> {
@@ -202,9 +204,8 @@ type MeterScope = (String, Option<String>, Option<String>);
 /// Aggregates primitive metric observations from a host tracer and exports them via OTLP.
 ///
 /// This is the entire public surface a host language binds to: register an instrument once, then
-/// push resolved primitive values for it. The aggregator does not know or care whether a value
-/// came from a synchronous instrument call or from a host-language-scheduled observable-instrument
-/// callback — both are just "a value for this instrument id."
+/// either push synchronous primitive values or provide an observable callback that returns them.
+/// The native reader invokes observable callbacks as part of collection.
 pub struct OtelMetricsAggregator {
     provider: SdkMeterProvider,
     meters: Mutex<HashMap<MeterScope, opentelemetry::metrics::Meter>>,
@@ -424,8 +425,7 @@ impl OtelMetricsAggregator {
         }
     }
 
-    /// Pushes a resolved value for an observable gauge. The host language is responsible for
-    /// deciding when to evaluate the user's callback; this only records the result.
+    /// Pushes a resolved value for a synchronous gauge.
     pub fn observe_gauge(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
         if let Some(InstrumentHandle::Gauge(gauge)) = self
             .instruments
@@ -437,7 +437,7 @@ impl OtelMetricsAggregator {
         }
     }
 
-    /// Pushes a resolved value for an observable counter, same caveat as [`Self::observe_gauge`].
+    /// Pushes a resolved value for a synchronous counter backed by the counter handle.
     pub fn observe_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
         self.record_counter(id, value, attrs);
     }
