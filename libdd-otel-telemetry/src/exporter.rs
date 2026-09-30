@@ -1,19 +1,19 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
-use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
 
-use crate::aggregator::{build_metric_exporter, Counters};
+use crate::ExportCounters;
+use crate::aggregator::{Counters, build_metric_exporter};
 use crate::config::{OtlpExporterConfig, Temporality};
 use crate::error::BuildWarning;
-use crate::ExportCounters;
 
 /// A Datadog-flavored OTLP [`PushMetricExporter`] that a host tracer can plug into its own
 /// `SdkMeterProvider` + `PeriodicReader`.

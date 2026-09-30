@@ -15,9 +15,8 @@ pub trait Limiter {
 }
 
 /// A thread-safe limiter built on Atomics.
-/// It's base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
-/// Internally the limiter works with the system time granularity, i.e. nanoseconds on unix and
-/// milliseconds on windows.
+/// Its base unit is in seconds, i.e. the minimum allowed rate is 1 per second.
+/// Internally the limiter measures elapsed time in nanoseconds.
 /// The implementation is a sliding window: every time the limiter is increased, the amount of time
 /// that has passed is also refilled.
 #[repr(C)]
@@ -25,7 +24,7 @@ pub struct LocalLimiter {
     hit_count: AtomicI64,
     last_update: AtomicU64,
     last_limit: AtomicU32,
-    granularity: i64,
+    granularity: AtomicI64,
 }
 
 const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
@@ -36,7 +35,8 @@ const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
 #[cfg(test)]
 static MOCK_NOW: AtomicU64 = AtomicU64::new(0);
 
-fn now() -> u64 {
+/// Monotonic nanoseconds from a system-wide clock, comparable across processes.
+pub fn now() -> u64 {
     #[cfg(test)]
     {
         let mock = MOCK_NOW.load(Ordering::Relaxed);
@@ -58,7 +58,8 @@ fn now() -> u64 {
 
         let mut perf_counter = 0;
         windows_sys::Win32::System::Performance::QueryPerformanceCounter(&mut perf_counter);
-        perf_counter as u64 * frequency / TIME_PER_SECOND as u64
+        // Nanoseconds fit in u64 for centuries, but the intermediate product needs u128.
+        (perf_counter as u128 * TIME_PER_SECOND as u128 / u128::from(frequency)) as u64
     };
     #[cfg(not(windows))]
     let now = {
@@ -87,7 +88,7 @@ impl Default for LocalLimiter {
             hit_count: Default::default(),
             last_update: AtomicU64::from(now()),
             last_limit: Default::default(),
-            granularity: TIME_PER_SECOND,
+            granularity: AtomicI64::new(TIME_PER_SECOND),
         }
     }
 }
@@ -95,17 +96,20 @@ impl Default for LocalLimiter {
 impl LocalLimiter {
     /// Allows setting a custom time granularity. The default() implementation is 1 second.
     pub fn with_granularity(seconds: u32) -> LocalLimiter {
-        let mut limiter = LocalLimiter::default();
-        limiter.granularity *= seconds as i64;
+        let limiter = LocalLimiter::default();
+        limiter
+            .granularity
+            .store(TIME_PER_SECOND * seconds as i64, Ordering::Relaxed);
         limiter
     }
 
     /// Resets, with a given granularity.
-    pub fn reset(&mut self, seconds: u32) {
+    pub fn reset(&self, seconds: u32) {
         self.last_update.store(now(), Ordering::Relaxed);
         self.hit_count.store(0, Ordering::Relaxed);
         self.last_limit.store(0, Ordering::Relaxed);
-        self.granularity = TIME_PER_SECOND * seconds as i64;
+        self.granularity
+            .store(TIME_PER_SECOND * seconds as i64, Ordering::Relaxed);
     }
 
     fn update(&self, limit: u32, inc: i64) -> i64 {
@@ -128,10 +132,11 @@ impl LocalLimiter {
 
 impl Limiter for LocalLimiter {
     fn inc(&self, limit: u32) -> bool {
-        let previous_hits = self.update(limit, self.granularity);
-        if previous_hits / self.granularity >= limit as i64 {
-            self.hit_count
-                .fetch_sub(self.granularity, Ordering::Acquire);
+        // Read once, and never divide by it unchecked: ensure it's never zero.
+        let granularity = self.granularity.load(Ordering::Relaxed).max(1);
+        let previous_hits = self.update(limit, granularity);
+        if previous_hits / granularity >= limit as i64 {
+            self.hit_count.fetch_sub(granularity, Ordering::Acquire);
             false
         } else {
             // We don't care about race conditions here:
@@ -146,18 +151,19 @@ impl Limiter for LocalLimiter {
     fn rate(&self) -> f64 {
         let last_limit = self.last_limit.load(Ordering::Relaxed);
         let hit_count = self.hit_count.load(Ordering::Relaxed);
-        (hit_count as f64 / (last_limit as i64 * self.granularity) as f64).clamp(0., 1.)
+        let granularity = self.granularity.load(Ordering::Relaxed).max(1);
+        (hit_count as f64 / (last_limit as i64 * granularity) as f64).clamp(0., 1.)
     }
 
     fn update_rate(&self) -> f64 {
-        self.update(0, self.granularity);
+        self.update(0, 0);
         self.rate()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{now, Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
+    use crate::rate_limiter::{Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND, now};
     use core::sync::atomic::Ordering;
 
     fn set_mock_time(nanos: u64) {
@@ -227,13 +233,19 @@ mod tests {
         // Now 1 succeeds again
         assert!(limiter.inc(1));
 
+        // Refreshing the rate must not count as another hit.
+        let limiter = LocalLimiter::default();
+        assert!(limiter.inc(1));
+        advance_mock_time(TIME_PER_SECOND as u64 / 2);
+        assert_eq!(0.5, limiter.update_rate());
+
+        advance_mock_time(60 * TIME_PER_SECOND as u64);
+        assert_eq!(0., limiter.update_rate());
+        assert!(limiter.inc(1));
+
         set_mock_time(0);
     }
 
-    /// Validates the real clock implementation (MOCK_NOW is 0, so `now()` hits the actual
-    /// platform clock).
-    // We normally shouldn't test private functions directly, but is necessary here since
-    // now() is mocked for the other tests.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_now_monotonic() {

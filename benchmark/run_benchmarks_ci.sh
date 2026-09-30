@@ -65,6 +65,36 @@ for crate in ${BENCH_PACKAGES}; do
   done
 done
 
+# Start the shared compiler cache. Still best-effort either way: a compiler
+# cache is an optimisation, and no cache problem may ever fail a benchmark job.
+start_compiler_cache() {
+  if ! command -v sccache > /dev/null 2>&1; then
+    message "sccache not present in this image; building without a compiler cache"
+    return 1
+  fi
+  local startup_output
+  if ! startup_output="$(sccache --start-server 2>&1)"; then
+    message "sccache: server startup failed; building without a compiler cache"
+    message "sccache: --start-server reported: ${startup_output:-<no output>}"
+    dump_compiler_cache_diagnostics
+    return 1
+  fi
+  return 0
+}
+
+# $SCCACHE_ERROR_LOG is not in artifacts:paths; echo it into the job log.
+# AWS_* names only -- one of them is a secret.
+dump_compiler_cache_diagnostics() {
+  message "sccache: AWS_* variables present: $(env | sed -n 's/^\(AWS_[A-Z_]*\)=.*/\1/p' | sort | tr '\n' ' ')"
+  message "sccache: SCCACHE_* config: $(env | grep '^SCCACHE_' | sort | tr '\n' ' ')"
+  if [[ -s "${SCCACHE_ERROR_LOG:-/nonexistent}" ]]; then
+    message "sccache: last 50 lines of ${SCCACHE_ERROR_LOG}:"
+    tail -n 50 "${SCCACHE_ERROR_LOG}" >&2
+  else
+    message "sccache: ${SCCACHE_ERROR_LOG:-unset} is empty or absent (server may have died before logging)"
+  fi
+}
+
 if (( ${#package_args[@]} == 0 )); then
   message "No benchmarkable crates present in this checkout; nothing to run."
 else
@@ -73,7 +103,21 @@ else
     feature_args=(--features "$(IFS=,; echo "${features[*]}")")
   fi
   message "Benchmarking crates:${package_args[*]}"
-  cargo bench "${package_args[@]}" "${feature_args[@]}" -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+
+  criterion_args=(--warm-up-time 1 --measurement-time 5 --sample-size=200)
+
+  # Compile and measure in separate invocations so no sccache server is alive while anything is
+  # timed. Safe only because cargo does not treat a RUSTC_WRAPPER change as a fingerprint change
+  # (checked on 1.87.0); if that stopped holding, the measuring run would rebuild the workspace.
+  if start_compiler_cache; then
+    if ! RUSTC_WRAPPER=sccache cargo bench "${package_args[@]}" "${feature_args[@]}" --no-run; then
+      message "sccache: compilation via the wrapper failed; retrying without a compiler cache"
+    fi
+    sccache --show-stats || :
+    sccache --stop-server > /dev/null 2>&1 || :
+  fi
+
+  cargo bench "${package_args[@]}" "${feature_args[@]}" -- "${criterion_args[@]}"
 fi
 message "Finished running benchmarks"
 

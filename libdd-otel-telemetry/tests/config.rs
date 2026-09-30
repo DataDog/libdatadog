@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_otel_telemetry::{parse_otlp_headers, OtlpProtocol, Temporality};
+use libdd_otel_telemetry::{OtlpProtocol, Temporality, parse_otlp_headers};
 
 #[test]
 fn protocol_parses_case_insensitively() {

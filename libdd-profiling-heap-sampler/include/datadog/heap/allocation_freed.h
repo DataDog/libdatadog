@@ -67,6 +67,11 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
 static inline __attribute__((always_inline))
 dd_alloc_freed_t dd_allocation_freed(void *ptr, size_t size, size_t alignment) {
 #if DD_HEAP_LIVE_TRACKING
+    /* N.B. We cannot gate this with USDT_SEMA_IS_ACTIVE. A profiler may have
+     * been attached (semaphore on) when the allocation was sampled and flagged,
+     * then detached (semaphore off) before the free. We must still detect the
+     * flag to recover the raw pointer (x86-64 header offset / arm64 TBI tag);
+     * skipping this would pass the wrong pointer to the real free. */
     void *raw;
     if (__builtin_expect(dd_sample_flag_check_and_clear(ptr, &raw), 0)) {
         return dd_allocation_freed_slow(ptr, raw, size, alignment);

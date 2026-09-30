@@ -7,9 +7,9 @@
 //! crash callbacks that can provide stack traces for dynamic languages.
 #[cfg(unix)]
 use libdd_crashtracker::{
+    CallbackError, RuntimeStackFrame as CoreRuntimeStackFrame, RuntimeStacktraceStringCallback,
     get_registered_callback_type_ptr, is_runtime_callback_registered,
-    register_runtime_frame_callback, register_runtime_stacktrace_string_callback, CallbackError,
-    RuntimeStackFrame as CoreRuntimeStackFrame, RuntimeStacktraceStringCallback,
+    register_runtime_frame_callback, register_runtime_stacktrace_string_callback,
 };
 
 use libdd_common_ffi::CharSlice;
@@ -71,14 +71,16 @@ fn convert_ffi_to_core_frame(ffi_frame: &RuntimeStackFrame) -> CoreRuntimeStackF
 
 #[cfg(unix)]
 unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) {
-    if ffi_frame_ptr.is_null() {
-        return;
-    }
+    unsafe {
+        if ffi_frame_ptr.is_null() {
+            return;
+        }
 
-    if let Some(core_emit) = STORED_CORE_EMIT {
-        let ffi_frame = &*ffi_frame_ptr;
-        let core_frame = convert_ffi_to_core_frame(ffi_frame);
-        core_emit(&core_frame);
+        if let Some(core_emit) = STORED_CORE_EMIT {
+            let ffi_frame = &*ffi_frame_ptr;
+            let core_frame = convert_ffi_to_core_frame(ffi_frame);
+            core_emit(&core_frame);
+        }
     }
 }
 
@@ -87,13 +89,15 @@ unsafe extern "C" fn emit_ffi_frame(ffi_frame_ptr: *const RuntimeStackFrame) {
 unsafe extern "C" fn ffi_callback_wrapper(
     emit_core_frame: unsafe extern "C" fn(&CoreRuntimeStackFrame),
 ) {
-    if let Some(ffi_callback) = STORED_FFI_CALLBACK {
-        STORED_CORE_EMIT = Some(emit_core_frame);
+    unsafe {
+        if let Some(ffi_callback) = STORED_FFI_CALLBACK {
+            STORED_CORE_EMIT = Some(emit_core_frame);
 
-        // Call the original FFI callback with our converting emit function
-        ffi_callback(emit_ffi_frame);
+            // Call the original FFI callback with our converting emit function
+            ffi_callback(emit_ffi_frame);
 
-        STORED_CORE_EMIT = None;
+            STORED_CORE_EMIT = None;
+        }
     }
 }
 
@@ -130,16 +134,18 @@ unsafe extern "C" fn ffi_callback_wrapper(
 ///     emit_frame(&frame);
 /// }
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
     callback: RuntimeStackFrameCallback,
 ) -> CallbackResult {
-    STORED_FFI_CALLBACK = Some(callback);
+    unsafe {
+        STORED_FFI_CALLBACK = Some(callback);
 
-    // Register the wrapper with the core crate
-    match register_runtime_frame_callback(ffi_callback_wrapper) {
-        Ok(()) => CallbackResult::Ok,
-        Err(e) => e.into(),
+        // Register the wrapper with the core crate
+        match register_runtime_frame_callback(ffi_callback_wrapper) {
+            Ok(()) => CallbackResult::Ok,
+            Err(e) => e.into(),
+        }
     }
 }
 
@@ -156,7 +162,7 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_frame_callback(
 /// - The callback must be signal-safe
 /// - Only one callback can be registered at a time (this replaces any existing one)
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_register_runtime_stacktrace_string_callback(
     callback: RuntimeStacktraceStringCallback,
 ) -> CallbackResult {
@@ -171,7 +177,7 @@ pub unsafe extern "C" fn ddog_crasht_register_runtime_stacktrace_string_callback
 /// # Safety
 /// This function is safe to call at any time
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
     is_runtime_callback_registered()
 }
@@ -183,9 +189,9 @@ pub extern "C" fn ddog_crasht_is_runtime_callback_registered() -> bool {
 /// - The caller should not free the returned pointer
 /// - The returned string should be copied if it needs to persist beyond callback lifetime
 #[cfg(unix)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_crasht_get_registered_callback_type() -> *const std::ffi::c_char {
-    get_registered_callback_type_ptr()
+    unsafe { get_registered_callback_type_ptr() }
 }
 
 #[cfg(all(test, unix))]
@@ -201,25 +207,29 @@ mod tests {
     unsafe extern "C" fn test_frame_callback(
         emit_frame: unsafe extern "C" fn(*const RuntimeStackFrame),
     ) {
-        let function_name = "TestModule.TestClass.test_function";
-        let file_name = "test.rb";
+        unsafe {
+            let function_name = "TestModule.TestClass.test_function";
+            let file_name = "test.rb";
 
-        let frame = RuntimeStackFrame {
-            type_name: CharSlice::from("TestModule.TestClass"),
-            function: CharSlice::from(function_name),
-            file: CharSlice::from(file_name),
-            line: 42,
-            column: 10,
-        };
+            let frame = RuntimeStackFrame {
+                type_name: CharSlice::from("TestModule.TestClass"),
+                function: CharSlice::from(function_name),
+                file: CharSlice::from(file_name),
+                line: 42,
+                column: 10,
+            };
 
-        emit_frame(&frame);
+            emit_frame(&frame);
+        }
     }
 
     unsafe extern "C" fn test_stacktrace_string_callback(
         emit_stacktrace_string: unsafe extern "C" fn(*const std::ffi::c_char),
     ) {
-        let stacktrace_string = "test_stacktrace_string\0";
-        emit_stacktrace_string(stacktrace_string.as_ptr() as *const std::ffi::c_char);
+        unsafe {
+            let stacktrace_string = "test_stacktrace_string\0";
+            emit_stacktrace_string(stacktrace_string.as_ptr() as *const std::ffi::c_char);
+        }
     }
 
     #[test]

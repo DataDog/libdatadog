@@ -2,6 +2,35 @@
 
 
 
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v4.0.0..libdd-library-config-v4.1.0) - 2026-09-24
+
+### Changed
+
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+
+
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v3.0.0..libdd-library-config-v4.0.0) - 2026-08-25
+
+### Added
+
+- Otel process context reader ([#2176](https://github.com/datadog/libdatadog/issues/2176)) - ([8ef07a9](https://github.com/datadog/libdatadog/commit/8ef07a933ada98023a64411301629eecd4f8a6ac))
+
+### Changed
+
+- Reorganize Linux process context ([#2228](https://github.com/datadog/libdatadog/issues/2228)) - ([c27825f](https://github.com/datadog/libdatadog/commit/c27825faa318b4e9668f2688017cc91e87a3d2e8))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Omit absent process context attributes ([#2337](https://github.com/datadog/libdatadog/issues/2337)) - ([3dd8fa1](https://github.com/datadog/libdatadog/commit/3dd8fa1904763bf037acbc2dc9b2697bf2202d9b))
+- Update Linux process context ([#2237](https://github.com/datadog/libdatadog/issues/2237)) - ([13b2491](https://github.com/datadog/libdatadog/commit/13b2491994128f9cec5e66240a7fb8cedeae80e6))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v2.0.0..libdd-library-config-v3.0.0) - 2026-07-07
 
 ### Added

@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::enter_listener_loop;
-use datadog_ipc::{AsyncConn, SeqpacketListener};
+use libdd_ipc::{AsyncConn, SeqpacketListener};
 
 use futures::FutureExt;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_common_ffi::CharSlice;
-use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
+use libdd_crashtracker_ffi::{Metadata, ddog_crasht_init_windows};
 use manual_future::ManualFuture;
-use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::{SpawnWorker, Stdio, TrampolineData, write_crashtracking_trampoline};
 use std::ffi::CStr;
 use std::io::{self, Error};
 use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
@@ -20,20 +20,20 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::select;
 use tracing::{error, info};
-use winapi::um::winnt::HANDLE;
-use winapi::{
-    shared::{sddl::ConvertSidToStringSidA, winerror::ERROR_INSUFFICIENT_BUFFER},
-    um::{
-        handleapi::CloseHandle,
-        processthreadsapi::{GetCurrentProcess, OpenProcessToken},
-        securitybaseapi::{GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation},
-        winbase::LocalFree,
-        winnt::{TokenIntegrityLevel, TokenUser, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER},
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE, LocalFree},
+    Security::{
+        Authorization::ConvertSidToStringSidA, GetSidSubAuthority, GetSidSubAuthorityCount,
+        GetTokenInformation, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenIntegrityLevel,
+        TokenUser,
     },
+    System::Threading::{GetCurrentProcess, OpenProcessToken},
 };
 
+pub mod remote_config_notification;
+
 /// cbindgen:ignore
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
     crate::log::enable_logging().ok();
@@ -42,7 +42,7 @@ pub extern "C" fn ddog_daemon_entry_point(_trampoline_data: &TrampolineData) {
     // so subsequent try_accept calls use the same buffer size.
     let buf_size = crate::config::Config::get().pipe_buffer_size;
     if buf_size > 0 {
-        datadog_ipc::platform::set_pipe_buffer_size(buf_size);
+        libdd_ipc::platform::set_pipe_buffer_size(buf_size);
     }
 
     let now = Instant::now();
@@ -147,7 +147,7 @@ static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identi
 
 fn fetch_sidecar_identifier() -> String {
     unsafe {
-        let mut access_token = null_mut();
+        let mut access_token = 0;
 
         // Note that we do intentionally not use the thread token:
         // IIS impersonates request users at the thread level (e.g. IUSR for Anonymous
@@ -206,8 +206,9 @@ fn fetch_sidecar_identifier() -> String {
             return "".to_string();
         }
 
-        let user_sid = String::from_utf8_lossy(CStr::from_ptr(string_sid).to_bytes()).to_string();
-        LocalFree(string_sid as HANDLE);
+        let user_sid =
+            String::from_utf8_lossy(CStr::from_ptr(string_sid.cast()).to_bytes()).to_string();
+        LocalFree(string_sid.cast());
 
         // Also include the integrity level so that elevated (admin) and non-elevated processes
         // of the same user get different sidecar identifiers and thus different sidecars.
@@ -223,28 +224,35 @@ fn fetch_sidecar_identifier() -> String {
 /// Returns the mandatory integrity level RID from the token (e.g. 0x1000=Low, 0x2000=Medium,
 /// 0x3000=High/admin, 0x4000=System), or None on failure.
 unsafe fn fetch_integrity_level(token: HANDLE) -> Option<u32> {
-    let mut size = 0u32;
-    GetTokenInformation(token, TokenIntegrityLevel, null_mut(), 0, &mut size);
-    if size == 0 {
-        return None;
-    }
+    unsafe {
+        let mut size = 0u32;
+        GetTokenInformation(token, TokenIntegrityLevel, null_mut(), 0, &mut size);
+        if size == 0 {
+            return None;
+        }
 
-    let buf = Vec::<u8>::with_capacity(size as usize);
-    let label = buf.as_ptr() as *const TOKEN_MANDATORY_LABEL;
-    if GetTokenInformation(token, TokenIntegrityLevel, label as *mut _, size, &mut size) == 0 {
-        return None;
-    }
+        let buf = Vec::<u8>::with_capacity(size as usize);
+        let label = buf.as_ptr() as *const TOKEN_MANDATORY_LABEL;
+        if GetTokenInformation(token, TokenIntegrityLevel, label as *mut _, size, &mut size) == 0 {
+            return None;
+        }
 
-    let sid = (*label).Label.Sid;
-    let count = *GetSidSubAuthorityCount(sid) as u32;
-    if count == 0 {
-        return None;
+        let sid = (*label).Label.Sid;
+        let count = *GetSidSubAuthorityCount(sid) as u32;
+        if count == 0 {
+            return None;
+        }
+        Some(*GetSidSubAuthority(sid, count - 1))
     }
-    Some(*GetSidSubAuthority(sid, count - 1))
 }
 
 pub fn primary_sidecar_identifier() -> &'static str {
     &SIDECAR_IDENTIFIER
+}
+
+/// What shared-memory names are qualified by: one sidecar per user session.
+pub fn shm_namespace() -> &'static str {
+    primary_sidecar_identifier()
 }
 
 #[test]

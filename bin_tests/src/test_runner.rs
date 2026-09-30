@@ -6,11 +6,11 @@
 //! across different test scenarios.
 
 use crate::{
+    ArtifactsBuild, BuildProfile,
     artifacts::StandardArtifacts,
     fetch_built_artifacts,
     test_types::{CrashType, TestMode},
-    validation::{read_and_parse_crash_payload, validate_std_outputs, PayloadValidator},
-    ArtifactsBuild, BuildProfile,
+    validation::{PayloadValidator, read_and_parse_crash_payload, validate_std_outputs},
 };
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -170,7 +170,7 @@ where
 /// # Example
 /// ```no_run
 /// use bin_tests::test_runner::run_custom_crash_test;
-/// use bin_tests::{fetch_built_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+/// use bin_tests::{ArtifactType, ArtifactsBuild, BuildProfile, fetch_built_artifacts};
 ///
 /// # fn main() -> anyhow::Result<()> {
 /// let receiver = ArtifactsBuild {

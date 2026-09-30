@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{varint, Value, WireType};
+use crate::{Value, WireType, varint};
 use std::fmt;
 use std::io::{self, Write};
 

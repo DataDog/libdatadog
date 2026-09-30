@@ -7,7 +7,7 @@ pub mod test_runner;
 pub mod test_types;
 pub mod validation;
 
-use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
+use std::{collections::HashMap, env, path::PathBuf, process};
 
 use once_cell::sync::OnceCell;
 
@@ -108,13 +108,18 @@ pub struct ArtifactsBuild {
     pub triple_target: Option<String>,
 }
 
-fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    let artifact_path = compute_artifact_path(c)?;
+/// Runs a single `cargo build` that builds every artifact in `crates` under
+/// `profile`. All artifacts must share the same target-selector kind (`--bin`
+/// vs `-p`); see [`rebuild_artifacts`] for why the two kinds are not mixed.
+fn cargo_build_batch(profile: BuildProfile, crates: &[&ArtifactsBuild]) -> anyhow::Result<()> {
+    if crates.is_empty() {
+        return Ok(());
+    }
 
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
 
-    match c.build_profile {
+    match profile {
         BuildProfile::Debug => {}
         BuildProfile::Release => {
             build_cmd.arg("--release");
@@ -143,12 +148,13 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         }
     }
 
-    match c.artifact_type {
-        ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
-        ArtifactType::Bin => build_cmd.arg("--bin"),
-    };
-
-    build_cmd.arg(&c.name);
+    for &c in crates {
+        match c.artifact_type {
+            ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
+            ArtifactType::Bin => build_cmd.arg("--bin"),
+        };
+        build_cmd.arg(&c.name);
+    }
 
     let output = build_cmd.output()?;
     if !output.status.success() {
@@ -159,7 +165,7 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         );
     }
 
-    Ok(artifact_path)
+    Ok(())
 }
 
 /// Returns the paths of prebuilt artifacts, failing if any are missing.
@@ -184,28 +190,34 @@ pub fn fetch_built_artifacts<'b>(
     Ok(res)
 }
 
-/// Invokes `cargo build` for each artifact, letting cargo's own dependency
-/// tracking decide whether recompilation is needed.
+/// Builds all requested artifacts, batching them into one `cargo build` per
+/// profile so cargo compiles each profile's shared dependency graph once rather
+/// than once per artifact, and lets cargo's own dependency tracking decide what
+/// needs recompiling.
 pub fn rebuild_artifacts<'b>(
     crates: &[&'b ArtifactsBuild],
 ) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
-    static ARTIFACTS: OnceCell<Mutex<HashMap<ArtifactsBuild, PathBuf>>> = OnceCell::new();
-
-    let mut res = HashMap::new();
-    let artifacts = ARTIFACTS.get_or_init(|| Mutex::new(HashMap::new()));
-    for &c in crates {
-        let mut artifacts = artifacts.lock().unwrap();
-        let artifacts = artifacts.deref_mut();
-
-        if let Some(p) = artifacts.get(c) {
-            res.insert(c, p.clone());
-        } else {
-            let p = cargo_build_artifact(c)?;
-            res.insert(c, p.clone());
-            artifacts.insert(c.clone(), p);
-        }
+    for profile in [
+        BuildProfile::Debug,
+        BuildProfile::Release,
+        BuildProfile::PanicAbort,
+    ] {
+        // cargo scopes `--bin`/`--lib` target selectors to the packages named by
+        // `-p` when both appear in one invocation, so bin and package artifacts
+        // are built in separate invocations to keep each selector workspace-wide.
+        let (bins, packages): (Vec<_>, Vec<_>) = crates
+            .iter()
+            .copied()
+            .filter(|c| c.build_profile == profile)
+            .partition(|c| c.artifact_type == ArtifactType::Bin);
+        cargo_build_batch(profile, &bins)?;
+        cargo_build_batch(profile, &packages)?;
     }
-    Ok(res)
+
+    crates
+        .iter()
+        .map(|&c| Ok((c, compute_artifact_path(c)?)))
+        .collect()
 }
 
 fn shared_lib_extension(triple_target: &str) -> anyhow::Result<&'static str> {

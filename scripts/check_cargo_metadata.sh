@@ -142,8 +142,9 @@ check_internal_dependencies() {
 # Main validation function
 validate_cargo_toml() {
     local file="$1"
-    local crate_dir=$(dirname "$file")
-    local crate_name=$(basename "$crate_dir")
+    local crate_dir crate_name
+    crate_dir=$(dirname "$file")
+    crate_name=$(basename "$crate_dir")
     local has_error=0
     
     # Skip the root workspace Cargo.toml

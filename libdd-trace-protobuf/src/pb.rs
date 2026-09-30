@@ -327,7 +327,10 @@ pub struct Span {
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]
     pub r#type: ::prost::alloc::string::String,
     /// meta_struct is a registry of structured "other" data used by, e.g., AppSec.
-    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty"
+    /// Entries can legitimately be much larger than other span fields, so this
+    /// field overrides the package-wide messagepack allocation limit with a 10MiB
+    /// cap (see the //msgp:limit directives in pkg/proto/pbgo/trace).
+    /// @gotags: json:"meta_struct,omitempty" msg:"meta_struct,omitempty,limit=10485760"
     #[prost(map = "string, bytes", tag = "13")]
     #[serde(default)]
     #[serde(deserialize_with = "crate::deserializers::deserialize_null_into_default")]

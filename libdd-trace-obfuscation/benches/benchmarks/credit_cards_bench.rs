@@ -5,7 +5,7 @@ use core::hint::black_box;
 use core::time::Duration;
 
 use criterion::Throughput::Elements;
-use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group};
 use libdd_trace_obfuscation::credit_cards::is_card_number;
 
 pub fn is_card_number_bench(c: &mut Criterion) {

@@ -4,10 +4,10 @@
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::session_info::SessionInfo;
 use crate::service::{
-    remote_configs::RemoteConfigsGuard, DynamicInstrumentationConfigState, InstanceId, QueueId,
+    DynamicInstrumentationConfigState, InstanceId, QueueId, remote_configs::RemoteConfigsGuard,
 };
-use datadog_live_debugger::sender::{generate_tags, PayloadSender};
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::{MutexExt, tag::Tag};
+use libdd_live_debugger::sender::{PayloadSender, generate_tags};
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -100,7 +100,7 @@ impl ActiveApplication {
     /// # Returns
     ///
     /// * `Arc<String>` - A percent encoded string to be passed to
-    ///   datadog_live_debugger::sender::send.
+    ///   libdd_live_debugger::sender::send.
     /// * `bool` - Whether new tags were set and a new sender needs to be started.
     pub fn get_debugger_tags(
         &mut self,

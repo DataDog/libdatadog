@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
-use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group};
 use libdd_crashtracker::{
-    benchmark::receiver_entry_point, default_signals, get_tests_folder_path, shared::constants::*,
     CrashtrackerConfiguration, SharedLibrary, StacktraceCollection,
+    benchmark::receiver_entry_point, default_signals, get_tests_folder_path, shared::constants::*,
 };
 use std::fmt::Write;
 use std::time::Duration;

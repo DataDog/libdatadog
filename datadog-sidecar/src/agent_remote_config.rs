@@ -1,10 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::primary_sidecar_identifier;
-use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
-use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::Endpoint;
+use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
+use libdd_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -13,8 +12,8 @@ use zwohash::ZwoHasher;
 
 pub struct AgentRemoteConfigEndpoint(Endpoint);
 
-pub struct AgentRemoteConfigWriter<T: FileBackedHandle + From<MappedMem<T>>>(OneWayShmWriter<T>);
-pub struct AgentRemoteConfigReader<T: FileBackedHandle + From<MappedMem<T>>>(
+pub struct AgentRemoteConfigWriter<T: FileBackedHandle>(OneWayShmWriter<T>);
+pub struct AgentRemoteConfigReader<T: FileBackedHandle>(
     OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>,
 );
 
@@ -26,17 +25,16 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
     endpoint.url.authority().unwrap().hash(&mut hasher);
     endpoint.test_token.hash(&mut hasher);
 
+    let mut path = format!("/ddcfg-{}-{}", crate::shm_namespace(), hasher.finish());
+    if cfg!(unix) {
+        path.truncate(31); // macOS limits shared memory names to 31 bytes.
+    }
     #[allow(clippy::unwrap_used)]
-    CString::new(format!(
-        "/ddcfg-{}-{}", // short enough because 31 character macos limitation
-        primary_sidecar_identifier(),
-        hasher.finish()
-    ))
-    .unwrap()
+    CString::new(path).unwrap()
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {
-    let (writer, handle) = datadog_ipc::one_way_shared_memory::create_anon_pair()?;
+    let (writer, handle) = libdd_ipc::one_way_shared_memory::create_anon_pair()?;
     Ok((AgentRemoteConfigWriter(writer), handle))
 }
 
@@ -83,18 +81,33 @@ pub fn new_writer(endpoint: &Endpoint) -> io::Result<AgentRemoteConfigWriter<Nam
     ))
 }
 
-impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T> {
+impl<T: FileBackedHandle> AgentRemoteConfigReader<T> {
     pub fn read(&mut self) -> (bool, &[u8]) {
         self.0.read()
     }
 }
 
-impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigWriter<T> {
-    pub fn write(&self, contents: &[u8]) {
+impl<T: FileBackedHandle> AgentRemoteConfigWriter<T> {
+    /// Returns `false` if the segment could not be grown to hold `contents`, in which case
+    /// nothing was published and the previous payload stays current.
+    pub fn write(&self, contents: &[u8]) -> bool {
         self.0.write(contents)
     }
 
     pub fn size(&self) -> usize {
         self.0.size()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shm_paths_distinguish_endpoints() {
+        assert_ne!(
+            path_for_endpoint(&Endpoint::from_slice("http://agent-a:8126")),
+            path_for_endpoint(&Endpoint::from_slice("http://agent-b:8126")),
+        );
     }
 }

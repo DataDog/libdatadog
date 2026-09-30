@@ -9,7 +9,7 @@ extern crate build_common;
 use build_common::generate_and_configure_header;
 
 fn main() {
-    println!("cargo:rerun-if-changed=src/*");
+    println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=cbindgen.toml");
     println!("cargo:rerun-if-changed=build.rs");
     generate_and_configure_header("heap_gotter.h");

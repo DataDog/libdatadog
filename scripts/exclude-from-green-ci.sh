@@ -7,7 +7,7 @@
 # Downloads the pinned, checksum-verified datadog-ci binary instead of `npm install -g`,
 # so no third-party install-time code runs with the Datadog API key in its environment.
 #
-# Requires DATADOG_SITE and DATADOG_API_KEY in the environment.
+# Requires DATADOG_SITE and DD_API_KEY in the environment.
 
 set -euo pipefail
 

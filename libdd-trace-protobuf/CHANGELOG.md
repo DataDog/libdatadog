@@ -2,6 +2,40 @@
 
 
 
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v5.0.0..libdd-trace-protobuf-v5.0.1) - 2026-09-24
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Build script change detection ([#2467](https://github.com/datadog/libdatadog/issues/2467)) - ([bdbad40](https://github.com/datadog/libdatadog/commit/bdbad408e9fd870de260d3688730f66b94445aef))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.1..libdd-trace-protobuf-v5.0.0) - 2026-08-25
+
+### Changed
+
+- Sync span.proto with datadog-agent ([#2356](https://github.com/datadog/libdatadog/issues/2356)) - ([899d0fb](https://github.com/datadog/libdatadog/commit/899d0fbad1e961bf23486282437b56e0c0199a98))
+
+
+
+## [4.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.0..libdd-trace-protobuf-v4.0.1) - 2026-08-07
+
+### Added
+
+- Implement additional metric tags in libdd-trace-stats ([#2170](https://github.com/datadog/libdatadog/issues/2170)) - ([63ecad5](https://github.com/datadog/libdatadog/commit/63ecad56152f675fb74761d60adf5a861dafb1e1))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.2..libdd-trace-protobuf-v4.0.0) - 2026-07-07
 
 ### Added

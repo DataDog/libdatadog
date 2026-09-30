@@ -30,6 +30,17 @@ impl SpanKind {
             _ => SpanKind::Internal,
         }
     }
+
+    /// Renders this [`SpanKind`] as the lowercase string used for the v0.4 `span.kind` meta value.
+    pub fn as_meta_str(&self) -> &'static str {
+        match self {
+            SpanKind::Internal => "internal",
+            SpanKind::Server => "server",
+            SpanKind::Client => "client",
+            SpanKind::Producer => "producer",
+            SpanKind::Consumer => "consumer",
+        }
+    }
 }
 
 impl From<u32> for SpanKind {
@@ -83,7 +94,7 @@ impl<T: TraceData> PartialEq for AttributeValue<T> {
 /// borrowed (e.g. `&str`). To define a generic function taking any `Span<T>` you can use the
 /// [`TraceData`] trait:
 /// ```
-/// use libdd_trace_utils::span::{v1::Span, TraceData};
+/// use libdd_trace_utils::span::{TraceData, v1::Span};
 /// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.attributes.get("foo");
 /// }

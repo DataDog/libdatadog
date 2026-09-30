@@ -56,7 +56,7 @@ impl<K, V> Default for VecMap<K, V> {
     fn default() -> Self {
         Self {
             data: Default::default(),
-            deduped: false,
+            deduped: true,
         }
     }
 }
@@ -185,6 +185,11 @@ impl<K, V> VecMap<K, V> {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
     }
 
     /// Return `true` if the map hasn't been extended since the last call to [Self::dedup],
@@ -484,9 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn is_deduped_false_initially() {
+    fn is_deduped_true_initially() {
         let m: VecMap<&str, i32> = VecMap::new();
-        assert!(!m.is_deduped());
+        assert!(m.is_deduped());
     }
 
     #[test]

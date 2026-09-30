@@ -3,7 +3,7 @@
 
 //! Scaffolding for memory usage benchmarks.
 //!
-//! See the `ReportingAllocator` type and `memory_allocated_measurement` for usage.
+//! See the `ReportingAllocator` type and `memory_allocated_criterion` for usage.
 
 #![allow(missing_docs)]
 
@@ -22,11 +22,17 @@ impl MeasurementName for criterion::measurement::WallTime {
     }
 }
 
-pub fn memory_allocated_measurement(
+/// `Criterion` for the allocation benchmarks. Sampling is deliberately small: allocation is
+/// deterministic, so extra samples cannot refine a constant.
+///
+/// Not usable as `criterion_group!`'s `config =` -- that macro appends `.configure_from_args()`,
+/// which would let command-line flags replace the settings below.
+pub fn memory_allocated_criterion(
     global_alloc: &'static ReportingAllocator<System>,
 ) -> Criterion<AllocatedBytesMeasurement<System>> {
     Criterion::default()
         .with_measurement(AllocatedBytesMeasurement(Cell::new(false), global_alloc))
+        .configure_from_args()
         .measurement_time(Duration::from_millis(1))
         .warm_up_time(Duration::from_millis(1))
         .without_plots()
@@ -68,15 +74,19 @@ impl<T: GlobalAlloc> ReportingAllocator<T> {
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        self.allocated_bytes
-            .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
-        self.allocations
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        self.alloc.alloc(layout)
+        unsafe {
+            self.allocated_bytes
+                .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
+            self.allocations
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            self.alloc.alloc(layout)
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        self.alloc.dealloc(ptr, layout);
+        unsafe {
+            self.alloc.dealloc(ptr, layout);
+        }
     }
 }
 

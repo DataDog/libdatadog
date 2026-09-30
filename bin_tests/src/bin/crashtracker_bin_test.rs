@@ -14,7 +14,7 @@ mod unix {
     use anyhow::Context;
     use bin_tests::modes::behavior::get_behavior;
     use nix::{
-        sys::signal::{kill, raise, Signal},
+        sys::signal::{Signal, kill, raise},
         unistd::Pid,
     };
     use std::env;
@@ -32,16 +32,18 @@ mod unix {
 
     #[inline(never)]
     pub unsafe fn cause_segfault() -> anyhow::Result<()> {
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            std::arch::asm!("mov eax, [0]", options(nostack));
-        }
+        unsafe {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            {
+                std::arch::asm!("mov eax, [0]", options(nostack));
+            }
 
-        #[cfg(target_arch = "aarch64")]
-        {
-            std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            #[cfg(target_arch = "aarch64")]
+            {
+                std::arch::asm!("mov x0, #0", "ldr x1, [x0]", options(nostack));
+            }
+            anyhow::bail!("Failed to cause segmentation fault")
         }
-        anyhow::bail!("Failed to cause segmentation fault")
     }
 
     pub fn main() -> anyhow::Result<()> {
@@ -95,10 +97,12 @@ mod unix {
         // In Debug builds the collector is slow, so the default 4 s receiver timeout
         // can expire before DD_CRASHTRACK_DONE is sent.
         if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
-            env::set_var(
-                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
-                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
-            );
+            unsafe {
+                env::set_var(
+                    "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                    TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+                )
+            };
         }
 
         let mut config = CrashtrackerConfiguration::builder()
@@ -106,6 +110,7 @@ mod unix {
             .demangle_names(true)
             .endpoint_url(output_url)
             .resolve_frames(stacktrace_collection)
+            .unwind_from_ucontext(env::var_os("DD_TEST_UNWIND_FROM_UCONTEXT").is_some())
             .signals(crashtracker::default_signals())
             .timeout(TEST_COLLECTOR_TIMEOUT)
             .unix_socket_path("".to_string())
@@ -158,6 +163,15 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            #[cfg(target_os = "linux")]
+            "assert_fail" => {
+                unsafe extern "C" {
+                    fn trigger_c_assert() -> !;
+                }
+                // SAFETY: trigger_c_assert calls the real C assert() macro,
+                // which expands to __assert_fail and never returns.
+                unsafe { trigger_c_assert() }
+            }
             "unhandled_exception" => {
                 let mut stacktrace = StackTrace::new_incomplete();
                 let mut stackframe1 = StackFrame::new();

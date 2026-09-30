@@ -10,18 +10,19 @@ use {
 
 // to re-generate protobuf structs, run cargo build --features generate-protobuf
 fn main() -> Result<()> {
+    println!("cargo:rerun-if-changed=build.rs");
     #[cfg(feature = "generate-protobuf")]
     {
         // protoc is required to compile proto files. This uses protobuf_src to compile protoc
         // from the source, setting the env var to tell prost_build where to find it.
-        std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+        // SAFETY: build scripts run single-threaded at build time; no other thread
+        // can be concurrently reading or writing the environment.
+        unsafe {
+            std::env::set_var("PROTOC", protoc_bin_vendored::protoc_bin_path().unwrap());
+        }
 
         // compiles the .proto files into rust structs
         generate_protobuf();
-    }
-    #[cfg(not(feature = "generate-protobuf"))]
-    {
-        println!("cargo:rerun-if-changed=build.rs");
     }
 
     Ok(())
@@ -65,10 +66,15 @@ fn generate_protobuf() {
         "#[derive(Deserialize, Serialize, PartialOrd, Ord)]",
     );
     config.field_attribute("ContainerDebug.error", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.errorRef", "#[serde(default)]");
     config.field_attribute("ContainerDebug.latencyMs", "#[serde(default)]");
     config.field_attribute("ContainerDebug.wasBuffered", "#[serde(default)]");
     config.field_attribute("ContainerDebug.bufferMs", "#[serde(default)]");
     config.field_attribute("ContainerDebug.bufferEvictionReason", "#[serde(default)]");
+    config.field_attribute(
+        "ContainerDebug.bufferEvictionReasonRef",
+        "#[serde(default)]",
+    );
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
@@ -349,6 +355,7 @@ fn generate_protobuf() {
 
     config.include_file("_includes.rs");
 
+    println!("cargo:rerun-if-changed=src/pb");
     config
         .compile_protos(
             &[

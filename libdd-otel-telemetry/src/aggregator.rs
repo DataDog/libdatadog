@@ -7,10 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use libdd_shared_runtime::BlockingRuntime;
-use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider, UpDownCounter};
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, MeterProvider, UpDownCounter};
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 
 use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
 use crate::error::{BuildWarning, OtelMetricsError};
@@ -169,7 +169,7 @@ pub(crate) async fn build_metric_exporter(
         OtlpProtocol::Grpc => {
             return Err(BuildWarning::UnsupportedProtocol(
                 "grpc protocol requires the 'grpc' feature".to_string(),
-            ))
+            ));
         }
         #[cfg(feature = "http")]
         OtlpProtocol::HttpProtobuf => {
@@ -190,12 +190,12 @@ pub(crate) async fn build_metric_exporter(
         OtlpProtocol::HttpProtobuf => {
             return Err(BuildWarning::UnsupportedProtocol(
                 "http/protobuf protocol requires the 'http' feature".to_string(),
-            ))
+            ));
         }
         OtlpProtocol::HttpJson => {
             return Err(BuildWarning::UnsupportedProtocol(
                 "http/json protocol is not supported for OTLP metrics export".to_string(),
-            ))
+            ));
         }
     };
 

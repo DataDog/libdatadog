@@ -82,7 +82,7 @@ impl<S: FilePath> ChangeTracker<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource};
+    use crate::RemoteConfigPath;
 
     struct TestFile(RemoteConfigPath);
 
@@ -93,12 +93,10 @@ mod tests {
     }
 
     fn file(name: &str) -> Arc<TestFile> {
-        Arc::new(TestFile(RemoteConfigPath {
-            source: RemoteConfigSource::Employee,
-            product: RemoteConfigProduct::ApmTracing,
-            config_id: "id".to_string(),
-            name: name.to_string(),
-        }))
+        Arc::new(TestFile(
+            RemoteConfigPath::parse(&format!("employee/APM_TRACING/id/{name}"))
+                .expect("test file has a valid path"),
+        ))
     }
 
     #[test]
@@ -115,11 +113,11 @@ mod tests {
 
         assert_eq!(changes.len(), 2);
         match &changes[0] {
-            Change::Remove(f) => assert_eq!(f.path().name, "a"),
+            Change::Remove(f) => assert_eq!(f.path().name(), "a"),
             _ => panic!("expected the removal to be emitted first"),
         }
         match &changes[1] {
-            Change::Add(f) => assert_eq!(f.path().name, "b"),
+            Change::Add(f) => assert_eq!(f.path().name(), "b"),
             _ => panic!("expected the addition to be emitted after the removal"),
         }
     }

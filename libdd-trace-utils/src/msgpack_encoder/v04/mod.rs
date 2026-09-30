@@ -1,11 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v04::Span;
-use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
+use crate::span::v1::TracerPayload;
+use crate::span::v04::Span;
 use libdd_common::ResultInfallibleExt;
-use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
+use rmp::encode::{ByteBuf, RmpWrite, ValueWriteError, write_array_len};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {
     const U16_MAX: usize = u16::MAX as usize;
@@ -112,10 +112,11 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let mut buffer = vec![0u8; 1024];
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -144,9 +145,10 @@ pub fn write_to_slice_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -174,9 +176,10 @@ pub fn to_vec_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -213,9 +216,10 @@ pub fn to_vec_with_capacity_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 /// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
+/// use std::borrow::Cow;
 ///
 /// let span = SpanSlice {
-///     name: "test-span",
+///     name: Cow::Borrowed("test-span"),
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -245,7 +249,7 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{encode_span, ChunkContext};
+    use span_v1::{ChunkContext, encode_span};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {

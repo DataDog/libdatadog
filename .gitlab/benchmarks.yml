@@ -1,13 +1,5 @@
-variables:
-  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
-  # The Dockerfile to this image is located at:
-  # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
-
-# Shared rules for the benchmark jobs: skip merge-queue and release/hotfix branches (whether they
-# arrive as a branch pipeline or an external PR), and run the full suite on main. Release/hotfix are
-# version bumps + merge-backs of code already benchmarked on its originating PR and on main, so
-# re-running here would add nothing.
 .benchmark_run_rules: &benchmark_run_rules
+  - !reference [.untrusted_ref_guard, rules]
   - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
     when: never
   - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)[-\/]/'
@@ -17,6 +9,22 @@ variables:
   - if: '$CI_COMMIT_BRANCH == "main"'
     interruptible: false
   - interruptible: true
+
+.clone_benchmarking_platform:
+  script:
+    # Wrapped in a subshell so `set -euo pipefail` stays local.
+    - |
+      (
+        set -euo pipefail
+        git clone --branch libdatadog/benchmarks \
+          "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform" /platform
+        git -C /platform checkout --detach "${BENCHMARKING_PLATFORM_SHA}"
+        # Drop the credential-bearing remote. Neither job pushes, and code from the tested commit
+        # runs later in this same container -- leaving $CI_JOB_TOKEN in /platform/.git/config would
+        # hand it to that code for free.
+        git -C /platform remote set-url origin "https://gitlab.ddbuild.io/DataDog/benchmarking-platform"
+      )
+    - unset CI_JOB_TOKEN
 
 # The benchmark suite is sharded across parallel jobs to reduce wall-clock time. Each shard runs
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
@@ -58,7 +66,8 @@ benchmarks:
           ;;
       esac
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
-    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
+    - !reference [.clone_benchmarking_platform, script]
+    - cd /platform
     - ./steps/capture-hardware-software-info.sh
     - |
       SCRIPT_DIR="$(pwd)/steps"
@@ -114,6 +123,23 @@ benchmarks:
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
     FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
 
+    # sccache, consumed by benchmark/run_benchmarks_ci.sh. Its own key prefix,
+    # not libddprof-build's: that pipeline builds --release and cargo bench uses
+    # [profile.bench], so the -C flags -- and therefore the cache keys -- never
+    # match.
+    # Our CI role is granted only "libdatadog/*" in this bucket, so the key
+    # prefix must stay under it (cloud-inventory gitlab-repositories/libdatadog.json).
+    SCCACHE_BUCKET: dd-sccache-storage-us1-ddbuild-io
+    SCCACHE_REGION: us-east-1
+    SCCACHE_S3_KEY_PREFIX: libdatadog/benchmarks/sccache
+    SCCACHE_ERROR_LOG: /tmp/sccache.log
+    # Required: candidate and baseline compile at different absolute paths, and
+    # without a basedir sccache keys on the path, so they would share nothing.
+    # Both leaf dirs, not the parent: sccache keys on the unmatched remainder.
+    SCCACHE_BASEDIRS: /platform/workspace/candidate:/platform/workspace/baseline
+    # Incompatible with a shared compiler cache.
+    CARGO_INCREMENTAL: "0"
+
 # Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
 # own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the
 # combined comment (pr-commenter uses --on-duplicate=replace, so exactly one job may comment).
@@ -132,7 +158,7 @@ benchmarks_combine:
         echo "No shard reports produced -> nothing to combine."
         exit 0
       fi
-    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform
+    - !reference [.clone_benchmarking_platform, script]
     - |
       # Assemble the files post-pr-comment.sh reads by concatenating each shard's markdown.
       export ARTIFACTS_DIR="${CI_PROJECT_DIR}/reports"

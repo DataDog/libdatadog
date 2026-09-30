@@ -32,7 +32,7 @@ impl From<AgentResponse> for ExporterResponse {
 /// Return a borrowed view of the response body.  The returned slice is
 /// only valid as long as `response` is alive.  Returns an empty slice
 /// when `response` is null or the body is absent.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_response_get_body<'a>(
     response: Option<&'a ExporterResponse>,
 ) -> ByteSlice<'a> {
@@ -43,10 +43,12 @@ pub unsafe extern "C" fn ddog_trace_exporter_response_get_body<'a>(
 
 /// Free `response` and all its contents. After being called response will not point to a valid
 /// memory address so any further actions on it could lead to undefined behavior.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_trace_exporter_response_free(response: *mut ExporterResponse) {
-    if !response.is_null() {
-        drop(Box::from_raw(response));
+    unsafe {
+        if !response.is_null() {
+            drop(Box::from_raw(response));
+        }
     }
 }
 

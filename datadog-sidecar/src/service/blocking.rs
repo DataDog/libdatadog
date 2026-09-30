@@ -6,16 +6,19 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::SidecarInterfaceChannel;
-use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::SeqpacketConn;
-use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_live_debugger::sender::DebuggerType;
-use libdd_common::tag::Tag;
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
 use libdd_common::MutexExt;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::SeqpacketConn;
+use libdd_ipc::codec::DecodeError;
+use libdd_ipc::platform::{FileBackedHandle, ShmHandle};
+use libdd_live_debugger::debugger_defs::DebuggerPayload;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
+use std::cell::Cell;
 use std::sync::Mutex;
 use std::{
     io,
@@ -57,11 +60,12 @@ impl SidecarTransport {
         sender.channel.0.conn.as_raw_fd()
     }
 
-    pub fn reconnect<F>(&mut self, factory: F)
+    pub fn reconnect<F>(&mut self, factory: F) -> bool
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
     {
-        Self::do_reconnect(&mut self.inner, factory, false);
+        let was_closed = self.is_closed();
+        was_closed && Self::do_reconnect(&mut self.inner, factory, false)
     }
 
     pub fn do_reconnect<F>(
@@ -79,22 +83,40 @@ impl SidecarTransport {
 
         #[allow(clippy::unwrap_used)]
         if force_reconnect || transport.channel.0.is_closed() {
-            warn!("The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug.");
-            let new = match factory() {
-                None => return false,
-                Some(n) => n.inner.into_inner(),
-            };
-            if new.is_err() {
+            // Avoid recursive reconnect, just to make sure we don't loop.
+            thread_local! {
+                static RECONNECT_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+            }
+            if RECONNECT_IN_PROGRESS.with(Cell::get) {
+                warn!(
+                    "Reconnect already in progress on this thread; not attempting a nested reconnect."
+                );
                 return false;
             }
-            let registrations = std::mem::take(&mut transport.metric_registrations);
+            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(true));
+            let reconnected = (|| {
+                warn!(
+                    "The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug."
+                );
+                let new = match factory() {
+                    None => return false,
+                    Some(n) => n.inner.into_inner(),
+                };
+                if new.is_err() {
+                    return false;
+                }
+                let registrations = std::mem::take(&mut transport.metric_registrations);
 
-            *transport = new.unwrap();
+                *transport = new.unwrap();
 
-            // Replay all registered metrics after a reconnect
-            for metric in registrations.into_values() {
-                transport.register_telemetry_metric(metric);
-            }
+                // Replay all registered metrics after a reconnect
+                for metric in registrations.into_values() {
+                    transport.register_telemetry_metric(metric);
+                }
+                true
+            })();
+            RECONNECT_IN_PROGRESS.with(|in_progress| in_progress.set(false));
+            return reconnected;
         }
         true
     }
@@ -150,7 +172,10 @@ impl SidecarTransport {
             || e.kind() == io::ErrorKind::ConnectionReset
             || e.kind() == io::ErrorKind::NotConnected
         {
-            warn!("with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug", e.kind());
+            warn!(
+                "with_retry ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug",
+                e.kind()
+            );
             if let Some(ref reconnect) = self.reconnect_fn {
                 if Self::do_reconnect(&mut self.inner, reconnect, true) {
                     return f(&mut self.inner.lock_or_panic());
@@ -168,10 +193,7 @@ impl SidecarTransport {
     /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
         match self.inner.lock() {
-            Ok(mut c) => c
-                .channel
-                .0
-                .send_blocking(&mut vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
+            Ok(mut c) => c.channel.0.send_blocking(vec![0xDE, 0xAD, 0xBE, 0xEF], &[]),
             Err(e) => Err(io::Error::other(e.to_string())),
         }
     }
@@ -183,6 +205,17 @@ impl From<SeqpacketConn> for SidecarTransport {
             inner: Mutex::new(SidecarSender::new(SidecarInterfaceChannel::new(conn))),
             reconnect_fn: None,
         }
+    }
+}
+
+/// Converts a [`DecodeError`] to an [`io::Error`], preserving the original
+/// [`io::ErrorKind`] when the decode failure was itself an I/O error.
+///
+/// This ensures `with_retry` properly reacts to errors and doesn't ignore some actual errors.
+fn decode_error_to_io(e: DecodeError) -> io::Error {
+    match e {
+        DecodeError::Io(io_err) => io_err,
+        other => io::Error::other(other.to_string()),
     }
 }
 
@@ -256,15 +289,16 @@ pub fn register_telemetry_metric(
 pub fn set_session_config(
     transport: &mut SidecarTransport,
     session_id: String,
-    #[cfg(windows)]
-    remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+    #[cfg(windows)] remote_config_notify_target: Option<
+        crate::service::remote_configs::RemoteConfigNotifyTarget,
+    >,
     config: &SessionConfig,
     is_fork: bool,
 ) -> io::Result<()> {
     lock_sender(transport)?.set_session_config(
         session_id,
         #[cfg(windows)]
-        remote_config_notify_function,
+        remote_config_notify_target,
         config.clone(),
         is_fork,
     );
@@ -316,6 +350,48 @@ pub fn send_trace_v04_shm(
     headers: SerializedTracerHeaderTags,
 ) -> io::Result<()> {
     lock_sender(transport)?.send_trace_v04_shm(instance_id.clone(), handle, len, headers);
+    Ok(())
+}
+
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(
+        instance_id.clone(),
+        data,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
+    Ok(())
+}
+
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    generic: TracerGenericTags,
+    lang_interpreter: String,
+    lang_vendor: String,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(
+        instance_id.clone(),
+        handle,
+        len,
+        generic,
+        lang_interpreter,
+        lang_vendor,
+    );
     Ok(())
 }
 
@@ -459,25 +535,68 @@ pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -
     Ok(())
 }
 
-/// IPC fallback: send a span directly to the sidecar's SHM concentrator for (env, version).
+/// IPC fallback. Returns whether the span was sent, so callers can retry a failed bootstrap.
 pub fn add_span_to_concentrator(
     transport: &mut SidecarTransport,
     env: String,
     version: String,
-    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
-) -> io::Result<()> {
-    lock_sender(transport)?.add_span_to_concentrator(env, version, span);
-    Ok(())
+    span: libdd_ipc::shm_stats::OwnedShmSpanInput,
+) -> io::Result<bool> {
+    Ok(lock_sender(transport)?.add_span_to_concentrator(env, version, span))
+}
+
+/// Starts the AppSec backend in the sidecar and waits for initialization to
+/// complete before returning.
+pub fn ensure_appsec_started(
+    transport: &mut SidecarTransport,
+    log_file_path: Vec<u8>,
+    log_level: String,
+) -> io::Result<bool> {
+    transport.with_retry(|sender| {
+        sender
+            .ensure_appsec_started(log_file_path.clone(), log_level.clone())
+            .map_err(decode_error_to_io)
+    })
 }
 
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
-    transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))
+    transport.with_retry(|s| s.dump().map_err(decode_error_to_io))
 }
 
 /// Retrieves the current statistics of the service.
 pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
-    transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
+    transport.with_retry(|s| s.stats().map_err(decode_error_to_io))
+}
+
+/// Forwards an AppSec message to the sidecar for dispatching to the registered helper.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message(
+    transport: &mut SidecarTransport,
+    client_id: u64,
+    data: &[u8],
+) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    transport.with_retry(|s| s.send_appsec_message(&request).map_err(decode_error_to_io))
+}
+
+/// Forwards an AppSec message without reconnecting the sidecar on failure.
+///
+/// Returns the response bytes from the helper and a disconnect flag.
+pub fn send_appsec_message_without_reconnect(
+    transport: &mut SidecarTransport,
+    client_id: u64,
+    data: &[u8],
+) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage { client_id, data };
+    let mut sender = transport
+        .inner
+        .lock()
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    sender
+        .send_appsec_message(&request)
+        .map_err(decode_error_to_io)
 }
 
 /// Flushes traces/stats and/or telemetry, as specified by options.
@@ -495,13 +614,56 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
-    use crate::service::blocking::SidecarTransport;
-    use datadog_ipc::{SeqpacketConn, SeqpacketListener};
+    use crate::service::blocking::{SidecarTransport, add_span_to_concentrator};
+    use crate::service::sidecar_interface::SidecarInterfaceRequest;
+    use libdd_ipc::{SeqpacketConn, SeqpacketListener};
+    use std::time::Duration;
 
     use tempfile::tempdir;
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn stats_fallback_reports_whether_the_span_was_sent() {
+        let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .unwrap();
+        let send = |transport: &mut SidecarTransport| {
+            add_span_to_concentrator(
+                transport,
+                "env".into(),
+                "v1".into(),
+                libdd_ipc::shm_stats::OwnedShmSpanInput {
+                    fixed: Default::default(),
+                    peer_tags: vec![("db.hostname".into(), "db".into())],
+                    duration_ns: 42,
+                    is_error: false,
+                    is_top_level: true,
+                },
+            )
+            .unwrap()
+        };
+        assert!(send(&mut transport));
+        let mut buf = [0; 1024];
+        let (len, _) = peer.try_recv_raw(&mut buf).unwrap();
+        match libdd_ipc::codec::decode::<SidecarInterfaceRequest>(&buf[..len]).unwrap() {
+            SidecarInterfaceRequest::AddSpanToConcentrator { env, version, span } => {
+                assert_eq!(env, "env");
+                assert_eq!(version, "v1");
+                assert_eq!(span.duration_ns, 42);
+                assert_eq!(span.peer_tags, [("db.hostname".into(), "db".into())]);
+            }
+            _ => panic!("expected a span"),
+        }
+
+        drop(peer);
+        assert!(!send(&mut transport));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[serial_test::serial(log_counter)]
     fn test_reconnect() {
         let tmpdir = tempdir().unwrap();
         let socket_path = tmpdir.path().join("test.sock");
