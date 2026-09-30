@@ -448,7 +448,7 @@ fn emit_threads<W: Write + Send>(
     config: &CrashtrackerConfiguration,
     ppid: i32,
     crashing_tid: libc::pid_t,
-    crashing_context: Option<&Ucontext>,
+    crashing_context: Option<&SavedRegisters>,
     supplied_main: Option<StackTrace>,
     deadline: Instant,
 ) -> Result<(), EmitterError> {
@@ -457,7 +457,6 @@ fn emit_threads<W: Write + Send>(
         crash_site_registers, parse_hex_address, stream_thread_contexts, thread_data_from_capture,
     };
 
-    let crash_site = crashing_context.and_then(crash_site_registers);
     let budget = deadline.saturating_duration_since(Instant::now());
     if budget.is_zero() {
         return Ok(());
@@ -466,6 +465,15 @@ fn emit_threads<W: Write + Send>(
     let outcome = std::thread::scope(|scope| {
         scope
             .spawn(|| -> Result<(bool, usize), EmitterError> {
+                let crashing_context = crashing_context.map(|registers| Ucontext {
+                    arch: std::env::consts::ARCH.to_string(),
+                    registers: registers
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), format!("0x{value:016x}")))
+                        .collect(),
+                    raw: None,
+                });
+                let crash_site = crashing_context.as_ref().and_then(crash_site_registers);
                 // blazesym's types are not Send; create and retain the cache on this thread.
                 let normalizer = ErrorData::create_normalizer();
                 let src = ErrorData::create_symbolizer_source(ppid as u32);
@@ -516,7 +524,9 @@ fn emit_threads<W: Write + Send>(
                     crashing_tid,
                     config.max_threads(),
                     budget,
-                    crashing_context.filter(|_| config.unwind_from_ucontext()),
+                    crashing_context
+                        .as_ref()
+                        .filter(|_| config.unwind_from_ucontext()),
                     |tid, captured| {
                         if write_result.is_ok() {
                             write_result = emit(tid, captured);
@@ -665,10 +675,13 @@ fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
 }
 
 #[cfg(target_os = "linux")]
+type SavedRegisters = [(&'static str, u64); if cfg!(target_arch = "x86_64") { 17 } else { 33 }];
+
+#[cfg(target_os = "linux")]
 fn emit_ucontext(
     w: &mut impl Write,
     ucontext: *const ucontext_t,
-) -> Result<Ucontext, EmitterError> {
+) -> Result<SavedRegisters, EmitterError> {
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
     }
@@ -697,42 +710,49 @@ fn emit_ucontext(
             ("r14", libc::REG_R14),
             ("r15", libc::REG_R15),
         ]
-        .into_iter()
         .map(|(name, index)| {
             (
-                name.to_string(),
-                format!("0x{:016x}", gregs[index as usize]),
+                name,
+                u64::from_ne_bytes(gregs[index as usize].to_ne_bytes()),
             )
         })
-        .collect()
     };
 
     #[cfg(target_arch = "aarch64")]
     let registers = {
         let mc = &uc.uc_mcontext;
-        [("pc".to_string(), mc.pc), ("sp".to_string(), mc.sp)]
-            .into_iter()
-            .chain(
-                mc.regs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, value)| (format!("x{i}"), *value)),
-            )
-            .map(|(name, value)| (name, format!("0x{value:016x}")))
-            .collect()
+        const NAMES: [&str; 33] = [
+            "pc", "sp", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+            "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+            "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+        ];
+        core::array::from_fn(|i| {
+            let value = match i {
+                0 => mc.pc,
+                1 => mc.sp,
+                _ => mc.regs[i - 2],
+            };
+            (NAMES[i], value)
+        })
     };
 
-    let context = Ucontext {
-        arch: std::env::consts::ARCH.to_string(),
-        registers,
-        raw: Some(format!("{uc:?}")),
-    };
+    // Keep the basic report allocation-free; thread collection builds its own owned context.
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
-    serde_json::to_writer(&mut *w, &context)?;
-    writeln!(w)?;
+    write!(
+        w,
+        "{{\"arch\": \"{}\", \"registers\": {{",
+        std::env::consts::ARCH
+    )?;
+    for (i, (name, value)) in registers.iter().enumerate() {
+        if i != 0 {
+            write!(w, ", ")?;
+        }
+        write!(w, "\"{name}\": \"0x{value:016x}\"")?;
+    }
+    writeln!(w, "}}, \"raw\": \"{uc:?}\"}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
-    Ok(context)
+    Ok(registers)
 }
 
 /// Emit runtime stack frames collected from registered runtime callback
@@ -1254,7 +1274,7 @@ mod tests {
         }
 
         let mut buf = Vec::new();
-        let context = emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
+        let registers = emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
 
         let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
 
@@ -1265,7 +1285,7 @@ mod tests {
         // Check architecture is correct
         #[cfg(target_arch = "x86_64")]
         {
-            assert_eq!(context.arch, "x86_64");
+            assert!(output.contains("\"x86_64\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1282,7 +1302,7 @@ mod tests {
 
         #[cfg(target_arch = "aarch64")]
         {
-            assert_eq!(context.arch, "aarch64");
+            assert!(output.contains("\"aarch64\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1309,7 +1329,9 @@ mod tests {
 
         let parsed: serde_json::Value =
             serde_json::from_str(json_part).expect("JSON between markers should be valid");
-        assert_eq!(parsed, serde_json::to_value(context).unwrap());
+        for (name, value) in registers {
+            assert_eq!(parsed["registers"][name], format!("0x{value:016x}"));
+        }
 
         // Verify the JSON structure
         assert!(parsed.is_object());
