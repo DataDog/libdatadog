@@ -354,14 +354,10 @@ pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_stack(
 #[named]
 pub unsafe extern "C" fn ddog_crasht_CrashInfoBuilder_with_thread(
     mut builder: *mut Handle<CrashInfoBuilder>,
-    mut thread: ThreadData,
+    thread: ThreadData,
 ) -> VoidResult {
     unsafe {
         wrap_with_void_ffi_result!({
-            if thread.crashed {
-                let stack = (thread.stack.to_inner_mut())?.clone();
-                builder.to_inner_mut()?.with_stack(stack)?;
-            }
             builder.to_inner_mut()?.with_thread(thread.try_into()?)?;
         })
     }
