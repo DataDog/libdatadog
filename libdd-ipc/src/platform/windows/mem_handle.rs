@@ -11,7 +11,8 @@ use std::io::Error;
 use std::mem::MaybeUninit;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, RawHandle};
 use std::ptr::{NonNull, null_mut};
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::{io, mem};
 use windows_sys::Win32::Foundation::{
     ERROR_ALREADY_EXISTS, ERROR_FILE_NOT_FOUND, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
@@ -144,7 +145,13 @@ fn alloc_shm(name: PCSTR) -> io::Result<(Section, bool)> {
     Ok((section(handle)?, existed))
 }
 
-static ANON_HANDLE_COUNTER: AtomicU32 = AtomicU32::new(0);
+fn next_section_id() -> u64 {
+    // Seed from monotonic time so reused PIDs do not repeat names still held by a sidecar.
+    // Zero is reserved for an empty named-section index.
+    static NEXT: LazyLock<AtomicU64> =
+        LazyLock::new(|| AtomicU64::new(libdd_common::rate_limiter::now().max(1)));
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 impl ShmHandle {
     pub fn new(size: usize) -> anyhow::Result<ShmHandle> {
@@ -158,8 +165,8 @@ impl ShmHandle {
             #[allow(clippy::unwrap_used)]
             let name = CString::new(format!(
                 "libdatadog-anon-{name}-{}-{}",
-                unsafe { libc::getpid() },
-                ANON_HANDLE_COUNTER.fetch_add(1, Ordering::SeqCst)
+                std::process::id(),
+                next_section_id()
             ))
             .unwrap();
             let (handle, existed) = alloc_shm(name.as_ptr() as PCSTR)?;
@@ -272,8 +279,6 @@ impl Drop for ShmPath {
     }
 }
 
-static PHYSICAL_COUNTER: AtomicU32 = AtomicU32::new(0);
-
 /// Commit the first `size` bytes of a freshly created reserved section, through a transient view.
 fn commit_section(handle: &Section, size: usize) -> io::Result<()> {
     let view = unsafe {
@@ -327,9 +332,7 @@ impl NamedShmHandle {
         const ATTEMPTS: usize = 16;
         let mut created = None;
         for _ in 0..ATTEMPTS {
-            // The PID keeps the suffix nonzero; 0 means no section.
-            let suffix = (u64::from(std::process::id()) << 32)
-                | u64::from(PHYSICAL_COUNTER.fetch_add(1, Ordering::Relaxed));
+            let suffix = next_section_id();
             let physical = Self::physical_name(&name, suffix);
             let (handle, existed) = alloc_shm(physical.as_ptr() as PCSTR)?;
             if existed {
@@ -435,6 +438,35 @@ impl<T: FileBackedHandle> MappedMem<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anonymous_sections_survive_pid_reuse() {
+        let name = "previous-process";
+        // A sidecar can still hold these sections after Windows reuses the creator's PID.
+        let old: Vec<_> = (0..16)
+            .map(|counter| {
+                let name = CString::new(format!(
+                    "libdatadog-anon-{name}-{}-{counter}",
+                    std::process::id()
+                ))
+                .unwrap();
+                let (handle, existed) = alloc_shm(name.as_ptr() as PCSTR).unwrap();
+                assert!(!existed);
+                let mut mapped = ShmHandle {
+                    handle,
+                    size: 4096 | NOT_COMMITTED,
+                }
+                .map()
+                .unwrap();
+                mapped.as_slice_mut()[0] = 42;
+                mapped
+            })
+            .collect();
+
+        let new = ShmHandle::new_named(4096, name).unwrap().map().unwrap();
+        assert!(new.as_slice().iter().all(|&byte| byte == 0));
+        assert!(old.iter().all(|mapped| mapped.as_slice()[0] == 42));
+    }
 
     /// A section nothing was committed in yet has no readable pages: mapping it must fail
     /// rather than report its whole reservation as usable, which faults on first touch.
