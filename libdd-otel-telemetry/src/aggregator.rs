@@ -112,7 +112,7 @@ impl OtelMetricsAggregatorBuilder {
         let mut counters = Arc::new(Counters::default());
 
         let reader = match &self.metrics_exporter {
-            Some(cfg) => match crate::build_datadog_metric_exporter(
+            Some(cfg) => match crate::exporter::build_datadog_metric_exporter_with_runtime(
                 cfg,
                 self.temporality,
                 Arc::clone(&runtime),

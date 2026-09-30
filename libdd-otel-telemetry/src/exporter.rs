@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
-use libdd_shared_runtime::BlockingRuntime;
+use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
 use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
 use opentelemetry_sdk::metrics::Temporality as SdkTemporality;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
@@ -61,7 +61,6 @@ impl DatadogMetricExporter {
     pub(crate) fn counters_handle(&self) -> Arc<Counters> {
         Arc::clone(&self.counters)
     }
-
 }
 
 impl Drop for DatadogMetricExporter {
@@ -115,7 +114,17 @@ impl PushMetricExporter for DatadogMetricExporter {
 ///
 /// `runtime` drives every export because the upstream SDK invokes exporters from a plain worker
 /// thread with no async reactor.
-pub fn build_datadog_metric_exporter<R>(
+pub fn build_datadog_metric_exporter(
+    config: &OtlpExporterConfig,
+    temporality: Temporality,
+) -> Result<DatadogMetricExporter, BuildWarning> {
+    let runtime = Arc::new(
+        BasicRuntime::new().map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?,
+    );
+    build_datadog_metric_exporter_with_runtime(config, temporality, runtime)
+}
+
+pub(crate) fn build_datadog_metric_exporter_with_runtime<R>(
     config: &OtlpExporterConfig,
     temporality: Temporality,
     runtime: Arc<R>,
