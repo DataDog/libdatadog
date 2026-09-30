@@ -849,6 +849,46 @@ mod tests_v1 {
     }
 
     #[test]
+    fn chunk_only_marker_stripped_and_not_counted_as_dropped() {
+        // When the span doesn't carry the marker, the chunk-level copy survives the merge and
+        // must be stripped by the eligibility filter itself, without skewing the dropped count.
+        for otel_semantics in [false, true] {
+            let baseline = {
+                let chunk = minimal_chunk([1; 16], minimal_span());
+                let req =
+                    map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), otel_semantics);
+                req.resource_spans[0].scope_spans[0].spans[0]
+                    .attributes
+                    .len()
+            };
+            let filler = MAX_ATTRIBUTES_PER_SPAN + 5;
+
+            let mut span = minimal_span();
+            for i in 0..filler {
+                span.attributes
+                    .insert(bs(&format!("attr.{i}")), AttributeValue::String(bs("v")));
+            }
+            let mut chunk = minimal_chunk([1; 16], span);
+            chunk.attributes.insert(
+                bs(OTLP_EXPORT_MARKER_KEY),
+                AttributeValue::String(bs("false")),
+            );
+            let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), otel_semantics);
+            let s = &req.resource_spans[0].scope_spans[0].spans[0];
+
+            assert!(
+                !s.attributes.iter().any(|a| a.key == OTLP_EXPORT_MARKER_KEY),
+                "chunk-level _dd.sdk.otlp_export must be stripped"
+            );
+            assert_eq!(s.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
+            assert_eq!(
+                s.dropped_attributes_count as usize,
+                baseline + filler - MAX_ATTRIBUTES_PER_SPAN
+            );
+        }
+    }
+
+    #[test]
     fn empty_chunk_does_not_panic() {
         let chunk = TraceChunk::<BytesData> {
             trace_id: [0; 16],
