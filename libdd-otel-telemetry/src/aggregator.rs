@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use libdd_shared_runtime::BlockingRuntime;
+use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{
     Counter, Gauge, Histogram, MeterProvider, ObservableCounter, ObservableGauge,
@@ -107,6 +107,17 @@ impl OtelMetricsAggregatorBuilder {
     pub fn with_export_interval(mut self, interval: Duration) -> Self {
         self.export_interval = interval;
         self
+    }
+
+    /// Builds with a runtime owned by this crate, avoiding runtime types across FFI boundaries.
+    pub fn build_with_default_runtime(
+        self,
+    ) -> Result<(OtelMetricsAggregator, Vec<BuildWarning>), BuildWarning> {
+        let runtime = Arc::new(
+            BasicRuntime::new()
+                .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?,
+        );
+        Ok(self.build(runtime))
     }
 
     /// Builds the aggregator, retaining `runtime` to drive exports from the SDK reader thread.
