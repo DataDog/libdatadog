@@ -110,14 +110,20 @@ impl OtelMetricsAggregatorBuilder {
     }
 
     /// Builds with a runtime owned by this crate, avoiding runtime types across FFI boundaries.
-    pub fn build_with_default_runtime(
-        self,
-    ) -> Result<(OtelMetricsAggregator, Vec<BuildWarning>), BuildWarning> {
-        let runtime = Arc::new(
-            BasicRuntime::new()
-                .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?,
-        );
-        Ok(self.build(runtime))
+    pub fn build_with_default_runtime(self) -> (OtelMetricsAggregator, Vec<BuildWarning>) {
+        match BasicRuntime::new() {
+            Ok(runtime) => self.build(Arc::new(runtime)),
+            Err(error) => {
+                let warning = BuildWarning::ExporterInitFailed(error.to_string());
+                let provider = SdkMeterProvider::builder()
+                    .with_resource(self.resource.build())
+                    .build();
+                (
+                    OtelMetricsAggregator::new(provider, Arc::new(Counters::default())),
+                    vec![warning],
+                )
+            }
+        }
     }
 
     /// Builds the aggregator, retaining `runtime` to drive exports from the SDK reader thread.
@@ -156,13 +162,7 @@ impl OtelMetricsAggregatorBuilder {
         }
         let provider = provider_builder.build();
 
-        let aggregator = OtelMetricsAggregator {
-            provider,
-            meters: Mutex::new(HashMap::new()),
-            instruments: Mutex::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
-            counters,
-        };
+        let aggregator = OtelMetricsAggregator::new(provider, counters);
         (aggregator, warnings)
     }
 }
@@ -235,6 +235,16 @@ pub struct OtelMetricsAggregator {
 }
 
 impl OtelMetricsAggregator {
+    fn new(provider: SdkMeterProvider, counters: Arc<Counters>) -> Self {
+        Self {
+            provider,
+            meters: Mutex::new(HashMap::new()),
+            instruments: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+            counters,
+        }
+    }
+
     pub fn register_instrument(&self, descriptor: InstrumentDescriptor) -> InstrumentId {
         let id = InstrumentId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let handle = self.create_instrument(&descriptor);
