@@ -14,11 +14,11 @@ mod native {
         StreamingBodySender,
     };
     use libdd_capabilities::maybe_send::MaybeSend;
+    use libdd_common::MutexExt;
     use libdd_common::connector::Connector;
     use libdd_common::http_common::{
-        new_client_periodic, new_default_client, Body, GenericHttpClient,
+        Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
-    use libdd_common::MutexExt;
 
     use http_body_util::BodyExt;
 

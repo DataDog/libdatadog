@@ -8,22 +8,22 @@
 //! `AttributeValue` maps onto OTLP's `AnyValue` losslessly, so attributes are converted
 //! recursively with no flattening or type coercion.
 
-use super::mapper::{build_resource, proto_kv, MAX_ATTRIBUTES_PER_SPAN};
 use super::OtlpResourceInfo;
+use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, build_resource, proto_kv};
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-    any_value::Value as ProtoValue, AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue,
-    InstrumentationScope as ProtoScope, KeyValue as ProtoKeyValue, KeyValueList as ProtoKvList,
+    AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue, InstrumentationScope as ProtoScope,
+    KeyValue as ProtoKeyValue, KeyValueList as ProtoKvList, any_value::Value as ProtoValue,
 };
 use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
-    span::{Event as ProtoEvent, Link as ProtoLink},
     ResourceSpans as ProtoResourceSpans, ScopeSpans as ProtoScopeSpans, Span as ProtoSpan,
     Status as ProtoStatus,
+    span::{Event as ProtoEvent, Link as ProtoLink},
 };
 
 use super::mapper::status_code;
@@ -455,8 +455,8 @@ pub fn map_traces_to_otlp_v1<T: TraceData>(
 #[cfg(test)]
 mod tests_v1 {
     use super::*;
-    use crate::span::v1::SpanKind;
     use crate::span::BytesData;
+    use crate::span::v1::SpanKind;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as PV;
 

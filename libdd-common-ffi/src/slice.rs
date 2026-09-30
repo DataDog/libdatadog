@@ -16,7 +16,7 @@ use alloc::{
 };
 
 #[cfg(feature = "std")]
-use {libdd_common::error::FfiSafeErrorMessage, serde::ser::Error, serde::Serializer};
+use {libdd_common::error::FfiSafeErrorMessage, serde::Serializer, serde::ser::Error};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -142,7 +142,7 @@ pub trait AsBytes<'a> {
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
     unsafe fn assume_utf8(&self) -> &'a str {
-        core::str::from_utf8_unchecked(self.as_bytes())
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
     }
 }
 

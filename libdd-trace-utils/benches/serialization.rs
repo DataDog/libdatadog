@@ -1,10 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, Criterion};
+use criterion::{Criterion, black_box, criterion_group};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::msgpack_encoder;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
     let mut spans = Vec::with_capacity(num_spans);

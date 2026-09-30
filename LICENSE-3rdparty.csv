@@ -218,7 +218,6 @@ jni,https://github.com/jni-rs/jni-rs,MIT OR Apache-2.0,Josh Chase <josh@prevoty.
 jni-sys,https://github.com/sfackler/rust-jni-sys,MIT OR Apache-2.0,Steven Fackler <sfackler@gmail.com>
 jobserver,https://github.com/rust-lang/jobserver-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 js-sys,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/js-sys,MIT OR Apache-2.0,The wasm-bindgen Developers
-kernel32-sys,https://github.com/retep998/winapi-rs,MIT,Peter Atashian <retep998@gmail.com>
 kv-log-macro,https://github.com/yoshuawuyts/kv-log-macro,MIT OR Apache-2.0,Yoshua Wuyts <yoshuawuyts@gmail.com>
 lazy_static,https://github.com/rust-lang-nursery/lazy-static.rs,MIT OR Apache-2.0,Marvin Löbel <loebel.marvin@gmail.com>
 libc,https://github.com/rust-lang/libc,MIT OR Apache-2.0,The libc Authors
@@ -505,7 +504,6 @@ web-time,https://github.com/daxpedda/web-time,MIT OR Apache-2.0,The web-time Aut
 webpki-root-certs,https://github.com/rustls/webpki-roots,CDLA-Permissive-2.0,The webpki-root-certs Authors
 webpki-roots,https://github.com/rustls/webpki-roots,CDLA-Permissive-2.0,The webpki-roots Authors
 widestring,https://github.com/VoidStarKat/widestring-rs,MIT OR Apache-2.0,The widestring Authors
-winapi,https://github.com/retep998/winapi-rs,MIT,Peter Atashian <retep998@gmail.com>
 winapi,https://github.com/retep998/winapi-rs,MIT OR Apache-2.0,Peter Atashian <retep998@gmail.com>
 winapi-i686-pc-windows-gnu,https://github.com/retep998/winapi-rs,MIT OR Apache-2.0,Peter Atashian <retep998@gmail.com>
 winapi-util,https://github.com/BurntSushi/winapi-util,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>

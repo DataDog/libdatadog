@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-use libdd_common_ffi::{slice::AsBytes, CharSlice, Handle, ToInner};
+use libdd_common_ffi::{CharSlice, Handle, ToInner, slice::AsBytes};
 
 use libdd_crashtracker::StackTrace;
 

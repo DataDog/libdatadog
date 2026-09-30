@@ -40,8 +40,8 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 use libdd_libunwind_sys::{
-    unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpace, UnwCursor, UnwWord,
-    UptInfo, UNW_REG_IP, UNW_REG_SP,
+    UNW_REG_IP, UNW_REG_SP, UnwAddrSpace, UnwCursor, UnwWord, UptInfo, unw_get_reg_remote,
+    unw_init_remote, unw_step_remote,
 };
 
 use super::parse_hex_address;

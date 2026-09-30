@@ -734,7 +734,7 @@ mod tests {
     };
     use crate::{
         obfuscation_config::{DbmsKind, JsonObfuscatorConfig, SqlConfig, SqlObfuscationMode},
-        sql::{obfuscate_sql, SqlObfuscationError, SQL_OBFUSCATION_FAILURE_REPLACEMENT},
+        sql::{SQL_OBFUSCATION_FAILURE_REPLACEMENT, SqlObfuscationError, obfuscate_sql},
     };
 
     fn obf(keep_keys: &[&str]) -> JsonObfuscator {

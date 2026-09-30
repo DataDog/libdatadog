@@ -11,8 +11,8 @@ pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 
-use super::add_path;
 use super::TracerMetadata;
+use super::add_path;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -501,7 +501,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     mod is_stats_computation_supported {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
-        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+        use crate::trace_exporter::stats::{STATS_ENDPOINT, is_stats_computation_supported};
 
         fn make_agent_info(
             client_drop_p0s: Option<bool>,

@@ -25,7 +25,7 @@ mod no_std_support {
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
         // Panics in no_std mode are silent and fatal — no std I/O is available to report _info.
-        extern "C" {
+        unsafe extern "C" {
             fn abort() -> !;
         }
         // SAFETY: abort() is a C standard library function with no preconditions.
@@ -36,7 +36,7 @@ mod no_std_support {
     /// unwinding will never occur under `panic = "abort"` (enforced by the compile_error!
     /// guard above). WARNING: this symbol is globally visible — this library must not be
     /// linked with other Rust code compiled with `panic = "unwind"`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn rust_eh_personality() {}
 }
 
@@ -83,7 +83,7 @@ pub struct Configurator<'a> {
     process_info: Option<lib_config::ProcessInfo>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_library_configurator_new(
     debug_logs: bool,
     language: CharSlice,
@@ -97,7 +97,7 @@ pub extern "C" fn ddog_library_configurator_new(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c: &mut Configurator<'a>,
     local_path: ffi::CStr<'a>,
@@ -105,7 +105,7 @@ pub extern "C" fn ddog_library_configurator_with_local_path<'a>(
     c.local_path = Some(local_path);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c: &mut Configurator<'a>,
     local_path: ffi::CStr<'a>,
@@ -113,7 +113,7 @@ pub extern "C" fn ddog_library_configurator_with_fleet_path<'a>(
     c.fleet_path = Some(local_path);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c: &mut Configurator<'a>,
     p: ProcessInfo<'a>,
@@ -121,7 +121,7 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c.process_info = Some(p.ffi_to_rs());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
 #[cfg(feature = "std")]
@@ -221,14 +221,14 @@ mod std_api {
         }
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
         c.process_info = Some(lib_config::ProcessInfo::detect_global(
             c.language.to_utf8_lossy().into_owned(),
         ));
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_library_configurator_get(
         configurator: &Configurator,
     ) -> LibraryConfigLoggedResult {
@@ -264,7 +264,7 @@ mod std_api {
         })
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /// Returns a static null-terminated string, containing the name of the environment variable
     /// associated with the library configuration
     pub extern "C" fn ddog_library_config_source_to_string(
@@ -290,21 +290,21 @@ mod std_api {
         };
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /// Returns a static null-terminated string with the path to the managed stable config yaml
     /// config file
     pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
         static_path_cstr!(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH)
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     /// Returns a static null-terminated string with the path to the local stable config yaml config
     /// file
     pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
         static_path_cstr!(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH)
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLoggedResult) {
         match &mut config_result {
             LibraryConfigLoggedResult::Ok(_) => {}

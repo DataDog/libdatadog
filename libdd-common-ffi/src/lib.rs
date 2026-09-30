@@ -21,6 +21,7 @@ pub mod array_queue;
 pub mod endpoint;
 mod error;
 pub mod handle;
+pub mod mutable_metadata;
 pub mod option;
 pub mod result;
 pub mod slice_mut;

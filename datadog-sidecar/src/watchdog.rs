@@ -1,13 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use futures::{
-    future::{BoxFuture, Shared},
     FutureExt,
+    future::{BoxFuture, Shared},
 };
 use std::{
     sync::{
-        atomic::{AtomicU32, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicU32, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -68,7 +68,10 @@ impl Watchdog {
                 } else {
                     if maybe_stuck {
                         std::thread::spawn(move || {
-                            error!("Watchdog timeout: Sidecar stuck for at least {} seconds. Sending SIGABRT, possibly dumping core.", interval.as_secs());
+                            error!(
+                                "Watchdog timeout: Sidecar stuck for at least {} seconds. Sending SIGABRT, possibly dumping core.",
+                                interval.as_secs()
+                            );
                         });
                         // wait 1 seconds to give log a chance to flush - then kill the process
                         std::thread::sleep(Duration::from_secs(1));

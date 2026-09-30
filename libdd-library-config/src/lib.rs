@@ -448,9 +448,13 @@ impl Configurator {
 
     pub const fn fleet_stable_configuration_path(target: Target) -> &'static str {
         match target {
-            Target::Linux => "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml",
+            Target::Linux => {
+                "/etc/datadog-agent/managed/datadog-agent/stable/application_monitoring.yaml"
+            }
             Target::Macos => "/opt/datadog-agent/etc/stable/application_monitoring.yaml",
-            Target::Windows => "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml",
+            Target::Windows => {
+                "C:\\ProgramData\\Datadog\\managed\\datadog-agent\\stable\\application_monitoring.yaml"
+            }
         }
     }
 
@@ -705,7 +709,9 @@ impl Configurator {
         }
 
         let messages = if self.debug_logs {
-            vec![format!("Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}")]
+            vec![format!(
+                "Will apply the following configuration:\n\tsource {source:?}\n\t{library_config:?}"
+            )]
         } else {
             Vec::new()
         };
@@ -1401,7 +1407,7 @@ mod config_read_tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
-    use super::{io, ConfigRead, Configurator, ProcessInfo};
+    use super::{ConfigRead, Configurator, ProcessInfo, io};
 
     /// In-memory reader for testing the `ConfigRead` trait without filesystem access.
     struct MemReader {

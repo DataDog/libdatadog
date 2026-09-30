@@ -216,7 +216,7 @@ impl HttpClientCapability for MockHttpCapabilities {
         &self,
         req: http::Request<Bytes>,
     ) -> impl std::future::Future<Output = Result<http::Response<Bytes>, HttpError>>
-           + libdd_capabilities::MaybeSend {
+    + libdd_capabilities::MaybeSend {
         let path = req.uri().path().to_owned();
         let (parts, body) = req.into_parts();
         let captured = CapturedRequest::from_parts(parts.method, parts.uri, parts.headers, body);

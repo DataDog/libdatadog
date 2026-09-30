@@ -116,7 +116,7 @@ mod unix {
         }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         /// A bit of C code which can access the constants in <signal.h>.
         /// See the file comment on emit_sicodes.c for full details.
         fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;

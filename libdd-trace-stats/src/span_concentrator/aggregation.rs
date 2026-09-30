@@ -14,11 +14,11 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{cardinality_limit_telemetry::CollapsedFieldSet, StatSpan};
+use crate::span_concentrator::{StatSpan, cardinality_limit_telemetry::CollapsedFieldSet};
 
 use super::{
-    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
     CardinalityLimitConfig,
+    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
 };
 
 /// Sentinel value used for cardinality limiting.
@@ -345,10 +345,10 @@ impl<'a> BorrowedAggregationKey<'a> {
         let http_method = get_http_method(span);
 
         let http_endpoint = span
-            .get_meta("http.route")
+            .get_meta("http.endpoint")
             .filter(|value| !value.is_empty())
             .or_else(|| {
-                span.get_meta("http.endpoint")
+                span.get_meta("http.route")
                     .filter(|value| !value.is_empty())
             })
             .unwrap_or_default();
@@ -1422,7 +1422,7 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // The canonical OTel route takes precedence over the Datadog-only endpoint.
+            // Span with http.route and http.endpoint (http.endpoint takes precedence)
             (
                 SpanBytes {
                     service: "service".into(),
@@ -1432,35 +1432,7 @@ mod tests {
                     parent_id: 0,
                     meta: vec![
                         ("http.method".into(), "POST".into()),
-                        ("http.route".into(), "/users/create".into()),
-                        ("http.endpoint".into(), "/users/create2".into()),
-                    ]
-                    .into(),
-                    ..Default::default()
-                },
-                FixedAggregationKey {
-                    service_name: "service".into(),
-                    operation_name: "op".into(),
-                    resource_name: "POST /users/create".into(),
-                    http_method: "POST".into(),
-                    http_endpoint: "/users/create".into(),
-                    is_synthetics_request: false,
-                    is_trace_root: pb::Trilean::True,
-                    ..Default::default()
-                }
-                .into_key(),
-            ),
-            // An empty route falls back to the retained Datadog endpoint.
-            (
-                SpanBytes {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "POST /users/create".into(),
-                    span_id: 1,
-                    parent_id: 0,
-                    meta: vec![
-                        ("http.method".into(), "POST".into()),
-                        ("http.route".into(), "".into()),
+                        ("http.route".into(), "/users/create1".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
                     ]
                     .into(),
@@ -1472,6 +1444,34 @@ mod tests {
                     resource_name: "POST /users/create".into(),
                     http_method: "POST".into(),
                     http_endpoint: "/users/create2".into(),
+                    is_synthetics_request: false,
+                    is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // Span with empty http.endpoint and http.route (fallback to http.route)
+            (
+                SpanBytes {
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "POST /users/create".into(),
+                    span_id: 1,
+                    parent_id: 0,
+                    meta: vec![
+                        ("http.method".into(), "POST".into()),
+                        ("http.route".into(), "/users/create1".into()),
+                        ("http.endpoint".into(), "".into()),
+                    ]
+                    .into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    service_name: "service".into(),
+                    operation_name: "op".into(),
+                    resource_name: "POST /users/create".into(),
+                    http_method: "POST".into(),
+                    http_endpoint: "/users/create1".into(),
                     is_synthetics_request: false,
                     is_trace_root: pb::Trilean::True,
                     ..Default::default()

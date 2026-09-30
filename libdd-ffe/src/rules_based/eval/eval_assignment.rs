@@ -4,9 +4,9 @@
 use chrono::{DateTime, Utc};
 
 use crate::rules_based::{
+    Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
     error::EvaluationError,
     ufc::{Allocation, Assignment, AssignmentReason, CompiledFlagsConfig, Flag, Shard, Split},
-    Configuration, EvaluationContext, ExpectedFlagType, Timestamp,
 };
 
 /// Evaluate the specified feature flag for the given subject and return assigned variation and

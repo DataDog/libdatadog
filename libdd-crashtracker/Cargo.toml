@@ -41,6 +41,7 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 # Should be kept in sync with the libdatadog symbolizer crate (also using blazesym)
 # Symbolization needs DWARF info, name demangling, and compressed debug sections.
 blazesym = { workspace = true, default-features = true }
+page_size.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
@@ -63,7 +64,6 @@ num-traits.workspace = true
 # os_info::get() is converted into our own OsInfo type before serialization,
 # so os_info's own `serde` default feature is unnecessary.
 os_info.workspace = true
-page_size.workspace = true
 portable-atomic = { workspace = true, default-features = true, features = ["serde"] }
 rand = { workspace = true, default-features = true }
 schemars = { workspace = true, default-features = true }

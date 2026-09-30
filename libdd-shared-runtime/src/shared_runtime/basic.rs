@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::pausable_worker::{tokio_spawn_fn, PausableWorker};
+use super::pausable_worker::{PausableWorker, tokio_spawn_fn};
 use super::{
     BlockingRuntime, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
 };
@@ -134,7 +134,7 @@ mod tests {
     use super::*;
     use crate::shared_runtime::BlockOnTimeoutError;
     use async_trait::async_trait;
-    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::mpsc::{Receiver, Sender, channel};
     use std::time::Duration;
     use tokio::time::sleep;
 

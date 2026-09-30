@@ -13,11 +13,7 @@ use std::path::Path;
 fn read_trimmed(path: &Path) -> Option<String> {
     let s = std::fs::read_to_string(path).ok()?;
     let s = s.trim().to_owned();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Resolves the id from the three candidate paths in priority order

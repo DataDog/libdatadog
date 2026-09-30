@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{Record, Value, WireType, NO_OPT_ZERO, OPT_ZERO};
+use crate::{NO_OPT_ZERO, OPT_ZERO, Record, Value, WireType};
 use std::io::{self, Write};
 
 /// Describes function and line table debug information. This only supports a

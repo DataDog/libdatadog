@@ -12,11 +12,11 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -222,7 +222,9 @@ impl SidecarSender {
     pub fn set_session_config(
         &mut self,
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)] remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
         config: SessionConfig,
         is_fork: bool,
     ) {
@@ -231,7 +233,7 @@ impl SidecarSender {
             SidecarInterfaceRequest::SetSessionConfig {
                 session_id,
                 #[cfg(windows)]
-                remote_config_notify_function,
+                remote_config_notify_target,
                 config,
                 is_fork,
             },
@@ -369,8 +371,7 @@ impl SidecarSender {
             if self.enqueue_actions_counter != 0 {
                 trace!(
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
-                    outstanding,
-                    self.max_outstanding,
+                    outstanding, self.max_outstanding,
                 );
                 return;
             }

@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
+arc-swap.workspace = true
 futures = { workspace = true, features = ["alloc", "executor"] }
 futures-util.workspace = true
 hex = { workspace = true, default-features = true }

@@ -55,11 +55,15 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
-    /// * `pid` - The pid of the sidecar client.
+    /// * `remote_config_notify_target` - The client's notification event (Windows only).
     /// * `config` - The configuration to be set.
     async fn set_session_config(
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)]
+        #[SerializedHandle]
+        remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
         config: SessionConfig,
         is_fork: bool,
     );
@@ -276,6 +280,14 @@ pub trait SidecarInterface {
     /// options.
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
+
+    /// Flush in the normal connection's packet order, then close the completion pipe.
+    /// The raw signal worker can send this packet concurrently without disturbing normal replies.
+    #[oneway]
+    async fn flush_signal(
+        options: SidecarFlushOptions,
+        #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    );
 
     /// Sets x-datadog-test-session-token on all requests for the given session.
     ///

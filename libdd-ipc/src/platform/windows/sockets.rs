@@ -38,36 +38,30 @@ use std::{
     pin::Pin,
     ptr::{null, null_mut},
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
-// winapi – only used for things not cleanly available in windows-sys
-use winapi::shared::minwindef::ULONG;
-use winapi::shared::winerror::ERROR_PIPE_CONNECTED;
-use winapi::um::handleapi::{CloseHandle, DuplicateHandle, INVALID_HANDLE_VALUE};
-use winapi::um::minwinbase::SECURITY_ATTRIBUTES;
-use winapi::um::processthreadsapi::{GetCurrentProcess, GetCurrentProcessId, OpenProcess};
-use winapi::um::winbase::{GetNamedPipeClientProcessId, GetNamedPipeServerProcessId};
-use winapi::um::winnt::{
-    DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, HANDLE, PROCESS_DUP_HANDLE,
+use windows_sys::Win32::Foundation::{
+    CloseHandle, DUPLICATE_CLOSE_SOURCE, DUPLICATE_SAME_ACCESS, DuplicateHandle,
+    ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
-
-// windows-sys – used for all pipe/IO/threading syscalls
-use windows_sys::Win32::Foundation::{HANDLE as SysHANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
-};
-use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeA, SetNamedPipeHandleState, PIPE_READMODE_MESSAGE,
-    PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
-};
-use windows_sys::Win32::System::Threading::{
-    CreateEventA, SetEvent, WaitForMultipleObjects, WaitForSingleObject, INFINITE,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
 use windows_sys::Win32::System::IO::{
     CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED, OVERLAPPED_0,
+};
+use windows_sys::Win32::System::Pipes::{
+    ConnectNamedPipe, CreateNamedPipeA, GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
+    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    SetNamedPipeHandleState,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventA, GetCurrentProcess, GetCurrentProcessId, INFINITE, OpenProcess,
+    PROCESS_DUP_HANDLE, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
 
 /// Wire-format suffix overhead: 4-byte count + 8 bytes per handle slot.
@@ -121,12 +115,12 @@ fn append_handle_suffix(
 
     if count > 0 {
         let peer_proc = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, peer_pid) };
-        if peer_proc.is_null() {
+        if peer_proc == 0 {
             return Err(io::Error::last_os_error());
         }
-        pending.peer = Some(unsafe { OwnedHandle::from_raw_handle(peer_proc.cast()) });
+        pending.peer = Some(unsafe { OwnedHandle::from_raw_handle(peer_proc as RawHandle) });
         for &h in handles {
-            let mut dup: HANDLE = null_mut();
+            let mut dup: HANDLE = 0;
             let ok = unsafe {
                 DuplicateHandle(
                     GetCurrentProcess(),
@@ -142,7 +136,9 @@ fn append_handle_suffix(
                 return Err(io::Error::last_os_error());
             }
             pending.handles.push(dup);
-            data.extend_from_slice(&(dup as u64).to_le_bytes());
+            // Preserve the handle's pointer-width bits without sign-extending on 32-bit Windows.
+            // Every supported Windows pointer width fits into the 64-bit wire representation.
+            data.extend_from_slice(&(dup as usize as u64).to_le_bytes());
         }
     }
 
@@ -173,12 +169,12 @@ impl Drop for PendingHandleTransfers {
             return;
         };
         for handle in self.handles.drain(..) {
-            let mut local = null_mut();
+            let mut local = 0;
             // No write has exposed these values. Roll preparation back by moving each
             // duplicate here; the retained process handle identifies the original peer.
             let ok = unsafe {
                 DuplicateHandle(
-                    peer.as_raw_handle().cast(),
+                    peer.as_raw_handle() as HANDLE,
                     handle,
                     GetCurrentProcess(),
                     &mut local,
@@ -195,7 +191,7 @@ impl Drop for PendingHandleTransfers {
 }
 
 // PID handshakes precede writer registration and always wait for completion.
-fn pipe_write_blocking(h: SysHANDLE, data: &[u8]) -> io::Result<()> {
+fn pipe_write_blocking(h: HANDLE, data: &[u8]) -> io::Result<()> {
     let len = u32::try_from(data.len())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC message is too large"))?;
     let event = unsafe { CreateEventA(null(), 1, 0, null()) };
@@ -205,7 +201,7 @@ fn pipe_write_blocking(h: SysHANDLE, data: &[u8]) -> io::Result<()> {
     let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
     // The low event bit suppresses IOCP notifications. This handshake precedes
     // writer registration and does not reserve a TP_IO callback.
-    let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
+    let mut overlapped = make_overlapped(event.as_raw_handle() as HANDLE | 1);
     if unsafe { WriteFile(h, data.as_ptr() as _, len, null_mut(), &mut overlapped) } == 0 {
         let error = io::Error::last_os_error();
         if error.raw_os_error() != Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32) {
@@ -234,7 +230,7 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
 
     let h = unsafe {
         let buf_size = PIPE_BUFFER_SIZE.load(Ordering::Relaxed) as u32;
-        let mut sec_attributes = SECURITY_ATTRIBUTES {
+        let sec_attributes = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: null_mut(),
             bInheritHandle: 1, // We want this one to be inherited
@@ -247,11 +243,11 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
             buf_size,
             buf_size,
             0,
-            &mut sec_attributes as *mut SECURITY_ATTRIBUTES as *mut _,
+            &sec_attributes,
         )
     };
 
-    if h == INVALID_HANDLE_VALUE as SysHANDLE {
+    if h == INVALID_HANDLE_VALUE {
         return Err(io::Error::last_os_error());
     }
     Ok(unsafe { OwnedHandle::from_raw_handle(h as RawHandle) })
@@ -264,7 +260,7 @@ fn path_to_null_terminated(path: &Path) -> Vec<u8> {
     bytes
 }
 
-fn make_overlapped(event: SysHANDLE) -> OVERLAPPED {
+fn make_overlapped(event: HANDLE) -> OVERLAPPED {
     OVERLAPPED {
         Internal: 0,
         InternalHigh: 0,
@@ -336,7 +332,7 @@ impl SeqpacketListener {
             .inner
             .lock()
             .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
-        let raw: SysHANDLE = guard.as_raw_handle() as SysHANDLE;
+        let raw: HANDLE = guard.as_raw_handle() as HANDLE;
 
         // Use overlapped ConnectNamedPipe with a 0-ms wait for non-blocking behaviour.
         let event = unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) };
@@ -365,29 +361,29 @@ impl SeqpacketListener {
                                 // Wait for the cancellation to complete so the handle is clean.
                                 let mut transferred: u32 = 0;
                                 GetOverlappedResult(raw, &ov, &mut transferred, 1);
-                                CloseHandle(event as HANDLE);
+                                CloseHandle(event);
                             }
                             return Err(io::ErrorKind::WouldBlock.into());
                         }
                         _ => {
-                            unsafe { CloseHandle(event as HANDLE) };
+                            unsafe { CloseHandle(event) };
                             return Err(io::Error::last_os_error());
                         }
                     }
                 }
                 _ => {
-                    unsafe { CloseHandle(event as HANDLE) };
+                    unsafe { CloseHandle(event) };
                     return Err(connect_err);
                 }
             }
         };
-        unsafe { CloseHandle(event as HANDLE) };
+        unsafe { CloseHandle(event) };
 
         if !connected {
             return Err(io::Error::last_os_error());
         }
 
-        let mut client_pid: ULONG = 0;
+        let mut client_pid: u32 = 0;
         unsafe { GetNamedPipeClientProcessId(guard.as_raw_handle() as HANDLE, &mut client_pid) };
 
         // Swap: the connected handle goes to the SeqpacketConn; the fresh server replaces it.
@@ -402,7 +398,7 @@ impl SeqpacketListener {
         // before sending any handles.
         let my_pid = unsafe { GetCurrentProcessId() };
         let pid_bytes = my_pid.to_le_bytes();
-        pipe_write_blocking(conn_handle.as_raw_handle() as SysHANDLE, &pid_bytes)?;
+        pipe_write_blocking(conn_handle.as_raw_handle() as HANDLE, &pid_bytes)?;
 
         Ok(SeqpacketConn {
             writer: OnceLock::new(),
@@ -453,20 +449,19 @@ unsafe impl Send for SeqpacketConn {}
 impl SeqpacketConn {
     /// Connect to a server at the given named pipe path (e.g. `\\\\.\\pipe\\…`).
     pub fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
-        use winapi::shared::winerror::ERROR_PIPE_BUSY;
-        use winapi::um::fileapi::{CreateFileA, OPEN_EXISTING};
-        use winapi::um::winnt::{GENERIC_READ, GENERIC_WRITE};
+        use windows_sys::Win32::Foundation::{ERROR_PIPE_BUSY, GENERIC_READ, GENERIC_WRITE};
+        use windows_sys::Win32::Storage::FileSystem::{CreateFileA, OPEN_EXISTING};
 
         let name = path_to_null_terminated(path.as_ref());
         let h = unsafe {
             CreateFileA(
-                name.as_ptr() as *const i8,
+                name.as_ptr(),
                 GENERIC_READ | GENERIC_WRITE,
                 0,
-                null_mut(),
+                null(),
                 OPEN_EXISTING,
                 FILE_FLAG_OVERLAPPED,
-                null_mut(),
+                0,
             )
         };
         if h == INVALID_HANDLE_VALUE {
@@ -481,7 +476,7 @@ impl SeqpacketConn {
         let mode = PIPE_READMODE_MESSAGE;
         // Take ownership before any fallible configuration or handshake operation.
         let handle = unsafe { OwnedHandle::from_raw_handle(h as RawHandle) };
-        if unsafe { SetNamedPipeHandleState(h as SysHANDLE, &mode, null(), null()) } == 0 {
+        if unsafe { SetNamedPipeHandleState(h, &mode, null(), null()) } == 0 {
             return Err(io::Error::last_os_error());
         }
 
@@ -499,16 +494,9 @@ impl SeqpacketConn {
             }
             let event = unsafe { OwnedHandle::from_raw_handle(event as RawHandle) };
             // Suppress IOCP notification: the writer has not been registered yet.
-            let mut overlapped = make_overlapped(event.as_raw_handle() as SysHANDLE | 1);
-            if unsafe {
-                ReadFile(
-                    h as SysHANDLE,
-                    pid_buf.as_mut_ptr() as _,
-                    4,
-                    null_mut(),
-                    &mut overlapped,
-                )
-            } == 0
+            let mut overlapped = make_overlapped(event.as_raw_handle() as HANDLE | 1);
+            if unsafe { ReadFile(h, pid_buf.as_mut_ptr() as _, 4, null_mut(), &mut overlapped) }
+                == 0
             {
                 let error = io::Error::last_os_error();
                 if error.raw_os_error()
@@ -519,18 +507,18 @@ impl SeqpacketConn {
             }
 
             let mut read = 0;
-            if unsafe { GetOverlappedResult(h as SysHANDLE, &overlapped, &mut read, 1) } == 0 {
+            if unsafe { GetOverlappedResult(h, &overlapped, &mut read, 1) } == 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(read)
         })();
-        let server_pid: ULONG = if matches!(pid_read, Ok(4)) {
+        let server_pid: u32 = if matches!(pid_read, Ok(4)) {
             u32::from_le_bytes(pid_buf)
         } else {
             // Fallback: use GetNamedPipeServerProcessId (returns the creator's PID, which may be
             // our own PID if we created the pipe and passed it to the sidecar).
-            let mut spid: ULONG = 0;
-            unsafe { GetNamedPipeServerProcessId(h as HANDLE, &mut spid) };
+            let mut spid: u32 = 0;
+            unsafe { GetNamedPipeServerProcessId(h, &mut spid) };
             spid
         };
 
@@ -560,7 +548,7 @@ impl SeqpacketConn {
             return Err(io::Error::last_os_error());
         }
         let mut ov = make_overlapped(event);
-        let srv_raw = server_handle.as_raw_handle() as SysHANDLE;
+        let srv_raw = server_handle.as_raw_handle() as HANDLE;
         unsafe { ConnectNamedPipe(srv_raw, &mut ov) };
 
         // connect() blocks reading the 4-byte PID handshake that try_accept() writes after
@@ -571,7 +559,7 @@ impl SeqpacketConn {
         // Wait for the client to connect (ConnectNamedPipe completes).
         unsafe {
             WaitForSingleObject(event, INFINITE);
-            CloseHandle(event as HANDLE);
+            CloseHandle(event);
         }
 
         // Write PID handshake to unblock the client thread's ReadFile in connect().
@@ -606,8 +594,8 @@ impl SeqpacketConn {
         }
     }
 
-    fn raw_handle(&self) -> SysHANDLE {
-        self.handle.as_raw_handle() as SysHANDLE
+    fn raw_handle(&self) -> HANDLE {
+        self.handle.as_raw_handle() as HANDLE
     }
 
     /// Retrieve the peer process's credentials (pid, uid).
@@ -752,7 +740,7 @@ struct ConnectFuture {
 
 impl Drop for ConnectFuture {
     fn drop(&mut self) {
-        unsafe { SetEvent(self.cancel_event.as_raw_handle() as SysHANDLE) };
+        unsafe { SetEvent(self.cancel_event.as_raw_handle() as HANDLE) };
     }
 }
 
@@ -802,8 +790,8 @@ impl SeqpacketListener {
         let (tx, rx) = tokio::sync::oneshot::channel::<io::Result<AsyncConn>>();
 
         std::thread::spawn(move || {
-            let raw = current.as_raw_handle() as SysHANDLE;
-            let cancel_raw = cancel_for_thread.as_raw_handle() as SysHANDLE;
+            let raw = current.as_raw_handle() as HANDLE;
+            let cancel_raw = cancel_for_thread.as_raw_handle() as HANDLE;
 
             // Create event for the overlapped ConnectNamedPipe.
             let overlapped_event = unsafe { CreateEventA(null_mut(), 1, 0, null_mut()) };
@@ -823,7 +811,7 @@ impl SeqpacketListener {
                 || connect_err.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32)
             {
                 // Already connected (e.g. client arrived before ConnectNamedPipe).
-                unsafe { CloseHandle(overlapped_event as HANDLE) };
+                unsafe { CloseHandle(overlapped_event) };
                 Ok(current)
             } else if connect_err.raw_os_error()
                 == Some(windows_sys::Win32::Foundation::ERROR_IO_PENDING as i32)
@@ -832,7 +820,7 @@ impl SeqpacketListener {
                 let handles = [overlapped_event, cancel_raw];
                 let wait = unsafe { WaitForMultipleObjects(2, handles.as_ptr() as _, 0, INFINITE) };
 
-                unsafe { CloseHandle(overlapped_event as HANDLE) };
+                unsafe { CloseHandle(overlapped_event) };
 
                 if wait == WAIT_OBJECT_0 {
                     // Connected.
@@ -852,16 +840,16 @@ impl SeqpacketListener {
                     Err(io::Error::from(io::ErrorKind::Interrupted))
                 }
             } else {
-                unsafe { CloseHandle(overlapped_event as HANDLE) };
+                unsafe { CloseHandle(overlapped_event) };
                 Err(connect_err)
             };
 
             // Write PID handshake and build AsyncConn on success.
             let result = conn_result.and_then(|conn_handle| {
-                let conn_raw = conn_handle.as_raw_handle() as SysHANDLE;
-                let mut client_pid: ULONG = 0;
+                let conn_raw = conn_handle.as_raw_handle() as HANDLE;
+                let mut client_pid: u32 = 0;
                 unsafe {
-                    GetNamedPipeClientProcessId(conn_raw as HANDLE, &mut client_pid);
+                    GetNamedPipeClientProcessId(conn_raw, &mut client_pid);
                 }
                 let pid_bytes = unsafe { GetCurrentProcessId() }.to_le_bytes();
                 pipe_write_blocking(conn_raw, &pid_bytes)?;
@@ -899,7 +887,7 @@ where
         /// Reusable receive buffer. Grows on first use; never shrinks.
         static RECV_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     }
-    let raw = conn.as_raw_handle() as SysHANDLE;
+    let raw = conn.as_raw_handle() as HANDLE;
     tokio::task::block_in_place(|| {
         conn.check_write_error()?;
         RECV_BUF.with_borrow_mut(|buf| {

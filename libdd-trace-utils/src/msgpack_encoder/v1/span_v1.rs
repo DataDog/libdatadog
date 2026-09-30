@@ -4,18 +4,18 @@
 //! Native V1 span encoder: `crate::span::v1::Span` → V1 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
+use crate::span::TraceData;
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
 use crate::span::vec_map::VecMap;
-use crate::span::TraceData;
 use rmp::encode::{
-    write_array_len, write_bin, write_bool, write_f64, write_map_len, write_sint, write_u64,
-    write_uint, write_uint8, RmpWrite, ValueWriteError,
+    RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_map_len,
+    write_sint, write_u64, write_uint, write_uint8,
 };
 use std::borrow::Borrow;
 
 use super::{
-    normalize_span_start, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable,
-    FLAT_ATTR_STRIDE, TYPED_VALUE_STRIDE,
+    AnyValueKey, FLAT_ATTR_STRIDE, SpanEventKey, SpanKey, SpanLinkKey, StringTable,
+    TYPED_VALUE_STRIDE, normalize_span_start,
 };
 
 /// Encodes a typed `AttributeValue` as `[type_uint8, value]`.

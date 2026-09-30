@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
-use libdd_profiling_protobuf::{prost_impls, Record, StringOffset};
+use libdd_profiling_protobuf::{Record, StringOffset, prost_impls};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub enum LabelValue {
