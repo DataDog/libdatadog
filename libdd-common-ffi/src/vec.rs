@@ -145,6 +145,7 @@ impl<T> Default for Vec<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_default() {

@@ -76,7 +76,15 @@ pub struct LibraryConfig {
 }
 
 pub struct Configurator<'a> {
+    #[cfg_attr(
+        not(feature = "std"),
+        expect(dead_code, reason = "only read by the std-only getters")
+    )]
     inner: lib_config::Configurator,
+    #[cfg_attr(
+        not(feature = "std"),
+        expect(dead_code, reason = "only read by the std-only getters")
+    )]
     language: CharSlice<'a>,
     fleet_path: Option<ffi::CStr<'a>>,
     local_path: Option<ffi::CStr<'a>>,

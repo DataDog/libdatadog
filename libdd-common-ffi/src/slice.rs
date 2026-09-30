@@ -345,8 +345,8 @@ impl<'a> CharSlice<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ffi::c_char;
     use core::ptr;
-    use std::os::raw::c_char;
 
     #[test]
     fn slice_from_into_slice() {
