@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::thread;
 use std::time::Duration;
 
 use libdd_shared_runtime::BlockingRuntime;
@@ -106,8 +107,18 @@ pub fn build_datadog_metric_exporter<R>(
 where
     R: BlockingRuntime + Send + Sync + 'static,
 {
-    let inner = runtime
-        .block_on(async { build_metric_exporter(config, temporality) })
+    let build_config = config.clone();
+    let build_runtime = Arc::clone(&runtime);
+    let inner = thread::Builder::new()
+        .name("libdd-otel-metrics-init".to_string())
+        .spawn(move || {
+            build_runtime.block_on(async { build_metric_exporter(&build_config, temporality) })
+        })
+        .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))?
+        .join()
+        .map_err(|_| {
+            BuildWarning::ExporterInitFailed("metrics exporter build thread panicked".to_string())
+        })?
         .map_err(|error| BuildWarning::ExporterInitFailed(error.to_string()))??;
     Ok(DatadogMetricExporter {
         inner,
