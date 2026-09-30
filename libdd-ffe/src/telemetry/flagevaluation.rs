@@ -21,7 +21,9 @@
 //! [`encode_flag_evaluation_payloads`] strips null / empty placeholder entries
 //! from the JSON before the HTTP POST, reproducing the old skip semantics only
 //! on the outbound wire. `#[serde(default)]` is kept on fields that have it for
-//! deserialize robustness.
+//! named-format deserialize robustness; it does not make changed bincode
+//! layouts backward compatible. Build and release the native sender and
+//! sidecar receiver together using matching headers and artifacts.
 
 use super::FfeTelemetryContext;
 use serde::{Deserialize, Serialize};
