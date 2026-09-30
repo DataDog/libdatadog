@@ -3,7 +3,7 @@
 use core::fmt::Write;
 use std::time::SystemTime;
 
-use crate::{ErrorKind, SigInfo};
+use crate::{ErrorKind, SigInfo, parse_tags};
 
 use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
@@ -165,25 +165,6 @@ impl CrashPing {
     }
 }
 
-macro_rules! parse_tags {
-    (   $tag_iterator:expr,
-        $($tag_name:literal => $var:ident),* $(,)?)  => {
-        $(
-            let mut $var: Option<&str> = None;
-        )*
-        for tag in $tag_iterator {
-            let Some((name, value)) = tag.split_once(':') else {
-                continue;
-            };
-            match name {
-                $($tag_name => {$var = Some(value);}, )*
-                _ => {},
-            }
-        }
-
-    };
-}
-
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
     cfg: libdd_telemetry::config::Config,
@@ -303,7 +284,7 @@ impl TelemetryCrashUploader {
     /// Send a crash info telemetry log to indicate that crash processing has completed
     pub async fn upload_crash_info(&self, crash_info: &CrashInfo) -> anyhow::Result<()> {
         let message = serde_json::to_string(crash_info)?;
-        let tags = extract_crash_info_tags(crash_info).unwrap_or_default();
+        let tags = extract_crash_info_tags(crash_info);
         let tracer_time = crash_info.timestamp.parse::<DateTime<Utc>>().map_or_else(
             |_| {
                 SystemTime::now()
@@ -407,12 +388,7 @@ impl TelemetryCrashUploader {
         );
 
         if let Some(sig_info) = sig_info {
-            tags.push_str(&format!(
-                ",si_code_human_readable:{:?},si_signo:{},si_signo_human_readable:{:?}",
-                sig_info.si_code_human_readable,
-                sig_info.si_signo,
-                sig_info.si_signo_human_readable
-            ));
+            sig_info.append_ddtags(&mut tags);
         }
 
         write!(tags, ",runtime_platform:{TARGET_TRIPLE}").ok();
@@ -434,42 +410,8 @@ impl TelemetryCrashUploader {
     }
 }
 
-fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
-    let mut tags = String::new();
-    write!(
-        &mut tags,
-        "data_schema_version:{}",
-        crash_info.data_schema_version
-    )?;
-    if let Some(fingerprint) = &crash_info.fingerprint {
-        write!(&mut tags, ",fingerprint:{fingerprint}")?;
-    }
-    write!(&mut tags, ",incomplete:{}", crash_info.incomplete)?;
-    write!(&mut tags, ",is_crash:{}", crash_info.error.is_crash)?;
-    write!(&mut tags, ",uuid:{}", crash_info.uuid)?;
-    for (counter, value) in &crash_info.counters {
-        write!(&mut tags, ",{counter}:{value}")?;
-    }
-
-    if let Some(siginfo) = &crash_info.sig_info {
-        if let Some(si_addr) = &siginfo.si_addr {
-            write!(&mut tags, ",si_addr:{si_addr}")?;
-        }
-        write!(&mut tags, ",si_code:{}", siginfo.si_code)?;
-        write!(
-            &mut tags,
-            ",si_code_human_readable:{:?}",
-            siginfo.si_code_human_readable
-        )?;
-        write!(&mut tags, ",si_signo:{}", siginfo.si_signo)?;
-        write!(
-            &mut tags,
-            ",si_signo_human_readable:{:?}",
-            siginfo.si_signo_human_readable
-        )?;
-    }
-    write!(&mut tags, ",runtime_platform:{TARGET_TRIPLE}")?;
-    Ok(tags)
+fn extract_crash_info_tags(crash_info: &CrashInfo) -> String {
+    crash_info.ddtags()
 }
 
 #[cfg(test)]
