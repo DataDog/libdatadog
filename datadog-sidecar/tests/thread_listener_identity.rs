@@ -11,8 +11,8 @@ fn thread_listener_restarts_keep_the_served_identity() {
     let peer = PeerCredentials {
         pid: std::process::id(),
         // Use a non-root identity: root is intentionally accepted regardless of the pin.
-        uid: unsafe { libc::geteuid() }.max(1),
-        gid: unsafe { libc::getegid() },
+        uid: 1000,
+        gid: 1000,
     };
     let first = ConnectionAuthorizer::for_in_process_listener();
     first.set_served_identity(peer.uid, peer.gid);
