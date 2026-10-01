@@ -2,6 +2,22 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v9.0.0..libdd-trace-obfuscation-v10.0.0) - 2026-10-01
+
+### Added
+
+- Make json transforms caller-provided ([#2548](https://github.com/datadog/libdatadog/issues/2548)) - ([9eed262](https://github.com/datadog/libdatadog/commit/9eed262f4dcf85c1b65ab659070ff3430bc5a5a2))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+### Fixed
+
+- Revert changes that made /info un-parsable ([#2586](https://github.com/datadog/libdatadog/issues/2586)) - ([8040933](https://github.com/datadog/libdatadog/commit/804093337c593c6e9134c494470749bd8e8a1af1))
+
+
+
 ## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v8.0.0..libdd-trace-obfuscation-v9.0.0) - 2026-09-24
 
 ### Added
