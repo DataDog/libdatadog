@@ -11,6 +11,7 @@ use crate::service::{
     FlagEvalEventContext, FlagKey,
 };
 use httpmock::{Method::POST, MockServer};
+use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 use libdd_ffe::telemetry::flagevaluation::{ContextTruncationReason, EVP_FLAGEVALUATION_PATH};
 use libdd_ipc::codec::{decode, encode};
 use std::io::Write;
@@ -261,6 +262,52 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
         "oversized-identity-canary",
         "protected-context-canary",
         "private-error-canary",
+    ] {
+        assert!(!logs.contains(canary));
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
+fn oversized_ipc_warning_does_not_log_exposure_data() {
+    let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
+    let log_writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || log_writer.clone())
+        .finish();
+    let (client, _peer) = SeqpacketConn::socketpair().unwrap();
+    let mut channel = SidecarInterfaceChannel::new(client);
+    let request = SidecarInterfaceRequest::EnqueueActions {
+        instance_id: InstanceId::new("privacy", "runtime"),
+        queue_id: QueueId::from(42),
+        actions: vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
+            context: FfeTelemetryContext {
+                service: "svc".into(),
+                env: "test".into(),
+                version: "1".into(),
+            },
+            exposures: vec![FfeExposure {
+                timestamp_ms: 123,
+                flag_key: "flag".into(),
+                subject_id: "oversized-identity-canary"
+                    .repeat(libdd_ipc::max_message_size() / 24 + 1),
+                subject_attributes_json: r#"{"email":"private-exposure-context-canary"}"#.into(),
+                allocation_key: "allocation".into(),
+                variant: "on".into(),
+                serial_id: None,
+            }],
+        })],
+    };
+    let sent = tracing::subscriber::with_default(subscriber, || channel.try_send_request(&request));
+    assert!(!sent);
+    let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("IPC message too large"));
+    for canary in [
+        "oversized-identity-canary",
+        "private-exposure-context-canary",
     ] {
         assert!(!logs.contains(canary));
     }

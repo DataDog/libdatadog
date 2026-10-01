@@ -24,7 +24,7 @@ pub enum ContextTruncationReason {
 
 impl ContextTruncationReason {
     /// Every possible reason, in counter order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: &'static [Self] = &[
         Self::MaxContextFields,
         Self::MaxKeyLength,
         Self::MaxValueLength,
@@ -34,6 +34,9 @@ impl ContextTruncationReason {
         Self::MaxVisitedNodes,
         Self::SnapshotError,
     ];
+
+    /// Number of counters, derived from the complete reason list.
+    pub const COUNT: usize = Self::ALL.len();
 
     /// Stable telemetry tag; never contains customer-controlled text.
     pub fn as_str(self) -> &'static str {
@@ -216,6 +219,8 @@ pub(super) fn protected_targeting_key(value: &str) -> String {
 
 /// OpenFeature error codes only: evaluator text can contain customer data even
 /// when the customer consented to collecting evaluation context.
+/// Accept exact canonical codes only; alternate casing, whitespace, and arbitrary
+/// evaluator messages become GENERAL rather than being treated as known codes.
 pub(super) fn error_code(value: &str) -> &'static str {
     match value {
         "PROVIDER_NOT_READY" => "PROVIDER_NOT_READY",
@@ -233,6 +238,30 @@ pub(super) fn error_code(value: &str) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn error_codes_accept_only_canonical_openfeature_values() {
+        for code in [
+            "PROVIDER_NOT_READY",
+            "PROVIDER_FATAL",
+            "FLAG_NOT_FOUND",
+            "PARSE_ERROR",
+            "TYPE_MISMATCH",
+            "TARGETING_KEY_MISSING",
+            "INVALID_CONTEXT",
+            "GENERAL",
+        ] {
+            assert_eq!(error_code(code), code);
+        }
+        for code in [
+            "flag_not_found",
+            "FlagNotFound",
+            " FLAG_NOT_FOUND ",
+            "private-error-canary",
+        ] {
+            assert_eq!(error_code(code), "GENERAL");
+        }
+    }
 
     #[test]
     fn invalid_json_omits_only_context_and_has_a_finite_reason() {

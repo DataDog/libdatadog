@@ -249,10 +249,12 @@ pub struct ContextDD {
 // ── Context pruning ──────────────────────────────────────────────────────────
 
 /// Prune evaluation context attributes to satisfy the flagevaluation bounds:
-/// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
+/// - Only the first `MAX_CONTEXT_FIELDS` (256) entries are inspected. Rejected fields consume
+///   inspection slots, so fewer entries may be retained.
 /// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
 ///   avoid partial-data misattribution.
-/// - Non-string values (bool, number, null) are kept regardless of their display length.
+/// - Scalar non-string values (bool, number, null) are kept regardless of their display length.
+///   Nested containers are subject to the snapshot's width, depth, and node limits.
 /// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
 ///   `BTreeMap` preserves that order.
 pub fn prune_context(
@@ -272,7 +274,7 @@ pub struct FlagEvaluationEvpPayloadBuildResult {
 #[derive(Default)]
 pub struct FlagEvaluationEvpWriterStats {
     /// Represented evaluations affected by each finite context-loss reason.
-    pub context_truncated: [u64; 8],
+    pub context_truncated: [u64; ContextTruncationReason::COUNT],
     /// Represented evaluations with invalid targeting text, not dropped rows.
     pub targeting_key_omitted: u64,
     pub rows_dropped_degraded_cap: u64,
@@ -284,7 +286,7 @@ pub struct FlagEvaluationEvpWriterStats {
 
 #[derive(Default)]
 struct FlagEvaluationEvpWriterCounters {
-    context_truncated: [AtomicU64; 8],
+    context_truncated: [AtomicU64; ContextTruncationReason::COUNT],
     targeting_key_omitted: AtomicU64,
     rows_dropped_degraded_cap: AtomicU64,
     rows_dropped_payload_limit: AtomicU64,
@@ -296,7 +298,7 @@ struct FlagEvaluationEvpWriterCounters {
 impl FlagEvaluationEvpWriterCounters {
     fn record_field_omissions(&self, event: &mut FfeFlagEvaluationEvent) {
         let omissions = std::mem::take(&mut event.field_omissions);
-        for reason in ContextTruncationReason::ALL {
+        for &reason in ContextTruncationReason::ALL {
             if omissions.contains_context(reason) {
                 add_counter(
                     &self.context_truncated[reason as usize],
@@ -354,7 +356,7 @@ fn add_counter(counter: &AtomicU64, count: u64) {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 struct EventKey {
     // Degraded rows intentionally ignore consent, unlike full-detail rows.
     consent: Option<bool>,
@@ -517,14 +519,17 @@ where
                 continue;
             }
 
+            let was_degraded_on_arrival = event.is_degraded;
             event.targeting_key = None;
             event.context = None;
             event.is_degraded = true;
             let evaluation_count = event.evaluation_count;
             let degraded_key = EventKey::degraded(&event);
             if merge_pending_event(&mut state, &destination, &degraded_key, &event) {
-                self.writer_stats
-                    .add_rows_degraded_cardinality_cap(evaluation_count);
+                if !was_degraded_on_arrival {
+                    self.writer_stats
+                        .add_rows_degraded_cardinality_cap(evaluation_count);
+                }
                 continue;
             }
 
@@ -539,8 +544,10 @@ where
 
             if insert_pending_event(&mut state, &destination, degraded_key, event) {
                 state.degraded_bucket_count += 1;
-                self.writer_stats
-                    .add_rows_degraded_cardinality_cap(evaluation_count);
+                if !was_degraded_on_arrival {
+                    self.writer_stats
+                        .add_rows_degraded_cardinality_cap(evaluation_count);
+                }
             }
         }
 
@@ -1110,14 +1117,56 @@ mod tests {
         protected.observe_full_evaluation_data = false;
         let mut consented = protected.clone();
         consented.observe_full_evaluation_data = true;
-        assert_ne!(EventKey::new(&protected), EventKey::new(&consented));
-        assert_eq!(
-            EventKey::degraded(&protected),
-            EventKey::degraded(&consented)
-        );
+        assert!(EventKey::new(&protected) != EventKey::new(&consented));
+        assert!(EventKey::degraded(&protected) == EventKey::degraded(&consented));
         protected.targeting_key = None;
         protected.context = None;
-        assert_ne!(EventKey::new(&protected), EventKey::degraded(&protected));
+        assert!(EventKey::new(&protected) != EventKey::degraded(&protected));
+        protected.is_degraded = true;
+        consented.is_degraded = true;
+        assert!(EventKey::new(&protected) == EventKey::degraded(&protected));
+        assert!(EventKey::new(&consented) == EventKey::degraded(&consented));
+        assert!(EventKey::new(&protected) == EventKey::new(&consented));
+    }
+
+    #[test]
+    fn pre_degraded_rows_coalesce_without_counting_a_cardinality_transition() {
+        for first_consent in [false, true] {
+            let coalescer = FlagEvaluationEvpCoalescer::default();
+            let mut first = full_event();
+            first.is_degraded = true;
+            first.observe_full_evaluation_data = first_consent;
+            first.evaluation_count = 5;
+            let mut second = first.clone();
+            second.observe_full_evaluation_data = !first_consent;
+            second.targeting_key = Some("another-identity".into());
+            second.context.as_mut().unwrap().evaluation = Some(r#"{"other":true}"#.into());
+            second.evaluation_count = 7;
+            for event in [first, second] {
+                coalescer.enqueue(
+                    "destination",
+                    FfeFlagEvaluationBatch {
+                        context: context(),
+                        flag_evaluations: vec![event],
+                    },
+                );
+                let stats = coalescer.collect_writer_stats();
+                assert_eq!(stats.rows_degraded_cardinality_cap, 0);
+                assert_eq!(stats.rows_dropped_degraded_cap, 0);
+            }
+            let state = coalescer.state.lock().unwrap();
+            assert_eq!(state.full_bucket_count, 0);
+            assert_eq!(state.degraded_bucket_count, 1);
+            drop(state);
+            let batches = coalescer.take_batches();
+            let events = &batches[0].1.flag_evaluations;
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].evaluation_count, 12);
+            assert!(events[0].is_degraded);
+            assert!(!events[0].observe_full_evaluation_data);
+            assert!(events[0].targeting_key.is_none());
+            assert!(events[0].context.is_none());
+        }
     }
 
     #[test]
@@ -1253,7 +1302,7 @@ mod tests {
         );
         let next = coalescer.collect_writer_stats();
         assert_eq!(next.targeting_key_omitted, 0);
-        assert_eq!(next.context_truncated, [0; 8]);
+        assert_eq!(next.context_truncated, [0; ContextTruncationReason::COUNT]);
         let batches = coalescer.take_batches();
         assert_eq!(batches[0].1.flag_evaluations[0].evaluation_count, 14);
         assert_eq!(

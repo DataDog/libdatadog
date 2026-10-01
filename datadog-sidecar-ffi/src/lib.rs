@@ -1421,8 +1421,8 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 ///
 /// # Safety
 /// All slices must reference valid memory under the CharSlice contract. Context
-/// metadata and flag/variant/allocation/rule fields must be UTF-8. Malformed
-/// targeting/context text is omitted; malformed error text becomes GENERAL.
+/// metadata and flag keys must be UTF-8. Malformed optional variant, allocation,
+/// rule, targeting, and context text is omitted; malformed error text becomes GENERAL.
 /// A null/zero targeting slice means missing; a non-null empty slice means empty.
 /// Empty `flag_evaluations` is a no-op. Use headers and library from the same build.
 #[unsafe(no_mangle)]
@@ -1606,10 +1606,9 @@ fn ffe_flag_evaluation_from_ffi(
         first_evaluation: event.first_evaluation_ms,
         last_evaluation: event.last_evaluation_ms,
         evaluation_count: event.evaluation_count,
-        variant: optional_string(event.variant)?.map(|key| VariantKey { key }),
-        allocation: optional_string(event.allocation_key)?.map(|key| AllocationKey { key }),
-        targeting_rule: optional_string(event.targeting_rule_key)?
-            .map(|key| TargetingRuleKey { key }),
+        variant: optional_utf8(event.variant).map(|key| VariantKey { key }),
+        allocation: optional_utf8(event.allocation_key).map(|key| AllocationKey { key }),
+        targeting_rule: optional_utf8(event.targeting_rule_key).map(|key| TargetingRuleKey { key }),
         targeting_key,
         context,
         error: (!event.error_message.is_empty()).then(|| EvalError {
@@ -1638,6 +1637,15 @@ fn ffe_metric_from_ffi(
         error_type: optional_string(metric.error_type)?,
         allocation_key: optional_string(metric.allocation_key)?,
     })
+}
+
+// Malformed optional flagevaluation dimensions must not discard healthy batch siblings.
+fn optional_utf8(slice: CharSlice) -> Option<String> {
+    if slice.is_empty() {
+        None
+    } else {
+        slice.try_to_utf8().ok().map(str::to_owned)
+    }
 }
 
 fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
@@ -2291,7 +2299,14 @@ mod tests {
             event.targeting_key = malformed;
             event.evaluation_context_json = malformed;
             event.error_message = malformed;
-            let events = [event, ffi_flag_evaluation("{}")];
+            event.variant = malformed;
+            event.allocation_key = malformed;
+            event.targeting_rule_key = malformed;
+            let mut healthy = ffi_flag_evaluation("{}");
+            healthy.variant = CharSlice::from("on");
+            healthy.allocation_key = CharSlice::from("allocation");
+            healthy.targeting_rule_key = CharSlice::from("rule");
+            let events = [event, healthy];
             let converted = events
                 .iter()
                 .map(|e| ffe_flag_evaluation_from_ffi(e, "svc"))
@@ -2299,6 +2314,13 @@ mod tests {
                 .unwrap();
             assert_eq!(converted.len(), 2);
             assert_eq!(converted[0].evaluation_count, 7);
+            assert!(converted[0].variant.is_none());
+            assert!(converted[0].allocation.is_none());
+            assert!(converted[0].targeting_rule.is_none());
+            assert_eq!(converted[1].variant.as_ref().unwrap().key, "on");
+            assert_eq!(converted[1].allocation.as_ref().unwrap().key, "allocation");
+            assert_eq!(converted[1].targeting_rule.as_ref().unwrap().key, "rule");
+            assert_eq!(converted[1].evaluation_count, 7);
             assert!(converted[0].targeting_key.is_none());
             assert!(converted[0].context.as_ref().unwrap().evaluation.is_none());
             assert_eq!(converted[0].error.as_ref().unwrap().message, "GENERAL");
@@ -2310,6 +2332,16 @@ mod tests {
                 consent
             );
         }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_rejects_malformed_required_flag() {
+        let invalid = [0xffu8];
+        // SAFETY: the borrowed bytes outlive the conversion below.
+        let malformed = unsafe { CharSlice::from_raw_parts(invalid.as_ptr().cast(), 1) };
+        let mut event = ffi_flag_evaluation("{}");
+        event.flag_key = malformed;
+        assert!(ffe_flag_evaluation_from_ffi(&event, "svc").is_err());
     }
 
     #[test]
