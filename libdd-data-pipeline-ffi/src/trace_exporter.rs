@@ -945,7 +945,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 
 /// Consumes the exporter and waits at most `timeout_ms` for its workers to flush.
 /// The handle is consumed on success and error. Other workers on a shared runtime
-/// are unaffected. Unlike `ddog_trace_exporter_free`, the wait is bounded.
+/// are unaffected. The deadline bounds worker flushing, not runtime destruction:
+/// dropping the last runtime owner can additionally wait for blocking tasks such
+/// as system DNS resolution. Hosts must account for that separately.
 ///
 /// # Safety
 ///
