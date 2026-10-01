@@ -220,6 +220,7 @@ fn test_ddog_sidecar_register_app() {
             "".into(),
             "".into(),
             "".into(),
+            false,
         )
         .unwrap_none();
 
@@ -332,6 +333,7 @@ fn test_ddog_sidecar_register_app() {
             "".into(),
             "".into(),
             "".into(),
+            false,
         )
         .unwrap_none();
 
