@@ -56,6 +56,13 @@ fn generated_header_exposes_native_evp_transport_abi() {
         "common.h",
         generated.path().to_path_buf(),
     );
+    // Seed shared option types with telemetry's unconditional definitions before
+    // deduplicating platform-specific sidecar declarations, as in release builds.
+    build_common::generate_header(
+        workspace.join("libdd-telemetry-ffi"),
+        "telemetry.h",
+        generated.path().to_path_buf(),
+    );
     // Windows-only sidecar declarations use crashtracker metadata. Include
     // those definitions in the shared header just as the release builder does.
     build_common::generate_header(
@@ -71,11 +78,13 @@ fn generated_header_exposes_native_evp_transport_abi() {
 
     let include_dir = generated.path().join(build_common::HEADER_PATH);
     let common_header = include_dir.join("common.h");
+    let telemetry_header = include_dir.join("telemetry.h");
     let crashtracker_header = include_dir.join("crashtracker.h");
     let sidecar_header = include_dir.join("sidecar.h");
     tools::headers::dedup_headers(
         common_header.to_str().unwrap(),
         &[
+            telemetry_header.to_str().unwrap(),
             crashtracker_header.to_str().unwrap(),
             sidecar_header.to_str().unwrap(),
         ],
