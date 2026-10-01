@@ -153,6 +153,7 @@ impl ConnectionSession {
             .clone_from(&config.tracer_version);
         tracer_config.retry_interval =
             u64::try_from(config.retry_interval.as_millis()).unwrap_or(u64::MAX);
+        tracer_config.force_v04 = config.force_v04_traces;
 
         let mut debugger_config = libdd_live_debugger::sender::Config::default();
         debugger_config
@@ -412,6 +413,17 @@ impl ConnectionSession {
         {
             self.remote_config_notify_target.clone()
         }
+    }
+
+    /// The agent info of this session's endpoint; `None` when agentless.
+    pub(crate) fn agent_info(&self) -> Option<&AgentInfoGuard> {
+        self.agent_info.as_deref()
+    }
+
+    /// Replaces the agent info, for tests that prime it from a mock agent.
+    #[cfg(test)]
+    pub(crate) fn set_agent_info(&mut self, agent_info: AgentInfoGuard) {
+        self.agent_info = Some(Arc::new(agent_info));
     }
 
     fn debugger_config(&self) -> Cow<'_, libdd_live_debugger::sender::Config> {

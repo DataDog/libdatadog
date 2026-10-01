@@ -79,6 +79,8 @@ pub struct Config {
     pub language_version: String,
     pub tracer_version: String,
     pub retry_interval: u64,
+    /// Downgrade V1 payloads to v0.4 regardless of the agent's `/info`.
+    pub force_v04: bool,
 }
 
 impl Config {

@@ -729,6 +729,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_connection_config(
                 Some(parent_session_id.to_utf8_lossy().into())
             },
             retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
+            force_v04_traces: false,
         };
         #[cfg(unix)]
         let _ = win_remote_config_notification;
