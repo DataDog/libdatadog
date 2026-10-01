@@ -31,7 +31,7 @@ mod linux {
     // This is ugly, but I couldn't get cbindgen to generate the corresponding #define in any other
     // way. It doesn't like re-exports (pub use), and doing `pub const MAX_ATTRS_DATA_SIZE = _MAX`
     // (where `_MAX` has been imported properly) generates something dumb such as `#define
-    // ddog_MAX_ATTRS_DATA_SIZE = _MAX` instead of propagating the actual value.
+    // ddog_MAX_ATTRS_DATA_SIZE _MAX` instead of propagating the actual value.
     // This solution is at least marginally better than prepending a hardcoded define manually in
     // build.rs, as it will at least keep the value in sync.
     pub const MAX_ATTRS_DATA_SIZE: usize = 612;
@@ -59,9 +59,11 @@ mod linux {
     ///
     /// # Safety
     ///
+    /// **`ctx` must not be a handle to a  currently attached to a thread**. Only free detached
+    /// contexts.
+    ///
     /// `ctx` must be a valid non-null pointer obtained from `ddog_otel_thread_ctx_new` or
-    /// `ddog_otel_thread_ctx_detach`, and must not be used after this call. In particular, `ctx`
-    /// must not be currently attached to a thread.
+    /// `ddog_otel_thread_ctx_detach`, and must not be used after this call.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
         if let Some(ctx) = NonNull::new(ctx) {
@@ -74,9 +76,10 @@ mod linux {
     ///
     /// # Safety
     ///
-    /// `ctx` must be a valid non-null pointer obtained from this API. Ownership of `ctx` is
-    /// transferred to the TLS slot: the caller must not drop `ctx` while it is still actively
-    /// attached.
+    /// Ownership of `ctx` is transferred to the TLS slot. **The caller must NOT free `ctx` while it
+    /// is still actively attached**.
+    ///
+    /// `ctx` must be a valid non-null pointer obtained from this API.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
         ctx: *mut ThreadContextHandle,
