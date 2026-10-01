@@ -2,6 +2,18 @@
 
 
 
+## [14.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v13.0.0..libdd-trace-utils-v14.0.0) - 2026-10-01
+
+### Added
+
+- Add mutable metadata ([#2545](https://github.com/datadog/libdatadog/issues/2545)) - ([823002e](https://github.com/datadog/libdatadog/commit/823002e431dff914aa7332d2647ec73d0537f9f3))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [13.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v12.0.0..libdd-trace-utils-v13.0.0) - 2026-09-24
 
 ### Added
