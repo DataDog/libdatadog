@@ -94,6 +94,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     span_obfuscation_config: ObfuscationConfig,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
+    observations: bool,
     #[cfg(feature = "telemetry")]
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<R>>,
@@ -170,6 +171,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             span_obfuscation_config: ObfuscationConfig::default(),
             #[cfg(feature = "telemetry")]
             telemetry: None,
+            observations: false,
             #[cfg(feature = "telemetry")]
             telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
             shared_runtime: None,
@@ -416,6 +418,14 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Only applied in the agentless export path.
     pub fn set_span_obfuscation_config(&mut self, config: ObfuscationConfig) -> &mut Self {
         self.span_obfuscation_config = config;
+        self
+    }
+
+    /// Select external observation delivery. Native telemetry workers are not constructed,
+    /// including when `enable_telemetry` was also called. Consume send reports with
+    /// `send_trace_chunks_observed` and background deltas with `take_stats_observations`.
+    pub fn enable_observations(&mut self) -> &mut Self {
+        self.observations = true;
         self
     }
 
@@ -785,7 +795,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             // Telemetry talks to the agent; disable it in agentless and log-export modes.
             let telemetry = self
                 .telemetry
-                .filter(|_| !(agentless_enabled || self.output_to_log))
+                .filter(|_| !(agentless_enabled || self.output_to_log || self.observations))
                 .map(|telemetry_config| -> Result<_, TraceExporterError> {
                     let mut tb = TelemetryClientBuilder::default()
                         .set_language(&self.language)
@@ -1089,6 +1099,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
 
         Ok(TraceExporter {
+            observations: self
+                .observations
+                .then(|| Arc::new(super::CollapsedSpansObservations::default())),
             endpoint: Endpoint {
                 url: agent_url,
                 test_token: self.test_session_token.map(|token| token.into()),
