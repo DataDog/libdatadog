@@ -36,7 +36,7 @@ rmp-serde.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
-libdd-capabilities-impl = { version = "6.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "7.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-shared-runtime = { version = "5.1.0", path = "../libdd-shared-runtime" }
 libdd-common = { path = "../libdd-common", default-features = false }
