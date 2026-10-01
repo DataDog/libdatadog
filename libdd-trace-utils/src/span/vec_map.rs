@@ -176,6 +176,13 @@ impl<K, V> VecMap<K, V> {
         self.data.iter_mut()
     }
 
+    /// Iterate mutably over the values, including duplicate entries. Unlike [Self::iter_mut], this
+    /// keeps the `deduped` flag: keys can't change, so no duplicate can appear.
+    #[inline]
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.data.iter_mut().map(|(_, v)| v)
+    }
+
     /// Return the length of the underlying vector, thus including duplicate entries.
     #[inline]
     pub fn len(&self) -> usize {
@@ -584,6 +591,16 @@ mod tests {
 
         m.extend(vec![("b", 2)]);
         assert!(!m.is_deduped());
+    }
+
+    #[test]
+    fn values_mut_keeps_dedup_flag() {
+        let mut m = VecMap::new();
+        m.insert("a", 1);
+        m.dedup();
+        m.values_mut().for_each(|v| *v += 1);
+        assert!(m.is_deduped());
+        assert_eq!(m.get("a"), Some(&2));
     }
 
     #[test]
