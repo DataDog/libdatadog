@@ -47,4 +47,4 @@ rmp.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
-libdd-trace-obfuscation = { version = "9.0.0", path = "../libdd-trace-obfuscation", default-features = false }
+libdd-trace-obfuscation = { version = "10.0.0", path = "../libdd-trace-obfuscation", default-features = false }
