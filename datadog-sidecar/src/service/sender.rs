@@ -11,6 +11,7 @@
 //!
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
+use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::{
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     sidecar_interface::{
@@ -27,6 +28,9 @@ use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
+
+#[cfg(all(test, unix))]
+mod ffe_submission_tests;
 
 /// Priority outbox for state-change (coalesced) messages.
 ///
@@ -169,6 +173,88 @@ pub struct SidecarSender {
 }
 
 impl SidecarSender {
+    /// Advisory FFE admission check. Drains available ACKs but never waits,
+    /// reconnects, advances shedding, or reserves a slot.
+    pub fn check_ffe_submission(&mut self) -> FfeSubmissionStatus {
+        if self.channel.0.is_closed() {
+            return FfeSubmissionStatus::Unavailable;
+        }
+        if self.channel.0.outstanding() >= self.max_outstanding / 2 {
+            self.channel.0.drain_acks();
+        }
+        if self.channel.0.is_closed() {
+            FfeSubmissionStatus::Unavailable
+        } else if self.channel.0.outstanding() >= self.max_outstanding {
+            FfeSubmissionStatus::QueueFull
+        } else {
+            FfeSubmissionStatus::Ready
+        }
+    }
+
+    /// Submit one FFE observation without waiting or reconnecting. `build` runs
+    /// only after admission; it must bound and normalize borrowed input before
+    /// ownership. No request is retained when submission is rejected.
+    pub fn try_submit_ffe<F>(&mut self, build: F) -> FfeSubmissionStatus
+    where
+        F: FnOnce() -> Result<SidecarInterfaceRequest, FfeSubmissionStatus>,
+    {
+        let status = self.check_ffe_submission();
+        if status != FfeSubmissionStatus::Ready {
+            return status;
+        }
+        if !self.try_drain_outbox() {
+            return if self.channel.0.is_closed() {
+                FfeSubmissionStatus::Unavailable
+            } else {
+                FfeSubmissionStatus::PriorityPending
+            };
+        }
+        let status = self.check_ffe_submission();
+        if status != FfeSubmissionStatus::Ready {
+            return status;
+        }
+        if self.channel.0.outstanding() > self.max_outstanding / 2 {
+            self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
+            if self.enqueue_actions_counter != 0 {
+                return FfeSubmissionStatus::LoadShed;
+            }
+        }
+        let request = match build() {
+            Ok(request) => request,
+            Err(status) => return status,
+        };
+        if !matches!(&request, SidecarInterfaceRequest::EnqueueActions { actions, .. }
+            if matches!(actions.as_slice(), [SidecarAction::FfeFlagEvaluationBatch(batch)]
+                if batch.flag_evaluations.len() == 1))
+        {
+            return FfeSubmissionStatus::InvalidInput;
+        }
+        let size = match bincode::serialized_size(&request) {
+            Ok(size) => size,
+            Err(_) => return FfeSubmissionStatus::EncodingError,
+        };
+        let Ok(size) = usize::try_from(size) else {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        };
+        if size > libdd_ipc::max_message_size() {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        }
+        let Some(capacity) = size.checked_add(libdd_ipc::platform::HANDLE_SUFFIX_SIZE) else {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        };
+        let mut data = Vec::with_capacity(capacity);
+        if bincode::serialize_into(&mut data, &request).is_err() {
+            return FfeSubmissionStatus::EncodingError;
+        }
+        if self.channel.0.try_send(data, &[]) {
+            FfeSubmissionStatus::Accepted
+        } else if self.channel.0.is_closed() {
+            FfeSubmissionStatus::Unavailable
+        } else {
+            FfeSubmissionStatus::WouldBlock
+        }
+    }
+
     pub fn new(channel: SidecarInterfaceChannel) -> Self {
         Self {
             channel,
