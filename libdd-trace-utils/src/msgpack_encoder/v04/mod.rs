@@ -73,6 +73,9 @@ macro_rules! write_const_msgpack_str {
 mod span_v04;
 mod span_v1;
 
+// Re-exported so introspection (`datadog-sidecar-ffi`) picks the same local root as the wire.
+pub use span_v1::local_root_idx;
+
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
@@ -249,16 +252,15 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1::{ChunkContext, encode_span};
+    use span_v1::{ChunkContext, encode_span, local_root_idx};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        // v0.4 has no wire-level equivalent of `dropped_trace`; the closest historical signal
-        // is `USER_REJECT` (priority -1), which tells the agent the sampler rejected this trace
-        // without dropping the spans themselves. Only force it when the chunk doesn't already
-        // carry a negative (reject-like) priority.
+        // v0.4 has no wire-level equivalent of `dropped_trace`; preserve the chunk's own
+        // sampling priority (so AUTO_REJECT `0` stays `0`) and default to `-1` only when the
+        // chunk carries no priority at all.
         let priority = if chunk.dropped_trace {
-            Some(chunk.priority.filter(|&p| p < 0).unwrap_or(-1))
+            chunk.priority.or(Some(-1))
         } else {
             chunk.priority
         };
@@ -272,9 +274,10 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
             &payload.app_version,
             &payload.attributes,
         );
+        let root_idx = local_root_idx(chunk.spans.iter());
         write_array_len(writer, chunk.spans.len() as u32)?;
-        for span in &chunk.spans {
-            encode_span(writer, span, &ctx)?;
+        for (i, span) in chunk.spans.iter().enumerate() {
+            encode_span(writer, span, &ctx, i == root_idx, i == 0)?;
         }
     }
     Ok(())
