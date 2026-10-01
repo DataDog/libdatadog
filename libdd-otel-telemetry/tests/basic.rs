@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use libdd_otel_telemetry::{InstrumentDescriptor, InstrumentKind, OtelMetricsAggregatorBuilder};
+use libdd_otel_telemetry::{
+    InstrumentDescriptor, InstrumentKind, KeyValue, OtelMetricsAggregatorBuilder,
+};
 use libdd_shared_runtime::BasicRuntime;
 use libdd_shared_runtime::SharedRuntime;
 
@@ -25,11 +27,7 @@ fn register_and_record_without_an_exporter_never_panics() {
         InstrumentKind::ObservableGauge,
     ));
 
-    aggregator.record_counter(
-        counter_id,
-        1.0,
-        &[("route".to_string(), "/health".to_string())],
-    );
+    aggregator.record_counter(counter_id, 1.0, &[KeyValue::new("route", "/health")]);
     aggregator.observe_gauge(gauge_id, 42.0, &[]);
 
     aggregator
@@ -93,7 +91,7 @@ fn observable_callback_runs_during_native_collection() {
             callback_invocations.fetch_add(1, Ordering::Relaxed);
             vec![ObservableMeasurement::new(
                 42.0,
-                vec![("pool".to_string(), "default".to_string())],
+                vec![KeyValue::new("pool", "default")],
             )]
         }),
     );

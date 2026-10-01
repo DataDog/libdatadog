@@ -13,10 +13,10 @@
 //!
 //! [`OtelMetricsAggregator`]'s public API never accepts or returns an OTel SDK object. Consumers
 //! register synchronous instruments once (getting back an opaque [`InstrumentId`]) and push
-//! primitive values (`f64` + string key/value attributes). Observable instruments instead
-//! register a host adapter callback that returns the same primitive measurements. The native
-//! metrics reader invokes that adapter during collection, so every language can use the same
-//! scheduling and aggregation mechanism.
+//! primitive values (`f64` plus OpenTelemetry API [`KeyValue`] attributes). Observable instruments
+//! instead register a host adapter callback that returns the same primitive measurements. The
+//! native metrics reader invokes that adapter during collection, so every language can use the
+//! same scheduling and aggregation mechanism.
 //!
 //! Keeping the boundary primitives-only is deliberate, not incidental: it's what makes this
 //! crate usable from Rust (dd-trace-rs, today) and, later, from other languages via a C-ABI
@@ -49,4 +49,5 @@ pub use exporter::{DatadogMetricExporter, build_datadog_metric_exporter};
 pub use instrument::{
     InstrumentDescriptor, InstrumentId, InstrumentKind, ObservableCallback, ObservableMeasurement,
 };
+pub use opentelemetry::{Array as AttributeArray, KeyValue, Value as AttributeValue};
 pub use resource::ResourceBuilder;

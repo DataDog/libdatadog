@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use opentelemetry::KeyValue;
+
 /// Opaque handle to an instrument registered on a [`crate::OtelMetricsAggregator`].
 ///
 /// This is the only thing consumers hold onto for an instrument — never the underlying SDK
@@ -14,11 +16,11 @@ pub struct InstrumentId(pub u64);
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservableMeasurement {
     pub value: f64,
-    pub attributes: Vec<(String, String)>,
+    pub attributes: Vec<KeyValue>,
 }
 
 impl ObservableMeasurement {
-    pub fn new(value: f64, attributes: Vec<(String, String)>) -> Self {
+    pub fn new(value: f64, attributes: Vec<KeyValue>) -> Self {
         Self { value, attributes }
     }
 }
@@ -55,7 +57,7 @@ pub struct InstrumentDescriptor {
     pub meter_name: String,
     pub meter_version: Option<String>,
     pub meter_schema_url: Option<String>,
-    pub meter_attributes: Vec<(String, String)>,
+    pub meter_attributes: Vec<KeyValue>,
 }
 
 impl InstrumentDescriptor {
@@ -96,8 +98,8 @@ impl InstrumentDescriptor {
     }
 
     /// Sets instrumentation-scope attributes, normalized for stable scope identity.
-    pub fn with_scope_attributes(mut self, mut attributes: Vec<(String, String)>) -> Self {
-        attributes.sort_unstable();
+    pub fn with_scope_attributes(mut self, mut attributes: Vec<KeyValue>) -> Self {
+        attributes.sort_by(|left, right| left.key.as_str().cmp(right.key.as_str()));
         attributes.dedup();
         self.meter_attributes = attributes;
         self
@@ -106,23 +108,22 @@ impl InstrumentDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use opentelemetry::KeyValue;
+
     use super::{InstrumentDescriptor, InstrumentKind};
 
     #[test]
     fn scope_attributes_have_stable_identity() {
         let descriptor = InstrumentDescriptor::new("requests", InstrumentKind::Counter)
             .with_scope_attributes(vec![
-                ("z".to_string(), "last".to_string()),
-                ("a".to_string(), "first".to_string()),
-                ("a".to_string(), "first".to_string()),
+                KeyValue::new("z", "last"),
+                KeyValue::new("a", "first"),
+                KeyValue::new("a", "first"),
             ]);
 
         assert_eq!(
             descriptor.meter_attributes,
-            vec![
-                ("a".to_string(), "first".to_string()),
-                ("z".to_string(), "last".to_string()),
-            ]
+            vec![KeyValue::new("a", "first"), KeyValue::new("z", "last"),]
         );
     }
 }

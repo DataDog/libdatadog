@@ -255,12 +255,7 @@ pub(crate) fn build_metric_exporter(
 }
 
 /// Identifies an OpenTelemetry instrumentation scope.
-type MeterScope = (
-    String,
-    Option<String>,
-    Option<String>,
-    Vec<(String, String)>,
-);
+type MeterScope = (String, Option<String>, Option<String>, Vec<KeyValue>);
 
 /// Aggregates primitive metric observations from a host tracer and exports them via OTLP.
 ///
@@ -330,7 +325,7 @@ impl OtelMetricsAggregator {
         if let Some(schema_url) = &descriptor.meter_schema_url {
             scope = scope.with_schema_url(schema_url.clone());
         }
-        scope = scope.with_attributes(Self::attrs(&descriptor.meter_attributes));
+        scope = scope.with_attributes(descriptor.meter_attributes.clone());
         let meter = self.provider.meter_with_scope(scope.build());
         meters.insert(key, meter.clone());
         meter
@@ -403,10 +398,7 @@ impl OtelMetricsAggregator {
                     builder
                         .with_callback(move |observer| {
                             for measurement in callback() {
-                                observer.observe(
-                                    measurement.value,
-                                    &Self::attrs(&measurement.attributes),
-                                );
+                                observer.observe(measurement.value, &measurement.attributes);
                             }
                         })
                         .build(),
@@ -424,10 +416,7 @@ impl OtelMetricsAggregator {
                     builder
                         .with_callback(move |observer| {
                             for measurement in callback() {
-                                observer.observe(
-                                    measurement.value,
-                                    &Self::attrs(&measurement.attributes),
-                                );
+                                observer.observe(measurement.value, &measurement.attributes);
                             }
                         })
                         .build(),
@@ -445,10 +434,7 @@ impl OtelMetricsAggregator {
                     builder
                         .with_callback(move |observer| {
                             for measurement in callback() {
-                                observer.observe(
-                                    measurement.value,
-                                    &Self::attrs(&measurement.attributes),
-                                );
+                                observer.observe(measurement.value, &measurement.attributes);
                             }
                         })
                         .build(),
@@ -458,16 +444,8 @@ impl OtelMetricsAggregator {
         }
     }
 
-    fn attrs(pairs: &[(String, String)]) -> Vec<KeyValue> {
-        pairs
-            .iter()
-            .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
-            .collect()
-    }
-
     /// Records a synchronous measurement using the instrument kind captured at registration.
-    pub fn record(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
-        let attributes = Self::attrs(attrs);
+    pub fn record(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         match self
             .instruments
             .lock()
@@ -475,18 +453,18 @@ impl OtelMetricsAggregator {
             .get(&id)
         {
             Some(InstrumentHandle::Counter(counter)) if value >= 0.0 || value.is_nan() => {
-                counter.add(value, &attributes);
+                counter.add(value, attrs);
             }
-            Some(InstrumentHandle::UpDownCounter(counter)) => counter.add(value, &attributes),
+            Some(InstrumentHandle::UpDownCounter(counter)) => counter.add(value, attrs),
             Some(InstrumentHandle::Histogram(histogram)) if value >= 0.0 || value.is_nan() => {
-                histogram.record(value, &attributes);
+                histogram.record(value, attrs);
             }
-            Some(InstrumentHandle::Gauge(gauge)) => gauge.record(value, &attributes),
+            Some(InstrumentHandle::Gauge(gauge)) => gauge.record(value, attrs),
             _ => {}
         }
     }
 
-    pub fn record_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+    pub fn record_counter(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         if value < 0.0 {
             return;
         }
@@ -496,22 +474,22 @@ impl OtelMetricsAggregator {
             .unwrap_or_else(|e| e.into_inner())
             .get(&id)
         {
-            counter.add(value, &Self::attrs(attrs));
+            counter.add(value, attrs);
         }
     }
 
-    pub fn record_up_down_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+    pub fn record_up_down_counter(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         if let Some(InstrumentHandle::UpDownCounter(counter)) = self
             .instruments
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&id)
         {
-            counter.add(value, &Self::attrs(attrs));
+            counter.add(value, attrs);
         }
     }
 
-    pub fn record_histogram(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+    pub fn record_histogram(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         if value < 0.0 {
             return;
         }
@@ -521,24 +499,24 @@ impl OtelMetricsAggregator {
             .unwrap_or_else(|e| e.into_inner())
             .get(&id)
         {
-            histogram.record(value, &Self::attrs(attrs));
+            histogram.record(value, attrs);
         }
     }
 
     /// Pushes a resolved value for a synchronous gauge.
-    pub fn observe_gauge(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+    pub fn observe_gauge(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         if let Some(InstrumentHandle::Gauge(gauge)) = self
             .instruments
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&id)
         {
-            gauge.record(value, &Self::attrs(attrs));
+            gauge.record(value, attrs);
         }
     }
 
     /// Pushes a resolved value for a synchronous counter backed by the counter handle.
-    pub fn observe_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+    pub fn observe_counter(&self, id: InstrumentId, value: f64, attrs: &[KeyValue]) {
         self.record_counter(id, value, attrs);
     }
 
