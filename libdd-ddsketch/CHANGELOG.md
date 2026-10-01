@@ -2,6 +2,14 @@
 
 
 
+## [1.1.3](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.2..libdd-ddsketch-v1.1.3) - 2026-10-01
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [1.1.2](https://github.com/datadog/libdatadog/compare/libdd-ddsketch-v1.1.1..libdd-ddsketch-v1.1.2) - 2026-09-24
 
 ### Changed
