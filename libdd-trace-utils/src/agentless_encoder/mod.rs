@@ -26,14 +26,14 @@
 //!
 //! TODO: span normalization (service/name/resource/type truncation + defaults)
 
-use crate::hex::{hex_low_u64, hex_u128, hex_u64};
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::hex::{hex_low_u64, hex_u64, hex_u128};
 use crate::span::v1;
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use crate::tracer_metadata::TracerMetadata;
 use serde::{
-    ser::{SerializeMap, SerializeSeq},
     Serialize, Serializer,
+    ser::{SerializeMap, SerializeSeq},
 };
 use std::borrow::{Borrow, Cow};
 use std::collections::HashSet;
@@ -188,9 +188,16 @@ fn encode_trace<T: TraceData>(
             &metadata.tracer_version,
         )?;
     }
-    if !metadata.runtime_id.is_empty() {
-        serialize_fixed_entry(bytes, &mut first, br#""runtimeID":"#, &metadata.runtime_id)?;
+    let mutable_metadata = metadata.mutable_metadata.load();
+    if !mutable_metadata.runtime_id.is_empty() {
+        serialize_fixed_entry(
+            bytes,
+            &mut first,
+            br#""runtimeID":"#,
+            &mutable_metadata.runtime_id,
+        )?;
     }
+    drop(mutable_metadata);
     if let Some(container_id) = libdd_common::entity_id::get_container_id() {
         serialize_fixed_entry(bytes, &mut first, br#""containerID":"#, container_id)?;
     }
@@ -691,12 +698,13 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     client_side_stats: bool,
 ) -> Result<S::Ok, S::Error> {
     let container_id = libdd_common::entity_id::get_container_id();
+    let mutable_metadata = metadata.mutable_metadata.load();
     let len = 2 // hostname + spans
         + usize::from(!metadata.env.is_empty())
         + usize::from(!metadata.language.is_empty())
         + usize::from(!metadata.language_version.is_empty())
         + usize::from(!metadata.tracer_version.is_empty())
-        + usize::from(!metadata.runtime_id.is_empty())
+        + usize::from(!mutable_metadata.runtime_id.is_empty())
         + usize::from(container_id.is_some());
     let mut map = ser.serialize_map(Some(len))?;
 
@@ -713,8 +721,8 @@ fn encode_trace_v1<T: TraceData, S: Serializer>(
     if !metadata.tracer_version.is_empty() {
         map.serialize_entry("tracerVersion", &metadata.tracer_version)?;
     }
-    if !metadata.runtime_id.is_empty() {
-        map.serialize_entry("runtimeID", &metadata.runtime_id)?;
+    if !mutable_metadata.runtime_id.is_empty() {
+        map.serialize_entry("runtimeID", &mutable_metadata.runtime_id)?;
     }
     if let Some(container_id) = container_id {
         map.serialize_entry("containerID", container_id)?;

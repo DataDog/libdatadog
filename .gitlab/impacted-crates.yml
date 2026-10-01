@@ -8,7 +8,8 @@
 # tool writes its results to the file named by $GITHUB_OUTPUT, so we point $GITHUB_OUTPUT at
 # a temp file and parse it here -- no changes to the Rust code are required.
 #
-# Only the benchmarks job consumes this today; other test jobs can depend on it later.
+# The benchmarks job consumes this directly; trigger_internal_build forwards it to the
+# libddprof-build pipeline as trigger variables.
 
 compute_impacted_crates:
   stage: test
@@ -57,6 +58,23 @@ compute_impacted_crates:
       printf 'AFFECTED_CRATES=%s\nIMPACTED_STATUS=%s\n' "$AFFECTED_CRATES" "$IMPACTED_STATUS" | tee impacted-crates.env
       # Record the changed files so downstream jobs can make path-based decisions.
       git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
+      # Classifications for the downstream pipeline, which cannot read changed_files.txt.
+      # - FFI_TOUCHED=false skips packaging. Absent means undetermined, making the the full chain run.
+      # - WORKSPACE_LEVEL_CHANGE indicates if there are workspace-level changes that can affect everything.
+      FFI_PATH_RE='(^[a-z0-9][a-z0-9-]*-ffi/|^builder/|^build-common/|^cmake/|^examples/ffi/|^tests/run-package-tests\.ps1$|^tests/windows_package/|^windows/|^Cargo\.lock$|^Cargo\.toml$|^Cross\.toml$|^rust-toolchain\.toml$|^nightly-toolchain\.toml$|^\.cargo/)'
+      WORKSPACE_LEVEL_RE='^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|nightly-toolchain\.toml)$'
+      if [[ -s changed_files.txt ]]; then
+        if grep -Eq "$FFI_PATH_RE" changed_files.txt; then
+          echo "FFI_TOUCHED=true" >> impacted-crates.env
+        else
+          echo "FFI_TOUCHED=false" >> impacted-crates.env
+        fi
+        if grep -Eq "$WORKSPACE_LEVEL_RE" changed_files.txt; then
+          echo "WORKSPACE_LEVEL_CHANGE=true" >> impacted-crates.env
+        else
+          echo "WORKSPACE_LEVEL_CHANGE=false" >> impacted-crates.env
+        fi
+      fi
   artifacts:
     when: always
     reports:

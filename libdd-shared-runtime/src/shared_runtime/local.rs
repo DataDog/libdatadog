@@ -3,14 +3,15 @@
 
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
+use libdd_capabilities::maybe_send::MaybeSync;
 use libdd_common::MutexExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error};
 
 use super::{
-    pausable_worker::PausableWorker, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry,
-    WorkerHandle,
+    BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
+    pausable_worker::PausableWorker,
 };
 
 /// Single-threaded local executor runtime for wasm32.
@@ -54,7 +55,7 @@ impl SharedRuntime for LocalRuntime {
         })
     }
 
-    fn spawn_worker<T: Worker + Sync + 'static>(
+    fn spawn_worker<T: Worker + MaybeSync + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,

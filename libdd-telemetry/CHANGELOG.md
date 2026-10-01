@@ -2,6 +2,20 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v8.0.0..libdd-telemetry-v9.0.0) - 2026-09-24
+
+### Changed
+
+- Apply small timeout pooling strategy to libdd-http-client as well ([#2449](https://github.com/datadog/libdatadog/issues/2449)) - ([16e10db](https://github.com/datadog/libdatadog/commit/16e10db927db4adcdf386cd09535e100bdf4f587))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Fall back to the proper intake telemetry domain when direct submission is enabled ([#2484](https://github.com/datadog/libdatadog/issues/2484)) - ([8d052a3](https://github.com/datadog/libdatadog/commit/8d052a3c12bdf4461029e696145a4ab84ffb8272))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v7.0.0..libdd-telemetry-v8.0.0) - 2026-09-08
 
 ### Changed

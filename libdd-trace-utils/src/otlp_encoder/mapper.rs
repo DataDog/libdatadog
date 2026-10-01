@@ -11,19 +11,19 @@
 
 use super::OtlpResourceInfo;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-    any_value::Value as ProtoValue, AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue,
-    InstrumentationScope as ProtoScope, KeyValue as ProtoKeyValue,
+    AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue, InstrumentationScope as ProtoScope,
+    KeyValue as ProtoKeyValue, any_value::Value as ProtoValue,
 };
 use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource as ProtoResource;
 use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
-    span::{Event as ProtoEvent, Link as ProtoLink},
     ResourceSpans as ProtoResourceSpans, ScopeSpans as ProtoScopeSpans, Span as ProtoSpan,
     Status as ProtoStatus,
+    span::{Event as ProtoEvent, Link as ProtoLink},
 };
 
 /// Maximum number of attributes per span; excess are dropped and counted.
@@ -401,7 +401,8 @@ pub(super) fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource 
         "telemetry.sdk.version",
         &resource_info.tracer_version,
     );
-    push_str_attr(&mut attributes, "runtime-id", &resource_info.runtime_id);
+    let mutable_metadata = resource_info.mutable_metadata.load();
+    push_str_attr(&mut attributes, "runtime-id", &mutable_metadata.runtime_id);
     // Tells Datadog Agent OTLP receivers to skip their concentrator; prevents double-counted
     // APM metrics.
     if resource_info.client_computed_stats {

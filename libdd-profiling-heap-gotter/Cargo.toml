@@ -26,10 +26,10 @@ test-support = []
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 libdd-gotter = { version = "1.1.0", path = "../libdd-gotter" }
-libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.1.0", path = "../libdd-profiling-heap-sampler" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc.workspace = true
-libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.1.0", path = "../libdd-profiling-heap-sampler" }
 # Only sync #[serial] is used; `logging`/`async` defaults are unneeded.
 serial_test.workspace = true

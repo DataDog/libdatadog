@@ -112,36 +112,38 @@ impl ProfilesDictionaryTranslator {
         string_table: &mut StringTable,
         id2: MappingId2,
     ) -> anyhow::Result<Option<MappingId>> {
-        // Translate null MappingId2 to Ok(None). This is different from
-        // functions because the internal module uses Option<MappingId>,
-        // whereas it assumes functions are required.
-        let Some(nn) = NonNull::new(id2.0) else {
-            return Ok(None);
-        };
-        let set_id = SetId(nn.cast::<dt::Mapping>());
-        if let Some(internal) = self.mappings.get(&set_id) {
-            return Ok(Some(*internal));
-        }
+        unsafe {
+            // Translate null MappingId2 to Ok(None). This is different from
+            // functions because the internal module uses Option<MappingId>,
+            // whereas it assumes functions are required.
+            let Some(nn) = NonNull::new(id2.0) else {
+                return Ok(None);
+            };
+            let set_id = SetId(nn.cast::<dt::Mapping>());
+            if let Some(internal) = self.mappings.get(&set_id) {
+                return Ok(Some(*internal));
+            }
 
-        // SAFETY: This is safe if `id2` (the MappingId2) was created by
-        // `self.profiles_dictionary`, which is a precondition of calling
-        // this method.
-        let mapping = unsafe { *self.profiles_dictionary.mappings().get(set_id) };
-        let internal = Mapping {
-            memory_start: mapping.memory_start,
-            memory_limit: mapping.memory_limit,
-            file_offset: mapping.file_offset,
-            filename: self.translate_string(string_table, mapping.filename)?,
-            build_id: self.translate_string(string_table, mapping.build_id)?,
-        };
-        let internal_id = mappings
-            .try_dedup(internal)
-            .context("failed to deduplicate mapping in ProfilesDictionaryTranslator")?;
-        self.mappings.try_reserve(1).context(
-            "failed to reserve memory for a new mapping in ProfilesDictionaryTranslator",
-        )?;
-        self.mappings.insert(set_id, internal_id);
-        Ok(Some(internal_id))
+            // SAFETY: This is safe if `id2` (the MappingId2) was created by
+            // `self.profiles_dictionary`, which is a precondition of calling
+            // this method.
+            let mapping = *self.profiles_dictionary.mappings().get(set_id);
+            let internal = Mapping {
+                memory_start: mapping.memory_start,
+                memory_limit: mapping.memory_limit,
+                file_offset: mapping.file_offset,
+                filename: self.translate_string(string_table, mapping.filename)?,
+                build_id: self.translate_string(string_table, mapping.build_id)?,
+            };
+            let internal_id = mappings
+                .try_dedup(internal)
+                .context("failed to deduplicate mapping in ProfilesDictionaryTranslator")?;
+            self.mappings.try_reserve(1).context(
+                "failed to reserve memory for a new mapping in ProfilesDictionaryTranslator",
+            )?;
+            self.mappings.insert(set_id, internal_id);
+            Ok(Some(internal_id))
+        }
     }
 
     /// Translates a StringRef from the ProfilesDictionary into a StringId

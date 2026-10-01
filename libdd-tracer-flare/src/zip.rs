@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use http::Method;
-use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_common::{Endpoint, MutexExt, http_common};
 use libdd_remote_config::config::agent_task::AgentTaskFile;
 use std::{
     collections::HashMap,
@@ -15,9 +15,9 @@ use std::{
 };
 use tempfile::tempfile;
 use walkdir::WalkDir;
-use zip::{write::FileOptions, ZipWriter};
+use zip::{ZipWriter, write::FileOptions};
 
-use crate::{error::FlareError, FlareAction, LogLevel, TracerFlareManager};
+use crate::{FlareAction, LogLevel, TracerFlareManager, error::FlareError};
 
 /// Adds a single file to the zip archive with the specified options and relative path
 fn add_file_to_zip(
@@ -280,7 +280,7 @@ impl TracerFlareManager {
             _ => {
                 return Err(FlareError::SendError(
                     "Trying to send the flare with a non Send Action".to_string(),
-                ))
+                ));
             }
         };
 

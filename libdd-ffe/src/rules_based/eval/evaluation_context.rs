@@ -51,7 +51,7 @@ impl EvaluationContext {
 mod pyo3_impl {
     use super::*;
 
-    use pyo3::{intern, prelude::*, types::PyDict, Borrowed};
+    use pyo3::{Borrowed, intern, prelude::*, types::PyDict};
 
     /// Accepts either a dict with `"targeting_key"` and `"attributes"` items, or any object with
     /// `targeting_key` and `attributes` attributes.

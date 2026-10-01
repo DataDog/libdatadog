@@ -6,8 +6,8 @@ use crate::span::TraceData;
 use rand::{Rng as _, SeedableRng as _};
 use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
 /// V1 counterpart of [`crate::span::span_pool`]'s drop policy: see its docs for the rationale.

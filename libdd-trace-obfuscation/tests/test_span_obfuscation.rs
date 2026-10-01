@@ -21,16 +21,15 @@ use libdd_trace_obfuscation::{
     obfuscation_config::ObfuscationConfig,
 };
 use libdd_trace_protobuf::pb::{
-    self, attribute_any_value::AttributeAnyValueType,
-    attribute_array_value::AttributeArrayValueType, AttributeAnyValue, AttributeArray,
-    AttributeArrayValue, Span, SpanEvent,
+    self, AttributeAnyValue, AttributeArray, AttributeArrayValue, Span, SpanEvent,
+    attribute_any_value::AttributeAnyValueType, attribute_array_value::AttributeArrayValueType,
 };
 use libdd_trace_utils::span::{
+    BytesData,
     v04::{
         AttributeAnyValue as V04AttributeAnyValue, AttributeArrayValue as V04AttributeArrayValue,
         SpanBytes, SpanEventBytes, SpanLinkBytes,
     },
-    BytesData,
 };
 use serde::Deserialize;
 
@@ -485,11 +484,7 @@ impl Display for SpanComparison<'_> {
             }
             let l = fmt_attribute_value(left);
             let r = fmt_attribute_value(right);
-            if l == r {
-                l
-            } else {
-                format!("{l} != {r}")
-            }
+            if l == r { l } else { format!("{l} != {r}") }
         }
 
         fn cmp_span_events(left: &[SpanEvent], right: &[SpanEvent]) -> String {

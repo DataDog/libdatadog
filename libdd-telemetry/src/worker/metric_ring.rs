@@ -36,9 +36,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::Notify;
 
+use crate::Tag;
 use crate::data::metrics::MetricType;
 use crate::metrics::ContextKey;
-use crate::Tag;
 
 /// Number of slots. Must be a power of two.
 const RING_SIZE: usize = 2048;
@@ -195,8 +195,8 @@ impl Default for MetricRing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     fn key(index: u32, t: MetricType) -> ContextKey {
         ContextKey::from_parts(index, t)
@@ -258,18 +258,20 @@ mod tests {
             let done = done.clone();
             let consumed = consumed.clone();
             let value_sum = value_sum.clone();
-            std::thread::spawn(move || loop {
-                ring.drain(|v, _k, _t| {
-                    consumed.fetch_add(1, Ordering::Relaxed);
-                    value_sum.fetch_add(v as u64, Ordering::Relaxed);
-                });
-                if done.load(Ordering::Acquire)
-                    && ring.read_pos.load(Ordering::Acquire)
-                        == ring.write_pos.load(Ordering::Acquire)
-                {
-                    break;
+            std::thread::spawn(move || {
+                loop {
+                    ring.drain(|v, _k, _t| {
+                        consumed.fetch_add(1, Ordering::Relaxed);
+                        value_sum.fetch_add(v as u64, Ordering::Relaxed);
+                    });
+                    if done.load(Ordering::Acquire)
+                        && ring.read_pos.load(Ordering::Acquire)
+                            == ring.write_pos.load(Ordering::Acquire)
+                    {
+                        break;
+                    }
+                    std::hint::spin_loop();
                 }
-                std::hint::spin_loop();
             })
         };
 

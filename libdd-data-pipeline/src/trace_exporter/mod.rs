@@ -18,16 +18,16 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::agentless::AgentlessTraceConfig;
 use crate::agentless::exporter::{
     send_agentless_traces_with_observer, send_agentless_traces_with_observer_v1,
 };
-use crate::agentless::AgentlessTraceConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::otlp::exporter::OTLP_RETRY_DELAY_MS;
-use crate::otlp::exporter::{send_otlp_http_with_observer, OTLP_MAX_RETRIES};
-use crate::otlp::{map_traces_to_otlp, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::exporter::{OTLP_MAX_RETRIES, send_otlp_http_with_observer};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::otlp::{send_otlp_traces_grpc, GrpcExportError, OtlpGrpcTransport};
+use crate::otlp::{GrpcExportError, OtlpGrpcTransport, send_otlp_traces_grpc};
+use crate::otlp::{OtlpResourceInfo, OtlpTraceConfig, map_traces_to_otlp};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -45,12 +45,12 @@ use crate::{
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use futures::stream::{FuturesUnordered, StreamExt};
+use http::Uri;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
-use http::Uri;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
@@ -61,12 +61,12 @@ use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::otlp_encoder::mapper_v1::map_traces_to_otlp_v1;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
 use libdd_trace_utils::span::v1::TraceChunk;
-use libdd_trace_utils::span::{trace_utils_v1, v04::Span, TraceData};
+use libdd_trace_utils::span::v1::chunk_pool::PooledTraceChunks;
+use libdd_trace_utils::span::{TraceData, trace_utils_v1, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -329,9 +329,9 @@ pub struct TraceExporter<
 }
 
 impl<
-        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
-        R: SharedRuntime,
-    > TraceExporter<C, R>
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> TraceExporter<C, R>
 {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
@@ -785,6 +785,48 @@ impl<
             self.check_agent_info().await;
         }
         self.send_trace_chunks_inner(trace_chunks).await
+    }
+
+    /// Force an immediate flush of client-computed stats if stats computation is currently
+    /// enabled.
+    ///
+    /// # Returns
+    ///
+    /// `true` when client-side stats computation is enabled and a flush was requested.
+    /// `false` when stats computation is disabled. A `true` return does not guarantee that
+    /// the flush completed: if the stats worker was concurrently shut down (during forks
+    /// for instance), no flush is performed.
+    pub async fn flush_client_side_stats_async(&self) -> bool {
+        let status = self.client_side_stats.status.load_full();
+        if let StatsComputationStatus::Enabled { flush_handle, .. } = &*status {
+            if let Some(exporter) = flush_handle.upgrade() {
+                exporter.force_flush().await;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sync call over [`Self::flush_client_side_stats_async`]
+    ///
+    /// # Panics
+    ///
+    /// Panics if called inside an existing tokio context.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn flush_client_side_stats(&self) -> bool
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime
+            .block_on(self.flush_client_side_stats_async())
+            .unwrap_or_else(|e| {
+                debug!(
+                    ?e,
+                    "Failed to run client-side stats flush on the shared runtime"
+                );
+                false
+            })
     }
 
     /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
@@ -1621,7 +1663,6 @@ impl<
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,
-    pub runtime_id: Option<String>,
     pub debug_enabled: bool,
 }
 
@@ -1635,8 +1676,8 @@ pub trait ResponseCallback {
 mod tests {
     use self::error::AgentErrorKind;
     use super::*;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
@@ -1813,9 +1854,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1841,9 +1884,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1866,9 +1911,11 @@ mod tests {
             },
         });
         exporter.refresh_v1_active(&agent_info);
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
     }
 
     fn read(socket: &net::UdpSocket) -> String {
@@ -3169,8 +3216,8 @@ mod tests {
 mod telemetry_metrics_tests {
     use super::*;
     use crate::trace_exporter::tests::build_test_exporter;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;

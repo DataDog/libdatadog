@@ -1,5 +1,9 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 license = "Apache 2.0"
 name = "datadog-sidecar"
 version = "0.0.1"
@@ -19,7 +23,7 @@ anyhow = { workspace = true, default-features = true }
 arc-swap = { workspace = true, optional = true }
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
-libdd-capabilities = { path = "../libdd-capabilities", version = "3.0.1" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
@@ -49,7 +53,7 @@ base64 = { workspace = true, features = ["std"] }
 spawn_worker = { path = "../spawn_worker" }
 zwohash = { workspace = true, default-features = true }
 sha2 = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "sync", "io-util", "signal", "rt-multi-thread", "time"] }
 tokio-util = { workspace = true, features = ["codec"] }
 
 prctl.workspace = true
@@ -64,7 +68,6 @@ libc.workspace = true
 
 # watchdog and self telemetry
 memory-stats = { workspace = true, features = ["always_use_statm"] }
-
 
 # unstable-only feature
 [target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies]
@@ -83,11 +86,13 @@ nix = { workspace = true, features = ["socket", "mman"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
 libc.workspace = true
+serial_test.workspace = true
 tempfile.workspace = true
 httpmock.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }

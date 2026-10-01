@@ -27,6 +27,9 @@ pub mod headers {
         .unwrap()
     });
 
+    static EMPTY_GUARD: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)^#if[^\n]*\n\s*#endif\n").unwrap());
+
     /// Gather all top level typedef and #define definitions from a C header file
     fn collect_definitions(header: &str) -> Vec<Span<'_>> {
         let mut items = Vec::new();
@@ -129,6 +132,46 @@ pub mod headers {
         s.trim_end()
     }
 
+    // cbindgen repeats a type's outer platform guard around its fields and variants.
+    // Removing those redundant inner guards lets us find an existing unconditional copy.
+    fn without_redundant_guards(header: &str, def: &Span<'_>) -> Option<String> {
+        let mut guards = Vec::new();
+        for line in header[..def.start].lines().map(str::trim) {
+            if line.starts_with("#if ")
+                || line.starts_with("#ifdef ")
+                || line.starts_with("#ifndef ")
+            {
+                guards.push(Some(line));
+            } else if line == "#endif" {
+                guards.pop()?;
+            } else if line.starts_with("#else") || line.starts_with("#elif ") {
+                *guards.last_mut()? = None;
+            }
+        }
+        let guard = guards.last().copied().flatten()?;
+        if !guard.starts_with("#if ") {
+            return None;
+        }
+        let mut result = String::new();
+        let mut depth = 0usize;
+        let mut removed = false;
+        for line in statement_text(def.str).lines() {
+            let directive = line.trim();
+            if directive == guard {
+                depth += 1;
+                removed = true;
+            } else if directive == "#endif" {
+                depth = depth.checked_sub(1)?;
+            } else if directive.starts_with('#') {
+                return None;
+            } else {
+                result.push_str(line);
+                result.push('\n');
+            }
+        }
+        (removed && depth == 0).then(|| result.trim_end().to_owned())
+    }
+
     fn is_ident(s: &str) -> bool {
         let mut b = s.bytes();
         b.next()
@@ -225,27 +268,32 @@ pub mod headers {
     }
 
     pub fn dedup_headers(base: &str, headers: &[&str]) {
-        let mut unique_child_defs: Vec<String> = Vec::new();
+        let mut unique_child_defs = Vec::new();
         let mut present = HashSet::new();
 
-        for child_def in headers.iter().flat_map(|p| {
+        for (child_def, unguarded) in headers.iter().flat_map(|p| {
             let child_header = OpenOptions::new().read(true).write(true).open(p).unwrap();
 
             let child_header_content = read(&mut BufReader::new(&child_header));
             let child_defs = collect_definitions(&child_header_content);
             let new_content_parts = content_without_defs(&child_header_content, &child_defs);
 
-            write_parts(&mut BufWriter::new(&child_header), &new_content_parts).unwrap();
+            let without_defs = new_content_parts.concat();
+            let without_empty_guards = EMPTY_GUARD.replace_all(&without_defs, "");
+            write_parts(&mut BufWriter::new(&child_header), &[&without_empty_guards]).unwrap();
 
             child_defs
                 .into_iter()
-                .map(|m| m.str.to_owned())
+                .map(|m| {
+                    let unguarded = without_redundant_guards(&child_header_content, &m);
+                    (m.str.to_owned(), unguarded)
+                })
                 .collect::<Vec<_>>()
         }) {
             if present.contains(&child_def) {
                 continue;
             }
-            unique_child_defs.push(child_def.clone());
+            unique_child_defs.push((child_def.clone(), unguarded));
             present.insert(child_def);
         }
 
@@ -258,10 +306,19 @@ pub mod headers {
         let base_header_content = read(&mut BufReader::new(&base_header));
         let base_defs = collect_definitions(&base_header_content);
         let base_defs_set: HashSet<_> = base_defs.iter().map(|s| s.str).collect();
+        let statements: HashSet<_> = base_defs
+            .iter()
+            .map(|def| statement_text(def.str))
+            .chain(unique_child_defs.iter().map(|(def, _)| statement_text(def)))
+            .collect();
 
         let mut base_new_parts = vec![&base_header_content[..base_defs.last().unwrap().end]];
-        for child_def in &unique_child_defs {
-            if base_defs_set.contains(child_def.as_str()) {
+        for (child_def, unguarded) in &unique_child_defs {
+            if base_defs_set.contains(child_def.as_str())
+                || unguarded
+                    .as_deref()
+                    .is_some_and(|stmt| statements.contains(stmt))
+            {
                 continue;
             }
             base_new_parts.push(child_def);
@@ -280,6 +337,34 @@ pub mod headers {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn redundant_platform_guards_match_unconditional_types() {
+            let header = "#if defined(_WIN32)\ntypedef enum Option_Tag {\n#if defined(_WIN32)\n  SOME,\n#endif\n#if defined(_WIN32)\n  NONE,\n#endif\n} Option_Tag;\n\ntypedef struct Option {\n  Option_Tag tag;\n#if defined(_WIN32)\n  int value;\n#endif\n} Option;\n#endif\n";
+            let defs = collect_definitions(header);
+            assert_eq!(
+                without_redundant_guards(header, &defs[0]).as_deref(),
+                Some("typedef enum Option_Tag {\n  SOME,\n  NONE,\n} Option_Tag;")
+            );
+            assert_eq!(
+                without_redundant_guards(header, &defs[1]).as_deref(),
+                Some("typedef struct Option {\n  Option_Tag tag;\n  int value;\n} Option;")
+            );
+        }
+
+        #[test]
+        fn differing_or_alternative_guards_are_preserved() {
+            for branch in [
+                "#if defined(__linux__)\n  int a;\n#endif",
+                "#if defined(_WIN32)\n  int a;\n#else\n  int b;\n#endif",
+            ] {
+                let header = format!(
+                    "#if defined(_WIN32)\ntypedef struct Foo {{\n{branch}\n}} Foo;\n#endif\n"
+                );
+                let defs = collect_definitions(&header);
+                assert!(without_redundant_guards(&header, &defs[0]).is_none());
+            }
+        }
 
         #[track_caller]
         fn test_regex_match(input: &str, expected: Vec<&str>) {

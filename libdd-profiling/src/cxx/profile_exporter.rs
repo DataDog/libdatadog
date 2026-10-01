@@ -7,7 +7,7 @@ use super::ffi;
 use super::profile::EncodedProfile;
 use crate::exporter;
 use crate::internal;
-use libdd_common::{parse_uri, Endpoint};
+use libdd_common::{Endpoint, parse_uri};
 
 struct PreparedExportArgs<'a> {
     files: Vec<(String, &'a [u8])>,
@@ -36,11 +36,7 @@ fn optional_json(value: &str) -> anyhow::Result<Option<serde_json::Value>> {
 }
 
 fn optional_str(value: &str) -> Option<&str> {
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn apply_timeout_and_resolver(
