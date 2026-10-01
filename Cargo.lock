@@ -3433,7 +3433,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
