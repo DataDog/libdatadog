@@ -602,16 +602,9 @@ where
             Some(scope) if transforms => ParserPhase::AwaitingTransform { keep: Some(scope) },
             Some(scope) => ParserPhase::KeepingValue(scope),
             // A key in both sets is kept rather than transformed.
-            None if self
-                .config
-                .keep_keys
-                .as_ref()
-                .is_some_and(|keep_keys| keep_keys.contains(key)) =>
-            {
-                ParserPhase::KeepingValue(KeptSubtree {
-                    parent_depth: depth,
-                })
-            }
+            None if self.config.keep_keys.contains(key) => ParserPhase::KeepingValue(KeptSubtree {
+                parent_depth: depth,
+            }),
             None if transforms => ParserPhase::AwaitingTransform { keep: None },
             None => ParserPhase::AwaitingValue,
         };
@@ -747,12 +740,10 @@ mod tests {
     fn obf(keep_keys: &[&str]) -> JsonObfuscator {
         JsonObfuscator::new(JsonObfuscatorConfig {
             enabled: true,
-            keep_keys: Some(
-                keep_keys
-                    .iter()
-                    .map(alloc::string::ToString::to_string)
-                    .collect(),
-            ),
+            keep_keys: keep_keys
+                .iter()
+                .map(alloc::string::ToString::to_string)
+                .collect(),
             ..Default::default()
         })
     }
@@ -760,12 +751,10 @@ mod tests {
     fn obf_keys(keep_keys: &[&str], transform_keys: &[&str]) -> JsonObfuscator {
         JsonObfuscator::new(JsonObfuscatorConfig {
             enabled: true,
-            keep_keys: Some(
-                keep_keys
-                    .iter()
-                    .map(alloc::string::ToString::to_string)
-                    .collect(),
-            ),
+            keep_keys: keep_keys
+                .iter()
+                .map(alloc::string::ToString::to_string)
+                .collect(),
             transform_keys: transform_keys
                 .iter()
                 .map(alloc::string::ToString::to_string)
