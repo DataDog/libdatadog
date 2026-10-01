@@ -6,6 +6,7 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
+pub use crate::trace_exporter::observations::SendPayloadTelemetry;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::tag::Tag;
@@ -13,11 +14,7 @@ use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
     TelemetryWorkerFlavor, TelemetryWorkerHandle,
 };
-use libdd_trace_utils::{
-    send_with_retry::{SendWithRetryError, SendWithRetryResult},
-    trace_utils::SendDataResult,
-};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 /// Structure to build a Telemetry client.
 ///
@@ -199,110 +196,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 }
 
-/// Telemetry describing the sending of a trace payload
-/// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
-#[derive(PartialEq, Debug, Default)]
-pub struct SendPayloadTelemetry {
-    requests_count: u64,
-    errors_network: u64,
-    errors_timeout: u64,
-    errors_status_code: u64,
-    bytes_sent: u64,
-    chunks_sent: u64,
-    chunks_dropped_serialization_error: u64,
-    chunks_dropped_send_failure: u64,
-    spans_enqueued_for_serialization: u64,
-    spans_dropped_serialization_error: u64,
-    spans_dropped_api_error: u64,
-    responses_count_per_code: HashMap<u16, u64>,
-}
-
-impl From<&SendDataResult> for SendPayloadTelemetry {
-    fn from(value: &SendDataResult) -> Self {
-        Self {
-            requests_count: value.requests_count,
-            errors_network: value.errors_network,
-            errors_timeout: value.errors_timeout,
-            errors_status_code: value.errors_status_code,
-            bytes_sent: value.bytes_sent,
-            chunks_sent: value.chunks_sent,
-            chunks_dropped_send_failure: value.chunks_dropped,
-            responses_count_per_code: value.responses_count_per_code.clone(),
-            ..Default::default()
-        }
-    }
-}
-
-impl SendPayloadTelemetry {
-    /// Create a [`SendPayloadTelemetry`] from a [`SendWithRetryResult`].
-    ///
-    /// # Arguments
-    /// * `value` - The result of sending traces with retry
-    /// * `bytes_sent` - The number of bytes in the payload
-    /// * `chunks` - The number of trace chunks in the payload
-    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
-        let mut telemetry = Self::default();
-        match value {
-            Ok((response, attempts)) => {
-                telemetry.chunks_sent = chunks;
-                telemetry.bytes_sent = bytes_sent;
-                telemetry
-                    .responses_count_per_code
-                    .insert(response.status().as_u16(), 1);
-                telemetry.requests_count = *attempts as u64;
-            }
-            Err(err) => match err {
-                SendWithRetryError::Http(response, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_status_code = 1;
-                    telemetry
-                        .responses_count_per_code
-                        .insert(response.status().as_u16(), 1);
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Timeout(attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_timeout = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Network(_, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::ResponseBody(attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
-                }
-                SendWithRetryError::Build(attempts) => {
-                    telemetry.chunks_dropped_serialization_error = chunks;
-                    telemetry.requests_count = *attempts as u64;
-                }
-            },
-        };
-        telemetry
-    }
-
-    pub(crate) fn from_retry_result_with_spans(
-        value: &SendWithRetryResult,
-        bytes_sent: u64,
-        chunks: u64,
-        spans: u64,
-    ) -> Self {
-        let mut telemetry = Self::from_retry_result(value, bytes_sent, chunks);
-        telemetry.spans_enqueued_for_serialization = spans;
-        match value {
-            Err(SendWithRetryError::Build(_)) => {
-                telemetry.spans_dropped_serialization_error = spans;
-            }
-            Err(_) => telemetry.spans_dropped_api_error = spans,
-            Ok(_) => {}
-        }
-        telemetry
-    }
-}
-
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
@@ -429,6 +322,8 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_trace_utils::{send_with_retry::SendWithRetryError, trace_utils::SendDataResult};
+    use std::collections::HashMap;
 
     use libdd_common::mutable_metadata::MutableMetadata;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
