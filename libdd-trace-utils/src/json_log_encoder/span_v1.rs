@@ -92,7 +92,7 @@ impl<'a, T: TraceData> ChunkContextV1<'a, T> {
 /// callers can skip emitting the default value.
 fn span_kind_to_meta(kind: SpanKind) -> Option<&'static str> {
     match kind {
-        SpanKind::Internal => None,
+        SpanKind::Unspecified | SpanKind::Internal => None,
         SpanKind::Server => Some("server"),
         SpanKind::Client => Some("client"),
         SpanKind::Producer => Some("producer"),
