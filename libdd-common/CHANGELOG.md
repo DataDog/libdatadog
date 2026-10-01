@@ -2,6 +2,23 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v7.0.0..libdd-common-v8.0.0) - 2026-10-01
+
+### Added
+
+- Authenticate sidecar connections and shared memory ([#2551](https://github.com/datadog/libdatadog/issues/2551)) - ([d120c10](https://github.com/datadog/libdatadog/commit/d120c1090a03fa7274fed4121344d25660081895))
+- Add mutable metadata ([#2545](https://github.com/datadog/libdatadog/issues/2545)) - ([823002e](https://github.com/datadog/libdatadog/commit/823002e431dff914aa7332d2647ec73d0537f9f3))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+### Fixed
+
+- Use atomic deadlines for shared limiters ([#2604](https://github.com/datadog/libdatadog/issues/2604)) - ([e8c680a](https://github.com/datadog/libdatadog/commit/e8c680a7e30f64ae0b33ed19bb86024fa8d5b882))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v6.0.0..libdd-common-v7.0.0) - 2026-09-24
 
 ### Changed
