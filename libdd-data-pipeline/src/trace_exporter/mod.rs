@@ -893,7 +893,7 @@ impl<
         };
         #[cfg(feature = "telemetry")]
         let payload_len = body.len();
-        let result = send_otlp_http_with_observer(
+        send_otlp_http_with_observer(
             &self.capabilities,
             &config_to_use.endpoint_url,
             &config_to_use.headers,
@@ -911,8 +911,7 @@ impl<
                 self.emit_retry_result(_result, payload_len, counts);
             },
         )
-        .await;
-        result?;
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
@@ -1008,7 +1007,7 @@ impl<
         };
         #[cfg(feature = "telemetry")]
         let payload_len = body.len();
-        let result = send_otlp_http_with_observer(
+        send_otlp_http_with_observer(
             &self.capabilities,
             &config_to_use.endpoint_url,
             &config_to_use.headers,
@@ -1026,8 +1025,7 @@ impl<
                 self.emit_retry_result(_result, payload_len, counts);
             },
         )
-        .await;
-        result?;
+        .await?;
         Ok(AgentResponse::Unchanged)
     }
 
