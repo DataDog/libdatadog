@@ -113,7 +113,7 @@ benchmarks:
     - |
       set -u
       f="${CI_PROJECT_DIR}/.cache-failures.log"
-      if [[ -s "$f" ]]; then
+      if [[ -e "$f" ]]; then
         echo "" >&2
         echo "CACHE FAILED:" >&2
         cat "$f" >&2

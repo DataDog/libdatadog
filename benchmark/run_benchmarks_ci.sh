@@ -26,7 +26,7 @@ record_cache_failure() {
   echo "$*" >> "${CACHE_FAILURES_LOG}" 2>/dev/null || :
 }
 report_cache_failures() {
-  if [[ -s "${CACHE_FAILURES_LOG}" ]]; then
+  if [[ -e "${CACHE_FAILURES_LOG}" ]]; then
     echo "" >&2
     echo "CACHE FAILED:" >&2
     cat "${CACHE_FAILURES_LOG}" >&2
