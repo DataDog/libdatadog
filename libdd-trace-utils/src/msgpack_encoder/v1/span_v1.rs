@@ -5,7 +5,7 @@
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
 use crate::span::TraceData;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
+use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::VecMap;
 use rmp::encode::{
     RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_map_len,
@@ -247,8 +247,9 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let has_env = !span.env.borrow().is_empty();
     let has_version = !span.version.borrow().is_empty();
     let has_component = !span.component.borrow().is_empty();
+    let has_kind = span.span_kind != SpanKind::Unspecified;
 
-    let span_len = 3 // span_id, start, kind — always present
+    let span_len = 2 // span_id, start — always present
         + (!span.service.borrow().is_empty()) as u32
         + (!span.name.borrow().is_empty()) as u32
         + (!span.resource.borrow().is_empty()) as u32
@@ -261,7 +262,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         + (!span.span_events.is_empty()) as u32
         + has_env as u32
         + has_version as u32
-        + has_component as u32;
+        + has_component as u32
+        + has_kind as u32;
 
     write_map_len(writer, span_len)?;
 
@@ -331,9 +333,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Component as u8)?;
         table.write_interned(writer, span.component.borrow())?;
     }
-    // SpanKind is always emitted (default = Internal).
-    write_uint8(writer, SpanKey::Kind as u8)?;
-    write_uint(writer, span.span_kind as u64)?;
+    // Unspecified (0) is the proto3 default, so it is left off the wire.
+    if has_kind {
+        write_uint8(writer, SpanKey::Kind as u8)?;
+        write_uint(writer, span.span_kind as u64)?;
+    }
 
     Ok(())
 }

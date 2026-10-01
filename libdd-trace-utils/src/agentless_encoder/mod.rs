@@ -498,7 +498,7 @@ const PROMOTED_ATTR_KEYS_V1: &[&str] = &[
 /// callers can skip emitting the default value.
 fn span_kind_to_meta_v1(kind: v1::SpanKind) -> Option<&'static str> {
     match kind {
-        v1::SpanKind::Internal => None,
+        v1::SpanKind::Unspecified | v1::SpanKind::Internal => None,
         v1::SpanKind::Server => Some("server"),
         v1::SpanKind::Client => Some("client"),
         v1::SpanKind::Producer => Some("producer"),
