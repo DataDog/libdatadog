@@ -21,7 +21,7 @@ use std::time::Duration;
 
 // public types we want to bring up to top level of service:: scope
 pub use evp_transport::{
-    EvpProducerIdentity, EvpProducerIdentityError, EvpTransportConfig,
+    EvpProducerIdentity, EvpProducerIdentityError, EvpTransportConfig, EvpTransportConfigError,
     EvpTransportConfigWithIdentity, EvpTransportMode, MAX_EVP_PRODUCER_IDENTITY_LENGTH,
 };
 pub use instance_id::InstanceId;

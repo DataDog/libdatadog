@@ -10,6 +10,7 @@ use crate::service::evp_proxy;
 use http::Method;
 use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability};
+use libdd_capabilities_impl::ResponseBodyLimit;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Display, Formatter};
@@ -167,6 +168,55 @@ pub enum EvpTransportMode {
     PreferLocalThenDirect,
 }
 
+/// Invalid explicit EVP routing configuration. Error values never retain API keys.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvpTransportConfigError {
+    InvalidIntakeSubdomain,
+    MissingApiKey,
+    InvalidApiKey,
+    HttpsRequired,
+    MissingAuthority,
+    NonCanonicalAuthority,
+    WrongIntakeHost { intake_subdomain: String },
+    InvalidSite,
+    UnexpectedPathOrQuery,
+}
+
+impl Display for EvpTransportConfigError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidIntakeSubdomain => {
+                formatter.write_str("EVP intake subdomain must be one canonical DNS label")
+            }
+            Self::MissingApiKey => {
+                formatter.write_str("direct EVP endpoint requires a non-empty API key")
+            }
+            Self::InvalidApiKey => {
+                formatter.write_str("direct EVP endpoint API key is not a valid HTTP header value")
+            }
+            Self::HttpsRequired => formatter.write_str("direct EVP endpoint must use HTTPS"),
+            Self::MissingAuthority => {
+                formatter.write_str("direct EVP endpoint requires an authority")
+            }
+            Self::NonCanonicalAuthority => formatter.write_str(
+                "direct EVP endpoint must use the canonical authority without userinfo or a port",
+            ),
+            Self::WrongIntakeHost { intake_subdomain } => write!(
+                formatter,
+                "direct EVP endpoint host must be {intake_subdomain}.<site>"
+            ),
+            Self::InvalidSite => {
+                formatter.write_str("direct EVP endpoint contains an invalid Datadog site")
+            }
+            Self::UnexpectedPathOrQuery => {
+                formatter.write_str("direct EVP endpoint must not include a path or query")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EvpTransportConfigError {}
+
 /// Explicit per-session EVP configuration crossing the sidecar IPC boundary.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvpTransportConfig {
@@ -201,7 +251,7 @@ impl EvpTransportConfig {
 
     /// Validate the target and reject direct credentials unless their
     /// destination matches the configured canonical HTTPS intake.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), EvpTransportConfigError> {
         validate_intake_subdomain(&self.intake_subdomain)?;
         if self.mode != EvpTransportMode::PreferLocalThenDirect {
             return Ok(());
@@ -225,7 +275,7 @@ impl EvpTransportConfigWithIdentity {
     pub fn new(
         transport: EvpTransportConfig,
         producer: EvpProducerIdentity,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, EvpTransportConfigError> {
         transport.validate()?;
         Ok(Self {
             transport,
@@ -234,48 +284,48 @@ impl EvpTransportConfigWithIdentity {
     }
 }
 
-fn validate_direct_endpoint(endpoint: &Endpoint, intake_subdomain: &str) -> Result<(), String> {
+fn validate_direct_endpoint(
+    endpoint: &Endpoint,
+    intake_subdomain: &str,
+) -> Result<(), EvpTransportConfigError> {
     if endpoint.api_key.as_deref().is_none_or(str::is_empty) {
-        return Err("direct EVP endpoint requires a non-empty API key".to_owned());
+        return Err(EvpTransportConfigError::MissingApiKey);
     }
     if endpoint
         .api_key
         .as_deref()
         .is_some_and(|key| http::HeaderValue::try_from(key).is_err())
     {
-        return Err("direct EVP endpoint API key is not a valid HTTP header value".to_owned());
+        return Err(EvpTransportConfigError::InvalidApiKey);
     }
     if endpoint.url.scheme_str() != Some("https") {
-        return Err("direct EVP endpoint must use HTTPS".to_owned());
+        return Err(EvpTransportConfigError::HttpsRequired);
     }
     let authority = endpoint
         .url
         .authority()
-        .ok_or_else(|| "direct EVP endpoint requires an authority".to_owned())?;
+        .ok_or(EvpTransportConfigError::MissingAuthority)?;
     if authority.as_str().contains('@') || authority.port().is_some() {
-        return Err(
-            "direct EVP endpoint must use the canonical authority without userinfo or a port"
-                .to_owned(),
-        );
+        return Err(EvpTransportConfigError::NonCanonicalAuthority);
     }
     let host = authority.host();
     let expected_prefix = format!("{intake_subdomain}.");
     let Some(site) = host.strip_prefix(&expected_prefix) else {
-        return Err(format!(
-            "direct EVP endpoint host must be {intake_subdomain}.<site>"
-        ));
+        return Err(EvpTransportConfigError::WrongIntakeHost {
+            intake_subdomain: intake_subdomain.to_owned(),
+        });
     };
     if host.len() > MAX_DNS_HOST_LENGTH || !is_valid_dns_site(site) {
-        return Err("direct EVP endpoint contains an invalid Datadog site".to_owned());
+        return Err(EvpTransportConfigError::InvalidSite);
     }
     let path_and_query = endpoint.url.path_and_query().map(|value| value.as_str());
     if !matches!(path_and_query, None | Some("") | Some("/")) {
-        return Err("direct EVP endpoint must not include a path or query".to_owned());
+        return Err(EvpTransportConfigError::UnexpectedPathOrQuery);
     }
     Ok(())
 }
 
-fn validate_intake_subdomain(subdomain: &str) -> Result<(), String> {
+fn validate_intake_subdomain(subdomain: &str) -> Result<(), EvpTransportConfigError> {
     let valid = !subdomain.is_empty()
         && subdomain.len() <= 63
         && subdomain
@@ -292,7 +342,7 @@ fn validate_intake_subdomain(subdomain: &str) -> Result<(), String> {
     if valid {
         Ok(())
     } else {
-        Err("EVP intake subdomain must be one canonical DNS label".to_owned())
+        Err(EvpTransportConfigError::InvalidIntakeSubdomain)
     }
 }
 
@@ -394,7 +444,7 @@ impl EvpTransport {
     pub(crate) fn new_with_identity(
         mut config: EvpTransportConfig,
         producer: EvpProducerIdentity,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, EvpTransportConfigError> {
         config.validate()?;
 
         // A local receiver must never receive direct-intake credentials, even
@@ -424,7 +474,7 @@ impl EvpTransport {
     pub(crate) fn agent_only(
         endpoint: Endpoint,
         intake_subdomain: impl Into<String>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, EvpTransportConfigError> {
         Self::new_with_identity(
             EvpTransportConfig::agent_only(endpoint, intake_subdomain),
             EvpProducerIdentity::legacy_sidecar(),
@@ -573,6 +623,9 @@ impl EvpTransport {
             .to_request_builder(USER_AGENT)
             .ok()?
             .method(Method::GET)
+            // Native clients enforce this while reading, before collecting the
+            // entire body. Keep the length check below for in-memory test clients.
+            .extension(ResponseBodyLimit(MAX_INFO_RESPONSE_BYTES))
             .body(Bytes::new())
             .ok()?;
         let timeout = Duration::from_millis(endpoint.timeout_ms);
@@ -635,14 +688,14 @@ impl EvpTransport {
                 .config
                 .direct_endpoint
                 .as_ref()
-                .ok_or_else(|| "direct endpoint is not configured".to_owned())
+                .ok_or_else(|| anyhow::anyhow!("direct endpoint is not configured"))
                 .and_then(|base| endpoint_with_path(base, event.intake_path)),
         }
         .map_err(DeliveryFailure::DefinitivePreSend)?;
 
         let mut builder = endpoint
             .to_request_builder(USER_AGENT)
-            .map_err(|error| DeliveryFailure::DefinitivePreSend(error.to_string()))?
+            .map_err(DeliveryFailure::DefinitivePreSend)?
             .method(Method::POST)
             .header("Content-Type", event.content_type)
             .header(EVP_ORIGIN_HEADER, self.producer.origin())
@@ -652,16 +705,14 @@ impl EvpTransport {
         }
         let request = builder
             .body(event.payload.clone())
-            .map_err(|error| DeliveryFailure::DefinitivePreSend(error.to_string()))?;
+            .map_err(|error| DeliveryFailure::DefinitivePreSend(error.into()))?;
 
         let timeout = Duration::from_millis(endpoint.timeout_ms);
         let response = tokio::select! {
             biased;
             result = client.request(request) => result.map_err(classify_http_error)?,
             _ = client.sleep(timeout) => {
-                return Err(DeliveryFailure::Ambiguous(format!(
-                    "request timed out after {timeout:?}"
-                )));
+                return Err(DeliveryFailure::Ambiguous(HttpError::Timeout.into()));
             }
         };
 
@@ -678,18 +729,18 @@ impl EvpTransport {
     }
 }
 
-fn endpoint_with_path(base: &Endpoint, path: &str) -> Result<Endpoint, String> {
-    let path = PathAndQuery::try_from(path).map_err(|error| error.to_string())?;
+fn endpoint_with_path(base: &Endpoint, path: &str) -> anyhow::Result<Endpoint> {
+    let path = PathAndQuery::try_from(path)?;
     let mut parts = base.url.clone().into_parts();
     parts.path_and_query = Some(path);
-    let url = http::Uri::from_parts(parts).map_err(|error| error.to_string())?;
+    let url = http::Uri::from_parts(parts)?;
     Ok(Endpoint {
         url,
         ..base.clone()
     })
 }
 
-fn agent_endpoint_with_path(base: &Endpoint, path: &str) -> Result<Endpoint, String> {
+fn agent_endpoint_with_path(base: &Endpoint, path: &str) -> anyhow::Result<Endpoint> {
     let base_path = base.url.path().trim_end_matches('/');
     let prefix = TRACE_ENDPOINT_PATHS
         .iter()
@@ -736,21 +787,21 @@ fn join_paths(base: &str, path: &str) -> String {
 
 #[derive(Debug)]
 enum DeliveryFailure {
-    DefinitivePreSend(String),
-    Ambiguous(String),
+    DefinitivePreSend(anyhow::Error),
+    Ambiguous(anyhow::Error),
     Status(u16),
 }
 
 fn classify_http_error(error: HttpError) -> DeliveryFailure {
     match error {
-        HttpError::InvalidRequest(error) => DeliveryFailure::DefinitivePreSend(error.to_string()),
+        HttpError::InvalidRequest(error) => DeliveryFailure::DefinitivePreSend(error),
         HttpError::Network(error) if is_definitive_connection_failure(&error) => {
-            DeliveryFailure::DefinitivePreSend(error.to_string())
+            DeliveryFailure::DefinitivePreSend(error)
         }
         HttpError::Network(error) | HttpError::ResponseBody(error) | HttpError::Other(error) => {
-            DeliveryFailure::Ambiguous(error.to_string())
+            DeliveryFailure::Ambiguous(error)
         }
-        HttpError::Timeout => DeliveryFailure::Ambiguous("request timed out".to_owned()),
+        HttpError::Timeout => DeliveryFailure::Ambiguous(HttpError::Timeout.into()),
     }
 }
 
@@ -1240,6 +1291,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn other_client_errors_keep_local_without_replaying_the_batch() {
+        for status in [400, 401, 413, 422] {
+            let client = ScriptedCapabilities::new(vec![
+                info_response(&["/evp_proxy/v4"]),
+                response(status, "invalid event"),
+                response(202, ""),
+            ]);
+            let transport = agentless(Some("api-key"));
+            assert!(!send(&transport, &client, "/api/v2/exposures").await);
+            assert_eq!(client.requests().len(), 2, "replayed a rejected batch");
+            assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
+            let requests = client.requests();
+            assert_eq!(requests.len(), 3, "unexpected discovery or replay");
+            for (url, headers) in &requests[1..] {
+                assert!(url.contains("/evp_proxy/v4/"));
+                assert!(!headers.contains_key("DD-API-KEY"));
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn definitive_pre_send_failure_replays_current_batch() {
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         let client = ScriptedCapabilities::new(vec![
@@ -1531,6 +1603,131 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn native_http_response_limit_is_opt_in_for_both_request_apis() {
+        use libdd_capabilities_impl::NativeCapabilities;
+        let server = httpmock::MockServer::start_async().await;
+        let response = "a response body";
+        server
+            .mock_async(|_when, then| {
+                then.status(200).body(response);
+            })
+            .await;
+        let client = NativeCapabilities::new_client();
+        for streamed in [false, true] {
+            for limit in [None, Some(response.len()), Some(response.len() - 1)] {
+                let mut builder = http::Request::builder().uri(server.url("/"));
+                if let Some(limit) = limit {
+                    builder = builder.extension(ResponseBodyLimit(limit));
+                }
+                let result = if streamed {
+                    let (sender, response) = client.request_streamed(builder.body(()).unwrap());
+                    drop(sender);
+                    response.await
+                } else {
+                    client.request(builder.body(Bytes::new()).unwrap()).await
+                };
+                if limit.is_some_and(|limit| limit < response.len()) {
+                    assert!(matches!(result, Err(HttpError::ResponseBody(_))));
+                } else {
+                    assert_eq!(result.unwrap().body().as_ref(), response.as_bytes());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn native_discovery_bounds_unfinished_response_while_reading() {
+        use libdd_capabilities_impl::NativeCapabilities;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        for chunked in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (release, released) = tokio::sync::oneshot::channel::<()>();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert!(request.len() < 4096, "unexpectedly large test request");
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                let size = MAX_INFO_RESPONSE_BYTES + 1;
+                let headers = if chunked {
+                    format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{size:x}\r\n")
+                } else {
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", size + 1)
+                };
+                socket.write_all(headers.as_bytes()).await.unwrap();
+                // Deliberately omit the final byte/chunk and keep the connection open.
+                // A post-collection check cannot reject this until the request times out.
+                let _ = socket.write_all(&vec![b' '; size]).await;
+                let _ = released.await;
+            });
+            let mut agent = endpoint(&format!("http://{address}"), None);
+            agent.timeout_ms = 30_000;
+            let transport = EvpTransport::new_with_identity(
+                EvpTransportConfig::prefer_local_then_direct(agent, None, EVP_SUBDOMAIN_VALUE),
+                EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+            )
+            .unwrap();
+            let client = NativeCapabilities::new_client();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                transport.discover_local_route(&client, "test"),
+            )
+            .await;
+            release.send(()).unwrap();
+            server.await.unwrap();
+            assert!(
+                result.is_ok(),
+                "discovery waited for EOF instead of enforcing its byte limit (chunked={chunked})"
+            );
+            assert!(result.unwrap().is_none());
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn native_discovery_accepts_response_at_byte_limit() {
+        use libdd_capabilities_impl::NativeCapabilities;
+        let server = httpmock::MockServer::start_async().await;
+        let mut body = serde_json::json!({
+            "endpoints": ["/evp_proxy/v4"],
+            "evp_proxy_allowed_headers": [EVP_ORIGIN_HEADER, EVP_ORIGIN_VERSION_HEADER],
+        })
+        .to_string();
+        body.extend(std::iter::repeat_n(
+            ' ',
+            MAX_INFO_RESPONSE_BYTES - body.len(),
+        ));
+        let info = server
+            .mock_async(|when, then| {
+                when.path("/info");
+                then.status(200).body(body);
+            })
+            .await;
+        let transport = EvpTransport::new_with_identity(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint(&server.url(""), None),
+                None,
+                EVP_SUBDOMAIN_VALUE,
+            ),
+            EvpProducerIdentity::new("dd-trace-rb", "3.0.0").unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            transport
+                .discover_local_route(&NativeCapabilities::new_client(), "test")
+                .await,
+            Some(ProxyVersion::V4)
+        ));
+        info.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn native_local_delivery_does_not_follow_redirects_or_retry_responses() {
         use httpmock::MockServer;
         use libdd_capabilities_impl::NativeCapabilities;
@@ -1589,6 +1786,92 @@ mod tests {
             info.assert_calls_async(1).await;
             delivery.assert_calls_async(1).await;
             redirect_mock.assert_calls_async(0).await;
+        }
+    }
+
+    #[test]
+    fn configuration_errors_are_typed_without_retaining_credentials() {
+        use EvpTransportConfigError::*;
+        for (url, key, expected) in [
+            (
+                "https://event-platform-intake.datadoghq.com",
+                None,
+                MissingApiKey,
+            ),
+            (
+                "https://event-platform-intake.datadoghq.com",
+                Some("secret\nkey"),
+                InvalidApiKey,
+            ),
+            (
+                "http://event-platform-intake.datadoghq.com",
+                Some("secret"),
+                HttpsRequired,
+            ),
+            (
+                "https://event-platform-intake.datadoghq.com:443",
+                Some("secret"),
+                NonCanonicalAuthority,
+            ),
+            (
+                "https://secret@example.com",
+                Some("secret"),
+                NonCanonicalAuthority,
+            ),
+            (
+                "https://secret.example.com",
+                Some("secret"),
+                WrongIntakeHost {
+                    intake_subdomain: EVP_SUBDOMAIN_VALUE.into(),
+                },
+            ),
+            (
+                "https://event-platform-intake.-example.com",
+                Some("secret"),
+                InvalidSite,
+            ),
+            (
+                "https://event-platform-intake.datadoghq.com/secret",
+                Some("secret"),
+                UnexpectedPathOrQuery,
+            ),
+        ] {
+            let error = EvpTransportConfig::prefer_local_then_direct(
+                Endpoint::default(),
+                Some(endpoint(url, key)),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .validate()
+            .unwrap_err();
+            assert_eq!(error, expected);
+            assert!(!format!("{error} {error:?}").contains("secret"));
+        }
+        assert_eq!(
+            EvpTransportConfig::agent_only(Endpoint::default(), "invalid.target").validate(),
+            Err(InvalidIntakeSubdomain)
+        );
+    }
+
+    #[test]
+    fn delivery_failure_retains_native_error_for_diagnostics() {
+        for (kind, pre_send) in [
+            (std::io::ErrorKind::ConnectionRefused, true),
+            (std::io::ErrorKind::ConnectionReset, false),
+        ] {
+            let failure =
+                classify_http_error(HttpError::Network(std::io::Error::from(kind).into()));
+            let error = match failure {
+                DeliveryFailure::DefinitivePreSend(error) => {
+                    assert!(pre_send);
+                    error
+                }
+                DeliveryFailure::Ambiguous(error) => {
+                    assert!(!pre_send);
+                    error
+                }
+                _ => panic!("unexpected HTTP status"),
+            };
+            assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), kind);
         }
     }
 

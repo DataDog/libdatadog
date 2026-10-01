@@ -220,7 +220,7 @@ impl SessionInfo {
     pub(crate) fn set_evp_transport(
         &self,
         config: EvpTransportConfigWithIdentity,
-    ) -> Result<(), String> {
+    ) -> Result<(), super::EvpTransportConfigError> {
         let intake_subdomain = config.transport.intake_subdomain.clone();
         let transport = EvpTransport::new_with_identity(config.transport, config.producer)?;
         let mut state = self.evp_transports.lock_or_panic();

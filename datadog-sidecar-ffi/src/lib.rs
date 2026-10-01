@@ -1381,10 +1381,12 @@ fn ddog_sidecar_session_set_evp_transport_impl(
         intake_subdomain: try_c!(char_slice_to_string(intake_subdomain)),
     };
     let producer = try_c!(evp_producer_identity_from_ffi(producer));
-    let config = try_c!(EvpTransportConfigWithIdentity::new(
-        transport_config,
-        producer
-    ));
+    // try_c! uses Debug; keep actionable Display text at the C boundary while
+    // Rust callers retain the structured configuration error.
+    let config = try_c!(
+        EvpTransportConfigWithIdentity::new(transport_config, producer)
+            .map_err(|error| error.to_string())
+    );
     try_c!(blocking::set_session_evp_transport(transport, config));
     MaybeError::None
 }
