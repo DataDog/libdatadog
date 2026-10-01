@@ -21,9 +21,10 @@
 //!
 //! * 64-bit Linux ELF only (`Elf64_*`).
 //! * Supports `DT_GNU_HASH` and falls back to `DT_HASH` (sysv) for determining dynsym entry count.
-//! * REL / RELA / JMPREL relocation arrays.
+//! * RELA / JMPREL relocation arrays. REL arrays are parsed but conservatively skipped when
+//!   patching because their implicit addends cannot be recovered reliably after relocation.
 
-use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ffi::{CStr, c_char, c_int, c_void};
 use core::slice;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -52,16 +53,18 @@ const fn u32_to_usize(v: u32) -> usize {
 /// `len * size_of::<T>()` bytes, properly aligned, and not mutated for
 /// lifetime `'a`.
 unsafe fn try_as_slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
-    if ptr.is_null() || len == 0 {
-        &[]
-    } else {
-        slice::from_raw_parts(ptr, len)
+    unsafe {
+        if ptr.is_null() || len == 0 {
+            &[]
+        } else {
+            slice::from_raw_parts(ptr, len)
+        }
     }
 }
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
+    _SC_PAGESIZE, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC,
+    PT_LOAD, dl_iterate_phdr, dl_phdr_info, mprotect, sysconf,
 };
 
 // ELF dynamic-section tags. The `libc` crate doesn't export these
@@ -128,181 +131,179 @@ impl<'a> DynamicInfo<'a> {
     ///   guaranteed when called from within a `dl_iterate_phdr` callback (loader lock held) or
     ///   while a `dlopen` handle is live.
     pub unsafe fn from_phdr(info: &'a dl_phdr_info) -> Option<Self> {
-        // SAFETY: caller guarantees info is a valid dl_phdr_info for a
-        // mapped ELF object. dlpi_phnum is u16 so the conversion is lossless.
-        let phdrs = unsafe { slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum)) };
-        let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
-        // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
-        let base = u64_to_usize(info.dlpi_addr);
-        let dyn_begin = (base + u64_to_usize(dyn_phdr.p_vaddr)) as *const Elf64_Dyn;
-        let containing_load_segment_end =
-            |addr: usize| -> Option<usize> { find_containing_load_segment(phdrs, base, addr) };
-        let correct = |a: u64| -> usize {
-            let a = u64_to_usize(a);
-            if a > base {
-                a
+        unsafe {
+            // SAFETY: caller guarantees info is a valid dl_phdr_info for a
+            // mapped ELF object. dlpi_phnum is u16 so the conversion is lossless.
+            let phdrs = slice::from_raw_parts(info.dlpi_phdr, usize::from(info.dlpi_phnum));
+            let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
+            // On 64-bit (this crate's cfg gate), Elf64_Addr (u64) -> usize is lossless.
+            let base = u64_to_usize(info.dlpi_addr);
+            let dyn_begin = (base + u64_to_usize(dyn_phdr.p_vaddr)) as *const Elf64_Dyn;
+            let containing_load_segment_end =
+                |addr: usize| -> Option<usize> { find_containing_load_segment(phdrs, base, addr) };
+            let correct = |a: u64| -> usize {
+                let a = u64_to_usize(a);
+                if a > base { a } else { base + a }
+            };
+
+            let mut strtab: *const c_char = core::ptr::null();
+            let mut strtab_size: usize = 0;
+            let mut symtab: *const Elf64_Sym = core::ptr::null();
+            let mut rels: *const Elf64_Rel = core::ptr::null();
+            let mut rels_size: usize = 0;
+            let mut relas: *const Elf64_Rela = core::ptr::null();
+            let mut relas_size: usize = 0;
+            let mut jmprels: *const Elf64_Rela = core::ptr::null();
+            let mut jmprels_size: usize = 0;
+            let mut gnu_hash: *const u32 = core::ptr::null();
+            let mut sysv_hash: *const u32 = core::ptr::null();
+            let mut pltrel_type: i64 = 0;
+
+            let mut it = dyn_begin;
+            loop {
+                let d = &*it;
+                if d.d_tag == DT_NULL {
+                    break;
+                }
+                let v = d.d_un;
+                match d.d_tag {
+                    DT_STRTAB => strtab = correct(v) as *const c_char,
+                    // u64 -> usize: lossless on 64-bit
+                    DT_STRSZ => strtab_size = u64_to_usize(v),
+                    DT_SYMTAB => symtab = correct(v) as *const Elf64_Sym,
+                    DT_GNU_HASH => gnu_hash = correct(v) as *const u32,
+                    DT_HASH => sysv_hash = correct(v) as *const u32,
+                    DT_REL => rels = correct(v) as *const Elf64_Rel,
+                    DT_RELA => relas = correct(v) as *const Elf64_Rela,
+                    DT_JMPREL => jmprels = correct(v) as *const Elf64_Rela,
+                    DT_RELSZ => rels_size = u64_to_usize(v),
+                    DT_RELASZ => relas_size = u64_to_usize(v),
+                    DT_PLTRELSZ => jmprels_size = u64_to_usize(v),
+                    // u64 -> i64: reinterpret (tag values fit in i64).
+                    DT_PLTREL => pltrel_type = v as i64,
+                    _ => {}
+                }
+                it = it.add(1);
+            }
+
+            // JMPREL entries are RELA only if DT_PLTREL says so.
+            if pltrel_type != DT_RELA {
+                jmprels = core::ptr::null();
+                jmprels_size = 0;
+            }
+
+            // Validate every raw pointer read from PT_DYNAMIC actually falls within one of this
+            // object's own PT_LOAD segments before trusting it for dereferencing.
+            // This is a sanity check to avoid crashing due to odd/corrupted dynamic entries.
+            let in_bounds = |addr: *const c_void, len: usize| -> bool {
+                let addr = addr as usize;
+                match containing_load_segment_end(addr) {
+                    Some(end) => addr.checked_add(len).is_some_and(|limit| limit <= end),
+                    None => false,
+                }
+            };
+            if strtab.is_null() || !in_bounds(strtab as *const c_void, strtab_size) {
+                strtab = core::ptr::null();
+            }
+            if symtab.is_null()
+                || !in_bounds(symtab as *const c_void, core::mem::size_of::<Elf64_Sym>())
+            {
+                symtab = core::ptr::null();
+            }
+            if rels.is_null() || !in_bounds(rels as *const c_void, rels_size) {
+                rels = core::ptr::null();
+                rels_size = 0;
+            }
+            if relas.is_null() || !in_bounds(relas as *const c_void, relas_size) {
+                relas = core::ptr::null();
+                relas_size = 0;
+            }
+            if jmprels.is_null() || !in_bounds(jmprels as *const c_void, jmprels_size) {
+                jmprels = core::ptr::null();
+                jmprels_size = 0;
+            }
+            const GNU_HASH_MIN_BYTES: usize = 4 * core::mem::size_of::<u32>();
+            if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void, GNU_HASH_MIN_BYTES) {
+                gnu_hash = core::ptr::null();
+            }
+            const SYSV_HASH_MIN_BYTES: usize = 2 * core::mem::size_of::<u32>();
+            if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void, SYSV_HASH_MIN_BYTES) {
+                sysv_hash = core::ptr::null();
+            }
+
+            // Need at minimum strtab + symtab to resolve relocation symbol names.
+            if strtab.is_null() || symtab.is_null() {
+                return None;
+            }
+
+            // Compute sysv_hash_words from the containing load segment.
+            let sysv_hash_words = if !sysv_hash.is_null() {
+                let addr = sysv_hash as usize;
+                containing_load_segment_end(addr)
+                    .and_then(|end| end.checked_sub(addr))
+                    .map(|bytes| bytes / core::mem::size_of::<u32>())
+                    .unwrap_or(0)
             } else {
-                base + a
-            }
-        };
+                0
+            };
 
-        let mut strtab: *const c_char = core::ptr::null();
-        let mut strtab_size: usize = 0;
-        let mut symtab: *const Elf64_Sym = core::ptr::null();
-        let mut rels: *const Elf64_Rel = core::ptr::null();
-        let mut rels_size: usize = 0;
-        let mut relas: *const Elf64_Rela = core::ptr::null();
-        let mut relas_size: usize = 0;
-        let mut jmprels: *const Elf64_Rela = core::ptr::null();
-        let mut jmprels_size: usize = 0;
-        let mut gnu_hash: *const u32 = core::ptr::null();
-        let mut sysv_hash: *const u32 = core::ptr::null();
-        let mut pltrel_type: i64 = 0;
-
-        let mut it = dyn_begin;
-        loop {
-            let d = &*it;
-            if d.d_tag == DT_NULL {
-                break;
-            }
-            let v = d.d_un;
-            match d.d_tag {
-                DT_STRTAB => strtab = correct(v) as *const c_char,
-                // u64 -> usize: lossless on 64-bit
-                DT_STRSZ => strtab_size = u64_to_usize(v),
-                DT_SYMTAB => symtab = correct(v) as *const Elf64_Sym,
-                DT_GNU_HASH => gnu_hash = correct(v) as *const u32,
-                DT_HASH => sysv_hash = correct(v) as *const u32,
-                DT_REL => rels = correct(v) as *const Elf64_Rel,
-                DT_RELA => relas = correct(v) as *const Elf64_Rela,
-                DT_JMPREL => jmprels = correct(v) as *const Elf64_Rela,
-                DT_RELSZ => rels_size = u64_to_usize(v),
-                DT_RELASZ => relas_size = u64_to_usize(v),
-                DT_PLTRELSZ => jmprels_size = u64_to_usize(v),
-                // u64 -> i64: reinterpret (tag values fit in i64).
-                DT_PLTREL => pltrel_type = v as i64,
-                _ => {}
-            }
-            it = it.add(1);
-        }
-
-        // JMPREL entries are RELA only if DT_PLTREL says so.
-        if pltrel_type != DT_RELA {
-            jmprels = core::ptr::null();
-            jmprels_size = 0;
-        }
-
-        // Validate every raw pointer read from PT_DYNAMIC actually falls within one of this
-        // object's own PT_LOAD segments before trusting it for dereferencing.
-        // This is a sanity check to avoid crashing due to odd/corrupted dynamic entries.
-        let in_bounds = |addr: *const c_void, len: usize| -> bool {
-            let addr = addr as usize;
-            match containing_load_segment_end(addr) {
-                Some(end) => addr.checked_add(len).is_some_and(|limit| limit <= end),
-                None => false,
-            }
-        };
-        if strtab.is_null() || !in_bounds(strtab as *const c_void, strtab_size) {
-            strtab = core::ptr::null();
-        }
-        if symtab.is_null()
-            || !in_bounds(symtab as *const c_void, core::mem::size_of::<Elf64_Sym>())
-        {
-            symtab = core::ptr::null();
-        }
-        if rels.is_null() || !in_bounds(rels as *const c_void, rels_size) {
-            rels = core::ptr::null();
-            rels_size = 0;
-        }
-        if relas.is_null() || !in_bounds(relas as *const c_void, relas_size) {
-            relas = core::ptr::null();
-            relas_size = 0;
-        }
-        if jmprels.is_null() || !in_bounds(jmprels as *const c_void, jmprels_size) {
-            jmprels = core::ptr::null();
-            jmprels_size = 0;
-        }
-        const GNU_HASH_MIN_BYTES: usize = 4 * core::mem::size_of::<u32>();
-        if gnu_hash.is_null() || !in_bounds(gnu_hash as *const c_void, GNU_HASH_MIN_BYTES) {
-            gnu_hash = core::ptr::null();
-        }
-        const SYSV_HASH_MIN_BYTES: usize = 2 * core::mem::size_of::<u32>();
-        if sysv_hash.is_null() || !in_bounds(sysv_hash as *const c_void, SYSV_HASH_MIN_BYTES) {
-            sysv_hash = core::ptr::null();
-        }
-
-        // Need at minimum strtab + symtab to resolve relocation symbol names.
-        if strtab.is_null() || symtab.is_null() {
-            return None;
-        }
-
-        // Compute sysv_hash_words from the containing load segment.
-        let sysv_hash_words = if !sysv_hash.is_null() {
-            let addr = sysv_hash as usize;
-            containing_load_segment_end(addr)
-                .and_then(|end| end.checked_sub(addr))
-                .map(|bytes| bytes / core::mem::size_of::<u32>())
-                .unwrap_or(0)
-        } else {
-            0
-        };
-
-        // Determine sym_count and gnu_hash metadata.
-        let (sym_count, gnu_hash_words) = if !gnu_hash.is_null() {
-            let gnu_hash_addr = gnu_hash as usize;
-            if let Some(end) = containing_load_segment_end(gnu_hash_addr) {
-                let bytes = end.saturating_sub(gnu_hash_addr);
-                let words = bytes / core::mem::size_of::<u32>();
-                if let Some(count) = gnu_hash_symbol_count(gnu_hash, words) {
-                    (count, words)
+            // Determine sym_count and gnu_hash metadata.
+            let (sym_count, gnu_hash_words) = if !gnu_hash.is_null() {
+                let gnu_hash_addr = gnu_hash as usize;
+                if let Some(end) = containing_load_segment_end(gnu_hash_addr) {
+                    let bytes = end.saturating_sub(gnu_hash_addr);
+                    let words = bytes / core::mem::size_of::<u32>();
+                    if let Some(count) = gnu_hash_symbol_count(gnu_hash, words) {
+                        (count, words)
+                    } else {
+                        (sym_count_fallback(symtab, strtab, sysv_hash), words)
+                    }
                 } else {
-                    (sym_count_fallback(symtab, strtab, sysv_hash), words)
+                    (sym_count_fallback(symtab, strtab, sysv_hash), 0)
                 }
             } else {
                 (sym_count_fallback(symtab, strtab, sysv_hash), 0)
-            }
-        } else {
-            (sym_count_fallback(symtab, strtab, sysv_hash), 0)
-        };
+            };
 
-        let max_syms = containing_load_segment_end(symtab as usize)
-            .map(|end| end.saturating_sub(symtab as usize) / core::mem::size_of::<Elf64_Sym>())
-            .unwrap_or(0);
-        let sym_count = sym_count.min(u32::try_from(max_syms).unwrap_or(u32::MAX));
+            let max_syms = containing_load_segment_end(symtab as usize)
+                .map(|end| end.saturating_sub(symtab as usize) / core::mem::size_of::<Elf64_Sym>())
+                .unwrap_or(0);
+            let sym_count = sym_count.min(u32::try_from(max_syms).unwrap_or(u32::MAX));
 
-        // SAFETY (applies to all `try_as_slice` calls below):
-        //
-        // Each pointer was read from the PT_DYNAMIC segment and
-        // corrected for the glibc/musl address quirk. The caller
-        // guarantees the ELF object remains mapped for lifetime `'a`
-        // (safety precondition of from_phdr). The dynamic linker
-        // enforces alignment and contiguous mapping at load time.
-        // Sizes come from DT_STRSZ, DT_RELSZ, DT_RELASZ, DT_PLTRELSZ,
-        // and sym_count (from DT_GNU_HASH or DT_HASH nchain).
+            // SAFETY (applies to all `try_as_slice` calls below):
+            //
+            // Each pointer was read from the PT_DYNAMIC segment and
+            // corrected for the glibc/musl address quirk. The caller
+            // guarantees the ELF object remains mapped for lifetime `'a`
+            // (safety precondition of from_phdr). The dynamic linker
+            // enforces alignment and contiguous mapping at load time.
+            // Sizes come from DT_STRSZ, DT_RELSZ, DT_RELASZ, DT_PLTRELSZ,
+            // and sym_count (from DT_GNU_HASH or DT_HASH nchain).
 
-        let rels_count = rels_size / core::mem::size_of::<Elf64_Rel>();
-        let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
-        let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
+            let rels_count = rels_size / core::mem::size_of::<Elf64_Rel>();
+            let relas_count = relas_size / core::mem::size_of::<Elf64_Rela>();
+            let jmprels_count = jmprels_size / core::mem::size_of::<Elf64_Rela>();
 
-        let strtab_slice = try_as_slice(strtab as *const u8, strtab_size);
-        // u32 -> usize: lossless on 64-bit (crate cfg gate).
-        let symtab_slice = try_as_slice(symtab, u32_to_usize(sym_count));
-        let rels_slice = try_as_slice(rels, rels_count);
-        let relas_slice = try_as_slice(relas, relas_count);
-        let jmprels_slice = try_as_slice(jmprels, jmprels_count);
+            let strtab_slice = try_as_slice(strtab.cast::<u8>(), strtab_size);
+            // u32 -> usize: lossless on 64-bit (crate cfg gate).
+            let symtab_slice = try_as_slice(symtab, u32_to_usize(sym_count));
+            let rels_slice = try_as_slice(rels, rels_count);
+            let relas_slice = try_as_slice(relas, relas_count);
+            let jmprels_slice = try_as_slice(jmprels, jmprels_count);
 
-        Some(Self {
-            strtab: strtab_slice,
-            symtab: symtab_slice,
-            gnu_hash,
-            gnu_hash_words,
-            sysv_hash,
-            sysv_hash_words,
-            rels: rels_slice,
-            relas: relas_slice,
-            jmprels: jmprels_slice,
-            base_address: base,
-        })
+            Some(Self {
+                strtab: strtab_slice,
+                symtab: symtab_slice,
+                gnu_hash,
+                gnu_hash_words,
+                sysv_hash,
+                sysv_hash_words,
+                rels: rels_slice,
+                relas: relas_slice,
+                jmprels: jmprels_slice,
+                base_address: base,
+            })
+        }
     }
 
     /// Look up the symbol entry and its name at index `idx`.
@@ -365,27 +366,29 @@ unsafe fn sym_count_fallback(
     strtab: *const c_char,
     sysv_hash: *const u32,
 ) -> u32 {
-    // DT_HASH (sysv): header is [nbucket, nchain]. nchain == dynsym count.
-    if !sysv_hash.is_null() {
-        let nchain = *sysv_hash.add(1);
-        if nchain > 0 {
-            return nchain;
+    unsafe {
+        // DT_HASH (sysv): header is [nbucket, nchain]. nchain == dynsym count.
+        if !sysv_hash.is_null() {
+            let nchain = *sysv_hash.add(1);
+            if nchain > 0 {
+                return nchain;
+            }
         }
-    }
 
-    // Last resort: estimate from the common .dynsym-before-.dynstr layout.
-    let symtab_addr = symtab as usize;
-    let strtab_addr = strtab as usize;
-    if strtab_addr > symtab_addr {
-        let bytes = strtab_addr - symtab_addr;
-        // usize -> u32: may truncate in theory, but dynsym tables with
-        // >4 billion entries don't exist in practice. If it did truncate,
-        // sym_name bounds-checks via slice indexing would catch it safely.
-        (bytes / core::mem::size_of::<Elf64_Sym>()) as u32
-    } else {
-        // Can't estimate; allow any index and rely on strtab bounds
-        // checking in sym_name to catch bad accesses.
-        u32::MAX
+        // Last resort: estimate from the common .dynsym-before-.dynstr layout.
+        let symtab_addr = symtab as usize;
+        let strtab_addr = strtab as usize;
+        if strtab_addr > symtab_addr {
+            let bytes = strtab_addr - symtab_addr;
+            // usize -> u32: may truncate in theory, but dynsym tables with
+            // >4 billion entries don't exist in practice. If it did truncate,
+            // sym_name bounds-checks via slice indexing would catch it safely.
+            (bytes / core::mem::size_of::<Elf64_Sym>()) as u32
+        } else {
+            // Can't estimate; allow any index and rely on strtab bounds
+            // checking in sym_name to catch bad accesses.
+            u32::MAX
+        }
     }
 }
 
@@ -425,52 +428,54 @@ pub fn sysv_hash(name: &[u8]) -> u32 {
 /// `info` must have been produced by [`DynamicInfo::from_phdr`] for a
 /// currently-loaded ELF object.
 pub unsafe fn sysv_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
-    let hashtab = info.sysv_hash;
-    if hashtab.is_null() || info.sysv_hash_words < 2 {
-        return None;
-    }
-
-    // Read the header: nbucket and nchain.
-    let nbucket = *hashtab;
-    let nchain = *hashtab.add(1);
-    if nbucket == 0 {
-        return None;
-    }
-
-    // Validate the table fits within the mapped region before computing
-    // any pointers into the bucket/chain arrays.
-    let buckets_start: usize = 2;
-    let chains_start = buckets_start.checked_add(u32_to_usize(nbucket))?;
-    let table_end = chains_start.checked_add(u32_to_usize(nchain))?;
-    if table_end > info.sysv_hash_words {
-        return None;
-    }
-
-    let buckets = hashtab.add(buckets_start);
-    let chains = hashtab.add(chains_start);
-
-    let h = sysv_hash(name);
-    let mut idx = *buckets.add(u32_to_usize(h % nbucket));
-
-    // Follow the chain from the bucket's head symbol, comparing names
-    // at each step. The chain terminates at STN_UNDEF (0). We also
-    // cap iterations at nchain to guard against malformed cycles.
-    let mut steps = 0u32;
-    while idx != STN_UNDEF && steps < nchain {
-        if (u32_to_usize(idx)) >= u32_to_usize(nchain) {
-            break;
+    unsafe {
+        let hashtab = info.sysv_hash;
+        if hashtab.is_null() || info.sysv_hash_words < 2 {
+            return None;
         }
-        if let Some((sym, sname)) = info.sym_entry(idx) {
-            if sname.to_bytes() == name && check_sym(sym) {
-                return Some(*sym);
+
+        // Read the header: nbucket and nchain.
+        let nbucket = *hashtab;
+        let nchain = *hashtab.add(1);
+        if nbucket == 0 {
+            return None;
+        }
+
+        // Validate the table fits within the mapped region before computing
+        // any pointers into the bucket/chain arrays.
+        let buckets_start: usize = 2;
+        let chains_start = buckets_start.checked_add(u32_to_usize(nbucket))?;
+        let table_end = chains_start.checked_add(u32_to_usize(nchain))?;
+        if table_end > info.sysv_hash_words {
+            return None;
+        }
+
+        let buckets = hashtab.add(buckets_start);
+        let chains = hashtab.add(chains_start);
+
+        let h = sysv_hash(name);
+        let mut idx = *buckets.add(u32_to_usize(h % nbucket));
+
+        // Follow the chain from the bucket's head symbol, comparing names
+        // at each step. The chain terminates at STN_UNDEF (0). We also
+        // cap iterations at nchain to guard against malformed cycles.
+        let mut steps = 0u32;
+        while idx != STN_UNDEF && steps < nchain {
+            if (u32_to_usize(idx)) >= u32_to_usize(nchain) {
+                break;
             }
+            if let Some((sym, sname)) = info.sym_entry(idx) {
+                if sname.to_bytes() == name && check_sym(sym) {
+                    return Some(*sym);
+                }
+            }
+            // SAFETY: idx was bounds-checked above against nchain, and
+            // chains points into the validated sysv hash table.
+            idx = *chains.add(u32_to_usize(idx));
+            steps += 1;
         }
-        // SAFETY: idx was bounds-checked above against nchain, and
-        // chains points into the validated sysv hash table.
-        idx = *chains.add(u32_to_usize(idx));
-        steps += 1;
+        None
     }
-    None
 }
 
 /// Compute the GNU symbol hash used by `DT_GNU_HASH` tables.
@@ -496,46 +501,48 @@ pub fn gnu_hash(name: &[u8]) -> u32 {
 /// `hashtab` must point to a valid `.gnu.hash` section of at least
 /// `hashtab_words` u32 entries in mapped memory.
 pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -> Option<u32> {
-    if hashtab_words < 4 {
-        return None;
-    }
-
-    let nbuckets = *hashtab;
-    let symbias = *hashtab.add(1);
-    let bloom_size = *hashtab.add(2);
-    let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
-    let buckets_start = 4usize.checked_add(bloom_size_words)?;
-    let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
-
-    if bloom_size == 0 || buckets_start > hashtab_words || chains_start > hashtab_words {
-        return None;
-    }
-    if nbuckets == 0 {
-        return None;
-    }
-
-    let buckets = slice::from_raw_parts(hashtab.add(buckets_start), u32_to_usize(nbuckets));
-    let mut idx = *buckets.iter().max()?;
-    // All buckets empty: hash covers zero defined symbols, but the
-    // symtab may still have undefined imports. Signal the caller to
-    // use a fallback.
-    if idx == STN_UNDEF {
-        return None;
-    }
-    if idx < symbias {
-        return None;
-    }
-
-    let chain_count = hashtab_words - chains_start;
-    loop {
-        let chain_idx = u32_to_usize(idx - symbias);
-        if chain_idx >= chain_count {
+    unsafe {
+        if hashtab_words < 4 {
             return None;
         }
-        if *hashtab.add(chains_start + chain_idx) & 1 != 0 {
-            return idx.checked_add(1);
+
+        let nbuckets = *hashtab;
+        let symbias = *hashtab.add(1);
+        let bloom_size = *hashtab.add(2);
+        let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
+        let buckets_start = 4usize.checked_add(bloom_size_words)?;
+        let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
+
+        if bloom_size == 0 || buckets_start > hashtab_words || chains_start > hashtab_words {
+            return None;
         }
-        idx = idx.checked_add(1)?;
+        if nbuckets == 0 {
+            return None;
+        }
+
+        let buckets = slice::from_raw_parts(hashtab.add(buckets_start), u32_to_usize(nbuckets));
+        let mut idx = *buckets.iter().max()?;
+        // All buckets empty: hash covers zero defined symbols, but the
+        // symtab may still have undefined imports. Signal the caller to
+        // use a fallback.
+        if idx == STN_UNDEF {
+            return None;
+        }
+        if idx < symbias {
+            return None;
+        }
+
+        let chain_count = hashtab_words - chains_start;
+        loop {
+            let chain_idx = u32_to_usize(idx - symbias);
+            if chain_idx >= chain_count {
+                return None;
+            }
+            if *hashtab.add(chains_start + chain_idx) & 1 != 0 {
+                return idx.checked_add(1);
+            }
+            idx = idx.checked_add(1)?;
+        }
     }
 }
 
@@ -548,73 +555,75 @@ pub unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -
 /// `info` must have been produced by [`DynamicInfo::from_phdr`] for a
 /// currently-loaded ELF object.
 pub unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
-    let hashtab = info.gnu_hash;
-    if hashtab.is_null() || info.gnu_hash_words < 4 {
-        return None;
-    }
-
-    // offset 0: nbuckets     (u32)
-    // offset 1: symbias      (u32)  first symbol index covered by the hash
-    // offset 2: bloom_size   (u32)  number of u64 bloom filter words
-    // offset 3: bloom_shift  (u32)  secondary bloom bit shift
-    // offset 4: bloom[bloom_size]   (u64 each, so bloom_size * 2 u32 words)
-    //           buckets[nbuckets]   (u32 each)
-    //           chains[...]         (u32 each, one per symbol starting at symbias)
-
-    let nbuckets = *hashtab;
-    let symbias = *hashtab.add(1);
-    let bloom_size = *hashtab.add(2);
-    let bloom_shift = *hashtab.add(3);
-    let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
-    let buckets_start = 4usize.checked_add(bloom_size_words)?;
-    let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
-
-    if nbuckets == 0
-        || bloom_size == 0
-        || buckets_start > info.gnu_hash_words
-        || chains_start > info.gnu_hash_words
-    {
-        return None;
-    }
-
-    let h = gnu_hash(name);
-    let bloom = hashtab.add(4) as *const u64;
-    let word = *bloom.add(u32_to_usize((h / 64) & (bloom_size - 1)));
-    let bit1 = h & 63;
-    let bit2 = (h >> bloom_shift) & 63;
-    if ((word >> bit1) & (word >> bit2) & 1) == 0 {
-        return None;
-    }
-
-    let buckets = hashtab.add(buckets_start);
-    let mut symidx = *buckets.add(u32_to_usize(h % nbuckets));
-    if symidx == STN_UNDEF {
-        return None;
-    }
-    if symidx < symbias {
-        return None;
-    }
-
-    let chain_count = info.gnu_hash_words - chains_start;
-    loop {
-        let chain_idx = u32_to_usize(symidx - symbias);
-        if chain_idx >= chain_count {
+    unsafe {
+        let hashtab = info.gnu_hash;
+        if hashtab.is_null() || info.gnu_hash_words < 4 {
             return None;
         }
-        let chain_h = *hashtab.add(chains_start + chain_idx);
-        if ((chain_h ^ h) >> 1) == 0 {
-            if let Some((sym, sname)) = info.sym_entry(symidx) {
-                if sname.to_bytes() == name && check_sym(sym) {
-                    return Some(*sym);
+
+        // offset 0: nbuckets     (u32)
+        // offset 1: symbias      (u32)  first symbol index covered by the hash
+        // offset 2: bloom_size   (u32)  number of u64 bloom filter words
+        // offset 3: bloom_shift  (u32)  secondary bloom bit shift
+        // offset 4: bloom[bloom_size]   (u64 each, so bloom_size * 2 u32 words)
+        //           buckets[nbuckets]   (u32 each)
+        //           chains[...]         (u32 each, one per symbol starting at symbias)
+
+        let nbuckets = *hashtab;
+        let symbias = *hashtab.add(1);
+        let bloom_size = *hashtab.add(2);
+        let bloom_shift = *hashtab.add(3);
+        let bloom_size_words = u32_to_usize(bloom_size).checked_mul(2)?;
+        let buckets_start = 4usize.checked_add(bloom_size_words)?;
+        let chains_start = buckets_start.checked_add(u32_to_usize(nbuckets))?;
+
+        if nbuckets == 0
+            || bloom_size == 0
+            || buckets_start > info.gnu_hash_words
+            || chains_start > info.gnu_hash_words
+        {
+            return None;
+        }
+
+        let h = gnu_hash(name);
+        let bloom = hashtab.add(4) as *const u64;
+        let word = *bloom.add(u32_to_usize((h / 64) & (bloom_size - 1)));
+        let bit1 = h & 63;
+        let bit2 = (h >> bloom_shift) & 63;
+        if ((word >> bit1) & (word >> bit2) & 1) == 0 {
+            return None;
+        }
+
+        let buckets = hashtab.add(buckets_start);
+        let mut symidx = *buckets.add(u32_to_usize(h % nbuckets));
+        if symidx == STN_UNDEF {
+            return None;
+        }
+        if symidx < symbias {
+            return None;
+        }
+
+        let chain_count = info.gnu_hash_words - chains_start;
+        loop {
+            let chain_idx = u32_to_usize(symidx - symbias);
+            if chain_idx >= chain_count {
+                return None;
+            }
+            let chain_h = *hashtab.add(chains_start + chain_idx);
+            if ((chain_h ^ h) >> 1) == 0 {
+                if let Some((sym, sname)) = info.sym_entry(symidx) {
+                    if sname.to_bytes() == name && check_sym(sym) {
+                        return Some(*sym);
+                    }
                 }
             }
+            if chain_h & 1 != 0 {
+                break;
+            }
+            symidx = symidx.checked_add(1)?;
         }
-        if chain_h & 1 != 0 {
-            break;
-        }
-        symidx = symidx.checked_add(1)?;
+        None
     }
-    None
 }
 
 /// Return whether this is a defining function/object/notype symbol.
@@ -650,12 +659,14 @@ fn find_containing_load_segment(
 /// # Safety
 /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
 unsafe fn phdr_contains_addr(info: &dl_phdr_info, addr: usize) -> bool {
-    // SAFETY: caller guarantees `info` is a valid `dl_phdr_info` for a
-    // currently-loaded ELF object. `dlpi_phnum` is u16, so the
-    // conversion to usize is lossless.
-    let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
-    let base = u64_to_usize(info.dlpi_addr);
-    find_containing_load_segment(phdrs, base, addr).is_some()
+    unsafe {
+        // SAFETY: caller guarantees `info` is a valid `dl_phdr_info` for a
+        // currently-loaded ELF object. `dlpi_phnum` is u16, so the
+        // conversion to usize is lossless.
+        let phdrs = slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
+        let base = u64_to_usize(info.dlpi_addr);
+        find_containing_load_segment(phdrs, base, addr).is_some()
+    }
 }
 
 /// Whether a `dl_iterate_phdr` entry is a pseudo-object that has no
@@ -685,14 +696,16 @@ pub fn is_vdso_or_dynamic_linker(lib_name: Option<&str>, is_exe: bool) -> bool {
 /// `ptr` must be null or point to a valid NUL-terminated C string, valid
 /// for the lifetime `'a` the caller assigns to the result.
 pub unsafe fn dlpi_name<'a>(ptr: *const c_char) -> Option<std::borrow::Cow<'a, str>> {
-    if ptr.is_null() {
-        return None;
+    unsafe {
+        if ptr.is_null() {
+            return None;
+        }
+        let cstr = CStr::from_ptr(ptr);
+        if cstr.to_bytes().is_empty() {
+            return None;
+        }
+        Some(cstr.to_string_lossy())
     }
-    let cstr = CStr::from_ptr(ptr);
-    if cstr.to_bytes().is_empty() {
-        return None;
-    }
-    Some(cstr.to_string_lossy())
 }
 
 /// Visit each loaded ELF object once. `is_exe` is true only on the
@@ -713,16 +726,18 @@ pub fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) 
         _size: libc::size_t,
         data: *mut c_void,
     ) -> c_int {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let ctx = &mut *(data as *mut Ctx);
-            let is_exe = ctx.is_first;
-            ctx.is_first = false;
-            (ctx.callback)(&*info, is_exe)
-        }));
+        unsafe {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let ctx = &mut *(data as *mut Ctx);
+                let is_exe = ctx.is_first;
+                ctx.is_first = false;
+                (ctx.callback)(&*info, is_exe)
+            }));
 
-        // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
-        // Treat patching as best-effort and stop iteration on panic.
-        result.map(i32::from).unwrap_or(1)
+            // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
+            // Treat patching as best-effort and stop iteration on panic.
+            result.map(i32::from).unwrap_or(1)
+        }
     }
 
     // SAFETY: `trampoline` has the correct signature for dl_iterate_phdr.
@@ -823,25 +838,27 @@ impl PageProtGuard {
     /// # Safety
     /// `addr` must point to a valid GOT slot in mapped memory.
     pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
-        let aligned = addr & !(self.page_size - 1);
-        if !self.touched.contains_key(&aligned) {
-            // If /proc/self/maps isn't available (or the page isn't in
-            // it, which shouldn't happen for a mapped GOT page) fall
-            // back to PROT_READ - the RELRO'd default. That's tighter
-            // than the previous behavior of leaving pages RW.
-            let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
-            if mprotect(
-                aligned as *mut c_void,
-                self.page_size,
-                PROT_READ | PROT_WRITE,
-            ) != 0
-            {
-                return false;
+        unsafe {
+            let aligned = addr & !(self.page_size - 1);
+            if !self.touched.contains_key(&aligned) {
+                // If /proc/self/maps isn't available (or the page isn't in
+                // it, which shouldn't happen for a mapped GOT page) fall
+                // back to PROT_READ - the RELRO'd default. That's tighter
+                // than the previous behavior of leaving pages RW.
+                let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
+                if mprotect(
+                    aligned as *mut c_void,
+                    self.page_size,
+                    PROT_READ | PROT_WRITE,
+                ) != 0
+                {
+                    return false;
+                }
+                self.touched.insert(aligned, orig);
             }
-            self.touched.insert(aligned, orig);
+            core::ptr::write_unaligned(addr as *mut usize, new_value);
+            true
         }
-        core::ptr::write_unaligned(addr as *mut usize, new_value);
-        true
     }
 }
 
@@ -875,26 +892,38 @@ pub fn elf64_r_type(info: u64) -> u32 {
     (info & 0xffff_ffff) as u32
 }
 
-/// Return whether the relocation type represents a pointer-width slot
-/// that is safe to overwrite with a function pointer.
+/// Return whether the relocation type represents a pointer-width slot that may be overwritten
+/// with a function pointer when its explicit RELA addend is zero.
 ///
 /// Accepted types:
 /// - `GLOB_DAT` / `JUMP_SLOT` -- GOT entries filled by the dynamic linker.
 /// - `R_X86_64_64` / `R_AARCH64_ABS64` -- absolute pointer-width relocations used for data-section
 ///   function pointers (`void *(*fn)(size_t) = malloc;`).
 ///
-/// Narrow or PC-relative types (`R_X86_64_PC32`, `R_AARCH64_TLSDESC`, etc.)
-/// are excluded since they have different widths and addend semantics
-pub fn is_got_pointer_reloc(r_type: u32) -> bool {
-    // x86_64
-    const R_X86_64_64: u32 = 1;
-    const R_X86_64_GLOB_DAT: u32 = 6;
-    const R_X86_64_JUMP_SLOT: u32 = 7;
-    // aarch64
-    const R_AARCH64_ABS64: u32 = 257;
-    const R_AARCH64_GLOB_DAT: u32 = 1025;
-    const R_AARCH64_JUMP_SLOT: u32 = 1026;
+/// Pointer width alone is not sufficient for safe substitution; depending on the relocation type
+/// the explicit addend either is ignored or must be zero (see [`is_rela_got_pointer_reloc`]).
+/// `Elf64_Rel` entries must be skipped because their implicit addend is no longer reliably
+/// recoverable after the dynamic linker has processed the relocation. REL has little practical use
+/// on our targets: the x86-64 ABI requires RELA relocation sections, and AArch64 likewise uses
+/// RELA, keeping the 64-bit addend explicit instead of embedding it in the relocated field.
+///
+/// Narrow, PC-relative, or special-purpose types (`R_X86_64_PC32`, `R_AARCH64_TLSDESC`, etc.) are
+/// excluded because they have different widths and relocation semantics. These relocation types
+/// may occur elsewhere in an ELF object, but they do not represent ordinary dynamically linked
+/// function calls or function pointers, so they are not expected for hook targets.
+// Relocation types whose pointer-width slot may be overwritten with a hook address. `GLOB_DAT` /
+// `JUMP_SLOT` entries are filled by the dynamic linker to exactly the symbol address `S`; their
+// relocation computation ignores the explicit addend, so the resolved value is `S` even for a
+// non-zero `A`. The absolute pointer-width types (`R_X86_64_64` / `R_AARCH64_ABS64`) instead
+// compute `S + A`, so a non-zero addend points into the middle of the target function.
+const R_X86_64_64: u32 = 1;
+const R_X86_64_GLOB_DAT: u32 = 6;
+const R_X86_64_JUMP_SLOT: u32 = 7;
+const R_AARCH64_ABS64: u32 = 257;
+const R_AARCH64_GLOB_DAT: u32 = 1025;
+const R_AARCH64_JUMP_SLOT: u32 = 1026;
 
+pub fn is_got_pointer_reloc(r_type: u32) -> bool {
     matches!(
         r_type,
         R_X86_64_64
@@ -904,6 +933,22 @@ pub fn is_got_pointer_reloc(r_type: u32) -> bool {
             | R_AARCH64_GLOB_DAT
             | R_AARCH64_JUMP_SLOT
     )
+}
+
+/// Return whether a RELA relocation resolves to exactly a supported symbol address.
+///
+/// `GLOB_DAT` / `JUMP_SLOT` entries resolve to exactly `S` (the dynamic linker fills them and
+/// ignores the addend), so they are always safe to overwrite with the hook address regardless of
+/// the RELA addend. Absolute pointer-width relocations (`R_X86_64_64` / `R_AARCH64_ABS64`) resolve
+/// to `S + A`, where a non-zero addend would point into the middle of the target function;
+/// replacing `S + A` with the hook address or the hook address plus `A` is incorrect because the
+/// target and hook have unrelated code layouts, so only zero addends are accepted for those.
+pub fn is_rela_got_pointer_reloc(r_type: u32, r_addend: i64) -> bool {
+    match r_type {
+        R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_AARCH64_GLOB_DAT | R_AARCH64_JUMP_SLOT => true,
+        R_X86_64_64 | R_AARCH64_ABS64 => r_addend == 0,
+        _ => false,
+    }
 }
 
 /// Look up a symbol across loaded objects, returning the first
@@ -1032,7 +1077,7 @@ pub enum HookError {
 /// `hook_fn` must point to a function with the same calling convention
 /// and signature as the symbol being hooked. The patching is permanent.
 pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize) -> Result<HookResult, HookError> {
-    hook_symbol_impl(symbol_name, hook_fn, None)
+    unsafe { hook_symbol_impl(symbol_name, hook_fn, None) }
 }
 
 /// Like [`hook_symbol`], but skips the library that contains `hook_fn`.
@@ -1054,7 +1099,7 @@ pub unsafe fn hook_symbol_excluding_self(
     symbol_name: &CStr,
     hook_fn: usize,
 ) -> Result<HookResult, HookError> {
-    hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn))
+    unsafe { hook_symbol_impl(symbol_name, hook_fn, Some(hook_fn)) }
 }
 
 /// `skip_addr`: if `Some(addr)`, skip the library whose PT_LOAD segments
@@ -1066,54 +1111,54 @@ unsafe fn hook_symbol_impl(
     hook_fn: usize,
     skip_addr: Option<usize>,
 ) -> Result<HookResult, HookError> {
-    let symbol_name_bytes = symbol_name.to_bytes();
-    let name_str = symbol_name
-        .to_str()
-        .map_err(|_| HookError::InvalidSymbolName)?;
+    unsafe {
+        let symbol_name_bytes = symbol_name.to_bytes();
+        let name_str = symbol_name
+            .to_str()
+            .map_err(|_| HookError::InvalidSymbolName)?;
 
-    // Resolve the original symbol, excluding both the hook_fn address
-    // and (if excluding self) the entire hook library so we don't
-    // accidentally resolve to a different export from the same object.
-    let result = if let Some(addr) = skip_addr {
-        lookup_symbol_excluding_addr(name_str, hook_fn, addr)
-    } else {
-        lookup_symbol(name_str, hook_fn)
-    }
-    .ok_or(HookError::SymbolNotFound)?;
-
-    let mut entries_patched: usize = 0;
-    let mut entries_failed: usize = 0;
-    let mut guard = PageProtGuard::new();
-
-    let guard_ptr = &mut guard as *mut PageProtGuard;
-    let patched_ptr = &mut entries_patched as *mut usize;
-    let failed_ptr = &mut entries_failed as *mut usize;
-
-    iterate_libraries(|info, is_exe| {
-        // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
-        // NUL-terminated C string for the callback's duration.
-        let lib_name = unsafe { dlpi_name(info.dlpi_name) };
-        if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
-            return false;
+        // Resolve the original symbol, excluding both the hook_fn address
+        // and (if excluding self) the entire hook library so we don't
+        // accidentally resolve to a different export from the same object.
+        let result = if let Some(addr) = skip_addr {
+            lookup_symbol_excluding_addr(name_str, hook_fn, addr)
+        } else {
+            lookup_symbol(name_str, hook_fn)
         }
+        .ok_or(HookError::SymbolNotFound)?;
 
-        // Skip the library containing skip_addr (the hook function).
-        if let Some(addr) = skip_addr {
-            if phdr_contains_addr(info, addr) {
+        let mut entries_patched: usize = 0;
+        let mut entries_failed: usize = 0;
+        let mut guard = PageProtGuard::new();
+
+        let guard_ptr = &mut guard as *mut PageProtGuard;
+        let patched_ptr = &mut entries_patched as *mut usize;
+        let failed_ptr = &mut entries_failed as *mut usize;
+
+        iterate_libraries(|info, is_exe| {
+            // SAFETY: dl_iterate_phdr guarantees dlpi_name is a valid
+            // NUL-terminated C string for the callback's duration.
+            let lib_name = dlpi_name(info.dlpi_name);
+            if is_vdso_or_dynamic_linker(lib_name.as_deref(), is_exe) {
                 return false;
             }
-        }
 
-        // SAFETY: `info` points to a valid `dl_phdr_info` provided by
-        // `dl_iterate_phdr`
-        let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
-            return false;
-        };
-        // SAFETY: dyn_info was just produced from a currently-loaded
-        // library. guard_ptr/patched_ptr/failed_ptr are valid for the
-        // duration of iterate_libraries (they point to locals in the
-        // enclosing fn).
-        unsafe {
+            // Skip the library containing skip_addr (the hook function).
+            if let Some(addr) = skip_addr {
+                if phdr_contains_addr(info, addr) {
+                    return false;
+                }
+            }
+
+            // SAFETY: `info` points to a valid `dl_phdr_info` provided by
+            // `dl_iterate_phdr`
+            let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
+                return false;
+            };
+            // SAFETY: dyn_info was just produced from a currently-loaded
+            // library. guard_ptr/patched_ptr/failed_ptr are valid for the
+            // duration of iterate_libraries (they point to locals in the
+            // enclosing fn).
             patch_got_entries(
                 &dyn_info,
                 symbol_name_bytes,
@@ -1122,22 +1167,25 @@ unsafe fn hook_symbol_impl(
                 &mut *patched_ptr,
                 &mut *failed_ptr,
             );
-        }
-        false
-    });
+            false
+        });
 
-    Ok(HookResult {
-        orig_addr: result.address,
-        entries_patched,
-        entries_failed,
-    })
+        Ok(HookResult {
+            orig_addr: result.address,
+            entries_patched,
+            entries_failed,
+        })
+    }
 }
 
 /// Patch GOT entries in one library for the target symbol.
 ///
-/// Only patches relocations of type `GLOB_DAT`, `JUMP_SLOT`, or
-/// pointer-width absolute (`R_X86_64_64` / `R_AARCH64_ABS64`).
-/// Narrow or PC-relative relocation types are skipped.
+/// Only patches RELA relocations of type `GLOB_DAT`, `JUMP_SLOT`, or pointer-width absolute
+/// (`R_X86_64_64` / `R_AARCH64_ABS64`). `GLOB_DAT` / `JUMP_SLOT` entries always resolve to exactly
+/// `S` (the dynamic linker fills them and ignores the addend), so they are patched regardless of
+/// the addend. Absolute pointer-width relocations resolve to `S + A`, so only zero addends are
+/// patched. Narrow or PC-relative types, RELA relocations resolving to `S + A` for non-zero `A`,
+/// and all REL relocations are skipped.
 ///
 /// # Safety
 /// `dyn_info` must have been produced by [`DynamicInfo::from_phdr`] for a
@@ -1151,36 +1199,29 @@ unsafe fn patch_got_entries(
     patched: &mut usize,
     failed: &mut usize,
 ) {
-    // Both REL and RELA relocations carry r_info (symbol + type) and
-    // r_offset (GOT slot address). RELA has an additional r_addend we
-    // don't use. This helper processes one relocation by those two fields.
-    let mut try_patch = |r_info: u64, r_offset: u64| {
-        if !is_got_pointer_reloc(elf64_r_type(r_info)) {
-            return;
-        }
-        let sym_idx = elf64_r_sym(r_info);
-        if let Some(cstr) = dyn_info.sym_name(sym_idx) {
-            if cstr.to_bytes() == symbol_name {
-                let addr = u64_to_usize(r_offset) + dyn_info.base_address();
-                if guard.override_entry(addr, hook_fn) {
-                    *patched += 1;
-                } else {
-                    *failed += 1;
+    unsafe {
+        // The AMD64 SysV ABI states on page 73: "The AMD64 LP64 ABI architecture uses only
+        // Elf64_Rela relocation entries with explicit addends":
+        // <https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build>
+        // AArch64 likewise uses RELA, so fortunately REL entries should be very unusual on our
+        // targets. If one is encountered, its implicit addend is no longer reliably
+        // distinguishable from the resolved symbol address after dynamic linking, so
+        // conservatively skip it.
+        for reloc in dyn_info.relas().iter().chain(dyn_info.jmprels().iter()) {
+            if !is_rela_got_pointer_reloc(elf64_r_type(reloc.r_info), reloc.r_addend) {
+                continue;
+            }
+            let sym_idx = elf64_r_sym(reloc.r_info);
+            if let Some(cstr) = dyn_info.sym_name(sym_idx) {
+                if cstr.to_bytes() == symbol_name {
+                    let addr = u64_to_usize(reloc.r_offset) + dyn_info.base_address();
+                    if guard.override_entry(addr, hook_fn) {
+                        *patched += 1;
+                    } else {
+                        *failed += 1;
+                    }
                 }
             }
-        }
-    };
-
-    // NOTE: the SysV x86-64 ABI specifies that only RELA entries are
-    // used on AMD64 (spec page 64). ARM64 appears similar. REL
-    // processing is kept for defensive completeness but may be
-    // dead code on both architectures. We should revisit this.
-    for reloc in dyn_info.rels() {
-        try_patch(reloc.r_info, reloc.r_offset);
-    }
-    for relocs in [dyn_info.relas(), dyn_info.jmprels()] {
-        for reloc in relocs {
-            try_patch(reloc.r_info, reloc.r_offset);
         }
     }
 }
@@ -1468,7 +1509,7 @@ mod tests {
         assert!(is_got_pointer_reloc(1)); // R_X86_64_64
         assert!(is_got_pointer_reloc(6)); // R_X86_64_GLOB_DAT
         assert!(is_got_pointer_reloc(7)); // R_X86_64_JUMP_SLOT
-                                          // aarch64
+        // aarch64
         assert!(is_got_pointer_reloc(257)); // R_AARCH64_ABS64
         assert!(is_got_pointer_reloc(1025)); // R_AARCH64_GLOB_DAT
         assert!(is_got_pointer_reloc(1026)); // R_AARCH64_JUMP_SLOT
@@ -1481,8 +1522,36 @@ mod tests {
         assert!(!is_got_pointer_reloc(10)); // R_X86_64_32
         assert!(!is_got_pointer_reloc(11)); // R_X86_64_32S
         assert!(!is_got_pointer_reloc(258)); // R_AARCH64_ABS32
-        assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLSDESC
+        assert!(!is_got_pointer_reloc(1029)); // R_AARCH64_TLS_DTPREL64
+        assert!(!is_got_pointer_reloc(1031)); // R_AARCH64_TLSDESC
         assert!(!is_got_pointer_reloc(u32::MAX));
+    }
+
+    #[test]
+    fn test_is_rela_got_pointer_reloc_addend_is_ignored_for_got_slots() {
+        const R_X86_64_64: u32 = 1;
+        const R_X86_64_GLOB_DAT: u32 = 6;
+        const R_X86_64_JUMP_SLOT: u32 = 7;
+        const R_AARCH64_ABS64: u32 = 257;
+        const R_AARCH64_GLOB_DAT: u32 = 1025;
+        const R_AARCH64_JUMP_SLOT: u32 = 1026;
+        const R_X86_64_PC32: u32 = 2;
+
+        // GLOB_DAT / JUMP_SLOT resolve to exactly `S`; the addend is ignored, so any value is ok.
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, 0));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, 8));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_GLOB_DAT, -8));
+        assert!(is_rela_got_pointer_reloc(R_X86_64_JUMP_SLOT, 8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_GLOB_DAT, -8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_JUMP_SLOT, 8));
+
+        // Absolute pointer-width relocations resolve to `S + A`, so only a zero addend is accepted.
+        assert!(is_rela_got_pointer_reloc(R_X86_64_64, 0));
+        assert!(!is_rela_got_pointer_reloc(R_X86_64_64, 8));
+        assert!(is_rela_got_pointer_reloc(R_AARCH64_ABS64, 0));
+        assert!(!is_rela_got_pointer_reloc(R_AARCH64_ABS64, -8));
+
+        assert!(!is_rela_got_pointer_reloc(R_X86_64_PC32, 0));
     }
 
     /// Verify that `hook_symbol_excluding_self` skips the library

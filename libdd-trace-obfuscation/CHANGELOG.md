@@ -2,6 +2,25 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v8.0.0..libdd-trace-obfuscation-v9.0.0) - 2026-09-24
+
+### Added
+
+- Refactor agent's /info obfuscation config format ([#2490](https://github.com/datadog/libdatadog/issues/2490)) - ([45009c2](https://github.com/datadog/libdatadog/commit/45009c22401ccf5821a5315fb128a37b664018f7))
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Harden agentless config setters and parse obfuscation config once ([#2474](https://github.com/datadog/libdatadog/issues/2474)) - ([c0341fa](https://github.com/datadog/libdatadog/commit/c0341fa19d061fd83fd4bb6303e7a31cc80f0b62))
+- Keep URLs whose path or fragment holds a bracket ([#2527](https://github.com/datadog/libdatadog/issues/2527)) - ([d644447](https://github.com/datadog/libdatadog/commit/d6444472d0610d7769ba9d9d50c8b35ebde19155))
+- Stop forcing serde_json/preserve_order on dependents ([#2529](https://github.com/datadog/libdatadog/issues/2529)) - ([3c2afd0](https://github.com/datadog/libdatadog/commit/3c2afd0cabe165c97c6f0eefa7a667352cec14dc))
+- Prevent crash and cap recursion in SQL/HTTP obfuscation ([#2441](https://github.com/datadog/libdatadog/issues/2441)) - ([8b0fa65](https://github.com/datadog/libdatadog/commit/8b0fa6509291f185d15ecf08d282a09655cff745))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v7.0.0..libdd-trace-obfuscation-v8.0.0) - 2026-09-08
 
 ### Added

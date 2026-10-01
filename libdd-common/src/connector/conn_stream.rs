@@ -113,6 +113,21 @@ impl ConnStream {
         #[cfg(unix)]
         {
             let path = super::uds::socket_path_from_uri(&uri)?;
+            // Filesystem endpoints need validated paths. Abstract sockets do not resolve paths.
+            #[cfg(unix)]
+            {
+                let bytes = path.as_os_str().as_encoded_bytes();
+                let is_abstract = bytes.first().is_none_or(|b| *b == 0);
+                if crate::unix_utils::worker_file_outputs_restricted() && !is_abstract {
+                    let (_pinned, connect_path) =
+                        crate::unix_utils::constrained_unix_socket_fd(&path)?;
+                    // Keep the pin alive until connect finishes using its /proc/self/fd path.
+                    let stream = tokio::net::UnixStream::connect(&connect_path).await?;
+                    return Ok(ConnStream::Udp {
+                        transport: TokioIo::new(stream),
+                    });
+                }
+            }
             Ok(ConnStream::Udp {
                 transport: TokioIo::new(tokio::net::UnixStream::connect(path).await?),
             })

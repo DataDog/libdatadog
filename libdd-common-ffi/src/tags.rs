@@ -1,17 +1,17 @@
 // Copyright 2022-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::slice::{AsBytes, CharSlice};
 use crate::Error;
-use libdd_common::tag::{parse_tags, Tag};
+use crate::slice::{AsBytes, CharSlice};
+use libdd_common::tag::{Tag, parse_tags};
 
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_Vec_Tag_new() -> crate::Vec<Tag> {
     crate::Vec::default()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_Vec_Tag_drop(_: crate::Vec<Tag>) {}
 
 #[repr(C)]
@@ -29,7 +29,7 @@ pub enum PushTagResult {
 /// The CharSlices `key` and `value` must point to at least many bytes as their
 /// `.len` properties claim.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Vec_Tag_push(
     vec: &mut crate::Vec<Tag>,
     key: CharSlice,
@@ -56,7 +56,7 @@ pub struct ParseTagsResult {
 /// The `string`'s .ptr must point to a valid object at least as large as its
 /// .len property.
 #[must_use]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_Vec_Tag_parse(string: CharSlice) -> ParseTagsResult {
     let string = string.to_utf8_lossy();
     let (tags, error) = parse_tags(string.as_ref());

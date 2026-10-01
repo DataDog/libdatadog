@@ -116,7 +116,7 @@ fn generated_header_exposes_native_evp_transport_abi() {
 }
 
 fn set_sidecar_per_process() {
-    std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process")
+    unsafe { std::env::set_var("_DD_DEBUG_SIDECAR_IPC_MODE", "instance_per_process") }
 }
 
 #[test]
@@ -239,9 +239,11 @@ fn test_ddog_sidecar_register_app() {
             "errors-intake".into(),
             &producer,
         ) {
-            libdd_common_ffi::Option::Some(error) => assert!(error
-                .to_string()
-                .contains("host must be errors-intake.<site>")),
+            libdd_common_ffi::Option::Some(error) => assert!(
+                error
+                    .to_string()
+                    .contains("host must be errors-intake.<site>")
+            ),
             libdd_common_ffi::Option::None => {
                 panic!("EVP transport accepted a mismatched direct intake")
             }

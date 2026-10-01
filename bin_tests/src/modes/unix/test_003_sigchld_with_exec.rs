@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::modes::behavior::Behavior;
 use crate::modes::behavior::{
-    fileat_content_equals, handler_write_msg, remove_permissive, removeat_permissive,
-    set_handler_path, wait_for_file_content, SIGNAL_HANDLER_TIMEOUT,
+    SIGNAL_HANDLER_TIMEOUT, fileat_content_equals, handler_write_msg, remove_permissive,
+    removeat_permissive, set_handler_path, wait_for_file_content,
 };
 
 use libc;

@@ -7,6 +7,8 @@
 
 When a shared library calls an external function like `malloc`, it jumps through a pointer in its **Global Offset Table** -- a writable table that the dynamic linker fills at load time. This crate walks every loaded ELF object via `dl_iterate_phdr`, parses its `PT_DYNAMIC` segment, and rewrites GOT entries so calls are redirected to a hook function. The original function address is resolved and returned so the hook can forward to it.
 
+Normal function-pointer relocations, including cached pointers such as `malloc_ptr = malloc`, are supported. A non-zero offset ('addend') from a function is theoretically possible but unusual, and is skipped because it cannot be redirected safely. The rarely used `Elf64_Rel` format is also skipped because its addend cannot be recovered reliably after linking.
+
 ## Usage
 
 ### Single-symbol hook (crashtracker intercepting `__assert_fail`)

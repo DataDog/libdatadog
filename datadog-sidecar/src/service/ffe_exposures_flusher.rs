@@ -9,16 +9,16 @@
 //! compatible local v4-before-v2 route, requiring both EVP identity headers,
 //! and otherwise uses authenticated direct intake.
 
+use crate::service::FfeExposureBatch;
 #[cfg(test)]
 use crate::service::evp_proxy::{
     EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE,
     SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER,
 };
 use crate::service::evp_transport::EvpTransport;
-use crate::service::FfeExposureBatch;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
-use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
+use libdd_ffe::telemetry::exposures::encode_exposure_batch_in_scope;
 use tracing::debug;
 
 /// Historical Agent-only EVP v2 path for Feature Flags exposure intake.
@@ -184,7 +184,7 @@ mod tests {
             Self
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self
         }
 

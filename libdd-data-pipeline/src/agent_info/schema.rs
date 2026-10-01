@@ -1,6 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module provides struct representing the info endpoint response
+use libdd_trace_obfuscation::{
+    obfuscation_config::{self, ObfuscationConfig},
+    replacer::ReplaceRule,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -77,50 +81,28 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
-    pub obfuscation: Option<ObfuscationConfig>,
+    pub obfuscation: Option<AgentObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct ObfuscationConfig {
-    pub elastic_search: bool,
-    pub mongo: bool,
-    pub sql_exec_plan: bool,
-    pub sql_exec_plan_normalize: bool,
-    #[cfg(feature = "stats-obfuscation")]
-    // Option because it might not exist with old agents
-    pub sql_obfuscation_mode: Option<libdd_trace_obfuscation::sql::SqlObfuscationMode>,
-    pub http: HttpObfuscationConfig,
+#[serde(default)]
+// Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
+// agent exposes is slightly different
+pub struct AgentObfuscationConfig {
+    /// Old format from the agent, now present under `sql.obfuscation_mode` directly
+    pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
     pub remove_stack_traces: bool,
-    pub redis: RedisObfuscationConfig,
-    pub memcached: MemcachedObfuscationConfig,
-}
-
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct HttpObfuscationConfig {
-    pub remove_query_string: bool,
-    pub remove_path_digits: bool,
-}
-
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct RedisObfuscationConfig {
-    // Agent sent pascal case fields here in versions <7.79.0
-    #[serde(alias = "Enabled")]
-    pub enabled: bool,
-    #[serde(alias = "RemoveAllArgs")]
-    pub remove_all_args: bool,
-}
-
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct MemcachedObfuscationConfig {
-    // Agent sent pascal case fields here in versions <7.79.0
-    #[serde(alias = "Enabled")]
-    pub enabled: bool,
-    #[serde(alias = "KeepCommand")]
-    pub keep_command: bool,
+    pub sql: Option<obfuscation_config::SqlConfig>,
+    pub http: obfuscation_config::HttpConfig,
+    pub redis: obfuscation_config::RedisConfig,
+    pub valkey: obfuscation_config::RedisConfig,
+    pub credit_cards: obfuscation_config::CreditCardConfig,
+    pub memcached: obfuscation_config::MemcachedConfig,
+    pub elasticsearch: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub opensearch: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub mongodb: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl AgentInfo {
@@ -130,6 +112,29 @@ impl AgentInfo {
             .feature_flags
             .iter()
             .any(|flag| flag == "big_resource")
+    }
+}
+
+impl From<AgentObfuscationConfig> for ObfuscationConfig {
+    fn from(value: AgentObfuscationConfig) -> Self {
+        let sql_config = value.sql.unwrap_or_else(||
+            // Fallback for the previous /info config format
+            obfuscation_config::SqlConfig {
+                obfuscation_mode: value.sql_obfuscation_mode,
+                ..Default::default()
+        });
+        Self {
+            tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
+            http: value.http,
+            memcached: value.memcached,
+            redis: value.redis,
+            valkey: value.valkey,
+            credit_cards: value.credit_cards,
+            sql: sql_config,
+            elasticsearch: value.elasticsearch,
+            opensearch: value.opensearch,
+            mongodb: value.mongodb,
+        }
     }
 }
 

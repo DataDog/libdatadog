@@ -12,7 +12,7 @@ use futures::future;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
-use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_common::{Endpoint, MutexExt, tag::Tag};
 use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
@@ -44,10 +44,8 @@ pub(crate) struct SessionInfo {
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
     #[cfg(windows)]
-    pub(crate) remote_config_notify_function:
-        Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
-    #[cfg(windows)]
-    pub(crate) process_handle: Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
+    pub(crate) remote_config_notify_target:
+        Arc<Mutex<Option<crate::service::remote_configs::RemoteConfigNotifyTarget>>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,
@@ -246,6 +244,19 @@ impl SessionInfo {
             .cloned()
     }
 
+    /// Return only a client-selected transport, not the legacy Agent-only default.
+    pub(crate) fn get_explicit_evp_transport(
+        &self,
+        intake_subdomain: &str,
+    ) -> Option<EvpTransport> {
+        let state = self.evp_transports.lock_or_panic();
+        if state.explicitly_configured.contains(intake_subdomain) {
+            state.transports.get(intake_subdomain).cloned()
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
         self.tracer_config.lock_or_panic()
     }
@@ -306,7 +317,9 @@ impl SessionInfo {
         ) -> anyhow::Result<()> {
             async fn finish_sender(debugger_type: DebuggerType, sender: PayloadSender) {
                 match sender.finish().await {
-                    Ok(payloads) => debug!("Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"),
+                    Ok(payloads) => debug!(
+                        "Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"
+                    ),
                     Err(e) => error!("Error sending to live debugger endpoint: {e:?}"),
                 }
             }
@@ -380,7 +393,10 @@ impl SessionInfo {
                     }
                 );
             } else {
-                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data", self.session_id);
+                warn!(
+                    "Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data",
+                    self.session_id
+                );
             }
         } else {
             warn!(
@@ -403,11 +419,13 @@ mod tests {
 
         // Test that a new runtime is created if it doesn't exist
         let _ = session_info.get_runtime(&runtime_id);
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id));
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id)
+        );
     }
 
     #[tokio::test]
@@ -431,16 +449,20 @@ mod tests {
         session_info.get_runtime(&runtime_id2);
 
         session_info.shutdown_runtime(&runtime_id1).await;
-        assert!(!session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id1));
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id2));
+        assert!(
+            !session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id1)
+        );
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id2)
+        );
     }
 
     #[test]
@@ -604,9 +626,11 @@ mod tests {
             },
             EVENT_PLATFORM_INTAKE_SUBDOMAIN,
         );
-        assert!(session
-            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
-            .is_some());
+        assert!(
+            session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .is_some()
+        );
 
         session.set_default_evp_transport(
             Endpoint {
@@ -616,8 +640,10 @@ mod tests {
             },
             EVENT_PLATFORM_INTAKE_SUBDOMAIN,
         );
-        assert!(session
-            .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
-            .is_none());
+        assert!(
+            session
+                .get_evp_transport(EVENT_PLATFORM_INTAKE_SUBDOMAIN)
+                .is_none()
+        );
     }
 }

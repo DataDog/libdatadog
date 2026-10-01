@@ -3,8 +3,8 @@
 
 //! Linux-specific IPC socket implementation using `AF_UNIX SOCK_SEQPACKET`.
 
-use super::{create_unix_socket, PeerCredentials, SeqpacketConn, SeqpacketListener};
-use nix::sys::socket::{accept, bind, connect, listen, Backlog, SockType, UnixAddr};
+use super::{PeerCredentials, SeqpacketConn, SeqpacketListener, create_unix_socket};
+use nix::sys::socket::{Backlog, SockType, UnixAddr, accept, bind, connect, listen};
 use std::os::fd::RawFd;
 use std::{
     io,
@@ -71,11 +71,23 @@ impl SeqpacketListener {
 }
 
 impl SeqpacketConn {
-    /// Create a connected pair (SEQPACKET, for testing / in-process use).
+    /// Duplicate the descriptor while preserving the connection's packet ordering.
+    /// The connection stays open until both owners have been dropped.
+    pub fn try_clone(&self) -> io::Result<Self> {
+        Self::from_owned(self.inner.try_clone()?)
+    }
+
+    /// Create a connected pair with close-on-exec descriptors.
     pub fn socketpair() -> io::Result<(Self, Self)> {
         let mut fds = [0i32; 2];
-        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, fds.as_mut_ptr()) }
-            == -1
+        if unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
+                0,
+                fds.as_mut_ptr(),
+            )
+        } == -1
         {
             return Err(io::Error::last_os_error());
         }
@@ -139,5 +151,6 @@ pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
     Ok(PeerCredentials {
         pid: cred.pid as u32,
         uid: cred.uid,
+        gid: cred.gid,
     })
 }

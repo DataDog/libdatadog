@@ -4,15 +4,15 @@
 use core::task::{Context, Poll};
 use std::sync::LazyLock;
 
-use futures::future::BoxFuture;
 use futures::FutureExt;
-use hyper_util::client::legacy::connect::{proxy::Tunnel, HttpConnector};
+use futures::future::BoxFuture;
+use hyper_util::client::legacy::connect::{HttpConnector, proxy::Tunnel};
 use hyper_util::client::proxy::matcher::Matcher;
 
+use super::Connector;
 use super::conn_stream::{ConnStream, ConnStreamError};
 #[cfg(feature = "tls-core")]
 use super::https;
-use super::Connector;
 
 // Read getenv only once at init to avoid concurrency issues with the environment.
 static PROXY_MATCHER: LazyLock<Matcher> = LazyLock::new(Matcher::from_env);

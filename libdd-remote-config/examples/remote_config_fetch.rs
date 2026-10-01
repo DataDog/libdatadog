@@ -4,10 +4,10 @@
 use libdd_capabilities::HttpClientCapability;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
+use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
 use libdd_remote_config::file_storage::ParsedFileStorage;
-use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::{RemoteConfigParsed, Target};
 use std::process::Command;
 use tokio::time::sleep;
@@ -109,7 +109,7 @@ async fn main() {
             products: vec![ApmTracing],
             capabilities: vec![],
         },
-        NativeCapabilities::new_without_connection_pooling(),
+        NativeCapabilities::new_periodic(),
     )
     .await
     .expect("Failed to create SingleChangesFetcher");

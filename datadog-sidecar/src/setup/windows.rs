@@ -7,6 +7,7 @@ use libc::getpid;
 use libdd_ipc::platform::PIPE_PATH;
 use libdd_ipc::{AsyncConn, SeqpacketConn, SeqpacketListener};
 use std::io;
+use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
 pub type IpcClient = AsyncConn;
 pub type IpcServer = SeqpacketListener;
@@ -23,12 +24,7 @@ impl Liaison for NamedPipeLiaison {
     fn attempt_listen(&self) -> io::Result<Option<SeqpacketListener>> {
         match SeqpacketListener::bind(&self.socket_path) {
             Ok(listener) => Ok(Some(listener)),
-            Err(ref e)
-                if e.raw_os_error()
-                    == Some(winapi::shared::winerror::ERROR_ACCESS_DENIED as i32) =>
-            {
-                Ok(None)
-            }
+            Err(ref e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -76,7 +72,7 @@ mod tests {
     #[test]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
         use rand::distributions::Alphanumeric;
-        use rand::{thread_rng, Rng};
+        use rand::{Rng, thread_rng};
         let random_prefix: Vec<u8> = thread_rng().sample_iter(&Alphanumeric).take(8).collect();
         let liaison = super::NamedPipeLiaison::new(String::from_utf8_lossy(&random_prefix));
         basic_liaison_connection_test(&liaison)?;
@@ -97,7 +93,7 @@ mod tests {
             let srv_thread = std::thread::spawn(move || listener.try_accept().unwrap());
             let client: SeqpacketConn = liaison.connect_to_server().unwrap();
             let srv: SeqpacketConn = srv_thread.join().unwrap();
-            client.send_raw_blocking(&mut vec![255], &[]).unwrap();
+            client.send_raw_blocking(vec![255], &[]).unwrap();
             let mut buf = vec![0u8; libdd_ipc::max_message_size() + libdd_ipc::HANDLE_SUFFIX_SIZE];
             let (n, _) = srv.recv_raw_blocking(&mut buf).unwrap();
             assert_eq!(n, 1);

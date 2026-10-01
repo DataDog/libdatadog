@@ -11,8 +11,8 @@ pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 
-use super::add_path;
 use super::TracerMetadata;
+use super::add_path;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -25,9 +25,12 @@ use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
 };
-use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_stats::stats_exporter::{
+    FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
+};
 use libdd_trace_utils::trace_filter::TraceFilterer;
-use std::sync::{Arc, Mutex};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
@@ -75,6 +78,9 @@ pub(crate) enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         worker_handle: WorkerHandle,
+        /// Weak handle to trigger an immediate forced flush of the stats
+        /// exporter without holding a strong reference to the background worker.
+        flush_handle: Weak<dyn FlushableStatsExport>,
     },
 }
 
@@ -177,9 +183,10 @@ fn create_and_start_stats_worker<
         ctx.telemetry.clone(),
         ctx.dogstatsd.clone(),
     );
+    let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, ctx.restart_after_fork)
+        .spawn_worker(shared, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -188,6 +195,7 @@ fn create_and_start_stats_worker<
         .store(Arc::new(StatsComputationStatus::Enabled {
             stats_concentrator: stats_concentrator.clone(),
             worker_handle,
+            flush_handle: weak,
         }));
 
     Ok(())
@@ -265,13 +273,15 @@ fn update_obfuscation_config(
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
         // FIXME(APMSP-3720): there is more than this to obfuscation config
         let sql_obfuscation_mode = (|| {
-            agent_info
-                .info
-                .config
-                .as_ref()?
-                .obfuscation
-                .as_ref()?
-                .sql_obfuscation_mode
+            Some(
+                agent_info
+                    .info
+                    .config
+                    .as_ref()?
+                    .obfuscation
+                    .as_ref()?
+                    .sql_obfuscation_mode,
+            )
         })()
         .unwrap_or_default();
         client_side_stats
@@ -491,7 +501,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     mod is_stats_computation_supported {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
-        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+        use crate::trace_exporter::stats::{STATS_ENDPOINT, is_stats_computation_supported};
 
         fn make_agent_info(
             client_drop_p0s: Option<bool>,

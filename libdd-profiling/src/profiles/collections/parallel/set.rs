@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::profiles::collections::parallel::sharded::Sharded;
-use crate::profiles::collections::{Arc, Set, SetError, SetId, SET_MIN_CAPACITY};
+use crate::profiles::collections::{Arc, SET_MIN_CAPACITY, Set, SetError, SetId};
 use core::hash;
 use libdd_alloc::Global;
 use std::ffi::c_void;

@@ -7,15 +7,15 @@
 //! explicitly opt into local discovery and authenticated direct fallback.
 
 use crate::service::evp_proxy;
-use http::uri::PathAndQuery;
 use http::Method;
+use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, warn};
@@ -436,6 +436,7 @@ impl EvpTransport {
         Arc::ptr_eq(&self.state, &other.state)
     }
 
+    #[cfg(test)]
     pub(crate) fn producer(&self) -> &EvpProducerIdentity {
         &self.producer
     }
@@ -823,7 +824,7 @@ mod tests {
             Self::new(Vec::new())
         }
 
-        fn new_without_connection_pooling() -> Self {
+        fn new_periodic() -> Self {
             Self::new(Vec::new())
         }
 
@@ -982,9 +983,11 @@ mod tests {
                 .count(),
             1
         );
-        assert!(requests
-            .iter()
-            .any(|(url, _)| url == "http://agent.internal:8126/evp_proxy/v4/api/v2/exposures"));
+        assert!(
+            requests
+                .iter()
+                .any(|(url, _)| url == "http://agent.internal:8126/evp_proxy/v4/api/v2/exposures")
+        );
         assert!(
             requests
                 .iter()
@@ -1181,9 +1184,11 @@ mod tests {
         let transport = agentless(Some("api-key"));
 
         assert!(send(&transport, &client, "/api/v2/exposures").await);
-        assert!(client.requests()[1]
-            .0
-            .starts_with("https://event-platform-intake.datadoghq.com/"));
+        assert!(
+            client.requests()[1]
+                .0
+                .starts_with("https://event-platform-intake.datadoghq.com/")
+        );
     }
 
     #[tokio::test]
@@ -1263,9 +1268,11 @@ mod tests {
         assert!(!send(&transport, &client, "/api/v2/exposures").await);
         assert_eq!(client.requests().len(), 2, "ambiguous batch was replayed");
         assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
-        assert!(client.requests()[2]
-            .0
-            .starts_with("https://event-platform-intake."));
+        assert!(
+            client.requests()[2]
+                .0
+                .starts_with("https://event-platform-intake.")
+        );
     }
 
     #[tokio::test]
@@ -1344,9 +1351,11 @@ mod tests {
             2,
             "concurrent recovery performed more than one new discovery"
         );
-        assert!(requests[2..]
-            .iter()
-            .all(|(url, _)| url.contains("/evp_proxy/v4/")));
+        assert!(
+            requests[2..]
+                .iter()
+                .all(|(url, _)| url.contains("/evp_proxy/v4/"))
+        );
     }
 
     #[tokio::test]
@@ -1371,12 +1380,17 @@ mod tests {
             assert!(send(&transport, &client, "/api/v2/exposures").await);
             let requests = client.requests();
             assert_eq!(requests.len(), 2);
-            assert!(requests
-                .iter()
-                .all(|(url, _)| url == "http://agent.internal:8126/evp_proxy/v2/api/v2/exposures"));
-            assert!(requests
-                .iter()
-                .all(|(_, headers)| !headers.contains_key("dd-api-key")));
+            assert!(
+                requests
+                    .iter()
+                    .all(|(url, _)| url
+                        == "http://agent.internal:8126/evp_proxy/v2/api/v2/exposures")
+            );
+            assert!(
+                requests
+                    .iter()
+                    .all(|(_, headers)| !headers.contains_key("dd-api-key"))
+            );
             assert_eq!(
                 requests[0].1.get(EVP_ORIGIN_HEADER).unwrap(),
                 "ddtrace-sidecar"
@@ -1599,53 +1613,61 @@ mod tests {
             assert!(config.validate().is_err(), "accepted direct URL {url}");
         }
 
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(
-                "https://event-platform-intake.datadoghq.eu/",
-                Some("secret")
-            )),
-            EVP_SUBDOMAIN_VALUE,
-        )
-        .validate()
-        .is_ok());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(
+                    "https://event-platform-intake.datadoghq.eu/",
+                    Some("secret")
+                )),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .validate()
+            .is_ok()
+        );
 
         // Custom and test Datadog sites remain valid. The client derives this
         // authority from DD_SITE and deliberately supplies the credential for
         // that exact host; validation binds the target label without imposing
         // a production-domain allowlist.
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(
-                "https://event-platform-intake.mock-intake.invalid/",
-                Some("secret")
-            )),
-            EVP_SUBDOMAIN_VALUE,
-        )
-        .validate()
-        .is_ok());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(
+                    "https://event-platform-intake.mock-intake.invalid/",
+                    Some("secret")
+                )),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .validate()
+            .is_ok()
+        );
 
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(
-                "https://errors-intake.datadoghq.com/",
-                Some("secret")
-            )),
-            "errors-intake",
-        )
-        .validate()
-        .is_ok());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(
+                    "https://errors-intake.datadoghq.com/",
+                    Some("secret")
+                )),
+                "errors-intake",
+            )
+            .validate()
+            .is_ok()
+        );
 
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(
-                "https://event-platform-intake.datadoghq.com/",
-                Some("secret")
-            )),
-            "errors-intake",
-        )
-        .validate()
-        .is_err());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(
+                    "https://event-platform-intake.datadoghq.com/",
+                    Some("secret")
+                )),
+                "errors-intake",
+            )
+            .validate()
+            .is_err()
+        );
 
         let longest_valid_site_for_target = [
             "a".repeat(63),
@@ -1660,13 +1682,15 @@ mod tests {
             format!("{EVP_SUBDOMAIN_VALUE}.{longest_valid_site_for_target}").len(),
             MAX_DNS_HOST_LENGTH
         );
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(&valid_boundary_url, Some("secret"))),
-            EVP_SUBDOMAIN_VALUE,
-        )
-        .validate()
-        .is_ok());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(&valid_boundary_url, Some("secret"))),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .validate()
+            .is_ok()
+        );
 
         let maximum_length_site = [
             "a".repeat(63),
@@ -1678,13 +1702,15 @@ mod tests {
         assert_eq!(maximum_length_site.len(), MAX_DNS_HOST_LENGTH);
         let oversized_composed_host =
             format!("https://{EVP_SUBDOMAIN_VALUE}.{maximum_length_site}/");
-        assert!(EvpTransportConfig::prefer_local_then_direct(
-            endpoint("http://agent.internal:8126/", None),
-            Some(endpoint(&oversized_composed_host, Some("secret"))),
-            EVP_SUBDOMAIN_VALUE,
-        )
-        .validate()
-        .is_err());
+        assert!(
+            EvpTransportConfig::prefer_local_then_direct(
+                endpoint("http://agent.internal:8126/", None),
+                Some(endpoint(&oversized_composed_host, Some("secret"))),
+                EVP_SUBDOMAIN_VALUE,
+            )
+            .validate()
+            .is_err()
+        );
 
         for subdomain in [
             "",
@@ -1725,11 +1751,10 @@ mod tests {
     fn producer_identity_rejects_untrusted_header_values_and_wire_input() {
         assert!(EvpProducerIdentity::new("", "1.0.0").is_err());
         assert!(EvpProducerIdentity::new("dd-trace-rb", "invalid\nversion").is_err());
-        assert!(EvpProducerIdentity::new(
-            "x".repeat(MAX_EVP_PRODUCER_IDENTITY_LENGTH + 1),
-            "1.0.0"
-        )
-        .is_err());
+        assert!(
+            EvpProducerIdentity::new("x".repeat(MAX_EVP_PRODUCER_IDENTITY_LENGTH + 1), "1.0.0")
+                .is_err()
+        );
 
         #[derive(Serialize)]
         struct WireIdentity<'a> {

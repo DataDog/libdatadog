@@ -12,12 +12,12 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
+    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
-    SidecarAction,
 };
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -255,13 +255,15 @@ impl SidecarSender {
     /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
     pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.0.send_blocking(&mut data.to_vec(), &[])
+        self.channel.0.send_blocking(data.to_vec(), &[])
     }
 
     pub fn set_session_config(
         &mut self,
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)] remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
         config: SessionConfig,
         is_fork: bool,
     ) {
@@ -270,7 +272,7 @@ impl SidecarSender {
             SidecarInterfaceRequest::SetSessionConfig {
                 session_id,
                 #[cfg(windows)]
-                remote_config_notify_function,
+                remote_config_notify_target,
                 config,
                 is_fork,
             },
@@ -416,8 +418,7 @@ impl SidecarSender {
             if self.enqueue_actions_counter != 0 {
                 trace!(
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
-                    outstanding,
-                    self.max_outstanding,
+                    outstanding, self.max_outstanding,
                 );
                 return;
             }
@@ -559,12 +560,12 @@ impl SidecarSender {
         env: String,
         version: String,
         span: libdd_ipc::shm_stats::OwnedShmSpanInput,
-    ) {
+    ) -> bool {
         if !self.try_drain_outbox() {
-            return;
+            return false;
         }
         self.channel
-            .try_send_add_span_to_concentrator(env, version, span);
+            .try_send_add_span_to_concentrator(env, version, span)
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
@@ -644,8 +645,10 @@ mod tests {
             }
             _ => unreachable!(),
         }
-        assert!(outbox
-            .set_session_evp_transports
-            .contains_key("errors-intake"));
+        assert!(
+            outbox
+                .set_session_evp_transports
+                .contains_key("errors-intake")
+        );
     }
 }

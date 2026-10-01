@@ -1,19 +1,22 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
+use spawn_worker::{SpawnWorker, Stdio, TrampolineData, getpid};
 
 use crate::config::Config;
 use crate::enter_listener_loop;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
-use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
-use nix::sys::socket::{shutdown, Shutdown};
+use nix::fcntl::{F_GETFL, F_SETFL, OFlag, fcntl};
+use nix::sys::socket::{Shutdown, shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 use tokio::select;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::Notify;
 use tracing::{error, info, warn};
 
 #[cfg(target_os = "linux")]
@@ -27,7 +30,7 @@ use spawn_worker::{entrypoint, get_dl_path_raw};
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(unused)]
 pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     #[cfg(feature = "tracing")]
@@ -65,13 +68,20 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
             // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
             // while shutting down
+            let shutdown = Arc::new(Notify::new());
             let cancel = {
                 let listener_fd = async_listener.as_raw_fd();
-                move || stop_listening(listener_fd)
+                let shutdown = shutdown.clone();
+                move || {
+                    stop_listening(listener_fd);
+                    // notify_one, not notify_waiters: it leaves a permit behind if the loop is
+                    // between iterations, so the cancellation cannot be missed.
+                    shutdown.notify_one();
+                }
             };
 
             Ok((
-                move |handler| accept_socket_loop(async_listener, handler),
+                move |handler| accept_socket_loop(async_listener, handler, shutdown),
                 cancel,
             ))
         };
@@ -99,12 +109,17 @@ fn stop_listening(listener_fd: RawFd) {
 async fn accept_socket_loop(
     async_listener: tokio::io::unix::AsyncFd<SeqpacketListener>,
     handler: Box<dyn Fn(SeqpacketConn)>,
+    shutdown: Arc<Notify>,
 ) -> io::Result<()> {
     #[allow(clippy::unwrap_used)]
     let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
         select! {
             _ = termsig.recv() => {
+                stop_listening(async_listener.as_raw_fd());
+                break;
+            }
+            _ = shutdown.notified() => {
                 stop_listening(async_listener.as_raw_fd());
                 break;
             }
@@ -157,9 +172,38 @@ pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// No-op: retained for FFI compatibility.
-/// The master PID is now tracked by MasterListener::start() directly.
-pub fn set_sidecar_master_pid(_pid: u32) {}
+/// Thread-mode master PID, or 0 for the per-user subprocess sidecar.
+static THREAD_SIDECAR_PID: AtomicU32 = AtomicU32::new(0);
+
+/// Use the shared memory of the thread-mode sidecar in `master_pid`, or of the subprocess
+/// sidecar for `None`.
+pub fn use_thread_sidecar_shm_namespace(master_pid: Option<u32>) {
+    THREAD_SIDECAR_PID.store(master_pid.unwrap_or(0), Ordering::Relaxed);
+}
+
+/// Qualify SHM names by effective UID for subprocess sidecars and master PID for thread mode.
+/// Multiple masters for one UID must not replace each other's live segments.
+pub fn shm_namespace() -> ShmNamespace {
+    match THREAD_SIDECAR_PID.load(Ordering::Relaxed) {
+        0 => ShmNamespace::User(primary_sidecar_identifier()),
+        pid => ShmNamespace::Thread(pid),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShmNamespace {
+    User(u32),
+    Thread(u32),
+}
+
+impl std::fmt::Display for ShmNamespace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShmNamespace::User(uid) => write!(f, "{uid}"),
+            ShmNamespace::Thread(pid) => write!(f, "t{pid}"),
+        }
+    }
+}
 
 /// Allow initializing crashtracker independently for thread-mode sidecar.
 #[cfg(target_os = "linux")]
@@ -261,12 +305,43 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_crashtracker_entry_point(_trampoline_data: &TrampolineData) {
     unsafe {
         if let Err(e) = libdd_crashtracker::receiver_entry_point_stdin() {
             eprintln!("{e}");
             libc::exit(1)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Isolate the process-wide namespace change from other tests.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn thread_mode_sidecars_get_names_of_their_own() {
+        // SAFETY: the child only formats names and leaves through _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                let own = crate::tracer::shm_limiter_path();
+                use_thread_sidecar_shm_namespace(Some(4242));
+                let first = crate::tracer::shm_limiter_path();
+                use_thread_sidecar_shm_namespace(Some(4243));
+                let second = crate::tracer::shm_limiter_path();
+                use_thread_sidecar_shm_namespace(None);
+                let back = crate::tracer::shm_limiter_path();
+                let ok = first != second && first != own && second != own && back == own;
+                unsafe { libc::_exit(if ok { 0 } else { 1 }) }
+            }
+            pid => {
+                let mut status = 0;
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert_eq!(libc::WEXITSTATUS(status), 0, "sidecars would share names");
+            }
         }
     }
 }

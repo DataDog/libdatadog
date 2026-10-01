@@ -9,8 +9,8 @@
 #![cfg(feature = "hyper-proxy")]
 
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;

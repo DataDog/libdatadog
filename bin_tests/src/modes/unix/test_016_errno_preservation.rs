@@ -16,11 +16,11 @@
 //  The integration test reads ERRNO_STATUS_FILENAME and asserts "PRESERVED"
 use crate::modes::behavior::Behavior;
 
-use errno::{errno, set_errno, Errno};
+use errno::{Errno, errno, set_errno};
 use libc;
 use libdd_crashtracker::CrashtrackerConfiguration;
 use nix::{
-    sys::signal::{self, kill, SaFlags, SigAction, SigHandler, SigSet, Signal},
+    sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet, Signal, kill},
     unistd::Pid,
 };
 use std::ffi::CString;
