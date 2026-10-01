@@ -90,8 +90,8 @@ pub struct Config {
 // Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
 // agent exposes is slightly different
 pub struct AgentObfuscationConfig {
-    /// Old format from the agent, now present under `sql.obfuscation_mode` directly
-    pub sql_obfuscation_mode: obfuscation_config::SqlObfuscationMode,
+    // Old format from the agent, now present under sql->obfuscation_mode directly
+    pub sql_obfuscation_mode: Option<obfuscation_config::SqlObfuscationMode>,
     pub remove_stack_traces: bool,
     pub sql: Option<obfuscation_config::SqlConfig>,
     pub http: obfuscation_config::HttpConfig,
@@ -117,12 +117,14 @@ impl AgentInfo {
 
 impl From<AgentObfuscationConfig> for ObfuscationConfig {
     fn from(value: AgentObfuscationConfig) -> Self {
-        let sql_config = value.sql.unwrap_or_else(||
+        let sql_config = match value.sql {
+            Some(sql_config) => sql_config,
             // Fallback for the previous /info config format
-            obfuscation_config::SqlConfig {
-                obfuscation_mode: value.sql_obfuscation_mode,
+            None => obfuscation_config::SqlConfig {
+                obfuscation_mode: value.sql_obfuscation_mode.unwrap_or_default(),
                 ..Default::default()
-        });
+            },
+        };
         Self {
             tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
             http: value.http,
