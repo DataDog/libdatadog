@@ -254,8 +254,13 @@ pub(crate) fn build_metric_exporter(
     result.map_err(|e| BuildWarning::ExporterInitFailed(e.to_string()))
 }
 
-/// Identifies an OpenTelemetry instrumentation scope: (meter name, version, schema_url).
-type MeterScope = (String, Option<String>, Option<String>);
+/// Identifies an OpenTelemetry instrumentation scope.
+type MeterScope = (
+    String,
+    Option<String>,
+    Option<String>,
+    Vec<(String, String)>,
+);
 
 /// Aggregates primitive metric observations from a host tracer and exports them via OTLP.
 ///
@@ -312,6 +317,7 @@ impl OtelMetricsAggregator {
             descriptor.meter_name.clone(),
             descriptor.meter_version.clone(),
             descriptor.meter_schema_url.clone(),
+            descriptor.meter_attributes.clone(),
         );
         let mut meters = self.meters.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(meter) = meters.get(&key) {
@@ -324,6 +330,7 @@ impl OtelMetricsAggregator {
         if let Some(schema_url) = &descriptor.meter_schema_url {
             scope = scope.with_schema_url(schema_url.clone());
         }
+        scope = scope.with_attributes(Self::attrs(&descriptor.meter_attributes));
         let meter = self.provider.meter_with_scope(scope.build());
         meters.insert(key, meter.clone());
         meter
@@ -459,6 +466,9 @@ impl OtelMetricsAggregator {
     }
 
     pub fn record_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+        if value < 0.0 {
+            return;
+        }
         if let Some(InstrumentHandle::Counter(counter)) = self
             .instruments
             .lock()
@@ -481,6 +491,9 @@ impl OtelMetricsAggregator {
     }
 
     pub fn record_histogram(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+        if value < 0.0 {
+            return;
+        }
         if let Some(InstrumentHandle::Histogram(histogram)) = self
             .instruments
             .lock()

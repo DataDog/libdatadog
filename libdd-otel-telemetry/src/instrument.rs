@@ -43,10 +43,9 @@ pub enum InstrumentKind {
 
 /// Metadata needed to create the underlying instrument once, at registration time.
 ///
-/// The `meter_*` fields carry the OpenTelemetry instrumentation scope the instrument belongs to
-/// (the name/version/schema_url the host passed to `get_meter`). The aggregator creates one SDK
-/// `Meter` per distinct scope so exported metrics keep the host's scope rather than a single
-/// crate-internal one.
+/// The `meter_*` fields carry the OpenTelemetry instrumentation scope the instrument belongs to.
+/// The aggregator creates one SDK `Meter` per distinct scope so exported metrics keep the host's
+/// scope rather than a single crate-internal one.
 #[derive(Debug, Clone)]
 pub struct InstrumentDescriptor {
     pub name: String,
@@ -56,6 +55,7 @@ pub struct InstrumentDescriptor {
     pub meter_name: String,
     pub meter_version: Option<String>,
     pub meter_schema_url: Option<String>,
+    pub meter_attributes: Vec<(String, String)>,
 }
 
 impl InstrumentDescriptor {
@@ -68,6 +68,7 @@ impl InstrumentDescriptor {
             meter_name: "libdd-otel-telemetry".to_string(),
             meter_version: None,
             meter_schema_url: None,
+            meter_attributes: Vec::new(),
         }
     }
 
@@ -92,5 +93,36 @@ impl InstrumentDescriptor {
         self.meter_version = meter_version;
         self.meter_schema_url = meter_schema_url;
         self
+    }
+
+    /// Sets instrumentation-scope attributes, normalized for stable scope identity.
+    pub fn with_scope_attributes(mut self, mut attributes: Vec<(String, String)>) -> Self {
+        attributes.sort_unstable();
+        attributes.dedup();
+        self.meter_attributes = attributes;
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InstrumentDescriptor, InstrumentKind};
+
+    #[test]
+    fn scope_attributes_have_stable_identity() {
+        let descriptor = InstrumentDescriptor::new("requests", InstrumentKind::Counter)
+            .with_scope_attributes(vec![
+                ("z".to_string(), "last".to_string()),
+                ("a".to_string(), "first".to_string()),
+                ("a".to_string(), "first".to_string()),
+            ]);
+
+        assert_eq!(
+            descriptor.meter_attributes,
+            vec![
+                ("a".to_string(), "first".to_string()),
+                ("z".to_string(), "last".to_string()),
+            ]
+        );
     }
 }
