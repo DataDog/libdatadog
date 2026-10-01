@@ -465,6 +465,27 @@ impl OtelMetricsAggregator {
             .collect()
     }
 
+    /// Records a synchronous measurement using the instrument kind captured at registration.
+    pub fn record(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
+        let attributes = Self::attrs(attrs);
+        match self
+            .instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+        {
+            Some(InstrumentHandle::Counter(counter)) if value >= 0.0 || value.is_nan() => {
+                counter.add(value, &attributes);
+            }
+            Some(InstrumentHandle::UpDownCounter(counter)) => counter.add(value, &attributes),
+            Some(InstrumentHandle::Histogram(histogram)) if value >= 0.0 || value.is_nan() => {
+                histogram.record(value, &attributes);
+            }
+            Some(InstrumentHandle::Gauge(gauge)) => gauge.record(value, &attributes),
+            _ => {}
+        }
+    }
+
     pub fn record_counter(&self, id: InstrumentId, value: f64, attrs: &[(String, String)]) {
         if value < 0.0 {
             return;
