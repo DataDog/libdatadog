@@ -89,6 +89,7 @@ rand = { workspace = true, default-features = true }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "time", "test-util"] }
 duplicate = { workspace = true, default-features = true }
+serde_ignored.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 h2.workspace = true
