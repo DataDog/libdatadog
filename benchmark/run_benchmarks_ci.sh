@@ -22,7 +22,8 @@ pushd "${PROJECT_DIR}" > /dev/null
 
 readonly CACHE_FAILURES_LOG="${CI_PROJECT_DIR:-${TMPDIR:-/tmp}}/.cache-failures.log"
 record_cache_failure() {
-  echo "$*" | tee -a "${CACHE_FAILURES_LOG}" >&2
+  echo "$*" >&2
+  echo "$*" >> "${CACHE_FAILURES_LOG}" 2>/dev/null || :
 }
 report_cache_failures() {
   if [[ -s "${CACHE_FAILURES_LOG}" ]]; then
@@ -129,11 +130,11 @@ else
     fi
     # Storage IO errors during the build (e.g. S3 hiccup) only show up in these
     # counters; surface them loudly instead of letting them read as cache misses.
-    sccache_stats="$(sccache --show-stats 2>&1 || true)"
-    echo "${sccache_stats}"
-    sccache_io_errors="$(awk '/^Cache (read|write) errors|^Cache timeouts/ { n += $NF } END { print n+0 }' <<< "${sccache_stats}")"
+    sccache --show-stats || :
+    sccache_stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
+    sccache_io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${sccache_stats}")"
     if (( sccache_io_errors > 0 )); then
-      sccache_io_detail="$(grep -E '^Cache (read|write) errors|^Cache timeouts' <<< "${sccache_stats}" | awk '$NF > 0 { $1 = $1; print }' | paste -sd';' - | sed 's/;/; /g')"
+      sccache_io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${sccache_stats}")"
       record_cache_failure "SCCACHE SERVER FAILURE: ${sccache_io_errors} cache storage IO errors during this job — ${sccache_io_detail}"
     fi
     sccache --stop-server > /dev/null 2>&1 || :
