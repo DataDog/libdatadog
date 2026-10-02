@@ -24,7 +24,7 @@ use crate::{
     replacer::{replace_span_tags, replace_span_tags_trait, replace_span_tags_v04},
     sql::obfuscate_sql_resource,
 };
-use libdd_trace_model::{Span, TraceText, AttributeValue};
+use libdd_trace_model::{AttributeValue, Span, TraceText};
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
 const TAG_REDIS_RAW_COMMAND: &str = "redis.raw_command";
@@ -79,7 +79,6 @@ pub fn obfuscate_resource_for_stats(
     }
 }
 
-
 /// `obfuscate_span` goes through
 pub fn obfuscate_span<S: Span>(span: &mut S, config: &ObfuscationConfig) {
     // for span_event in &mut span.span_events {
@@ -100,7 +99,7 @@ pub fn obfuscate_span<S: Span>(span: &mut S, config: &ObfuscationConfig) {
             true
         });
     }
-    match span.r#type().as_str() {
+    match span.r#type() {
         "web" | "http" => {
             if let Some(AttributeValue::String(url)) = span.attribute_mut(TAG_HTTPURL) {
                 *url = S::Text::from(obfuscate_url_string(
@@ -119,8 +118,7 @@ pub fn obfuscate_span<S: Span>(span: &mut S, config: &ObfuscationConfig) {
                 }
             }
         }
-        _ => {},
-    
+        _ => {}
     }
     //     "redis" => {
     //         span.resource = quantize_redis_string(&span.resource);
@@ -183,9 +181,6 @@ pub fn obfuscate_span<S: Span>(span: &mut S, config: &ObfuscationConfig) {
     // }
     replace_span_tags_trait(span, &config.tag_replace_rules);
 }
-
-
-
 
 /// `obfuscate_pb_span` goes through `span` fields and applies obfuscation on it
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?

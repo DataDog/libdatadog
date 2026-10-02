@@ -224,6 +224,14 @@ impl<K, V> VecMap<K, V> {
     ) -> std::vec::Drain<'_, (K, V)> {
         self.data.drain(range)
     }
+
+    /// Retains only the entries for which `f` returns `true`, allowing values to be mutated
+    /// in place. Keys are borrowed immutably, so this cannot introduce duplicates and the
+    /// `deduped` flag is preserved.
+    #[inline]
+    pub fn retain_mut(&mut self, mut f: impl FnMut(&K, &mut V) -> bool) {
+        self.data.retain_mut(|(k, v)| f(k, v));
+    }
 }
 
 impl<K: Eq + Hash, V> VecMap<K, V> {

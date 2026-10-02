@@ -3599,6 +3599,7 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-normalization",
  "libdd-trace-protobuf",
  "libdd-trace-utils",

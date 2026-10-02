@@ -3,6 +3,7 @@
 
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
+use libdd_trace_model::{self, TraceBytes, TraceText};
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
@@ -114,9 +115,38 @@ pub struct Span<T: TraceData> {
     pub env: T::Text,
     pub version: T::Text,
     pub component: T::Text,
-    pub attributes: VecMap<T::Text, AttributeValue<T>>,
+    pub attributes: VecMap<T::Text, libdd_trace_model::AttributeValue<T::Text, T::Bytes>>,
     pub span_links: ThinVec<SpanLink<T>>,
     pub span_events: ThinVec<SpanEvent<T>>,
+}
+
+impl<T: TraceData> libdd_trace_model::Attributes for Span<T>
+where
+    T::Text: TraceText,
+    T::Bytes: TraceBytes,
+{
+    // TODO: simplify by combining the TraceText type with the model's version
+    type Text = T::Text;
+    type Bytes = T::Bytes;
+
+    fn attribute(&self, key: &str) -> Option<&libdd_trace_model::Value<Self>> {
+        self.attributes.get(key)
+    }
+
+    fn retain_attributes(
+        &mut self,
+        f: impl FnMut(&Self::Text, &mut libdd_trace_model::Value<Self>) -> bool,
+    ) {
+        self.attributes.retain_mut(f);
+    }
+
+    fn attribute_mut(&mut self, key: &str) -> Option<&mut libdd_trace_model::Value<Self>> {
+        todo!()
+    }
+
+    fn set_attribute(&mut self, key: impl Into<Self::Text>, value: libdd_trace_model::Value<Self>) {
+        todo!()
+    }
 }
 
 /// The generic representation of a V1 span link.

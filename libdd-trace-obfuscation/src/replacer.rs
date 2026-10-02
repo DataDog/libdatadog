@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_common::regex_engine::{Regex, Replacer};
+use libdd_trace_model::{AttributeValue, Span, TraceText};
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::{SpanText, TraceData, v04};
 use serde::{Deserialize, Deserializer, Serialize};
-use libdd_trace_model::{AttributeValue, Span, TraceText};
 
 // Agent-facing representation. `re` and `no_expansion` are derived runtime state.
 #[derive(Serialize, Deserialize)]
@@ -128,7 +128,6 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
     }
 }
 
-
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 /// TODO: This function should probably recurse into arrays and keyvalue attributes and should act on non-string types for full trace-agent parity
 pub fn replace_span_tags_trait<S: Span>(span: &mut S, rules: &[ReplaceRule]) {
@@ -147,20 +146,20 @@ pub fn replace_span_tags_trait<S: Span>(span: &mut S, rules: &[ReplaceRule]) {
                 // meta tags, matching the Datadog Agent reference implementation in
                 // `pkg/trace/filters/replacer.go` (see the `Replace` and `ReplaceV1`
                 // functions, which apply "*" rules to both span meta and `s.Resource`).
-                if let Some(new_resource) = rule.apply_str(span.resource().as_str()) {
+                if let Some(new_resource) = rule.apply_str(span.resource()) {
                     span.set_resource(new_resource);
                 }
             }
             "resource.name" => {
-                if let Some(new_resource) = rule.apply_str(span.resource().as_str()) {
+                if let Some(new_resource) = rule.apply_str(span.resource()) {
                     span.set_resource(new_resource);
                 }
             }
             _ => {
                 if let Some(AttributeValue::String(tag_value)) = span.attribute_mut(&rule.name) {
                     if let Some(new_val) = rule.apply_str(tag_value.as_str()) {
-                            *tag_value = S::Text::from(new_val);
-                        }
+                        *tag_value = S::Text::from(new_val);
+                    }
                 }
             }
         }
