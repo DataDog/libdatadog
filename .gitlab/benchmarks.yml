@@ -30,7 +30,7 @@
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
 # noise-controlled), then benchmarks_combine merges the shards' results into a single PR comment.
 benchmarks:
-  parallel: 2
+  parallel: 3
   tags: ["runner:apm-k8s-tweaked-metal"]
   needs:
     # Not created on main (which runs the full suite) -- hence optional.
