@@ -237,11 +237,28 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     /// drains the mailbox so that actions queued before the fork are not processed by the
     /// child.
     fn reset(&mut self) {
+        let mut start_pending = matches!(
+            self.next_action,
+            Some(TelemetryActions::Lifecycle(LifecycleAction::Start))
+        );
         // Drain all actions queued in the mailbox before the fork.
-        while self.mailbox.try_recv().is_ok() {}
+        while let Ok(action) = self.mailbox.try_recv() {
+            start_pending |= matches!(action, TelemetryActions::Lifecycle(LifecycleAction::Start));
+        }
 
         // Discard any action that was staged by the last trigger() call.
         self.next_action = None;
+
+        // A queued Start or staged flush must not leave the child's metrics worker dormant.
+        if matches!(self.flavor, TelemetryWorkerFlavor::MetricsLogs)
+            && (self.data.started || start_pending)
+        {
+            self.data.started = true;
+            let _ = self
+                .deadlines
+                .schedule_event(LifecycleAction::FlushMetricAggr);
+            let _ = self.deadlines.schedule_event(LifecycleAction::FlushData);
+        }
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -944,9 +961,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             );
         let req = http_client::add_instrumentation_session_headers(
             req,
-            self.config.session_id.as_deref(),
-            self.config.parent_session_id.as_deref(),
-            self.config.root_session_id.as_deref(),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.id.as_str())
+                .or(self.config.session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.parent_id.as_str())
+                .or(self.config.parent_session_id.as_deref()),
+            metadata
+                .session
+                .as_ref()
+                .map(|s| s.root_id.as_str())
+                .or(self.config.root_session_id.as_deref()),
         );
 
         let body = Bytes::from(serialize::serialize(&tel)?);
@@ -1620,6 +1649,38 @@ mod tests {
 
     #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
+    fn mutable_identity_overrides_static_headers_atomically() {
+        use libdd_common::mutable_metadata::InstrumentationSession;
+
+        let worker = test_worker(Some("static".into()), Some("static-root".into()), None);
+        let parent = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        worker.mutable_metadata.set_identity(
+            "child".into(),
+            InstrumentationSession {
+                id: "child-session".into(),
+                root_id: "root-session".into(),
+                parent_id: "parent-session".into(),
+            },
+        );
+        let child = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(child.body()).unwrap();
+        assert_eq!(body["runtime_id"], "child");
+        assert_eq!(child.headers()["dd-session-id"], "child-session");
+        assert_eq!(child.headers()["dd-root-session-id"], "root-session");
+        assert_eq!(child.headers()["dd-parent-session-id"], "parent-session");
+        assert_eq!(parent.headers()["dd-session-id"], "static");
+
+        worker
+            .mutable_metadata
+            .set_identity("no-headers".into(), InstrumentationSession::default());
+        let empty = worker.build_request(&Payload::AppHeartbeat(())).unwrap();
+        assert!(!empty.headers().contains_key("dd-session-id"));
+        assert!(!empty.headers().contains_key("dd-root-session-id"));
+        assert!(!empty.headers().contains_key("dd-parent-session-id"));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
     fn telemetry_http_includes_dd_session_id() {
         let req = test_worker(Some("sess".into()), None, None)
             .build_request(&Payload::AppHeartbeat(()))
@@ -2145,6 +2206,32 @@ mod tests {
                 "queued AddDependency must not be pending"
             );
             assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[tokio::test]
+        async fn metrics_reset_keeps_queued_start_and_staged_flush_alive() {
+            let (handle, mut worker) = build_test_worker();
+            worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            handle.send_start().unwrap();
+            worker.reset();
+            assert!(worker.data.started);
+            assert!(worker.mailbox.try_recv().is_err());
+            for action in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                worker.deadlines.clear_pending();
+                worker.next_action = Some(TelemetryActions::Lifecycle(action));
+                worker.reset();
+                assert!(worker.next_action.is_none());
+                for expected in [LifecycleAction::FlushMetricAggr, LifecycleAction::FlushData] {
+                    assert!(
+                        worker
+                            .deadlines
+                            .deadlines
+                            .iter()
+                            .any(|(_, action)| *action == expected)
+                    );
+                }
+            }
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.
