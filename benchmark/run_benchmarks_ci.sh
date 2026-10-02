@@ -20,6 +20,19 @@ OUTPUT_DIR="${1:-}"
 
 pushd "${PROJECT_DIR}" > /dev/null
 
+readonly CACHE_FAILURES_LOG="${CI_PROJECT_DIR:-${TMPDIR:-/tmp}}/.cache-failures.log"
+record_cache_failure() {
+  echo "$*" >&2
+  echo "$*" >> "${CACHE_FAILURES_LOG}" 2>/dev/null || :
+}
+report_cache_failures() {
+  if [[ -e "${CACHE_FAILURES_LOG}" ]]; then
+    echo "" >&2
+    echo "CACHE FAILED:" >&2
+    cat "${CACHE_FAILURES_LOG}" >&2
+  fi
+}
+
 # The single source of truth for which crate-specific features each crate's benchmarks need.
 # When scoping a run we must pass only the features for the selected crates (cargo errors on
 # --features for a crate that isn't part of the selection).
@@ -77,6 +90,7 @@ start_compiler_cache() {
     message "sccache: server startup failed; building without a compiler cache"
     message "sccache: --start-server reported: ${startup_output:-<no output>}"
     dump_compiler_cache_diagnostics
+    record_cache_failure "SCCACHE SERVER FAILURE: server startup failed; building without a compiler cache — $(grep -m1 '^sccache: error:' <<< "${startup_output:-}" || echo "no error line captured")"
     return 1
   fi
   return 0
@@ -112,14 +126,24 @@ else
   if start_compiler_cache; then
     if ! RUSTC_WRAPPER=sccache cargo bench "${package_args[@]}" "${feature_args[@]}" --no-run; then
       message "sccache: compilation via the wrapper failed; retrying without a compiler cache"
+      record_cache_failure "SCCACHE SERVER FAILURE: compilation via the wrapper failed; the measuring run continues without a compiler cache"
     fi
+    # Storage IO errors during the build (e.g. S3 hiccup) only show up in these
+    # counters; surface them loudly instead of letting them read as cache misses.
     sccache --show-stats || :
+    sccache_stats="$(sccache --show-stats --stats-format json 2>/dev/null || echo '{}')"
+    sccache_io_errors="$(jq -r '[.stats.cache_write_errors, .stats.cache_read_errors, .stats.cache_timeouts] | add // 0' <<< "${sccache_stats}")"
+    if (( sccache_io_errors > 0 )); then
+      sccache_io_detail="$(jq -r '"cache write errors=\(.stats.cache_write_errors), cache read errors=\(.stats.cache_read_errors), cache timeouts=\(.stats.cache_timeouts)"' <<< "${sccache_stats}")"
+      record_cache_failure "SCCACHE SERVER FAILURE: ${sccache_io_errors} cache storage IO errors during this job — ${sccache_io_detail}"
+    fi
     sccache --stop-server > /dev/null 2>&1 || :
   fi
 
   cargo bench "${package_args[@]}" "${feature_args[@]}" -- "${criterion_args[@]}"
 fi
 message "Finished running benchmarks"
+report_cache_failures
 
 # Copy the benchmark results to the output directory
 if [[ -n "${OUTPUT_DIR}" && -d "target" ]]; then

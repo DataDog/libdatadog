@@ -478,9 +478,15 @@ where
     D: Clone + Eq + Hash,
 {
     /// Enqueue a batch and return whether the caller should start a flush loop.
-    pub fn enqueue(&self, destination: D, batch: FfeFlagEvaluationBatch) -> bool {
+    pub fn enqueue(&self, destination: D, mut batch: FfeFlagEvaluationBatch) -> bool {
         if batch.flag_evaluations.is_empty() {
             return false;
+        }
+
+        // Parsing and pruning only need the owned event, not shared aggregation
+        // state. Keep that work out of the lock used by other enqueues and flushes.
+        for event in &mut batch.flag_evaluations {
+            normalize_for_aggregation(event);
         }
 
         let mut state = lock_or_recover(&self.state);
@@ -494,7 +500,6 @@ where
             });
 
         for mut event in batch.flag_evaluations {
-            normalize_for_aggregation(&mut event);
             self.writer_stats.record_field_omissions(&mut event);
             let key = EventKey::new(&event);
             if merge_pending_event(&mut state, &destination, &key, &event) {
@@ -1127,6 +1132,58 @@ mod tests {
         assert!(EventKey::new(&protected) == EventKey::degraded(&protected));
         assert!(EventKey::new(&consented) == EventKey::degraded(&consented));
         assert!(EventKey::new(&protected) == EventKey::new(&consented));
+    }
+
+    #[test]
+    fn mixed_consent_stays_separate_through_aggregation_and_encoding() {
+        for protected_first in [false, true] {
+            let coalescer = FlagEvaluationEvpCoalescer::default();
+            let mut protected = full_event();
+            protected.context = None;
+            protected.targeting_key = Some("jane.doe@datadoghq.com".into());
+            protected.observe_full_evaluation_data = false;
+            protected.evaluation_count = 5;
+            let mut consented = protected.clone();
+            consented.observe_full_evaluation_data = true;
+            consented.evaluation_count = 7;
+            let events = if protected_first {
+                [protected, consented]
+            } else {
+                [consented, protected]
+            };
+            for event in events {
+                coalescer.enqueue(
+                    "destination",
+                    FfeFlagEvaluationBatch {
+                        context: context(),
+                        flag_evaluations: vec![event],
+                    },
+                );
+            }
+            let mut batches = coalescer.take_batches();
+            assert_eq!(batches.len(), 1);
+            let encoded =
+                encode_flag_evaluation_payloads(batches.pop().unwrap().1, usize::MAX).unwrap();
+            assert_eq!(encoded.payloads.len(), 1);
+            let payload: Value = serde_json::from_str(&encoded.payloads[0]).unwrap();
+            let rows = payload["flagEvaluations"].as_array().unwrap();
+            assert_eq!(rows.len(), 2);
+            for (identity, count) in [
+                ("jane.doe@datadoghq.com", 7),
+                (
+                    "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b",
+                    5,
+                ),
+            ] {
+                let row = rows
+                    .iter()
+                    .find(|row| row["targeting_key"] == identity)
+                    .unwrap();
+                assert_eq!(row["evaluation_count"], count);
+                assert!(row.get("context").is_none());
+                assert!(row.get("observe_full_evaluation_data").is_none());
+            }
+        }
     }
 
     #[test]

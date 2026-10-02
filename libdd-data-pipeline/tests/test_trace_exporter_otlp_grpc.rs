@@ -262,6 +262,14 @@ mod grpc_export_tests {
             resource_attribute(&initial.request, "_dd.stats_computed"),
             Some("true")
         );
+        assert_eq!(
+            resource_attribute(&initial.request, "_dd.sdk.otlp_export"),
+            Some("true")
+        );
+        assert_eq!(
+            resource_attribute(&initial.request, "datadog.sdk.semantics"),
+            Some("datadog")
+        );
 
         shared_runtime.before_fork();
         shared_runtime
