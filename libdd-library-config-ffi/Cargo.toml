@@ -15,7 +15,7 @@ bench = false
 [dependencies]
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer"] }
+libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer", "otel-thread-ctx"] }
 anyhow.workspace = true
 constcat.workspace = true
 
@@ -33,3 +33,6 @@ build_common = { path = "../build-common" }
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-reader"] }
