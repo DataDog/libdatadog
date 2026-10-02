@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Lock-free `Option<T>` with atomic take, valid for any `T` where
-//! `size_of::<Option<T>>() <= 8`.
+//! Lock-free `Option<T>` with atomic take, valid for any `T` where `Option<T>` has the size and
+//! alignment of one of `u8`, `u16`, `u32` or `u64`.
 
 use std::cell::UnsafeCell;
 use std::mem::{self, MaybeUninit};
@@ -12,16 +12,29 @@ use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 /// An `Option<T>` that supports lock-free atomic take.
 ///
 /// # Constraints
-/// `size_of::<Option<T>>()` must be `<= 8`.  Enforced by a `debug_assert` in
-/// `From<Option<T>>`).  This holds for niche-optimised types (`NonNull<T>`,
-/// `Box<T>`, …) and for any `Option<T>` that fits in a single machine word.
+/// `T` must have the size and and an alignement compatible with one of the available atomic
+/// integers (typically `u8`, `u16`, `u32` and `u64`). More specifically, `size_of::<Option<T>>()`
+/// must be exactly 1, 2, 4 or 8 bytes, and `align_of::<Option<T>>()` must be at least the alignment
+/// of the atomic integer of that size. This is enforced at compile time through `const` assertions.
+///
+/// This holds for niche-optimised pointer-like types (`NonNull<T>`, `Box<T>`, `&T`, …) and for
+/// small integers wrapped in a niche (`NonZeroU32`, …).
+///
+/// ```compile_fail
+/// // `Option<[u8; 3]>` has size 4 but alignment 1: not suitably aligned for `AtomicU32`.
+/// let _ = libdd_ipc::AtomicOption::<[u8; 3]>::from(None);
+/// ```
+///
+/// ```compile_fail
+/// // `Option<u64>` has size 16.
+/// let _ = libdd_ipc::AtomicOption::<u64>::from(None);
+/// ```
 ///
 /// # Storage
-/// The option is stored in a `UnsafeCell<Option<T>>`, giving it exactly the size
-/// and alignment of `Option<T>` itself.  `take()` picks the narrowest atomic that
-/// covers `size_of::<Option<T>>()` bytes — `AtomicU8` for 1-byte options up to
-/// `AtomicU64` for 5–8 byte options.  The atomic cast is valid because
-/// `align_of::<AtomicUN>() == align_of::<uN>() <= align_of::<Option<T>>()`.
+/// The option is stored in a `UnsafeCell<Option<T>>`, giving it exactly the size and alignment
+/// of `Option<T>` itself. Atomic operations reinterpret that storage as the atomic integer
+/// `AtomicU<N>` with `N = 8 * size_of::<Option<T>>()`. This is valid thanks to the constraints
+/// above.
 ///
 /// # None sentinel
 /// The "none" bit-pattern is computed by value (`Option::<T>::None`) rather than
@@ -33,9 +46,35 @@ use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
 pub struct AtomicOption<T>(UnsafeCell<Option<T>>);
 
 impl<T> AtomicOption<T> {
+    /// Check of the constraints documented on [`AtomicOption`] at compile time.
+    const fn assert_layout() {
+        let size = size_of::<Option<T>>();
+        let align = align_of::<Option<T>>();
+
+        let atomic_align = match size {
+            1 => align_of::<AtomicU8>(),
+            2 => align_of::<AtomicU16>(),
+            4 => align_of::<AtomicU32>(),
+            8 => align_of::<AtomicU64>(),
+            // A panic in a `const fn` is compile-time, which is ok.
+            #[allow(clippy::panic)]
+            _ => panic!("AtomicOption requires the size of T to be either 1, 2, 4 or 8"),
+        };
+
+        assert!(
+            align >= atomic_align,
+            "AtomicOption requires that the aligment of T is equal to or greater than the alignement of the matching atomic"
+        );
+    }
+
     /// Encode `val` as a `u64`, transferring ownership into the bit representation.
     const fn encode(val: Option<T>) -> u64 {
+        const { Self::assert_layout() };
         let mut bits = 0u64;
+        // SAFETY: `assert_layout` guarantees `size_of::<Option<T>>() <= size_of::<u64>()`, so both
+        // the source and the destination are valid for that many bytes. They don't overlap by core
+        // guarantees of Rust (two distinct owned values). Ownership of `val` is moved into `bits`,
+        // hence the `forget`.
         unsafe {
             ptr::copy_nonoverlapping(
                 ptr::from_ref(&val).cast::<u8>(),
@@ -50,15 +89,23 @@ impl<T> AtomicOption<T> {
     /// Atomically swap the storage with `new_bits`, returning the old bits.
     #[inline]
     fn atomic_swap(&self, new_bits: u64) -> u64 {
+        let ptr = self.0.get();
+        // SAFETY: `assert_layout` (checked when constructing `self`) guarantees that
+        // `size_of::<Option<T>>()` is one of the sizes below and that the storage is suitably
+        // aligned for the corresponding atomic, so the cell is valid for atomic access of that
+        // width. All concurrent accesses to the cell go through this function (apart from
+        // `as_option`, whose contract forbids concurrency), so there is no mixed
+        // atomic/non-atomic or mixed-size access.
+        //
+        // The `as` casts truncate `new_bits` to its low bytes, which is where `encode` put the
+        // value, and zero-extend the result back, which `decode` ignores.
         unsafe {
-            let ptr = self.0.get();
             match size_of::<Option<T>>() {
-                1 => (*(ptr as *const AtomicU8)).swap(new_bits as u8, Ordering::AcqRel) as u64,
-                2 => (*(ptr as *const AtomicU16)).swap(new_bits as u16, Ordering::AcqRel) as u64,
-                3 | 4 => {
-                    (*(ptr as *const AtomicU32)).swap(new_bits as u32, Ordering::AcqRel) as u64
-                }
-                _ => (*(ptr as *const AtomicU64)).swap(new_bits, Ordering::AcqRel),
+                1 => AtomicU8::from_ptr(ptr.cast()).swap(new_bits as u8, Ordering::AcqRel) as u64,
+                2 => AtomicU16::from_ptr(ptr.cast()).swap(new_bits as u16, Ordering::AcqRel) as u64,
+                4 => AtomicU32::from_ptr(ptr.cast()).swap(new_bits as u32, Ordering::AcqRel) as u64,
+                // Only 8 is left, per `assert_layout`.
+                _ => AtomicU64::from_ptr(ptr.cast()).swap(new_bits, Ordering::AcqRel),
             }
         }
     }
@@ -69,6 +116,9 @@ impl<T> AtomicOption<T> {
     /// `bits` must hold a valid `Option<T>` bit-pattern in its low
     /// `size_of::<Option<T>>()` bytes, as produced by a previous `encode`.
     const unsafe fn decode(bits: u64) -> Option<T> {
+        // SAFETY: `assert_layout` (checked in `encode`, which produced `bits`) guarantees that
+        // `size_of::<Option<T>>() <= size_of::<u64>()`, and the caller guarantees that these bytes
+        // are a valid `Option<T>`.
         unsafe {
             let mut result = MaybeUninit::<Option<T>>::uninit();
             ptr::copy_nonoverlapping(
@@ -91,6 +141,7 @@ impl<T> AtomicOption<T> {
     /// Atomically store `val`, dropping any previous value.
     pub fn set(&self, val: Option<T>) -> Option<T> {
         let old = self.atomic_swap(Self::encode(val));
+        // SAFETY: `old` holds a valid `Option<T>` bit-pattern.
         unsafe { Self::decode(old) }
     }
 
@@ -104,22 +155,56 @@ impl<T> AtomicOption<T> {
     /// # Safety
     /// Must not be called concurrently with [`take`], [`set`], or [`replace`].
     pub unsafe fn as_option(&self) -> &Option<T> {
+        // SAFETY: the caller guarantees there is no concurrent write to the cell.
         unsafe { &*self.0.get() }
     }
 }
 
 impl<T> From<Option<T>> for AtomicOption<T> {
     fn from(val: Option<T>) -> Self {
-        // we may raise this to 16 once AtomicU128 becomes stable
-        debug_assert!(
-            size_of::<Option<T>>() <= size_of::<u64>(),
-            "AtomicOption requires size_of::<Option<T>>() <= 8, got {}",
-            size_of::<Option<T>>()
-        );
+        // We may allow 16 bytes once AtomicU128 becomes stable.
+        const { Self::assert_layout() };
         Self(UnsafeCell::new(val))
     }
 }
 
-// `AtomicOption<T>` is `Send`/`Sync` when `T: Send` — same contract as `Mutex<Option<T>>`.
+// SAFETY: `AtomicOption<T>` is `Send` and `Sync` when `T: Send` — same contract as
+// `Mutex<Option<T>>`. Values of `T` are only ever moved in and out atomically, never shared (at
+// least by safe functions).
 unsafe impl<T: Send> Send for AtomicOption<T> {}
 unsafe impl<T: Send> Sync for AtomicOption<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::num::{NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64};
+
+    fn roundtrip<T: Copy + PartialEq + std::fmt::Debug>(a: T, b: T) {
+        let opt = AtomicOption::from(Some(a));
+        assert_eq!(opt.replace(b), Some(a));
+        assert_eq!(opt.take(), Some(b));
+        assert_eq!(opt.take(), None);
+        assert_eq!(opt.set(Some(a)), None);
+        // SAFETY: no concurrent access.
+        assert_eq!(unsafe { opt.as_option() }, &Some(a));
+    }
+
+    #[test]
+    fn supported_sizes() {
+        roundtrip(NonZeroU8::MIN, NonZeroU8::MAX);
+        roundtrip(NonZeroU16::MIN, NonZeroU16::MAX);
+        roundtrip(NonZeroU32::MIN, NonZeroU32::MAX);
+        roundtrip(NonZeroU64::MIN, NonZeroU64::MAX);
+        // Discriminant-based option (`None` isn't all zeros).
+        roundtrip(false, true);
+    }
+
+    #[test]
+    fn owned_values_are_dropped_once() {
+        let opt = AtomicOption::from(Some(Box::new(String::from("a"))));
+        let old = opt.replace(Box::new(String::from("b")));
+        assert_eq!(old.as_deref().map(String::as_str), Some("a"));
+        assert_eq!(opt.take().as_deref().map(String::as_str), Some("b"));
+        assert!(opt.take().is_none());
+    }
+}
