@@ -21,9 +21,10 @@ use crate::{
         obfuscate_redis, obfuscate_redis_remove_all_args, obfuscate_redis_string, quantize_redis,
         quantize_redis_string, remove_all_redis_args,
     },
-    replacer::{replace_span_tags, replace_span_tags_v04},
+    replacer::{replace_span_tags, replace_span_tags_trait, replace_span_tags_v04},
     sql::obfuscate_sql_resource,
 };
+use libdd_trace_model::{Span, TraceText, AttributeValue};
 
 /// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
 const TAG_REDIS_RAW_COMMAND: &str = "redis.raw_command";
@@ -77,6 +78,114 @@ pub fn obfuscate_resource_for_stats(
         _ => None,
     }
 }
+
+
+/// `obfuscate_span` goes through
+pub fn obfuscate_span<S: Span>(span: &mut S, config: &ObfuscationConfig) {
+    // for span_event in &mut span.span_events {
+    //     obfuscate_span_event(span_event, config);
+    // }
+
+    // TODO: Technically the trace-agent also looks at numbers for potential CC values
+    if config.credit_cards.enabled {
+        span.retain_attributes(|k, v| {
+            if !should_obfuscate_cc_key(k.as_str(), config) {
+                return true;
+            }
+            if let AttributeValue::String(val_str) = v {
+                if is_card_number(val_str.as_str(), config.credit_cards.luhn) {
+                    *val_str = S::Text::from_static("?");
+                }
+            }
+            true
+        });
+    }
+    match span.r#type().as_str() {
+        "web" | "http" => {
+            if let Some(AttributeValue::String(url)) = span.attribute_mut(TAG_HTTPURL) {
+                *url = S::Text::from(obfuscate_url_string(
+                    url.as_str(),
+                    config.http.remove_query_string,
+                    config.http.remove_path_digits,
+                ));
+            }
+        }
+        "memcached" if config.memcached.enabled => {
+            if let Some(AttributeValue::String(cmd)) = span.attribute_mut(TAG_MEMCACHED_COMMAND) {
+                if config.memcached.keep_command {
+                    *cmd = S::Text::from(obfuscate_memcached_string(cmd.as_str()));
+                } else {
+                    *cmd = S::Text::from_static("");
+                }
+            }
+        }
+        _ => {},
+    
+    }
+    //     "redis" => {
+    //         span.resource = quantize_redis_string(&span.resource);
+    //         if config.redis.enabled && !span.meta.is_empty() {
+    //             if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
+    //                 if config.redis.remove_all_args {
+    //                     *redis_cmd = remove_all_redis_args(redis_cmd);
+    //                 } else {
+    //                     *redis_cmd = obfuscate_redis_string(redis_cmd);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     "valkey" => {
+    //         span.resource = quantize_redis_string(&span.resource);
+    //         if config.valkey.enabled && !span.meta.is_empty() {
+    //             if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
+    //                 if config.valkey.remove_all_args {
+    //                     *valkey_cmd = remove_all_redis_args(valkey_cmd);
+    //                 } else {
+    //                     *valkey_cmd = obfuscate_redis_string(valkey_cmd);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     "sql" | "cassandra" if !span.resource.is_empty() => {
+    //         let dbms: DbmsKind = span
+    //             .meta
+    //             .get(TAG_DBMS)
+    //             .map(String::as_str)
+    //             .and_then(|dbms| TryInto::try_into(dbms).ok())
+    //             .unwrap_or_default();
+    //         // On failure the resource is discarded for the Agent's marker rather than forwarded
+    //         // as sent; see `obfuscate_sql_resource`.
+    //         let obfuscated_query = obfuscate_sql_resource(&span.resource, &config.sql, dbms);
+    //         span.resource.clone_from(&obfuscated_query);
+    //         span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
+    //     }
+    //     "elasticsearch" if config.elasticsearch.config().enabled => {
+    //         if let Some(elastic_query) = span.meta.get_mut(TAG_ELASTIC_BODY) {
+    //             let (res, _err) = config.elasticsearch.obfuscate(elastic_query);
+    //             *elastic_query = res;
+    //         }
+    //     }
+    //     "opensearch" if config.opensearch.config().enabled => {
+    //         if let Some(opensearch_query) = span.meta.get_mut(TAG_OPEN_SEARCH_BODY) {
+    //             let (res, _err) = config.opensearch.obfuscate(opensearch_query);
+    //             *opensearch_query = res;
+    //         }
+    //     }
+    //     "mongodb" if config.mongodb.config().enabled => {
+    //         if let Some(mongodb_query) = span.meta.get_mut(TAG_MONGO_DBQUERY) {
+    //             let (res, _err) = config.mongodb.obfuscate(mongodb_query);
+
+    //             *mongodb_query = res;
+    //         }
+    //     }
+
+    //     _ => {}
+    // }
+    replace_span_tags_trait(span, &config.tag_replace_rules);
+}
+
+
+
 
 /// `obfuscate_pb_span` goes through `span` fields and applies obfuscation on it
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?

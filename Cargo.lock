@@ -3493,6 +3493,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-trace-model"
+version = "0.1.0"
+
+[[package]]
 name = "libdd-trace-normalization"
 version = "4.1.0"
 dependencies = [
@@ -3514,6 +3518,7 @@ dependencies = [
  "fluent-uri",
  "libdd-common",
  "libdd-tinybytes",
+ "libdd-trace-model",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "log",

@@ -327,6 +327,8 @@ pub fn obfuscate_url(
     ))
 }
 
+
+// TODO: can we write this in a way that doesn't just always allocate and build a new string?
 #[must_use]
 pub fn obfuscate_url_string(
     url: &str,

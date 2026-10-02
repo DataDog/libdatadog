@@ -1,0 +1,15 @@
+[package]
+name = "libdd-trace-model"
+version = "0.1.0"
+authors = ["Andrew Glaude <andrew.glaude@datadoghq.com"]
+description = "A set of shareable traits needed to operate on Trace-like structures"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-model"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-model"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true
