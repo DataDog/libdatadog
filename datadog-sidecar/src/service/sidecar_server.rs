@@ -42,7 +42,6 @@ use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
-use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
@@ -55,6 +54,7 @@ use crate::service::stats_flusher::{
 use crate::service::telemetry::InProcessTelemetryClientFactory;
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
+use crate::tracer::ShmLimiters;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
@@ -215,6 +215,10 @@ impl ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    pub(crate) fn shm_limiters(&self) -> &ShmLimiters {
+        self.remote_configs.shm_limiters()
+    }
+
     #[cfg(unix)]
     pub(crate) fn with_appsec_telemetry(
         mut self,
@@ -1214,7 +1218,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         exception_hash: u64,
         granularity: Duration,
     ) {
-        if let Some(limiter) = EXCEPTION_HASH_LIMITER.as_ref() {
+        if let Some(limiter) = &self.server.shm_limiters().exceptions {
             limiter.lock_or_panic().add(exception_hash, granularity);
         }
     }

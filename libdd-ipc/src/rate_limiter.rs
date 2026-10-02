@@ -4,8 +4,9 @@
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use arc_swap::ArcSwapOption;
 use libdd_common::rate_limiter::LocalLimiter;
+use std::borrow::Cow;
 use std::cell::UnsafeCell;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fmt::{Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
@@ -40,7 +41,22 @@ impl<Inner> ShmLimiterData<'_, Inner> {
 
 pub struct ShmLimiterMemory<Inner> {
     mem: ArcSwapOption<ShmLimiterArena<Inner>>,
-    path: Option<CString>,
+    path: Option<ReaderPath>,
+}
+
+#[derive(Clone)]
+enum ReaderPath {
+    Fixed(CString),
+    Dynamic(fn() -> CString),
+}
+
+impl ReaderPath {
+    fn get(&self) -> Cow<'_, CStr> {
+        match self {
+            Self::Fixed(path) => Cow::Borrowed(path),
+            Self::Dynamic(path) => Cow::Owned(path()),
+        }
+    }
 }
 
 struct ShmLimiterArena<Inner> {
@@ -86,7 +102,7 @@ impl<Inner> ShmLimiterMemory<Inner> {
             mem: ArcSwapOption::from_pointee(ShmLimiterArena::new(
                 NamedShmHandle::open(path)?.map()?,
             )),
-            path: Some(path.clone()),
+            path: Some(ReaderPath::Fixed(path.clone())),
         })
     }
 
@@ -94,13 +110,42 @@ impl<Inner> ShmLimiterMemory<Inner> {
     pub fn new_reader(path: CString) -> Self {
         Self {
             mem: ArcSwapOption::empty(),
-            path: Some(path),
+            path: Some(ReaderPath::Fixed(path)),
+        }
+    }
+
+    /// Recompute the name whenever the reader needs to open an arena.
+    pub const fn new_reader_with_path(path: fn() -> CString) -> Self {
+        Self {
+            mem: ArcSwapOption::const_empty(),
+            path: Some(ReaderPath::Dynamic(path)),
+        }
+    }
+
+    /// Retire a cached arena from another namespace so the next lookup reopens it.
+    pub fn reconnect(&self) {
+        if let (Some(mem), Some(path)) = (self.mem.load().as_ref(), &self.path) {
+            // Reader handles are never unlinked through this cache.
+            if unsafe { mem.mem.get_path() } != path.get().to_bytes() {
+                if let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(mem.mem.as_slice()) {
+                    retired.store(1, Ordering::Release);
+                }
+            }
         }
     }
 
     /// Whether the cached arena was replaced. Existing slots remain valid.
     pub fn is_retired(&self) -> bool {
         self.mem.load().as_ref().is_some_and(|mem| mem.is_retired())
+    }
+
+    /// Unlink this arena if it still belongs to the current process.
+    pub fn unlink(&self) {
+        if self.path.is_none() {
+            if let Some(mem) = self.mem.load().as_ref() {
+                mem.mem.unlink();
+            }
+        }
     }
 
     fn with_current<R>(
@@ -111,9 +156,9 @@ impl<Inner> ShmLimiterMemory<Inner> {
         if let Some(mem) = current.as_ref().filter(|mem| !mem.is_retired()) {
             return f(mem);
         }
-        let path = self.path.as_ref()?;
+        let path = self.path.as_ref()?.get();
         let mem = Arc::new(ShmLimiterArena::new(
-            NamedShmHandle::open(path).ok()?.map().ok()?,
+            NamedShmHandle::open(&path).ok()?.map().ok()?,
         ));
         // A slow opener must not overwrite another thread's replacement.
         self.mem.compare_and_swap(&current, Some(mem));
@@ -1049,6 +1094,55 @@ mod tests {
         let slot = owner.alloc().unwrap();
         assert_eq!(reader.get(slot.index()).unwrap().index(), slot.index());
         assert_eq!(reader.find(|_| true).unwrap().index(), slot.index());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn reconnect_follows_the_current_name() {
+        static NAMESPACE: AtomicU64 = AtomicU64::new(0);
+        fn path() -> CString {
+            CString::new(format!(
+                "/ddlim-name-{}-{}",
+                std::process::id(),
+                NAMESPACE.load(Ordering::Relaxed)
+            ))
+            .unwrap()
+        }
+
+        let reader = ShmLimiterMemory::<AtomicU64>::new_reader_with_path(path);
+        let mut old = ShmLimiterMemory::create(path()).unwrap();
+        let old_slot = old
+            .alloc_with(|hash: &AtomicU64| hash.store(11, Ordering::Relaxed))
+            .unwrap();
+        assert!(
+            reader
+                .find(|hash| hash.load(Ordering::Relaxed) == 11)
+                .is_some()
+        );
+        reader.reconnect();
+        assert!(!old.is_retired());
+
+        NAMESPACE.store(1, Ordering::Relaxed);
+        reader.reconnect();
+        assert!(old.is_retired());
+        assert!(reader.get(old_slot.index()).is_none());
+        let mut new = ShmLimiterMemory::create(path()).unwrap();
+        let new_slot = new
+            .alloc_with(|hash: &AtomicU64| hash.store(22, Ordering::Relaxed))
+            .unwrap();
+        assert_eq!(old_slot.index(), new_slot.index());
+        assert_eq!(
+            reader
+                .find(|hash| hash.load(Ordering::Relaxed) == 22)
+                .unwrap()
+                .index(),
+            new_slot.index()
+        );
+        reader.reconnect();
+        assert!(!new.is_retired());
+        reader.unlink();
+        drop(reader);
+        assert!(ShmLimiterMemory::<AtomicU64>::open(&path()).is_ok());
     }
 
     #[test]
