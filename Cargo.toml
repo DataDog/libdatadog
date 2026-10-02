@@ -63,6 +63,7 @@ members = [
   "libdd-agent-client",
   "libdd-log",
   "libdd-log-ffi",
+  "libdd-trace-inferrer",
   "libdd-sampling",
 ]
 
