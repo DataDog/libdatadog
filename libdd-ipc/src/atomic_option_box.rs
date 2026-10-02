@@ -31,7 +31,10 @@ impl<T> AtomicOptionBox<T> {
     /// # Safety
     /// Must not be called concurrently with [`take`], and the returned reference must not
     /// outlive a subsequent [`take`] or drop of the value.
-    pub unsafe fn as_ref(&self) -> Option<&T> {
+    pub unsafe fn as_ref(&self) -> Option<&T>
+    where
+        T: Sync,
+    {
         let ptr = self.0.load(Ordering::Acquire);
         // SAFETY: a non-null pointer is always a valid `Box<T>` (see `take`), and the caller
         // guarantees no concurrent mutation of the storage.
