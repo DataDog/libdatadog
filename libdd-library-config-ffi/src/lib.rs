@@ -14,28 +14,51 @@ compile_error!(
 
 #[cfg(all(not(feature = "std"), feature = "standalone"))]
 mod no_std_support {
-    #[cfg(target_os = "linux")]
+    // Forward to the host's libc allocator; this library is always loaded into a C process.
     #[global_allocator]
-    static ALLOC: rustix_dlmalloc::GlobalDlmalloc = rustix_dlmalloc::GlobalDlmalloc;
+    static ALLOC: libc_alloc::LibcAlloc = libc_alloc::LibcAlloc;
 
-    #[cfg(not(target_os = "linux"))]
-    #[global_allocator]
-    static ALLOC: dlmalloc::GlobalDlmalloc = dlmalloc::GlobalDlmalloc;
+    // no_std links with -nodefaultlibs, so libc must be requested explicitly; this resolves
+    // `abort` below as well as the malloc/free family used by libc_alloc.
+    #[cfg_attr(target_vendor = "apple", link(name = "System"))]
+    #[cfg_attr(target_os = "linux", link(name = "c"))]
+    unsafe extern "C" {
+        fn abort() -> !;
+    }
 
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
         // Panics in no_std mode are silent and fatal — no std I/O is available to report _info.
-        unsafe extern "C" {
-            fn abort() -> !;
-        }
         // SAFETY: abort() is a C standard library function with no preconditions.
         unsafe { abort() }
     }
 
-    /// Required by the Rust compiler's exception handling ABI. A no-op is safe because
-    /// unwinding will never occur under `panic = "abort"` (enforced by the compile_error!
-    /// guard above). WARNING: this symbol is globally visible — this library must not be
-    /// linked with other Rust code compiled with `panic = "unwind"`.
+    // `rust_eh_personality` is referenced by the precompiled core/alloc (built with
+    // panic=unwind), so it must be defined for the link to succeed. A no-op is safe because
+    // unwinding never occurs under `panic = "abort"` (enforced by the compile_error! guard
+    // above). It is defined in asm so it can be hidden and weak: hidden keeps it out of the
+    // cdylib's dynamic symbol table, so it cannot interpose on another Rust library's
+    // personality at runtime; weak lets a real personality from an unwinding Rust staticlib
+    // win when both are linked into the same binary.
+    #[cfg(target_vendor = "apple")]
+    core::arch::global_asm!(
+        ".globl _rust_eh_personality",
+        ".weak_definition _rust_eh_personality",
+        ".private_extern _rust_eh_personality",
+        "_rust_eh_personality:",
+        "ret",
+    );
+    #[cfg(target_os = "linux")]
+    core::arch::global_asm!(
+        ".globl rust_eh_personality",
+        ".weak rust_eh_personality",
+        ".hidden rust_eh_personality",
+        ".type rust_eh_personality, %function",
+        "rust_eh_personality:",
+        "ret",
+    );
+    // No hidden/weak equivalent in COFF asm; fall back to a plain exported definition.
+    #[cfg(not(any(target_vendor = "apple", target_os = "linux")))]
     #[unsafe(no_mangle)]
     pub extern "C" fn rust_eh_personality() {}
 }

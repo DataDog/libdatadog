@@ -123,7 +123,6 @@ diff,https://github.com/utkarshkukreti/diff.rs,MIT OR Apache-2.0,Utkarsh Kukreti
 digest,https://github.com/RustCrypto/traits,MIT OR Apache-2.0,RustCrypto Developers
 dispatch2,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,"Mads Marquart <mads@marquart.dk>, Mary <mary@mary.zone>"
 displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlusby@yaah.dev>
-dlmalloc,https://github.com/alexcrichton/dlmalloc-rs,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
 elf,https://github.com/cole14/rust-elf,MIT OR Apache-2.0,Christopher Cole <chris.cole.09@gmail.com>
@@ -221,6 +220,7 @@ js-sys,https://github.com/rustwasm/wasm-bindgen/tree/master/crates/js-sys,MIT OR
 kv-log-macro,https://github.com/yoshuawuyts/kv-log-macro,MIT OR Apache-2.0,Yoshua Wuyts <yoshuawuyts@gmail.com>
 lazy_static,https://github.com/rust-lang-nursery/lazy-static.rs,MIT OR Apache-2.0,Marvin Löbel <loebel.marvin@gmail.com>
 libc,https://github.com/rust-lang/libc,MIT OR Apache-2.0,The libc Authors
+libc_alloc,https://github.com/daniel5151/libc_alloc,MIT,Daniel Prilik <danielprilik@gmail.com>
 libdd-libunwind-sys,https://github.com/DataDog/libdatadog/tree/main/libdd-libunwind-sys,Apache-2.0,The libdd-libunwind-sys Authors
 libdd-tuf,https://github.com/theupdateframework/rust-tuf,MIT OR Apache-2.0,"heartsucker <heartsucker@autistici.org>, Erick Tryzelaar <etryzelaar@google.com>"
 libloading,https://github.com/nagisa/rust_libloading,ISC,Simonas Kazlauskas <libloading@kazlauskas.me>
@@ -352,8 +352,6 @@ rmpv,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmai
 rustc-demangle,https://github.com/rust-lang/rustc-demangle,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
 rustc-hash,https://github.com/rust-lang/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
 rustix,https://github.com/bytecodealliance/rustix,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,"Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>"
-rustix-dlmalloc,https://github.com/sunfishcode/rustix-dlmalloc,MIT OR Apache-2.0,"Alex Crichton <alex@alexcrichton.com>, Dan Gohman <dev@sunfishcode.online>"
-rustix-futex-sync,https://github.com/sunfishcode/rustix-futex-sync,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,Dan Gohman <dev@sunfishcode.online>
 rustls,https://github.com/rustls/rustls,Apache-2.0 OR ISC OR MIT,The rustls Authors
 rustls-native-certs,https://github.com/rustls/rustls-native-certs,Apache-2.0 OR ISC OR MIT,The rustls-native-certs Authors
 rustls-pki-types,https://github.com/rustls/pki-types,MIT OR Apache-2.0,The rustls-pki-types Authors

@@ -168,7 +168,6 @@ current_platform = { version = "0.2.0", default-features = false }
 cxx = { version = "1.0", default-features = false }
 cxx-build = { version = "1.0", default-features = false }
 derive_more = { version = "2.0.0", default-features = false }
-dlmalloc = { version = "0.2", default-features = false }
 duplicate = { version = "2.0.1", default-features = false }
 either = { version = "1.13.0", default-features = false }
 elf = { version = "0.7", default-features = false }
@@ -214,6 +213,7 @@ itoa = { version = "1.0", default-features = false }
 # and that this possibility will be gone in future versions). We enable it by
 # default for everyone.
 libc = { version = "0.2", default-features = true }
+libc_alloc = { version = "1.0", default-features = false }
 libdd-libunwind-sys = { version = "1.0.3", default-features = false }
 log = { version = "0.4.21", default-features = false }
 lru = { version = "0.16.3", default-features = false }
@@ -260,7 +260,6 @@ rmp = { version = "0.8.14", default-features = false }
 rmp-serde = { version = "1.3.0", default-features = false }
 rmpv = { version = "1.3.0", default-features = false }
 rustc-hash = { version = "2.1.1", default-features = false }
-rustix-dlmalloc = { version = "0.2", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-platform-verifier = { version = "0.6", default-features = false }
 rustls-webpki = { version = ">=0.103.13", default-features = false }
