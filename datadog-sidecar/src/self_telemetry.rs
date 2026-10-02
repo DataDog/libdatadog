@@ -412,3 +412,136 @@ impl SelfTelemetry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::{
+        FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext, FlagEvalEventContext,
+        FlagKey,
+    };
+    use crate::watchdog::Watchdog;
+    use httpmock::{Method::POST, MockServer};
+    use libdd_common::Endpoint;
+    use libdd_telemetry::config::TelemetryEndpoint;
+    use serde_json::{Value, json};
+
+    fn contains_expected_omission_metric(value: &Value) -> bool {
+        match value {
+            Value::Object(fields)
+                if fields.get("metric") == Some(&json!("flagevaluation.context.truncated")) =>
+            {
+                value["namespace"] == "tracers"
+                    && value["type"] == "count"
+                    && value["tags"] == json!(["reason:max_value_length"])
+                    && value["points"].as_array().is_some_and(|points| {
+                        points.len() == 1 && points[0][1].as_f64() == Some(14.0)
+                    })
+            }
+            Value::Object(fields) => fields.values().any(contains_expected_omission_metric),
+            Value::Array(values) => values.iter().any(contains_expected_omission_metric),
+            _ => false,
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn context_omissions_emit_weighted_metric_with_reason() {
+        let http = MockServer::start_async().await;
+        let metric = http
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/telemetry/proxy/api/v2/apmtelemetry")
+                    .is_true(|request| {
+                        serde_json::from_slice::<Value>(request.body_ref())
+                            .is_ok_and(|body| contains_expected_omission_metric(&body))
+                    });
+                then.status(202);
+            })
+            .await;
+        // Also acknowledge unrelated lifecycle and EVP requests from the real workers.
+        let _other = http
+            .mock_async(|when, then| {
+                when.method(POST).is_true(|request| {
+                    serde_json::from_slice::<Value>(request.body_ref())
+                        .is_ok_and(|body| !contains_expected_omission_metric(&body))
+                });
+                then.status(202);
+            })
+            .await;
+        let server = SidecarServer::default();
+        let row = FfeFlagEvaluationEvent {
+            timestamp: 1_760_000_000_000,
+            first_evaluation: 1_760_000_000_000,
+            last_evaluation: 1_760_000_000_000,
+            evaluation_count: 7,
+            flag: FlagKey {
+                key: "test-flag".into(),
+            },
+            variant: None,
+            allocation: None,
+            targeting_rule: None,
+            targeting_key: Some("test-user".into()),
+            context: Some(FlagEvalEventContext {
+                evaluation: Some(json!({"oversized": "x".repeat(257)}).to_string()),
+                dd: None,
+            }),
+            error: None,
+            runtime_default_used: false,
+            observe_full_evaluation_data: true,
+            is_degraded: false,
+            field_omissions: Default::default(),
+        };
+        server.ffe_flagevaluation_coalescer.enqueue(
+            NativeCapabilities::new(),
+            Endpoint {
+                url: http
+                    .url("/evp_proxy/v2/api/v2/flagevaluation")
+                    .parse()
+                    .unwrap(),
+                ..Default::default()
+            },
+            FfeFlagEvaluationBatch {
+                context: FfeTelemetryContext {
+                    service: "svc".into(),
+                    env: "test".into(),
+                    version: "1".into(),
+                },
+                flag_evaluations: vec![row.clone(), row],
+            },
+            Some("dd-trace-php"),
+            "test",
+        );
+        server
+            .ffe_flagevaluation_coalescer
+            .flush_now(NativeCapabilities::new())
+            .await;
+        let (shutdown, receiver) = tokio::sync::mpsc::channel(1);
+        let mut watchdog = Watchdog::from_receiver(receiver);
+        watchdog.max_memory_usage_bytes = usize::MAX;
+        let watchdog_handle = watchdog.spawn_watchdog(server.clone());
+        shutdown.send(()).await.unwrap();
+        watchdog_handle.wait_for_shutdown().await;
+        let mut config = libdd_telemetry::config::Config::default();
+        config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(http.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
+        // The ready shutdown signal drives one final collection and waits for HTTP completion.
+        let telemetry = SelfTelemetry {
+            submission_interval: tokio::time::interval_at(
+                tokio::time::Instant::now() + Duration::from_secs(60),
+                Duration::from_secs(60),
+            ),
+            watchdog_handle,
+            config,
+            server,
+        };
+        tokio::time::timeout(Duration::from_secs(10), telemetry.spawn_worker())
+            .await
+            .unwrap();
+        metric.assert_calls_async(1).await;
+    }
+}

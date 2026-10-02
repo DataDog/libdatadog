@@ -291,6 +291,27 @@ mod tests {
     }
 
     #[test]
+    fn sibling_arrays_share_the_leaf_budget_after_repeated_normalization() {
+        let raw = json!({
+            "a": (0..200).collect::<Vec<_>>(),
+            "b": (200..400).collect::<Vec<_>>(),
+        })
+        .to_string();
+        let mut omissions = FieldOmissions::default();
+        let retained = context_json(&raw, &mut omissions).unwrap();
+        let value: Value = serde_json::from_str(&retained).unwrap();
+        assert_eq!(value["a"], json!((0..200).collect::<Vec<_>>()));
+        assert_eq!(value["b"], json!((200..256).collect::<Vec<_>>()));
+        assert!(omissions.contains_context(ContextTruncationReason::MaxContextFields));
+        assert!(!omissions.contains_context(ContextTruncationReason::MaxListElements));
+        let original_omissions = omissions;
+        for _ in 0..2 {
+            assert_eq!(context_json(&retained, &mut omissions).unwrap(), retained);
+            assert_eq!(omissions, original_omissions);
+        }
+    }
+
+    #[test]
     fn rejected_fields_consume_width_and_global_visit_budgets() {
         let mut attrs = Map::new();
         for i in 0..257 {
