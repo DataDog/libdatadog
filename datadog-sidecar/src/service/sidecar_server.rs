@@ -1527,6 +1527,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "flagevaluation_privacy_tests.rs"]
+mod flagevaluation_privacy_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1830,6 +1834,9 @@ mod tests {
                 context: None,
                 error: None,
                 runtime_default_used: false,
+                observe_full_evaluation_data: false,
+                is_degraded: false,
+                field_omissions: Default::default(),
             }],
         }
     }

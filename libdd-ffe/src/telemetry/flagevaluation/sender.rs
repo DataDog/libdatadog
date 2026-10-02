@@ -298,6 +298,9 @@ mod tests {
                 message: "boom".to_owned(),
             }),
             runtime_default_used: true,
+            observe_full_evaluation_data: true,
+            is_degraded: false,
+            field_omissions: Default::default(),
         }
     }
 
