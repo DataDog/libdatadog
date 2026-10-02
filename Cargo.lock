@@ -3148,6 +3148,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "constcat",
+ "function_name",
  "libc_alloc",
  "libdd-common",
  "libdd-common-ffi",

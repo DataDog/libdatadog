@@ -35,6 +35,7 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config", default-features = false }
 anyhow = { workspace = true, optional = true }
 constcat.workspace = true
+function_name.workspace = true
 libc_alloc = { workspace = true, optional = true }
 
 [build-dependencies]

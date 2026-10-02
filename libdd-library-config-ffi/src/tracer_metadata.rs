@@ -3,30 +3,15 @@
 #![cfg(feature = "std")]
 
 use core::ffi::CStr;
+#[cfg(all(feature = "catch_panic", panic = "unwind"))]
+use libdd_common_ffi::wrap_with_ffi_result;
+#[cfg(not(all(feature = "catch_panic", panic = "unwind")))]
+use libdd_common_ffi::wrap_with_ffi_result_no_catch as wrap_with_ffi_result;
 use libdd_common_ffi::{Result, VoidResult};
 #[cfg(target_os = "linux")]
 use libdd_library_config::tracer_metadata::AnonymousFileHandle;
 use libdd_library_config::tracer_metadata::{self, TracerMetadata};
 use std::os::raw::{c_char, c_int};
-
-fn with_tracer_metadata_result(operation: impl FnOnce() -> anyhow::Result<()>) -> VoidResult {
-    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
-    {
-        match std::panic::catch_unwind(core::panic::AssertUnwindSafe(|| operation().into())) {
-            Ok(result) => result,
-            Err(panic) => libdd_common_ffi::utils::handle_panic_error(
-                panic,
-                "ddog_tracer_metadata_include_otel_thread_context",
-            )
-            .into(),
-        }
-    }
-
-    #[cfg(not(all(feature = "catch_panic", panic = "unwind")))]
-    {
-        operation().into()
-    }
-}
 
 /// C-compatible representation of an anonymous file handle
 #[repr(C)]
@@ -142,10 +127,11 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 /// - On success: `VoidResult::Ok`, also when thread-context metadata is already present
 /// - An error if `ptr` is null.
 #[unsafe(no_mangle)]
+#[function_name::named]
 pub unsafe extern "C" fn ddog_tracer_metadata_include_otel_thread_context(
     ptr: *mut TracerMetadata,
 ) -> VoidResult {
-    with_tracer_metadata_result(|| {
+    wrap_with_ffi_result!({
         let metadata = unsafe { ptr.as_mut() }.ok_or_else(|| {
             anyhow::anyhow!("Failed to include OTel thread context: received a null pointer")
         })?;
@@ -154,7 +140,7 @@ pub unsafe extern "C" fn ddog_tracer_metadata_include_otel_thread_context(
             .threadlocal_metadata
             .get_or_insert_with(Default::default);
 
-        Ok(())
+        anyhow::Ok(())
     })
 }
 
@@ -334,22 +320,25 @@ mod tests {
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     #[test]
+    #[function_name::named]
     fn tracer_metadata_result_converts_panic_to_error() {
-        let result = with_tracer_metadata_result(|| panic!("test panic"));
+        let operation = || -> anyhow::Result<()> { panic!("test panic") };
+
+        let result: VoidResult = wrap_with_ffi_result!({ operation() });
         let message = result.unwrap_err().to_string();
 
-        assert!(
-            message.contains("ddog_tracer_metadata_include_otel_thread_context"),
-            "{message}"
-        );
+        assert!(message.contains(function_name!()), "{message}");
         assert!(message.contains("test panic"), "{message}");
     }
 
     #[cfg(all(not(feature = "catch_panic"), panic = "unwind"))]
     #[test]
+    #[function_name::named]
     fn tracer_metadata_result_propagates_panic_without_containment() {
+        let operation = || -> anyhow::Result<()> { panic!("test panic") };
+
         let result =
-            std::panic::catch_unwind(|| with_tracer_metadata_result(|| panic!("test panic")));
+            std::panic::catch_unwind(|| -> VoidResult { wrap_with_ffi_result!({ operation() }) });
 
         assert!(result.is_err());
     }
