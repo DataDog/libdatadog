@@ -32,15 +32,16 @@ runs:
         echo "Available branches:"
         git branch -a
 
-    - name: Build annotation reporter
-      shell: bash
-      run: |
-        cd ${{ github.action_path }}/..
-        cargo build --release -p clippy-annotation-reporter
+    - name: Resolve annotation reporter
+      id: bin
+      uses: ./.github/actions/ci-tools-bin
+      with:
+        tool: clippy-annotation-reporter
+
     - name: Run annotation reporter
       shell: bash
       run: |
-        ${{ github.action_path }}/../target/release/clippy-annotation-reporter \
+        "$BIN" \
           --token "${{ inputs.github-token }}" \
           --rules "${{ inputs.allow-annotation-rules }}" \
           --repo "${{ github.repository }}" \
@@ -48,3 +49,4 @@ runs:
           --base-branch "${{ inputs.base_branch }}"
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        BIN: ${{ steps.bin.outputs.path }}
