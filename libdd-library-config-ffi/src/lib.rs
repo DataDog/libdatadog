@@ -18,17 +18,17 @@ mod no_std_support {
     #[global_allocator]
     static ALLOC: libc_alloc::LibcAlloc = libc_alloc::LibcAlloc;
 
-    // no_std links with -nodefaultlibs, so libc must be requested explicitly; this resolves
-    // `abort` below as well as the malloc/free family used by libc_alloc.
-    #[cfg_attr(target_vendor = "apple", link(name = "System"))]
-    #[cfg_attr(target_os = "linux", link(name = "c"))]
-    unsafe extern "C" {
-        fn abort() -> !;
-    }
-
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
         // Panics in no_std mode are silent and fatal — no std I/O is available to report _info.
+        // Declared inside the function so cbindgen does not emit `abort` into the C header.
+        // no_std links with -nodefaultlibs, so libc must be requested explicitly; this resolves
+        // `abort` as well as the malloc/free family used by libc_alloc.
+        #[cfg_attr(target_vendor = "apple", link(name = "System"))]
+        #[cfg_attr(target_os = "linux", link(name = "c"))]
+        unsafe extern "C" {
+            fn abort() -> !;
+        }
         // SAFETY: abort() is a C standard library function with no preconditions.
         unsafe { abort() }
     }
