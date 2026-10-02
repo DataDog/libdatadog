@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - mq-working-branch-*
+      - release/*
   schedule:
     - cron: '0 6 * * *'
 
