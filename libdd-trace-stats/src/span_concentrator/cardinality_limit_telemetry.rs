@@ -45,6 +45,28 @@ const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 16);
 #[derive(Debug, Clone, Default, Copy)]
 pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
 
+/// Bounded, atomically drained cardinality observations for an external telemetry client.
+/// Slot zero counts whole-key collapse; slots 1..16 are the collapsed-field bitmask.
+/// Counters saturate at `u64::MAX`, rather than wrapping. Call `take` in a forked
+/// child before restarting producers to discard inherited observations.
+#[derive(Debug, Default)]
+pub struct CollapsedSpansObservations(std::sync::Mutex<[u64; COLLAPSED_FIELD_METRIC_SIZE]>);
+
+impl CollapsedSpansObservations {
+    pub fn record(&self, whole_key: u64, fields: &CollapsedFieldsMetrics) {
+        let mut counts = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        counts[0] = counts[0].saturating_add(whole_key);
+        for (count, delta) in counts.iter_mut().zip(fields.0).skip(1) {
+            *count = count.saturating_add(u64::try_from(delta).unwrap_or(u64::MAX));
+        }
+    }
+
+    /// Transfer all pending counts to one reader, leaving zeros for subsequent readers.
+    pub fn take(&self) -> [u64; COLLAPSED_FIELD_METRIC_SIZE] {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
 impl CollapsedFieldsMetrics {
     /// Default value every combination of collapsed fields set to 0
     pub fn zero() -> Self {
@@ -132,5 +154,37 @@ impl std::ops::AddAssign for CollapsedFieldsMetrics {
         for i in 0..self.0.len() {
             self.0[i] += rhs.0[i];
         }
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_drains_preserve_field_combinations_once() {
+        let observations = std::sync::Arc::new(CollapsedSpansObservations::default());
+        let mut fields = CollapsedFieldsMetrics::zero();
+        let mut set = CollapsedFieldSet::empty();
+        set.add(CollapsedFieldSet::RESOURCE_NAME);
+        set.add(CollapsedFieldSet::HTTP_ENDPOINT);
+        fields.increment(set);
+        observations.record(2, &fields);
+        let other = observations.clone();
+        let reader = std::thread::spawn(move || other.take());
+        let first = observations.take();
+        let second = reader.join().unwrap();
+        assert_eq!(first[0] + second[0], 2);
+        assert_eq!(first[3] + second[3], 1);
+        assert_eq!(first.iter().sum::<u64>() + second.iter().sum::<u64>(), 3);
+        assert_eq!(observations.take(), [0; 16]);
+    }
+
+    #[test]
+    fn counters_saturate_instead_of_wrapping() {
+        let observations = CollapsedSpansObservations::default();
+        observations.record(u64::MAX, &CollapsedFieldsMetrics::zero());
+        observations.record(1, &CollapsedFieldsMetrics::zero());
+        assert_eq!(observations.take()[0], u64::MAX);
     }
 }
