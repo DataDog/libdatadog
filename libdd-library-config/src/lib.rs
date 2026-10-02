@@ -8,7 +8,6 @@ pub mod io;
 pub use config_read::*;
 
 #[cfg(all(
-    feature = "std",
     target_os = "linux",
     any(feature = "process-context-reader", feature = "process-context-writer")
 ))]
@@ -463,7 +462,7 @@ impl Configurator {
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
-        let stable_config = match yaml_serde::from_slice::<StableConfig>(buf) {
+        let stable_config = match yaml_serde::from_slice::<StableConfig>(buf.trim_ascii()) {
             Ok(config) => config,
             Err(e) => return LoggedResult::Err(e.into()),
         };
@@ -1228,6 +1227,16 @@ rules:
     fn test_parse_empty_yaml() {
         let configurator = Configurator::new(true);
         let result = configurator.parse_stable_config_slice(b"");
+        match result {
+            LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
+            LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_whitespace_only_yaml() {
+        let configurator = Configurator::new(true);
+        let result = configurator.parse_stable_config_slice(b"   \n\t\n");
         match result {
             LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
             LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
