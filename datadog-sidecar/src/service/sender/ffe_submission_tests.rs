@@ -63,7 +63,6 @@ fn outstanding(sender: &mut SidecarSender, peer: &SeqpacketConn, count: u64) {
 }
 
 fn full_socket(sender: &SidecarSender) {
-    sender.channel.0.conn.set_sndbuf_size(4096).unwrap();
     for _ in 0..10_000 {
         match sender.channel.0.conn.try_send_raw(vec![0; 1024], &[]) {
             Ok(()) => {}
@@ -72,6 +71,42 @@ fn full_socket(sender: &SidecarSender) {
         }
     }
     panic!("socket never became full");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn ffe_kernel_size_rejection_preserves_connection_for_next_observation() {
+    let (mut sender, peer) = pair();
+    // Change only this socket, not the process-wide advertised message limit.
+    let bytes: libc::c_int = 4096;
+    // SAFETY: the descriptor is live and the pointer/length describe `bytes`.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                sender.channel.0.conn.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&bytes as *const libc::c_int).cast(),
+                std::mem::size_of_val(&bytes).try_into().unwrap(),
+            )
+        },
+        0
+    );
+    let mut oversized = request();
+    if let SidecarInterfaceRequest::EnqueueActions { instance_id, .. } = &mut oversized {
+        instance_id.runtime_id = "x".repeat(16 * 1024);
+    }
+    assert!(bincode::serialized_size(&oversized).unwrap() < libdd_ipc::max_message_size() as u64);
+    assert_eq!(
+        sender.try_submit_ffe(|| Ok(oversized)),
+        Status::PayloadTooLarge
+    );
+    assert_eq!(sender.channel.0.outstanding(), 0);
+    assert_eq!(sender.check_ffe_submission(), Status::Ready);
+    assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
+    receive(&peer);
+    assert_eq!(sender.channel.0.outstanding(), 1);
 }
 
 #[test]

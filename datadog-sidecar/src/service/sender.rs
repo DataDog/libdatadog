@@ -246,12 +246,14 @@ impl SidecarSender {
         if bincode::serialize_into(&mut data, &request).is_err() {
             return FfeSubmissionStatus::EncodingError;
         }
-        if self.channel.0.try_send(data, &[]) {
-            FfeSubmissionStatus::Accepted
-        } else if self.channel.0.is_closed() {
-            FfeSubmissionStatus::Unavailable
-        } else {
-            FfeSubmissionStatus::WouldBlock
+        match self.channel.0.try_send_with_rejection(data, &[]) {
+            Ok(()) => FfeSubmissionStatus::Accepted,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => FfeSubmissionStatus::WouldBlock,
+            #[cfg(unix)]
+            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                FfeSubmissionStatus::PayloadTooLarge
+            }
+            Err(_) => FfeSubmissionStatus::Unavailable,
         }
     }
 
