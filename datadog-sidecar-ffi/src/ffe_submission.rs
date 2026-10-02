@@ -499,7 +499,7 @@ mod tests {
     fn bad_scalars_are_omitted_without_losing_healthy_fields() {
         let invalid = [0xffu8];
         let mut bad = attr("bad", "");
-        bad.string_value = CharSlice::from(&invalid[..]);
+        bad.string_value = CharSlice::from_bytes(&invalid);
         let mut number = attr("number", "");
         number.kind = 3;
         number.double_value = f64::INFINITY;
@@ -571,7 +571,7 @@ mod tests {
     fn invalid_optional_text_and_private_errors_do_not_drop_the_event() {
         let invalid = [0xffu8];
         let mut source = event(true);
-        source.variant = CharSlice::from(&invalid[..]);
+        source.variant = CharSlice::from_bytes(&invalid);
         source.allocation_key = source.variant;
         source.targeting_rule_key = source.variant;
         source.targeting_key = source.variant;
