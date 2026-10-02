@@ -12,7 +12,8 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
+    SidecarAction,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
         SidecarInterfaceClientRequest, SidecarInterfaceRequest,
@@ -24,7 +25,7 @@ use libdd_ipc::platform::ShmHandle;
 use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{io, time::Duration};
 use tracing::trace;
 
@@ -35,6 +36,7 @@ use tracing::trace;
 #[derive(Default)]
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
+    set_session_evp_transports: BTreeMap<String, SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
     set_session_default_service_name: Option<SidecarInterfaceRequest>,
     set_session_user_service_defined: Option<SidecarInterfaceRequest>,
@@ -46,9 +48,8 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 9] {
+    fn remaining_slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 8] {
         [
-            &mut self.set_session_config,
             &mut self.set_session_process_tags,
             &mut self.set_session_default_service_name,
             &mut self.set_session_user_service_defined,
@@ -106,6 +107,7 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     }
     if matches!(incoming, SidecarInterfaceRequest::ShutdownSession {}) {
         outbox.set_session_config = None;
+        outbox.set_session_evp_transports.clear();
     }
     if let SidecarInterfaceRequest::ClearQueueId {
         ref instance_id,
@@ -123,6 +125,11 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
     match incoming {
         SidecarInterfaceRequest::SetSessionConfig { .. } => {
             outbox.set_session_config = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionEvpTransport { ref config } => {
+            outbox
+                .set_session_evp_transports
+                .insert(config.transport.intake_subdomain.clone(), incoming);
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
@@ -166,6 +173,9 @@ pub struct SidecarSender {
     /// All metric registrations ever sent on this transport (keyed by name).
     /// Persisted across reconnects; replayed on new connections before any metric points.
     pub metric_registrations: HashMap<String, MetricContext>,
+    /// Latest explicit routing policy and producer identity per intake target.
+    /// Retained after sending so a replacement sidecar can recover the session.
+    pub(super) evp_transports: BTreeMap<String, EvpTransportConfigWithIdentity>,
 }
 
 impl SidecarSender {
@@ -176,6 +186,7 @@ impl SidecarSender {
             max_outstanding: 100,
             enqueue_actions_counter: 0,
             metric_registrations: HashMap::new(),
+            evp_transports: BTreeMap::new(),
         }
     }
 
@@ -186,7 +197,33 @@ impl SidecarSender {
         if self.channel.0.outstanding() >= self.max_outstanding / 2 {
             self.channel.0.drain_acks();
         }
-        for slot in self.outbox.slots_mut() {
+        if let Some(msg) = &self.outbox.set_session_config {
+            if self.channel.0.outstanding() >= self.max_outstanding
+                || !self.channel.try_send_request(msg)
+            {
+                return false;
+            }
+            self.outbox.set_session_config = None;
+        }
+
+        let targets: Vec<_> = self
+            .outbox
+            .set_session_evp_transports
+            .keys()
+            .cloned()
+            .collect();
+        for target in targets {
+            if self.channel.0.outstanding() >= self.max_outstanding {
+                return false;
+            }
+            let msg = &self.outbox.set_session_evp_transports[&target];
+            if !self.channel.try_send_request(msg) {
+                return false;
+            }
+            self.outbox.set_session_evp_transports.remove(&target);
+        }
+
+        for slot in self.outbox.remaining_slots_mut() {
             if let Some(msg) = slot {
                 if self.channel.0.outstanding() >= self.max_outstanding {
                     return false;
@@ -200,13 +237,24 @@ impl SidecarSender {
         true
     }
 
-    /// Blocking drain of the outbox (used before blocking calls).
-    fn drain_outbox_blocking(&mut self) {
-        for slot in self.outbox.slots_mut() {
-            if let Some(msg) = slot.take() {
-                self.channel.send_request_blocking(&msg).ok();
+    /// Stop on the first failed send, retaining that message and everything after it.
+    /// Data must not overtake session setup or an explicit routing update.
+    fn drain_outbox_blocking(&mut self) -> io::Result<()> {
+        if let Some(msg) = &self.outbox.set_session_config {
+            self.channel.send_request_blocking(msg)?;
+            self.outbox.set_session_config = None;
+        }
+        while let Some(entry) = self.outbox.set_session_evp_transports.first_entry() {
+            self.channel.send_request_blocking(entry.get())?;
+            entry.remove();
+        }
+        for slot in self.outbox.remaining_slots_mut() {
+            if let Some(msg) = slot.as_ref() {
+                self.channel.send_request_blocking(msg)?;
+                *slot = None;
             }
         }
+        Ok(())
     }
 
     /// Drain outbox blocking, then send pre-serialized bytes blocking (no fds).
@@ -215,7 +263,7 @@ impl SidecarSender {
     /// allowing callers to detect failure and trigger reconnect via `SidecarTransport::with_retry`.
     /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
     pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.0.send_blocking(data.to_vec(), &[])
     }
 
@@ -237,6 +285,16 @@ impl SidecarSender {
                 config,
                 is_fork,
             },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_evp_transport(&mut self, config: EvpTransportConfigWithIdentity) {
+        self.evp_transports
+            .insert(config.transport.intake_subdomain.clone(), config.clone());
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionEvpTransport { config },
         );
         self.try_drain_outbox();
     }
@@ -345,6 +403,8 @@ impl SidecarSender {
     }
 
     pub fn shutdown_session(&mut self) {
+        // Never replay credentials or routing from a session that has ended.
+        self.evp_transports.clear();
         coalesce(
             &mut self.outbox,
             SidecarInterfaceRequest::ShutdownSession {},
@@ -542,27 +602,69 @@ impl SidecarSender {
         &mut self,
         request: &SidecarInterfaceClientRequest<'_>,
     ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()?;
         self.channel.call_ping()
     }
 
     pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_dump()
     }
 
     pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
-        self.drain_outbox_blocking();
+        self.drain_outbox_blocking()
+            .map_err(libdd_ipc::codec::DecodeError::Io)?;
         self.channel.call_stats()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::{EvpProducerIdentity, EvpTransportConfig};
+    use libdd_common::Endpoint;
+
+    fn evp_request(target: &str, version: &str) -> SidecarInterfaceRequest {
+        SidecarInterfaceRequest::SetSessionEvpTransport {
+            config: EvpTransportConfigWithIdentity::new(
+                EvpTransportConfig::agent_only(Endpoint::default(), target),
+                EvpProducerIdentity::new("dd-trace-rb", version).unwrap(),
+            )
+            .unwrap(),
+        }
+    }
+
+    #[test]
+    fn evp_transport_updates_coalesce_per_intake_target() {
+        let mut outbox = SidecarOutbox::default();
+        coalesce(&mut outbox, evp_request("event-platform-intake", "1.0.0"));
+        coalesce(&mut outbox, evp_request("errors-intake", "1.0.0"));
+        coalesce(&mut outbox, evp_request("event-platform-intake", "2.0.0"));
+
+        assert_eq!(outbox.set_session_evp_transports.len(), 2);
+        let event_platform = &outbox.set_session_evp_transports["event-platform-intake"];
+        match event_platform {
+            SidecarInterfaceRequest::SetSessionEvpTransport { config } => {
+                assert_eq!(config.producer.version(), "2.0.0");
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            outbox
+                .set_session_evp_transports
+                .contains_key("errors-intake")
+        );
     }
 }
