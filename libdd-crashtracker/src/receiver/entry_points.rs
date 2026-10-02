@@ -7,6 +7,8 @@ use crate::CrashtrackerConfiguration;
 use crate::StacktraceCollection;
 use crate::crash_info::CrashInfo;
 use anyhow::Context;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -35,6 +37,8 @@ pub async fn async_receiver_entry_point_unix_listener(
     listener: &UnixListener,
 ) -> anyhow::Result<()> {
     let (unix_stream, _) = listener.accept().await?;
+    #[cfg(target_os = "linux")]
+    ensure_same_user(&unix_stream)?;
     let stream = BufReader::new(unix_stream);
     // This standalone receiver trusts its collector.
     receiver_entry_point(receiver_timeout(), stream, ReceiverFileAccess::Trusted).await
@@ -47,6 +51,32 @@ pub async fn async_receiver_entry_point_stream(
     access: ReceiverFileAccess,
 ) -> anyhow::Result<()> {
     receiver_entry_point(receiver_timeout(), stream, access).await
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_same_user(unix_stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+    let mut ucred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut ucred_len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let getsockopt_res = unsafe {
+        libc::getsockopt(
+            unix_stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut ucred as *mut libc::ucred as *mut libc::c_void,
+            &mut ucred_len,
+        )
+    };
+
+    anyhow::ensure!(getsockopt_res == 0, "Failed to get unix peer credentials");
+    anyhow::ensure!(
+        ucred.uid == unsafe { libc::geteuid() },
+        "Refusing crash report from another user"
+    );
+    Ok(())
 }
 
 pub async fn async_receiver_entry_point_unix_socket(
