@@ -267,6 +267,154 @@ fn oversized_ipc_warning_does_not_log_evaluation_data() {
     }
 }
 
+#[tokio::test]
+#[cfg_attr(miri, ignore = "requires native IPC sockets")]
+async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() {
+    use crate::service::blocking::{SidecarTransport, try_submit_ffe};
+    use crate::service::ffe_submission::FfeSubmissionStatus;
+
+    let http = MockServer::start_async().await;
+    let output = http
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path(EVP_FLAGEVALUATION_PATH)
+                .body_includes(
+                    "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b",
+                )
+                .body_includes("consented-identity-canary")
+                .body_includes("consented-context-canary")
+                .body_includes("\"evaluation_count\":1")
+                .body_includes("\"message\":\"GENERAL\"")
+                .body_excludes("jane.doe@datadoghq.com")
+                .body_excludes("protected-context-canary")
+                .body_excludes("private-error-canary")
+                .body_excludes("oversize-canary")
+                .body_excludes("observe_full_evaluation_data");
+            then.status(202);
+        })
+        .await;
+    let server = SidecarServer::default();
+    server.get_session("privacy").modify_trace_config(|cfg| {
+        cfg.set_endpoint(Endpoint {
+            url: http.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        })
+        .unwrap();
+        cfg.language = "php".into();
+    });
+    let logs = LogBuffer(Arc::new(Mutex::new(Vec::new())));
+    let log_writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || log_writer.clone())
+        .finish();
+    let (local, client) = SeqpacketConn::socketpair().unwrap();
+    let handler = Arc::new(ConnectionSidecarHandler::new(
+        server,
+        OwnedServerConn::new(local).unwrap(),
+    ));
+    let task = tokio::spawn(
+        serve_sidecar_interface_connection(handler.clone()).with_subscriber(subscriber),
+    );
+    let transport = SidecarTransport::from(client);
+    // Ordinary traffic remains on its existing API and connection.
+    assert!(
+        transport
+            .inner
+            .lock()
+            .unwrap()
+            .channel
+            .try_send_enqueue_actions(
+                InstanceId::new("privacy", "runtime"),
+                QueueId::from(42),
+                vec![SidecarAction::AddTelemetryMetricPoint((
+                    "ffe.healthy".into(),
+                    1.0,
+                    vec![]
+                ))],
+            )
+    );
+    let single = |mut row: FfeFlagEvaluationEvent| {
+        row.evaluation_count = 1;
+        row.last_evaluation = row.first_evaluation;
+        row.normalize();
+        let mut req = request(vec![row]);
+        if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut req {
+            actions.retain(|action| matches!(action, SidecarAction::FfeFlagEvaluationBatch(_)));
+        }
+        req
+    };
+    assert_eq!(
+        try_submit_ffe(&transport, || Ok(single(event()))),
+        FfeSubmissionStatus::Accepted
+    );
+    let mut oversized = event();
+    oversized.targeting_key =
+        Some("oversize-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
+    assert_eq!(
+        try_submit_ffe(&transport, || Ok(single(oversized))),
+        FfeSubmissionStatus::PayloadTooLarge
+    );
+    let mut consented = event();
+    consented.flag.key = "consented".into();
+    consented.observe_full_evaluation_data = true;
+    consented.targeting_key = Some("consented-identity-canary".into());
+    consented.context.as_mut().unwrap().evaluation =
+        Some(r#"{"email":"consented-context-canary"}"#.into());
+    assert_eq!(
+        try_submit_ffe(&transport, || Ok(single(consented))),
+        FfeSubmissionStatus::Accepted
+    );
+    for req in [
+        SidecarInterfaceRequest::Flush {
+            options: SidecarFlushOptions {
+                flag_evaluations: true,
+                ..Default::default()
+            },
+        },
+        SidecarInterfaceRequest::Ping {},
+    ] {
+        assert!(
+            transport
+                .inner
+                .lock()
+                .unwrap()
+                .channel
+                .try_send_request(&req)
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while handler.submitted_payloads.load(Ordering::Relaxed) < 5 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("healthy follow-up traffic must finish after rejection");
+    output.assert_calls_async(1).await;
+    let captured = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    assert!(captured.contains("IPC recv"));
+    for canary in [
+        "jane.doe@datadoghq.com",
+        "protected-context-canary",
+        "consented-identity-canary",
+        "consented-context-canary",
+        "private-error-canary",
+        "oversize-canary",
+    ] {
+        assert!(!captured.contains(canary));
+    }
+    drop(transport);
+    task.abort();
+    if let Err(error) = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+    {
+        assert!(error.is_cancelled());
+    }
+}
+
 #[test]
 #[cfg_attr(miri, ignore = "requires native IPC sockets")]
 fn oversized_ipc_warning_does_not_log_exposure_data() {
