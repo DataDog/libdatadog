@@ -3139,6 +3139,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "constcat",
+ "function_name",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",

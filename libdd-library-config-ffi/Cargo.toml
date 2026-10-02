@@ -18,6 +18,7 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer", "otel-thread-ctx"] }
 anyhow.workspace = true
 constcat.workspace = true
+function_name.workspace = true
 
 [features]
 default = ["cbindgen", "catch_panic"]
