@@ -123,12 +123,12 @@ impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
             Some(AttributeValue::String(s)) => Some(s.borrow()),
             // `env`, `version`, `component`, and `span.kind` are "promoted" to dedicated span
             // fields rather than stored in `attributes` (see the V1 downgrade encoder). Empty
-            // text / the default `Internal` kind are treated as "unset" here.
+            // text / the default `Unspecified` kind are treated as "unset" here.
             _ => match key {
                 "env" if !self.env.borrow().is_empty() => Some(self.env.borrow()),
                 "version" if !self.version.borrow().is_empty() => Some(self.version.borrow()),
                 "component" if !self.component.borrow().is_empty() => Some(self.component.borrow()),
-                "span.kind" if self.span_kind != SpanKind::Internal => {
+                "span.kind" if self.span_kind != SpanKind::Unspecified => {
                     Some(self.span_kind.as_meta_str())
                 }
                 _ => None,
