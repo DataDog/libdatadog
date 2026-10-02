@@ -84,7 +84,7 @@ All Rust code must be formatted with `rustfmt` using the project's configuration
 code locally by running:
 
 ```bash
-cargo +nightly fmt --all
+cargo +nightly-2026-09-23 fmt --all
 ```
 
 If you'd like CI to automatically format your code and commit the changes to your PR, add the `commit-rustfmt-changes`
