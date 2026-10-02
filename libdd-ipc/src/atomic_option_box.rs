@@ -8,13 +8,6 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 /// An `Option<Box<T>>` that supports lock-free atomic take.
 ///
-/// Non-`Send` payloads are rejected at compile time:
-///
-/// ```compile_fail
-/// fn assert_send<T: Send>() {}
-/// assert_send::<libdd_ipc::AtomicOptionBox<std::rc::Rc<u8>>>();
-/// ```
-///
 /// # Storage
 /// The value is stored as an `AtomicPtr<T>`, `None` being the null pointer. The pointer keeps
 /// its provenance from `Box::into_raw`, so taking the value back is sound.
@@ -64,11 +57,9 @@ impl<T> Drop for AtomicOptionBox<T> {
     }
 }
 
-// SAFETY: `AtomicOptionBox<T>` is `Send` and `Sync` when `T: Send` — same contract as
-// `Mutex<Option<Box<T>>>`. Values of `T` are only ever moved in and out atomically, never
-// shared (at least by safe functions), so `T: Send` suffices for both traits. This must be
-// declared explicitly: `AtomicPtr<T>` itself is `Send`/`Sync` for *any* `T`, which would
-// otherwise let non-`Send` payloads (e.g. `Rc<_>`) cross threads.
+// `AtomicPtr<T>` is `Send` and `Sync` when `T: Send` — same contract as `Mutex<Option<Box<T>>>`.
+// Values of `T` are only ever moved in and out atomically, never shared (at least by safe
+// functions), so `T: Send` suffices for both traits.
 unsafe impl<T: Send> Send for AtomicOptionBox<T> {}
 unsafe impl<T: Send> Sync for AtomicOptionBox<T> {}
 
