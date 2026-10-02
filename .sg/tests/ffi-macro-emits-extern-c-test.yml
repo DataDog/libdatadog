@@ -1,0 +1,71 @@
+id: ffi-macro-emits-extern-c
+valid:
+  - |
+    macro_rules! try_c {
+        ($failable:expr) => {
+            match $failable {
+                Ok(o) => o,
+                Err(e) => return err,
+            }
+        };
+    }
+  - |
+    macro_rules! contained_ffi {
+        ($name:ident) => {
+            pub unsafe extern "C" fn $name() {
+                let _ = std::panic::catch_unwind(|| risky());
+            }
+        };
+    }
+  - |
+    macro_rules! wrapped_ffi {
+        ($name:ident) => {
+            pub extern "C" fn $name() {
+                wrap_with_ffi_result!({ ok() })
+            }
+        };
+    }
+  - |
+    // allow(ffi-panic-boundary): generated setters are panic-free field writes
+    macro_rules! allowed_ffi {
+        ($name:ident) => {
+            pub unsafe extern "C" fn $name() {
+                risky();
+            }
+        };
+    }
+  - |
+    macro_rules! docs_only {
+        () => {
+            // mentions extern "C" in a comment only
+            risky();
+        };
+    }
+invalid:
+  - |
+    macro_rules! c_setters {
+        ($name:ident) => {
+            pub unsafe extern "C" fn $name() {
+                risky();
+            }
+        };
+    }
+  - |
+    macro_rules! comment_is_not_containment {
+        ($name:ident) => {
+            pub extern "C" fn $name() {
+                // catch_unwind is intentionally absent
+                // wrap_with_ffi_result! is also absent
+                risky();
+            }
+        };
+    }
+  - |
+    // allow(ffi-panic-boundary):
+    macro_rules! empty_allow {
+        ($name:ident) => {
+            pub extern "C" fn $name() {
+                risky();
+            }
+        };
+    }

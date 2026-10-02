@@ -71,6 +71,28 @@ jobs:
         with:
           shellcheck_opts: '-e SC2086'
 
+  # Structural / syntactic rules in .sg/rules. Cheap: no rustc, no matrix.
+  # Same command as local: bash scripts/run-ast-grep.sh
+  # fetch-depth: 0 so run-ffi-panic-lint.sh can diff the PR against its
+  # base (or github.event.before on push) and fail only newly added
+  # uncontained pub extern "C" sites (~400 legacy accessors are
+  # grandfathered). After checkout on push, origin/main is the new HEAD;
+  # FFI_PANIC_LINT_BASE is the pre-push SHA so that range is not empty.
+  # ast-grep does not expand macros; the script also flags uncontained
+  # FFI-generating macro_rules and new lines in their invocations
+  # (e.g. c_setters!).
+  ast-grep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+      - name: Run ast-grep
+        env:
+          FFI_PANIC_LINT_BASE: ${{ github.event.before }}
+        run: bash scripts/run-ast-grep.sh
+
   changes:
     runs-on: ubuntu-latest
     outputs:
