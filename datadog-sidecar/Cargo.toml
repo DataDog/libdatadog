@@ -14,13 +14,13 @@ bench = false
 
 [features]
 default = ["tracing"]
-tracing = ["tracing/std", "tracing-log", "tracing-subscriber", "arc-swap"]
+tracing = ["tracing/std", "tracing-log", "tracing-subscriber"]
 tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
-stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline/stats-obfuscation", "arc-swap"]
+stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline/stats-obfuscation"]
 
 [dependencies]
 anyhow = { workspace = true, default-features = true }
-arc-swap = { workspace = true, optional = true }
+arc-swap.workspace = true
 priority-queue = { workspace = true, default-features = true }
 libdd-common = { path = "../libdd-common" }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }

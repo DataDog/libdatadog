@@ -106,7 +106,7 @@ pub(crate) fn create_replacing(
                         };
                         let path = ShmPath {
                             name: name.to_owned(),
-                            ownership,
+                            ownership: Some(ownership),
                         };
                         Ok((fd, path, predecessors))
                     }

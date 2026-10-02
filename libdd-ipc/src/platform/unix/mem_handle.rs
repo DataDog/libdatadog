@@ -199,8 +199,9 @@ const MAPPING_RESERVED_SIZE: usize = 1 << 27;
 pub(crate) fn mmap_handle<T: FileBackedHandle>(handle: T) -> io::Result<MappedMem<T>> {
     let fd = handle.get_shm().handle.as_owned_fd()?.as_fd();
     let Some(size) = NonZeroUsize::new(handle.get_shm().size) else {
-        return Err(io::Error::other(
-            "Size of handle used for mmap() is zero. When used for shared memory this may originate from race conditions between creation and truncation of the shared memory file.",
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "shared memory size not yet initialized",
         ));
     };
     // A segment that already exceeds the standard reservation keeps its own size as one: it
@@ -344,7 +345,11 @@ impl NamedShmHandle {
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
         let file: File = sys_open_existing(path)?.into();
         let size = file.metadata()?.size() as usize;
-        Ok(Self::new(file.into(), None, size))
+        let path = ShmPath {
+            name: path.to_owned(),
+            ownership: None,
+        };
+        Ok(Self::new(file.into(), Some(path), size))
     }
 
     fn new(fd: OwnedFd, path: Option<ShmPath>, size: usize) -> NamedShmHandle {

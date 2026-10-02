@@ -46,7 +46,7 @@ where
 pub(crate) struct ShmPath {
     pub(crate) name: CString,
     #[cfg(unix)]
-    pub(crate) ownership: crate::platform::NameOwnership,
+    pub(crate) ownership: Option<crate::platform::NameOwnership>,
     /// Kept open by readers and owner alike; see `ShmIndex`.
     #[cfg(windows)]
     pub(crate) index: crate::platform::ShmIndex,
@@ -58,7 +58,9 @@ pub(crate) struct ShmPath {
 #[cfg(unix)]
 impl Drop for ShmPath {
     fn drop(&mut self) {
-        self.ownership.release(&self.name);
+        if let Some(ownership) = &self.ownership {
+            ownership.release(&self.name);
+        }
     }
 }
 

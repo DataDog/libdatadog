@@ -87,10 +87,11 @@ pub(crate) fn mmap_handle<T: FileBackedHandle>(mut handle: T) -> io::Result<Mapp
         }
     };
 
-    // Handle transiently not yet assigned size the same than a non-existing mapping
+    // The creator has not committed the mapping size yet.
     if usable == 0 {
         unsafe { _ = munmap(ptr, MAPPING_MAX_SIZE) };
-        return Err(io::Error::other(
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
             "shared memory mapping size not yet committed",
         ));
     }
@@ -236,7 +237,12 @@ impl NamedShmHandle {
     }
 
     pub fn open(path: &CStr) -> io::Result<NamedShmHandle> {
-        Ok(Self::new(sys_open_existing(path)?, None, 0))
+        let fd = sys_open_existing(path)?;
+        let path = ShmPath {
+            name: path.to_owned(),
+            ownership: None,
+        };
+        Ok(Self::new(fd, Some(path), 0))
     }
 
     fn new(fd: OwnedFd, path: Option<ShmPath>, size: usize) -> NamedShmHandle {
