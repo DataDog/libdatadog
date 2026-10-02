@@ -19,6 +19,7 @@ std = [
     "dep:anyhow",
     "libdd-library-config/std",
     "libdd-library-config/process-context-writer",
+    "libdd-library-config/otel-thread-ctx",
     "libdd-common-ffi/std",
 ]
 cbindgen = ["std", "build_common/cbindgen", "libdd-common-ffi/cbindgen"]
@@ -44,3 +45,6 @@ build_common = { path = "../build-common" }
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-reader"] }
