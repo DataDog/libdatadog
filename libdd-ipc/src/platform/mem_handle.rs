@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::AtomicOption;
+use crate::AtomicOptionBox;
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{OwnedFileHandle, PlatformHandle, mmap_handle, munmap_handle};
 #[cfg(feature = "tiny-bytes")]
@@ -64,7 +64,7 @@ impl Drop for ShmPath {
 
 pub struct NamedShmHandle {
     /// Drop before `inner` so the open descriptor prevents identity reuse during unlink.
-    pub(crate) path: AtomicOption<Box<ShmPath>>,
+    pub(crate) path: AtomicOptionBox<ShmPath>,
     pub(crate) inner: ShmHandle,
 }
 
@@ -73,7 +73,7 @@ impl NamedShmHandle {
     /// Must not be called concurrently with `unlink()`.
     pub unsafe fn get_path(&self) -> &[u8] {
         unsafe {
-            match self.path.as_option() {
+            match self.path.as_ref() {
                 Some(shm_path) => shm_path.name.to_bytes(),
                 None => b"",
             }
