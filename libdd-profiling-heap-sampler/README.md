@@ -37,7 +37,7 @@ libraries function largely as API glue around native libraries this will help cl
 flowchart TB
     sampler["<b>libdd-profiling-heap-sampler</b><br/>Sampling decisions and USDT emission"]
     allocator["<b>libdd-profiling-heap-allocator</b><br/>Rust GlobalAlloc wrapper"]
-    hooks["<b>libdd-profiling-heap-hooks</b><br/>Native allocator hooks (jemalloc, etc.)"]
+    hooks["<b>libdd-profiling-heap-jemalloc</b><br/>jemalloc's own sampling hooks"]
     gotter["<b>libdd-profiling-heap-gotter</b><br/>Dynamically inject samplers at runtime"]
 
     sampler --- allocator
@@ -84,8 +84,8 @@ value through verbatim to the allocator it is wrapping.
 ### [Rust Allocator `libdd-profiling-heap-allocator`](../libdd-profiling-heap-allocator)
 An implementation of a rust allocator using `libdd-profiling-heap-sampler` and wrapping an arbitrary allocator.
 
-### [Native Allocator Hooks `libdd-profiling-heap-hooks`](../libdd-profiling-heap-hooks)
-These implement the native profiling hooks for the various allocators we support, emitting the same USDTs in the sampling path as `libdd-profiling-heap-sampler` does. We will implement this for `jemalloc` first.
+### [Native Allocator Hooks `libdd-profiling-heap-jemalloc`](../libdd-profiling-heap-jemalloc)
+Drives these USDTs from a native allocator's own sampling hooks instead of an independent sampler. Implemented for `jemalloc` first, piggybacking its `experimental.hooks.prof_sample`/`prof_sample_free` hooks so `jemalloc`'s own sampling decision and clock drive the same `ddheap:alloc`/`ddheap:free` USDTs.
 
 ### [GOTter `libdd-profiling-heap-gotter`](../libdd-profiling-heap-gotter)
 GOTter implements our GOT-patching mechanism to wrap (dynamically!) linked allocators in a running process.

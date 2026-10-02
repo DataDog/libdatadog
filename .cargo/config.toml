@@ -9,3 +9,14 @@
 # 2. Compile the C/C++ examples using CMake
 # 3. Run each example and report pass/fail
 ffi-test = "run --package tools --bin ffi_test --"
+
+[env]
+# `libdd-profiling-heap-jemalloc` needs jemalloc built with profiling compiled
+# in (`--enable-prof`) AND the `prof` runtime option turned on. The `profiling`
+# feature on `tikv-jemalloc-ctl`/`tikv-jemalloc-sys`/`tikv-jemallocator` handles
+# the former; jemalloc itself defaults `opt.prof` to `false` even with
+# `--enable-prof`, so we turn it on here via `MALLOC_CONF` (the `prof:true`
+# compiles sampling in, `prof_active:false` keeps it inert until a consumer such
+# as `libdd-profiling-heap-jemalloc::install` flips `prof.active`; both mirror
+# what the old `profiling_hooks` feature used to bake into the build).
+JEMALLOC_SYS_WITH_MALLOC_CONF = "prof:true,prof_active:false"
