@@ -12,8 +12,8 @@
 //!   * a single consumer (the telemetry worker) that batch-drains all pending points,
 //!   * an amortized wakeup — the consumer is notified once every [`NOTIFY_INTERVAL`] points (and
 //!     whenever a producer finds the buffer full), not once per point, and
-//!   * bounded memory without blocking — a producer that would lap the consumer drops its point
-//!     and returns. A producer never waits for the consumer.
+//!   * bounded memory without blocking — a producer that would lap the consumer drops its point and
+//!     returns. A producer never waits for the consumer.
 //!
 //! # Why a full buffer drops the point
 //!
