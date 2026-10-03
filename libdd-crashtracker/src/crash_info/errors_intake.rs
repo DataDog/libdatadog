@@ -1065,11 +1065,19 @@ mod tests {
 
         clear_errors_intake_env();
 
+        // `from_env` looks for the agent UDS socket on the real filesystem, and a found socket
+        // takes priority over the host and port. Other tests can create that socket while this
+        // test runs, so tests 2 and 3 ignore the result of the lookup.
+        let settings_without_uds_socket = || ErrorsIntakeSettings {
+            agent_uds_socket_found: false,
+            ..ErrorsIntakeSettings::from_env()
+        };
+
         // Test 2: DD_AGENT_HOST + DD_TRACE_AGENT_PORT used when no DD_TRACE_AGENT_URL
         unsafe { std::env::set_var("DD_AGENT_HOST", "custom-host") };
         unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "7777") };
 
-        let cfg = ErrorsIntakeConfig::from_env();
+        let cfg = ErrorsIntakeConfig::from_settings(&settings_without_uds_socket());
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.host(), Some("custom-host"));
@@ -1078,7 +1086,7 @@ mod tests {
         clear_errors_intake_env();
 
         // Test 3: Default fallback when nothing is set
-        let cfg = ErrorsIntakeConfig::from_env();
+        let cfg = ErrorsIntakeConfig::from_settings(&settings_without_uds_socket());
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.host(), Some(DEFAULT_AGENT_HOST));
