@@ -16,6 +16,9 @@ use libdd_capabilities::MaybeSend;
 /// worker at this point will be saved and used to restart the worker. To be able to safely restart,
 /// the worker must be in a valid state on every call to `.await` within the trigger function.
 /// See [`tokio::select#cancellation-safety`] for more details.
+// `async_trait` adds `#[must_use]` to the generated methods, which already return a `#[must_use]`
+// future.
+#[allow(clippy::double_must_use)]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait Worker: std::fmt::Debug + MaybeSend {
