@@ -1317,7 +1317,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         // This never waits for the worker. The worker does not drain the buffer while it waits for
         // the response to a telemetry request, so a full buffer drops the point, like the
         // `try_send_msg` of the other actions does on a full mailbox.
-        if self.metric_ring.push(value, *context, extra_tags) {
+        if self.metric_ring.try_push(value, *context, extra_tags) {
             Ok(())
         } else {
             Err(anyhow::anyhow!(
