@@ -1311,8 +1311,17 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
     ) -> anyhow::Result<()> {
         // Points are the highest-frequency action; publish to the lock-free ring buffer rather
         // than boxing a message + waking the receiver per point. The worker batch-drains it.
-        self.metric_ring.push(value, *context, extra_tags);
-        Ok(())
+        //
+        // This never waits for the worker. The worker does not drain the buffer while it waits for
+        // the response to a telemetry request, so a full buffer drops the point, like the
+        // `try_send_msg` of the other actions does on a full mailbox.
+        if self.metric_ring.push(value, *context, extra_tags) {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "telemetry metric buffer is full, the point is dropped"
+            ))
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2319,5 +2328,60 @@ mod tests {
         <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
 
         metric_mock.assert_calls(1);
+    }
+
+    /// The worker does not drain the metric buffer while it waits for the response to a telemetry
+    /// request, and a slow agent can keep it there for the whole request timeout. `add_point` is
+    /// called from application threads, so it must return at once and drop the point when the
+    /// buffer is full. The worker of this test never runs, which is that state.
+    #[test]
+    fn add_point_does_not_wait_for_a_worker_that_does_not_drain() {
+        use crate::data::metrics::{MetricNamespace, MetricType};
+
+        let runtime = Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let (handle, mut worker) = {
+            let mut builder = TelemetryWorkerBuilder::new(
+                "host".into(),
+                "svc".into(),
+                "lang".into(),
+                "1".into(),
+                "tv".into(),
+            );
+            builder.runtime_id = Some("rid".into());
+            builder.build_worker::<NativeCapabilities>(Some(runtime.handle().clone()))
+        };
+        let context = handle.register_metric_context(
+            "regression.full_metric_buffer".into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        // Ten times the capacity of the buffer. Without the drop this loop never ends.
+        let total = 20_480u32;
+        let producer = {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                (0..total)
+                    .filter(|_| handle.add_point(1.0, &context, Vec::new()).is_ok())
+                    .count()
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !producer.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "add_point waited for a worker that does not drain the metric buffer"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let accepted = producer.join().unwrap();
+        assert!(accepted > 0 && accepted < total as usize);
+
+        // The worker reads every accepted point when it drains again.
+        worker.drain_metric_ring();
+        assert!(handle.add_point(1.0, &context, Vec::new()).is_ok());
     }
 }
