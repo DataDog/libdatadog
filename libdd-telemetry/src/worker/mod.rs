@@ -2379,6 +2379,7 @@ mod tests {
     /// request, and a slow agent can keep it there for the whole request timeout. `add_point` is
     /// called from application threads, so it must return at once and drop the point when the
     /// buffer is full. The worker of this test never runs, which is that state.
+    #[cfg_attr(miri, ignore)] // too slow for the deadline; the metric_ring tests cover the buffer
     #[test]
     fn add_point_does_not_wait_for_a_worker_that_does_not_drain() {
         use crate::data::metrics::{MetricNamespace, MetricType};
