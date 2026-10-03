@@ -137,11 +137,18 @@ impl MetricRing {
         self.notify.notified()
     }
 
+    /// Publish a metric point, or drop it when the buffer is full. It never waits for the consumer.
+    /// Use [`MetricRing::try_push`] to learn whether the point was dropped. Safe to call from any
+    /// thread.
+    pub fn push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) {
+        let _ = self.try_push(value, key, tags);
+    }
+
     /// Publish a metric point. Lock-free, and it never waits for the consumer: when the buffer is
     /// full the point is dropped, the consumer is woken, and `false` is returned. Safe to call
     /// from any thread.
     #[must_use = "a `false` result means that the buffer was full and the point was dropped"]
-    pub fn push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> bool {
+    pub fn try_push(&self, value: f64, key: ContextKey, tags: Vec<Tag>) -> bool {
         // Reserve a sequence only when its slot is free. The slot of `seq` holds the point of
         // `seq - RING_SIZE` until the consumer advances `read_pos` past it. A sequence that is
         // reserved must always be published, because the consumer stops at the first empty slot.
@@ -250,7 +257,7 @@ mod tests {
         let mut sum = 0.0f64;
         let mut next_expected = 0u32;
         for i in 0..n {
-            assert!(ring.push(i as f64, key(i, MetricType::Count), Vec::new()));
+            assert!(ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()));
             // Drain after each point, so the buffer is never full.
             ring.drain(|v, k, _| {
                 assert_eq!(k.index(), next_expected, "points must arrive in order");
@@ -270,11 +277,11 @@ mod tests {
         // to a telemetry request. A push that waited for free space would never return.
         let ring = MetricRing::new();
         for i in 0..RING_SIZE as u32 {
-            assert!(ring.push(i as f64, key(i, MetricType::Count), Vec::new()));
+            assert!(ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()));
         }
         for i in 0..100u32 {
             assert!(
-                !ring.push(-1.0, key(i, MetricType::Count), Vec::new()),
+                !ring.try_push(-1.0, key(i, MetricType::Count), Vec::new()),
                 "a full buffer must drop the point"
             );
         }
@@ -291,9 +298,9 @@ mod tests {
 
         // The buffer accepts points again after the drain, across the wraparound.
         for i in 0..RING_SIZE as u32 {
-            assert!(ring.push(i as f64, key(i, MetricType::Gauge), Vec::new()));
+            assert!(ring.try_push(i as f64, key(i, MetricType::Gauge), Vec::new()));
         }
-        assert!(!ring.push(-1.0, key(0, MetricType::Gauge), Vec::new()));
+        assert!(!ring.try_push(-1.0, key(0, MetricType::Gauge), Vec::new()));
         let mut drained = 0u32;
         ring.drain(|v, k, _| {
             assert_eq!(k.index(), drained);
@@ -307,10 +314,10 @@ mod tests {
     fn dropped_point_releases_its_tags() {
         let ring = MetricRing::new();
         for i in 0..RING_SIZE as u32 {
-            assert!(ring.push(0.0, key(i, MetricType::Count), Vec::new()));
+            assert!(ring.try_push(0.0, key(i, MetricType::Count), Vec::new()));
         }
         let tags = vec![Tag::new("a", "b").unwrap()];
-        assert!(!ring.push(1.0, key(0, MetricType::Count), tags));
+        assert!(!ring.try_push(1.0, key(0, MetricType::Count), tags));
         let mut tagged = 0;
         ring.drain(|_, _, t| tagged += t.len());
         assert_eq!(
@@ -359,7 +366,7 @@ mod tests {
                 let mut accepted = 0u64;
                 let mut accepted_sum = 0u64;
                 for i in 0..per_producer {
-                    if ring.push(i as f64, key(i, MetricType::Count), Vec::new()) {
+                    if ring.try_push(i as f64, key(i, MetricType::Count), Vec::new()) {
                         accepted += 1;
                         accepted_sum += i as u64;
                     }
