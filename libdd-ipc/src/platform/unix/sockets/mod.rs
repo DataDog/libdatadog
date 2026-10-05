@@ -277,7 +277,18 @@ impl SeqpacketConn {
     pub fn try_send_raw(&self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
         #[cfg(target_os = "macos")]
         self.poll_liveness_pipe()?;
-        sendmsg_raw(self.inner.as_raw_fd(), &data, fds, MsgFlags::empty())
+        let result = sendmsg_raw(self.inner.as_raw_fd(), &data, fds, MsgFlags::empty());
+        // macOS datagram socketpairs can report ENOBUFS when the peer's receive
+        // buffer is full. Treat it as backpressure, not a broken connection.
+        #[cfg(target_os = "macos")]
+        let result = result.map_err(|e| {
+            if e.raw_os_error() == Some(libc::ENOBUFS) {
+                io::ErrorKind::WouldBlock.into()
+            } else {
+                e
+            }
+        });
+        result
     }
 
     /// Blocking send. Polls for writability (respecting write_timeout), then sends.
