@@ -21,7 +21,9 @@ chrono = { workspace = true, features = ["now", "serde"] }
 derive_more = { workspace = true, features = ["from", "into"] }
 log = { workspace = true, features = ["kv", "kv_serde"] }
 md5.workspace = true
-sha2.workspace = true
+sha2 = { workspace = true, optional = true }
+strum = { workspace = true, optional = true }
+strum_macros = { workspace = true, optional = true }
 libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["require-regex-full"] }
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1", optional = true }
 http = { workspace = true, features = ["std"], optional = true }
@@ -46,6 +48,6 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 default = ["remote-config"]
 exposure-events = ["dep:lru"]
 evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
-flagevaluation-evp = ["dep:http", "dep:libdd-capabilities", "dep:tokio"]
+flagevaluation-evp = ["dep:http", "dep:libdd-capabilities", "dep:sha2", "dep:strum", "dep:strum_macros", "dep:tokio"]
 pyo3 = ["dep:pyo3"]
 remote-config = ["dep:libdd-remote-config"]

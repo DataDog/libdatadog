@@ -208,7 +208,7 @@ impl MetricData<'_> {
             ));
         }
 
-        for &reason in ContextTruncationReason::ALL {
+        for reason in ContextTruncationReason::iter() {
             let count = flagevaluation_writer_stats.context_truncated[reason as usize];
             if count > 0 {
                 // Telemetry counters are f64, matching the existing writer counters above.

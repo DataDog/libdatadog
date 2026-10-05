@@ -298,7 +298,7 @@ struct FlagEvaluationEvpWriterCounters {
 impl FlagEvaluationEvpWriterCounters {
     fn record_field_omissions(&self, event: &mut FfeFlagEvaluationEvent) {
         let omissions = std::mem::take(&mut event.field_omissions);
-        for &reason in ContextTruncationReason::ALL {
+        for reason in ContextTruncationReason::iter() {
             if omissions.contains_context(reason) {
                 add_counter(
                     &self.context_truncated[reason as usize],
@@ -838,11 +838,23 @@ fn degrade_event_for_payload_limit(
         return None;
     }
 
-    let mut degraded = event.clone();
-    degraded.targeting_key = None;
-    degraded.context = None;
-    degraded.is_degraded = true;
-    Some(degraded)
+    Some(FfeFlagEvaluationEvent {
+        timestamp: event.timestamp,
+        flag: event.flag.clone(),
+        first_evaluation: event.first_evaluation,
+        last_evaluation: event.last_evaluation,
+        evaluation_count: event.evaluation_count,
+        variant: event.variant.clone(),
+        allocation: event.allocation.clone(),
+        targeting_rule: event.targeting_rule.clone(),
+        targeting_key: None,
+        context: None,
+        error: event.error.clone(),
+        runtime_default_used: event.runtime_default_used,
+        observe_full_evaluation_data: event.observe_full_evaluation_data,
+        is_degraded: true,
+        field_omissions: event.field_omissions,
+    })
 }
 
 #[cfg(test)]
@@ -1923,6 +1935,7 @@ mod tests {
             message: "boom".to_owned(),
         });
         oversized.runtime_default_used = true;
+        oversized.field_omissions.targeting_key_invalid = true;
         oversized.context = Some(FlagEvalEventContext {
             evaluation: Some(json!({ "blob": "x".repeat(1024) }).to_string()),
             dd: Some(ContextDD {
@@ -1932,6 +1945,20 @@ mod tests {
 
         let degraded = degrade_event_for_payload_limit(&oversized)
             .expect("full event should have a degraded form");
+        assert_eq!(degraded.timestamp, oversized.timestamp);
+        assert_eq!(degraded.first_evaluation, oversized.first_evaluation);
+        assert_eq!(degraded.last_evaluation, oversized.last_evaluation);
+        assert_eq!(degraded.evaluation_count, oversized.evaluation_count);
+        assert_eq!(degraded.flag.key, oversized.flag.key);
+        assert_eq!(
+            degraded.observe_full_evaluation_data,
+            oversized.observe_full_evaluation_data
+        );
+        assert_eq!(degraded.field_omissions, oversized.field_omissions);
+        assert!(degraded.runtime_default_used);
+        assert!(degraded.is_degraded);
+        assert!(degraded.targeting_key.is_none());
+        assert!(degraded.context.is_none());
         let degraded_limit = build_payload(&FfeFlagEvaluationBatch {
             context: context(),
             flag_evaluations: vec![degraded],
