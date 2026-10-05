@@ -43,7 +43,7 @@ pub mod rate_limiter;
 pub mod tag;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub mod threading;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
