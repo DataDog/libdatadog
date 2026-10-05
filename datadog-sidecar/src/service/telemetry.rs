@@ -381,7 +381,7 @@ static TELEMETRY_ACTION_SENDER: ArcSwapOption<mpsc::Sender<InternalTelemetryActi
 
 #[cfg(unix)]
 pub(crate) unsafe fn clear_inherited_state() {
-    // Abandon the old mutex: it may be locked by a thread that did not survive fork.
+    // SAFETY: Abandon the old mutex: it may be locked by a thread that did not survive fork.
     unsafe {
         (&raw mut COMPOSER_CACHE).write(LazyLock::new(|| {
             tokio::sync::Mutex::new(Default::default())
@@ -553,6 +553,7 @@ impl TelemetryCachedClient {
     pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
+            // SAFETY: global which isn't &mut-accessed outside of single-threaded stage
             let mut cache = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.lock().await;
             // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
             // and contents come from the same file.
