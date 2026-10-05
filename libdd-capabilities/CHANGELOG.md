@@ -2,6 +2,14 @@
 
 
 
+## [4.0.1](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v4.0.0..libdd-capabilities-v4.0.1) - 2026-10-02
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-v3.0.1..libdd-capabilities-v4.0.0) - 2026-09-24
 
 ### Added
