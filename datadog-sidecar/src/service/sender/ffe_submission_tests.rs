@@ -63,9 +63,20 @@ fn outstanding(sender: &mut SidecarSender, peer: &SeqpacketConn, count: u64) {
 }
 
 fn full_socket(sender: &SidecarSender) {
+    let mut packet_size = 1024;
     for _ in 0..10_000 {
-        match sender.channel.0.conn.try_send_raw(vec![0; 1024], &[]) {
+        match sender
+            .channel
+            .0
+            .conn
+            .try_send_raw(vec![0; packet_size], &[])
+        {
             Ok(()) => {}
+            // A rejected 1 KiB datagram can leave room for our smaller requests
+            // on macOS. Fill that remaining space before asserting backpressure.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock && packet_size > 1 => {
+                packet_size = 1;
+            }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return,
             Err(e) => panic!("unexpected fill failure: {e}"),
         }
