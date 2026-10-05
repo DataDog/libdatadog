@@ -257,6 +257,15 @@ pub struct ContextDD {
 
 // ── Context pruning ──────────────────────────────────────────────────────────
 
+/// Parse borrowed JSON and return an owned, pruned context using the same limits
+/// as aggregation and output. The input is neither modified nor retained.
+/// Callers must check consent before inspecting context. Parsing still visits the
+/// full JSON input; only the subsequent snapshot traversal/retention is bounded.
+/// Invalid or non-object JSON is omitted and records `SnapshotError`.
+pub fn prune_context_json(raw: &str, omissions: &mut FieldOmissions) -> Option<String> {
+    privacy::context_json(raw, omissions)
+}
+
 /// Prune evaluation context attributes to satisfy the flagevaluation bounds:
 /// - Only the first `MAX_CONTEXT_FIELDS` (256) entries are inspected. Rejected fields consume
 ///   inspection slots, so fewer entries may be retained.
