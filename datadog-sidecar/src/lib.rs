@@ -10,6 +10,7 @@
 pub mod agent_remote_config;
 #[cfg(unix)]
 pub mod appsec;
+pub mod auth;
 pub mod config;
 #[cfg(unix)]
 pub mod crashtracker;
@@ -38,7 +39,7 @@ pub mod windows;
 #[cfg(windows)]
 pub use self::windows::{
     ddog_daemon_entry_point, ddog_setup_crashtracking, primary_sidecar_identifier,
-    setup_daemon_process,
+    setup_daemon_process, shm_namespace,
 };
 
 macro_rules! sidecar_version {

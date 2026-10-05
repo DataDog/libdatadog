@@ -196,7 +196,6 @@ mod test {
     use crate::action::DogStatsDAction::{Count, Distribution, Gauge, Histogram, Set};
     use libdd_common::{Endpoint, tag};
     use std::net;
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
@@ -237,6 +236,7 @@ mod test {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "shared-runtime")]
     async fn test_thread_safety() {
         let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
         let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));

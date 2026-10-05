@@ -5,6 +5,8 @@ use alloc::borrow::Cow;
 use core::time::Duration;
 use std::time::SystemTime;
 
+use crate::parse_tags;
+
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
@@ -296,38 +298,28 @@ struct ExtractedMetadata {
 
 impl ExtractedMetadata {
     fn from_metadata(metadata: &Metadata) -> Self {
-        let mut result = Self {
+        parse_tags!(
+            metadata.tags.iter(),
+            "service" => service,
+            "env" => env,
+            "version" | "service_version" => service_version,
+            "language" => language_name,
+            "language_version" | "runtime_version" => language_version,
+            "library_version" | "profiler_version" => tracer_version,
+            "process_tags" => process_tags,
+        );
+        Self {
+            env: env.map(str::to_owned),
             family: metadata.family.clone(),
+            language_name: language_name.map(str::to_owned),
+            language_version: language_version.map(str::to_owned),
             library_name: metadata.library_name.clone(),
             library_version: metadata.library_version.clone(),
-            service_name: "unknown".to_string(),
-            ..Default::default()
-        };
-
-        for tag in &metadata.tags {
-            if let Some((key, value)) = tag.split_once(':') {
-                match key {
-                    "service" => result.service_name = value.to_string(),
-                    "env" => result.env = Some(value.to_string()),
-                    "version" | "service_version" => {
-                        result.service_version = Some(value.to_string())
-                    }
-                    "language" => result.language_name = Some(value.to_string()),
-                    "language_version" | "runtime_version" => {
-                        result.language_version = Some(value.to_string())
-                    }
-                    "library_version" | "profiler_version" => {
-                        result.tracer_version = Some(value.to_string())
-                    }
-                    "process_tags" => {
-                        result.process_tags = Some(value.to_string());
-                    }
-                    _ => {}
-                }
-            }
+            process_tags: process_tags.filter(|v| !v.is_empty()).map(str::to_owned),
+            service_name: service.unwrap_or("unknown").to_owned(),
+            service_version: service_version.map(str::to_owned),
+            tracer_version: tracer_version.map(str::to_owned),
         }
-
-        result
     }
 
     fn append_base_tags(&self, tags: &mut String) {
@@ -359,57 +351,15 @@ impl ExtractedMetadata {
         }
     }
 
-    // Process tags don't get a key because they are already formated as a
-    // key1:value1,key2:value2,... string
+    // Process tags don't get a key because they are already formatted as a
+    // key1:value1,key2:value2,... string. Empty values are filtered out at
+    // parse time in from_metadata, so process_tags is always None or non empty
     fn append_process_tags(&self, tags: &mut String) {
         if let Some(process_tags) = &self.process_tags {
-            // Pushing empty string as a tag value is okay, but pushing just a comma is not
-            // TODO(gyuheon0h): clean up mtag parsing and building logic
-            if !process_tags.is_empty() {
-                tags.push(',');
-                tags.push_str(process_tags);
-            }
+            tags.push(',');
+            tags.push_str(process_tags);
         }
     }
-}
-
-fn append_signal_tags(tags: &mut String, sig_info: &SigInfo) {
-    tags.push_str(&format!(
-        ",si_code_human_readable:{:?}",
-        sig_info.si_code_human_readable
-    ));
-    tags.push_str(&format!(",si_signo:{}", sig_info.si_signo));
-    tags.push_str(&format!(
-        ",si_signo_human_readable:{:?}",
-        sig_info.si_signo_human_readable
-    ));
-}
-
-fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
-    let mut tags = format!("data_schema_version:{}", crash_info.data_schema_version);
-
-    if let Some(fingerprint) = &crash_info.fingerprint {
-        tags.push_str(&format!(",fingerprint:{fingerprint}"));
-    }
-
-    tags.push_str(&format!(",incomplete:{}", crash_info.incomplete));
-    tags.push_str(&format!(",is_crash:{}", crash_info.error.is_crash));
-    tags.push_str(&format!(",uuid:{}", crash_info.uuid));
-
-    for (counter, value) in &crash_info.counters {
-        tags.push_str(&format!(",{counter}:{value}"));
-    }
-
-    if let Some(siginfo) = &crash_info.sig_info {
-        if let Some(si_addr) = &siginfo.si_addr {
-            tags.push_str(&format!(",si_addr:{si_addr}"));
-        }
-        tags.push_str(&format!(",si_code:{}", siginfo.si_code));
-        append_signal_tags(&mut tags, siginfo);
-    }
-
-    tags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
-    tags
 }
 
 impl ErrorsIntakePayload {
@@ -429,9 +379,8 @@ impl ErrorsIntakePayload {
         metadata.append_base_tags(&mut ddtags);
         metadata.append_runtime_tags(&mut ddtags);
         metadata.append_process_tags(&mut ddtags);
-
-        let crash_tags = build_crash_info_tags(crash_info);
-        ddtags.push_str(&format!(",{crash_tags}"));
+        ddtags.push(',');
+        ddtags.push_str(&crash_info.ddtags());
 
         let error_type = if let Some(sig_info) = &crash_info.sig_info {
             Some(format!("{:?}", sig_info.si_signo_human_readable))
@@ -490,25 +439,17 @@ impl ErrorsIntakePayload {
         let metadata = crash_ping.metadata();
 
         let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
-        let mut ddtags = format!(
-            "uuid:{},is_crash_ping:true,service:{}",
-            crash_uuid, extracted_metadata.service_name
-        );
+        let mut ddtags = String::new();
+        extracted_metadata.append_base_tags(&mut ddtags);
         extracted_metadata.append_runtime_tags(&mut ddtags);
-        if let Some(env) = &extracted_metadata.env {
-            ddtags.push_str(&format!(",env:{env}"));
-        }
-        if let Some(version) = &extracted_metadata.service_version {
-            ddtags.push_str(&format!(",version:{version}"));
-        }
-        extracted_metadata.append_library_tags(&mut ddtags);
         extracted_metadata.append_process_tags(&mut ddtags);
 
+        use core::fmt::Write;
+        write!(ddtags, ",uuid:{crash_uuid},is_crash_ping:true").ok();
         if let Some(sig_info) = sig_info {
-            append_signal_tags(&mut ddtags, sig_info);
+            sig_info.append_ddtags(&mut ddtags);
         }
-
-        ddtags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
+        write!(ddtags, ",runtime_platform:{TARGET_TRIPLE}").ok();
 
         let error_type = Some(
             sig_info
@@ -581,6 +522,26 @@ impl ErrorsIntakeUploader {
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
+            // Apply the same path policy as the crash JSON output to its .errors companion.
+            #[cfg(unix)]
+            let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                libdd_common::unix_utils::open_regular_for_create(&file_path).with_context(
+                    || {
+                        format!(
+                            "Failed to create errors intake file {}",
+                            file_path.display()
+                        )
+                    },
+                )?
+            } else {
+                std::fs::File::create(&file_path).with_context(|| {
+                    format!(
+                        "Failed to create errors intake file {}",
+                        file_path.display()
+                    )
+                })?
+            };
+            #[cfg(not(unix))]
             let file = std::fs::File::create(&file_path).with_context(|| {
                 format!(
                     "Failed to create errors intake file {}",

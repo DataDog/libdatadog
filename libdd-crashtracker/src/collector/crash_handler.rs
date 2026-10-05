@@ -4,6 +4,7 @@
 #![cfg(unix)]
 
 use super::collector_manager::Collector;
+use super::emitters::CrashKindData;
 use super::receiver_manager::Receiver;
 use super::saguard::{SaGuard, SuppressionMode};
 use super::signal_handler_manager::chain_signal_handler;
@@ -16,9 +17,6 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 use errno::{errno, set_errno};
 use libc::{c_void, pid_t, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
-use std::os::fd::OwnedFd;
-use std::os::unix::io::{AsRawFd, FromRawFd};
-use std::os::unix::net::UnixStream;
 use std::panic;
 use std::panic::PanicHookInfo;
 
@@ -354,20 +352,37 @@ fn handle_posix_signal_impl(
         grant_ptracer_permission(&receiver);
     }
 
-    let collector = Collector::spawn(
-        &receiver,
+    collect_and_finish(
+        receiver,
         config,
         config_str,
         metadata_string,
         message,
-        sig_info,
-        ucontext,
+        CrashKindData::UnixSignal { sig_info, ucontext },
+        &timeout_manager,
+    )
+}
+
+fn collect_and_finish(
+    receiver: Receiver,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_str: &str,
+    message: Option<&str>,
+    crash: CrashKindData,
+    timeout_manager: &TimeoutManager,
+) -> Result<(), CrashHandlerError> {
+    let collector = Collector::spawn(
+        &receiver,
+        config,
+        config_str,
+        metadata_str,
+        message,
+        crash,
+        std::time::Instant::now() + timeout_manager.remaining(),
     )?;
-
-    // We're done. Wrap up our interaction with the receiver.
-    collector.finish(&timeout_manager);
-    receiver.finish(&timeout_manager);
-
+    collector.finish(timeout_manager);
+    receiver.finish(timeout_manager);
     Ok(())
 }
 
@@ -477,28 +492,12 @@ fn grant_ptracer_permission(receiver: &Receiver) {
 /// - The crashtracker must be started
 /// - The stacktrace must be valid
 ///
-///  This function will spawn the receiver process and call an emit function to pipe over
-///  the crash data. We don't use the collector process because we are not in a signal handler
-///  Rather, we call emit_crashreport directly and pipe over data to the receiver
+/// Spawns a collector child to unwind with this process's credentials, as in the signal path.
 pub fn report_unhandled_exception(
     exception_type: Option<&str>,
     exception_message: Option<&str>,
     stacktrace: StackTrace,
 ) -> Result<(), CrashHandlerError> {
-    // Although both report_unhandled_exception and handle_posix_signal_impl do similar things of
-    //   1. Getting config and metadata
-    //   2. Spawn receiver
-    //   3. Set timeout
-    //   4. Emit report
-    //   5. Finish logic
-    // It is not worth going out of the way to combine these because:
-    //   1. The signal handler borrows and leaks (async-signal-safe); unifying them would require a
-    //      generic or trait just to paper over a deliberate constraint, making the split harder to
-    //      see.
-    //   2. The emit + finish: completely different mechanisms (fork vs. direct IO, Collector vs.
-    //      raw ProcessHandle).
-    //   3. TimeoutManager::new(config.timeout()); one line, not worth extracting.
-
     // Turn crashtracker off to prevent a recursive crash report emission
     // We do not turn it back on because this function is not intended to be used as
     // a recurring mechanism to report exceptions. We expect the application to exit
@@ -516,9 +515,6 @@ pub fn report_unhandled_exception(
     }
 
     let timeout_manager = TimeoutManager::new(config.timeout());
-
-    let pid = unsafe { libc::getpid() };
-    let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
 
     // This allocates but that is okay because we are not in the signal handling path
     // Both error type and error message are user-controlled and may contain newlines or protocol
@@ -540,38 +536,15 @@ pub fn report_unhandled_exception(
          Message: {error_message_str}"
     );
 
-    // Duplicate the socket fd before handing it to UnixStream so we retain an fd to poll on after
-    // the write end is closed.  OwnedFd is the scope guard: it closes poll_fd on any exit path.
-    //
-    // SAFETY: dup() returns a fresh fd; we are its sole owner.  ProcessHandle only polls it
-    // (wait_for_pollhup) and has no Drop impl, so it never closes the fd. Closing it here
-    // after finish() returns is the first and only close
-    let poll_fd = unsafe { OwnedFd::from_raw_fd(libc::dup(receiver.handle.uds_fd)) };
-    let receiver_pid = receiver.handle.pid;
-
-    {
-        let mut unix_stream = unsafe { UnixStream::from_raw_fd(receiver.handle.uds_fd) };
-        let _ = super::emitters::emit_crashreport(
-            &mut unix_stream,
-            &config,
-            &config_str,
-            &metadata_str,
-            Some(message.as_str()),
-            super::emitters::CrashKindData::UnhandledException { stacktrace },
-            pid,
-            tid,
-        );
-        // unix_stream is dropped here, closing the write end of the socket.
-        // This signals EOF to the receiver so it can finish writing the crash report.
-    }
-
-    // Wait for the receiver to signal it is done (POLLHUP on the dup'd fd), then reap it.
-    // poll_fd is dropped at the end of this function, closing the fd.
-    let finish_handle =
-        super::process_handle::ProcessHandle::new(poll_fd.as_raw_fd(), receiver_pid);
-    finish_handle.finish(&timeout_manager);
-
-    Ok(())
+    collect_and_finish(
+        receiver,
+        &config,
+        &config_str,
+        &metadata_str,
+        Some(message.as_str()),
+        CrashKindData::UnhandledException { stacktrace },
+        &timeout_manager,
+    )
 }
 #[cfg(test)]
 mod tests {

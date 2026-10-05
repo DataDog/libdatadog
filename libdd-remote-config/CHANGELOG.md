@@ -2,6 +2,18 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v6.0.0..libdd-remote-config-v7.0.0) - 2026-10-02
+
+### Added
+
+- Authenticate sidecar connections and shared memory ([#2551](https://github.com/datadog/libdatadog/issues/2551)) - ([d120c10](https://github.com/datadog/libdatadog/commit/d120c1090a03fa7274fed4121344d25660081895))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v5.0.0..libdd-remote-config-v6.0.0) - 2026-09-24
 
 ### Changed
