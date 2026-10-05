@@ -257,6 +257,38 @@ impl NamedShmHandle {
 }
 
 impl<T: FileBackedHandle> MappedMem<T> {
+    /// macOS POSIX SHM does not support `mmap(MAP_PRIVATE)`. Make the view COW in place.
+    pub(crate) fn make_private(&self) -> io::Result<()> {
+        unsafe extern "C" {
+            static mach_task_self_: libc::mach_port_t;
+            fn mach_vm_protect(
+                task: libc::mach_port_t,
+                address: libc::mach_vm_address_t,
+                size: libc::mach_vm_size_t,
+                set_maximum: libc::boolean_t,
+                protection: libc::vm_prot_t,
+            ) -> libc::kern_return_t;
+        }
+        const VM_PROT_COPY: libc::vm_prot_t = 0x10;
+        // SAFETY: the full range belongs to this mapping and remains at the same address.
+        let result = unsafe {
+            mach_vm_protect(
+                mach_task_self_,
+                self.ptr.as_ptr() as libc::mach_vm_address_t,
+                self.mapped_len as libc::mach_vm_size_t,
+                0,
+                VM_PROT_COPY | libc::VM_PROT_READ | libc::VM_PROT_WRITE,
+            )
+        };
+        if result == libc::KERN_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "mach_vm_protect failed: {result}"
+            )))
+        }
+    }
+
     /// Pick up backing that somebody else committed, without committing any.
     ///
     /// `usable` is per-process: only this handle's own [`Self::ensure_space`] raises it, so a

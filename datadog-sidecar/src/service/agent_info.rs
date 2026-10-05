@@ -281,8 +281,8 @@ mod tests {
         );
         assert_eq!(config.read(), (true, b"new config".as_slice()));
 
-        assert!(!old_info.write(TEST_INFO.as_bytes()));
-        assert!(!old_config.write(b"old config"));
+        assert!(old_info.write(TEST_INFO.as_bytes()));
+        assert!(old_config.write(b"old config"));
         info.reconnect();
         config.reconnect();
         assert!(new_info.write(TEST_INFO.as_bytes()));

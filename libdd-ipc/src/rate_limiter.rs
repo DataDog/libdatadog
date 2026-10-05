@@ -1,6 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(unix)]
+use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use arc_swap::ArcSwapOption;
 use libdd_common::rate_limiter::LocalLimiter;
@@ -122,11 +124,22 @@ impl<Inner> ShmLimiterMemory<Inner> {
         }
     }
 
-    /// Retire a cached arena from another namespace so the next lookup reopens it.
+    /// Retire a cached arena from an old namespace so the next lookup reopens it.
+    /// On Unix, retire only this process's view.
     pub fn reconnect(&self) {
         if let (Some(mem), Some(path)) = (self.mem.load().as_ref(), &self.path) {
             // Reader handles are never unlinked through this cache.
             if unsafe { mem.mem.get_path() } != path.get().to_bytes() {
+                #[cfg(unix)]
+                let _guard = lock_shm();
+                if mem.is_retired() {
+                    return;
+                }
+                #[cfg(unix)]
+                if let Err(error) = mem.mem.make_private() {
+                    tracing::warn!("Failed to detach SHM limiter: {error}");
+                    return;
+                }
                 if let Some(retired) = ShmLimiterArena::<Inner>::retired_flag(mem.mem.as_slice()) {
                     retired.store(1, Ordering::Release);
                 }
@@ -1122,9 +1135,12 @@ mod tests {
         reader.reconnect();
         assert!(!old.is_retired());
 
+        let cloned_reader = reader.clone();
         NAMESPACE.store(1, Ordering::Relaxed);
         reader.reconnect();
-        assert!(old.is_retired());
+        assert!(reader.is_retired());
+        assert!(cloned_reader.is_retired());
+        assert_eq!(old.is_retired(), cfg!(windows));
         assert!(reader.get(old_slot.index()).is_none());
         let mut new = ShmLimiterMemory::create(path()).unwrap();
         let new_slot = new

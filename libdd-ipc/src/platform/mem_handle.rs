@@ -291,6 +291,52 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn detaching_after_fork_preserves_the_parent_mapping() {
+        use crate::platform::lock_shm;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let size = 2 * page_size::get();
+        let mapped = ShmHandle::new(size).unwrap().map().unwrap();
+        let base = mapped.as_slice().as_ptr();
+        let reserved = mapped.mapped_len;
+        let first = unsafe { &*base.cast::<AtomicU64>() };
+        let last = unsafe { &*base.add(size - size_of::<AtomicU64>()).cast::<AtomicU64>() };
+        first.store(11, Ordering::Relaxed);
+        last.store(22, Ordering::Relaxed);
+
+        // Inherit a held lock too: detachment in the child must reclaim it.
+        let _guard = lock_shm();
+        // SAFETY: the child only detaches its mapping, writes atomics, and calls _exit.
+        match unsafe { libc::fork() } {
+            -1 => panic!("fork failed"),
+            0 => {
+                let _guard = lock_shm();
+                let mut ok = mapped.make_private().is_ok();
+                if ok {
+                    ok = mapped.as_slice().as_ptr() == base
+                        && mapped.mapped_len == reserved
+                        && mapped.get_size() == size
+                        && first.load(Ordering::Relaxed) == 11
+                        && last.load(Ordering::Relaxed) == 22;
+                    first.store(u64::MAX, Ordering::Relaxed);
+                    last.store(u64::MAX, Ordering::Relaxed);
+                }
+                unsafe { libc::_exit(if ok { 0 } else { 1 }) }
+            }
+            pid => {
+                let mut status = 0;
+                assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+                assert!(libc::WIFEXITED(status));
+                assert_eq!(libc::WEXITSTATUS(status), 0);
+                assert_eq!(first.load(Ordering::Relaxed), 11);
+                assert_eq!(last.load(Ordering::Relaxed), 22);
+            }
+        }
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)]
     fn test_anon_shm() {
         let shm = ShmHandle::new(5).unwrap();

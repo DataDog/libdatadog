@@ -26,24 +26,23 @@ const MAX_REPLACEMENTS: usize = 4;
 
 pub(crate) type SegmentIdentity = (u64, u64);
 
-/// Serialize creation and removal so another thread cannot replace a name between its
-/// identity check and unlink. Store the holder's PID so a forked child can reclaim the lock
-/// from a parent thread that no longer exists in the child.
-static NAMES_LOCK: AtomicU32 = AtomicU32::new(0);
+// Serialize name changes and reader detachment. A forked child can reclaim a lock
+// held by a parent thread that no longer exists in the child.
+static SHM_LOCK: AtomicU32 = AtomicU32::new(0);
 
-struct NamesGuard;
+pub(crate) struct ShmGuard;
 
-fn lock_names() -> NamesGuard {
+pub(crate) fn lock_shm() -> ShmGuard {
     let pid = std::process::id();
     loop {
-        match NAMES_LOCK.compare_exchange(0, pid, Ordering::Acquire, Ordering::Relaxed) {
-            Ok(_) => return NamesGuard,
+        match SHM_LOCK.compare_exchange(0, pid, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return ShmGuard,
             Err(holder) if holder != pid => {
-                if NAMES_LOCK
+                if SHM_LOCK
                     .compare_exchange(holder, pid, Ordering::Acquire, Ordering::Relaxed)
                     .is_ok()
                 {
-                    return NamesGuard;
+                    return ShmGuard;
                 }
             }
             Err(_) => std::thread::yield_now(),
@@ -51,9 +50,9 @@ fn lock_names() -> NamesGuard {
     }
 }
 
-impl Drop for NamesGuard {
+impl Drop for ShmGuard {
     fn drop(&mut self) {
-        NAMES_LOCK.store(0, Ordering::Release);
+        SHM_LOCK.store(0, Ordering::Release);
     }
 }
 
@@ -68,7 +67,7 @@ impl NameOwnership {
         if self.pid != std::process::id() {
             return;
         }
-        let _guard = lock_names();
+        let _guard = lock_shm();
         if let Ok(fd) = sys_open_existing(name) {
             if sys_identity(&fd) == Some(self.identity) {
                 _ = sys_shm_unlink(name);
@@ -85,7 +84,7 @@ pub(crate) fn create_replacing(
     mode: Mode,
     init: impl FnOnce(&OwnedFd) -> io::Result<()>,
 ) -> io::Result<(OwnedFd, ShmPath, Vec<OwnedFd>)> {
-    let _guard = lock_names();
+    let _guard = lock_shm();
     let mut predecessors = vec![];
     for _ in 0..MAX_REPLACEMENTS {
         match sys_create_exclusive(name, mode) {
