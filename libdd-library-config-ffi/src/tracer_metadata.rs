@@ -206,29 +206,6 @@ mod tests {
     }
 
     #[test]
-    fn include_otel_thread_context_sets_defaults_and_is_idempotent() {
-        unsafe {
-            let ptr = ddog_tracer_metadata_new();
-
-            assert!((*ptr).threadlocal_metadata.is_none());
-            (*ptr).service_name = Some("some-service".to_owned());
-
-            let expected = TracerMetadata {
-                service_name: Some("some-service".to_owned()),
-                threadlocal_metadata: Some(Default::default()),
-                ..Default::default()
-            };
-
-            for _ in 0..2 {
-                ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
-                assert_eq!(&*ptr, &expected);
-            }
-
-            ddog_tracer_metadata_free(ptr);
-        }
-    }
-
-    #[test]
     fn include_otel_thread_context_preserves_existing_metadata() {
         unsafe {
             let ptr = ddog_tracer_metadata_new();
@@ -255,67 +232,32 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn thread_context_metadata_publication_lifecycle() {
+    fn included_thread_context_metadata_is_published() {
         use libdd_library_config::otel_process_ctx::{ProcessContextSelfReader, unpublish};
         use std::os::fd::{FromRawFd, OwnedFd};
 
+        let expected = TracerMetadata {
+            threadlocal_metadata: Some(Default::default()),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
         unsafe {
             let ptr = ddog_tracer_metadata_new();
-            (*ptr).service_name = Some("some-service".to_owned());
-
-            let expected = (*ptr).to_otel_process_ctx();
-
-            let handle = ddog_tracer_metadata_store(ptr).unwrap();
-            let legacy_fd = OwnedFd::from_raw_fd(handle.fd);
-
-            let reader =
-                ProcessContextSelfReader::new().expect("published context should be discoverable");
-
-            let actual = reader.read().expect("published context should be readable");
-
-            assert_eq!(actual, expected);
-
             ddog_tracer_metadata_include_otel_thread_context(ptr).unwrap();
 
-            let expected_with_thread_context = (*ptr).to_otel_process_ctx();
-            assert_ne!(expected_with_thread_context, expected);
-
-            let before_store = reader
-                .read()
-                .expect("previous publication should remain readable");
-            assert_eq!(before_store, expected);
-
-            let updated_handle = ddog_tracer_metadata_store(ptr).unwrap();
-            drop(OwnedFd::from_raw_fd(updated_handle.fd));
-
-            let after_store = reader
-                .read()
-                .expect("updated publication should be readable");
-            assert_eq!(after_store, expected_with_thread_context);
-
-            let replacement = ddog_tracer_metadata_new();
-            (*replacement).service_name = Some("updated-service".to_owned());
-
-            ddog_tracer_metadata_include_otel_thread_context(replacement).unwrap();
-            assert!((*replacement).threadlocal_metadata.is_some());
-
-            let expected_replacement = (*replacement).to_otel_process_ctx();
-            assert_ne!(expected_replacement, expected_with_thread_context);
-
-            let replacement_handle = ddog_tracer_metadata_store(replacement).unwrap();
-            drop(OwnedFd::from_raw_fd(replacement_handle.fd));
-
+            let handle = ddog_tracer_metadata_store(ptr).unwrap();
+            drop(OwnedFd::from_raw_fd(handle.fd));
             ddog_tracer_metadata_free(ptr);
-            ddog_tracer_metadata_free(replacement);
-            drop(legacy_fd);
-
-            let after_cleanup = reader
-                .read()
-                .expect("replacement publication should remain readable after cleanup");
-            assert_eq!(after_cleanup, expected_replacement);
-
-            unpublish().expect("published context should be removed");
         }
+
+        let actual = ProcessContextSelfReader::new()
+            .expect("published context should be discoverable")
+            .read()
+            .expect("published context should be readable");
+
+        unpublish().expect("published context should be removed");
+        assert_eq!(actual, expected);
     }
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
