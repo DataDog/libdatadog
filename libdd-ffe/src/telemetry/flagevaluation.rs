@@ -208,6 +208,15 @@ pub struct EvalError {
     pub message: String,
 }
 
+impl EvalError {
+    /// Omit empty errors and copy only the allowed code, never the original text.
+    pub fn from_message(message: &str) -> Option<Self> {
+        (!message.is_empty()).then(|| Self {
+            message: privacy::error_code(message).to_owned(),
+        })
+    }
+}
+
 /// Per-event context object.
 ///
 /// `evaluation` carries the pruned context attributes; `dd.service` carries the
@@ -687,13 +696,16 @@ fn normalize_for_aggregation(event: &mut FfeFlagEvaluationEvent) {
             .as_deref()
             .and_then(|raw| privacy::context_json(raw, &mut event.field_omissions));
     }
-    event.error = event
-        .error
-        .as_ref()
-        .filter(|error| !error.message.is_empty())
-        .map(|error| EvalError {
-            message: privacy::error_code(&error.message).to_owned(),
-        });
+    if let Some(error) = event.error.as_mut() {
+        if error.message.is_empty() {
+            event.error = None;
+        } else {
+            let code = privacy::error_code(&error.message);
+            if error.message != code {
+                error.message = code.to_owned();
+            }
+        }
+    }
 }
 
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
@@ -1034,6 +1046,23 @@ mod tests {
             service: "svc".to_owned(),
             env: "prod".to_owned(),
             version: "1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn normalization_reuses_canonical_error_storage() {
+        for code in ["FLAG_NOT_FOUND", "GENERAL"] {
+            let mut event = full_event();
+            event.error = Some(EvalError {
+                message: code.into(),
+            });
+            let original = event.error.as_ref().unwrap().message.as_ptr();
+            for _ in 0..2 {
+                event.normalize();
+                let error = event.error.as_ref().unwrap();
+                assert_eq!(error.message, code);
+                assert_eq!(error.message.as_ptr(), original);
+            }
         }
     }
 

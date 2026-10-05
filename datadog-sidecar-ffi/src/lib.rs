@@ -1611,13 +1611,11 @@ fn ffe_flag_evaluation_from_ffi(
         targeting_rule: optional_utf8(event.targeting_rule_key).map(|key| TargetingRuleKey { key }),
         targeting_key,
         context,
-        error: (!event.error_message.is_empty()).then(|| EvalError {
-            message: event
-                .error_message
-                .try_to_utf8()
-                .unwrap_or("GENERAL")
-                .to_owned(),
-        }),
+        error: if event.error_message.is_empty() {
+            None
+        } else {
+            EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+        },
         runtime_default_used: event.runtime_default_used,
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
@@ -2285,6 +2283,27 @@ mod tests {
             assert_eq!(converted.observe_full_evaluation_data, consent);
             assert_eq!(converted.error.unwrap().message, "GENERAL");
             assert_eq!(converted.context.unwrap().evaluation.is_some(), consent);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_error_codes_preserve_existing_policy() {
+        let long_error = "private-error-canary".repeat(4096);
+        for (message, expected) in [
+            ("", None),
+            ("FLAG_NOT_FOUND", Some("FLAG_NOT_FOUND")),
+            ("GENERAL", Some("GENERAL")),
+            ("flag_not_found", Some("GENERAL")),
+            (" FLAG_NOT_FOUND ", Some("GENERAL")),
+            (long_error.as_str(), Some("GENERAL")),
+        ] {
+            let mut event = ffi_flag_evaluation("");
+            event.error_message = CharSlice::from(message);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(
+                converted.error.as_ref().map(|error| error.message.as_str()),
+                expected
+            );
         }
     }
 

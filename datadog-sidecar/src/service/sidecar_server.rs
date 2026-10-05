@@ -578,7 +578,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let ffe_http_client = self.server.ffe_http_client.clone();
         let actions: Vec<SidecarAction> = actions
             .into_iter()
-            .filter(|a| match a {
+            .filter_map(|a| match a {
                 SidecarAction::FfeExposureBatch(batch) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
                         if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
@@ -602,7 +602,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     } else {
                         debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
                     }
-                    false
+                    None
                 }
                 SidecarAction::FfeFlagEvaluationBatch(batch) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
@@ -611,7 +611,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             self.server.ffe_flagevaluation_coalescer.enqueue(
                                 ffe_http_client.clone(),
                                 ep,
-                                batch.clone(),
+                                batch,
                                 ffe_flagevaluation_flusher::evp_origin_from_language(
                                     &trace_config.language,
                                 ),
@@ -627,7 +627,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
                         );
                     }
-                    false
+                    None
                 }
                 SidecarAction::FfeEvaluationMetrics { context, metrics } => {
                     if let Some(ep) = session.get_otlp_metrics_endpoint().clone() {
@@ -640,9 +640,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     } else {
                         debug!("ffe_metrics_flusher: no configured endpoint, dropping batch");
                     }
-                    false
+                    None
                 }
-                _ => true,
+                action => Some(action),
             })
             .collect();
 
@@ -1967,6 +1967,64 @@ mod tests {
                 .lock_applications()
                 .contains_key(&queue_id)
         );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn mixed_flag_evaluation_and_telemetry_actions_reach_their_consumers() {
+        let http_server = MockServer::start_async().await;
+        let evaluations = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path(EVP_FLAGEVALUATION_PATH);
+                then.status(202);
+            })
+            .await;
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("mixed-ffe-session", "runtime");
+        let queue_id = QueueId::from(42);
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                cfg.set_endpoint(Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                })
+                .unwrap();
+            });
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default();
+        let (before_tx, before_rx) = futures::channel::oneshot::channel();
+        let (after_tx, after_rx) = futures::channel::oneshot::channel();
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![
+                    SidecarAction::Telemetry(TelemetryActions::CollectStats(before_tx)),
+                    SidecarAction::FfeFlagEvaluationBatch(ffe_flag_evaluation_batch()),
+                    SidecarAction::Telemetry(TelemetryActions::CollectStats(after_tx)),
+                ],
+            )
+            .await;
+        // Neither neighboring action may be dropped or routed to the FFE coalescer.
+        tokio::time::timeout(TokioDuration::from_secs(5), async {
+            before_rx.await.unwrap();
+            after_rx.await.unwrap();
+        })
+        .await
+        .unwrap();
+        handler
+            .flush(SidecarFlushOptions {
+                flag_evaluations: true,
+                ..SidecarFlushOptions::default()
+            })
+            .await;
+        evaluations.assert_calls_async(1).await;
     }
 
     #[tokio::test]
