@@ -56,11 +56,11 @@ use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
-use libdd_trace_utils::otlp_encoder::mapper::OTLP_EXPORT_MARKER_KEY;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
+use libdd_trace_utils::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use libdd_trace_utils::span::{SpanText, TraceData, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
@@ -997,9 +997,8 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
-        // Agentless takes precedence over OTLP below, so a payload leaves in the native format
-        // whenever agentless is configured or OTLP is not.
-        let native_export = self.agentless_config.is_some() || self.otlp.is_none();
+        // Agent and agentless both send the Datadog format; the builder rejects agentless + OTLP.
+        let native_export = self.otlp.is_none();
         for chunk in traces.iter_mut() {
             if native_export {
                 if let Some(first) = chunk.first_mut() {
@@ -1321,8 +1320,8 @@ pub trait ResponseCallback {
 
 /// Marks a span as exported natively (not over OTLP) with `_dd.sdk.otlp_export: "false"`.
 fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
-    span.meta.insert(
-        T::Text::from_static_str(OTLP_EXPORT_MARKER_KEY),
+    span.meta.insert_or_replace(
+        T::Text::from_static_str(SDK_OTLP_EXPORT_KEY),
         T::Text::from_static_str("false"),
     );
 }
@@ -1580,12 +1579,13 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
-    // Pre-marks chunks so the exporter sends them unchanged and sent bytes match the input.
-    fn encode_marked_v04(mut traces: Vec<Vec<SpanBytes>>) -> Vec<u8> {
-        for chunk in traces.iter_mut() {
+    // Size of the v04 body the exporter sends for `traces`, once it adds the native export marker.
+    fn marked_v04_len(traces: &[Vec<SpanBytes>]) -> usize {
+        let mut marked = traces.to_vec();
+        for chunk in marked.iter_mut() {
             add_native_export_marker(&mut chunk[0]);
         }
-        msgpack_encoder::v04::to_vec_from_v04(&traces)
+        msgpack_encoder::v04::to_vec_from_v04(&marked).len()
     }
 
     pub(crate) fn build_test_exporter(
@@ -1780,7 +1780,10 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let data = encode_marked_v04(traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
+        // The marker grows the body, so reporting the input length instead would fail below.
+        assert!(sent_len > data.len());
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1802,7 +1805,7 @@ mod tests {
             ),
             format!(
                 "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-                data.len(),
+                sent_len,
                 env!("CARGO_PKG_VERSION")
             ),
             format!(
@@ -1880,7 +1883,8 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = encode_marked_v04(traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1909,12 +1913,12 @@ mod tests {
         );
         let expected_dropped = format!(
             "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_bytes = format!(
             "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
@@ -1988,7 +1992,8 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = encode_marked_v04(traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let sent_len = marked_v04_len(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -2010,7 +2015,7 @@ mod tests {
         );
         let expected_sent_bytes = format!(
             "datadog.tracer.exporter.transport.sent.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         let expected_sent_traces = format!(
@@ -2047,7 +2052,7 @@ mod tests {
         // Should NOT emit http.dropped.bytes for 404
         let dropped_bytes_metric = format!(
             "datadog.tracer.exporter.transport.dropped.bytes:{}|d|#libdatadog_version:{}",
-            data.len(),
+            sent_len,
             env!("CARGO_PKG_VERSION")
         );
         assert!(
@@ -2490,23 +2495,26 @@ mod tests {
     #[test]
     fn test_add_native_export_marker() {
         let mut span = SpanBytes::default();
+        span.meta.mark_deduped();
         add_native_export_marker(&mut span);
+        assert!(span.meta.is_deduped());
         assert_eq!(
-            span.meta.get(OTLP_EXPORT_MARKER_KEY).map(|v| v.as_str()),
+            span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
             Some("false")
         );
 
-        // A marker already set by the tracer is overridden once the span is deduped.
+        // A marker already set by the tracer is overridden in place.
         let mut span = SpanBytes::default();
         span.meta.insert(
-            BytesString::from_static(OTLP_EXPORT_MARKER_KEY),
+            BytesString::from_static(SDK_OTLP_EXPORT_KEY),
             BytesString::from_static("true"),
         );
+        span.meta.mark_deduped();
         add_native_export_marker(&mut span);
-        span.dedup();
+        assert!(span.meta.is_deduped());
         assert_eq!(span.meta.len(), 1);
         assert_eq!(
-            span.meta.get(OTLP_EXPORT_MARKER_KEY).map(|v| v.as_str()),
+            span.meta.get(SDK_OTLP_EXPORT_KEY).map(|v| v.as_str()),
             Some("false")
         );
     }
@@ -2522,14 +2530,14 @@ mod tests {
                 };
                 let is_marked = |span: &libdd_trace_utils::span::v04::SpanSlice| {
                     span.meta
-                        .get(OTLP_EXPORT_MARKER_KEY)
+                        .get(SDK_OTLP_EXPORT_KEY)
                         .is_some_and(|v| v == "false")
                 };
                 chunks.len() == 2
                     && chunks[0].len() == 2
                     && chunks[1].len() == 1
                     && is_marked(&chunks[0][0])
-                    && !chunks[0][1].meta.contains_key(OTLP_EXPORT_MARKER_KEY)
+                    && !chunks[0][1].meta.contains_key(SDK_OTLP_EXPORT_KEY)
                     && is_marked(&chunks[1][0])
             });
             then.status(200)
@@ -2689,6 +2697,73 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
+        mock_intake.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_marks_first_span_of_each_chunk() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            fn check_body(body: &[u8]) -> bool {
+                let Ok(body) = serde_json::from_slice::<serde_json::Value>(body) else {
+                    return false;
+                };
+                let marker = |trace: usize, span: usize| {
+                    body["traces"][trace]["spans"][span]["meta"][SDK_OTLP_EXPORT_KEY].as_str()
+                };
+                body["traces"].as_array().map(Vec::len) == Some(2)
+                    && marker(0, 0) == Some("false")
+                    && !body["traces"][0]["spans"][1].is_null()
+                    && marker(0, 1).is_none()
+                    && marker(1, 0) == Some("false")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.is_true(|req| {
+                #[cfg(not(target_arch = "wasm32"))]
+                let body = zstd::decode_all(req.body_ref());
+                #[cfg(target_arch = "wasm32")]
+                let body = zrip::decompress(req.body_ref());
+                body.is_ok_and(|body| check_body(&body))
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when.is_true(|req| check_body(req.body_ref()));
+            let _ = when;
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("svc")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_agentless_endpoint(&intake_url, "k")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let span = |trace_id, span_id, parent_id| SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            trace_id,
+            span_id,
+            parent_id,
+            ..Default::default()
+        };
+        let traces: Vec<Vec<SpanBytes>> =
+            vec![vec![span(1, 1, 0), span(1, 2, 1)], vec![span(2, 3, 0)]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
         mock_intake.assert();
     }
 

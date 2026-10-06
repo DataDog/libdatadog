@@ -17,6 +17,16 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
+/// Key declaring whether a Datadog SDK exported a trace over OTLP (`"true"`) or natively
+/// (`"false"`). An absent key means the producer predates the marker.
+///
+/// Where it is carried depends on the transport:
+/// - Native export (agent or agentless): span meta on the first span of each trace chunk, set to
+///   `"false"` by the trace exporter.
+/// - OTLP export: a resource attribute set to `"true"` by the OTLP encoder. Span-level occurrences
+///   are stripped from OTLP span attributes so they can never contradict the resource value.
+pub const SDK_OTLP_EXPORT_KEY: &str = "_dd.sdk.otlp_export";
+
 fn set_top_level_span<T>(span: &mut Span<T>)
 where
     T: TraceData,
