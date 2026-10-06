@@ -4,7 +4,7 @@
 //! Trace-utils functionalities implementation for V1 spans.
 
 use crate::span::trace_utils::DroppedP0Stats;
-use crate::span::v1::{AttributeValue, Span, TraceChunk};
+use crate::span::v1::{Span, TraceChunk};
 use crate::span::{SpanText, TraceData};
 use std::collections::{HashMap, HashSet};
 use tracing::debug;
@@ -19,10 +19,12 @@ const SAMPLING_SINGLE_SPAN_MECHANISM: &str = "_dd.span_sampling.mechanism";
 const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 
 /// Reads a numeric attribute (`Float` or `Int`), mirroring how v0.4's `metrics` map is read.
-fn attribute_as_f64<T: TraceData>(value: &AttributeValue<T>) -> Option<f64> {
+fn attribute_as_f64<T: libdd_trace_model::ValueTypes>(
+    value: &libdd_trace_model::AttributeValue<T>,
+) -> Option<f64> {
     match value {
-        AttributeValue::Float(v) => Some(*v),
-        AttributeValue::Int(v) => Some(*v as f64),
+        libdd_trace_model::AttributeValue::Float(v) => Some(*v),
+        libdd_trace_model::AttributeValue::Int(v) => Some(*v as f64),
         _ => None,
     }
 }
@@ -30,7 +32,7 @@ fn attribute_as_f64<T: TraceData>(value: &AttributeValue<T>) -> Option<f64> {
 fn set_top_level_span<T: TraceData>(span: &mut Span<T>) {
     span.attributes.insert(
         T::Text::from_static_str(TOP_LEVEL_KEY),
-        AttributeValue::Float(1.0),
+        libdd_trace_model::AttributeValue::Float(1.0),
     );
 }
 
@@ -196,6 +198,7 @@ pub fn drop_chunks<T: TraceData>(traces: &mut Vec<TraceChunk<T>>) -> DroppedP0St
 mod tests {
     use super::*;
     use crate::span::v1::{SpanBytes, TraceChunkBytes};
+    use libdd_trace_model::AttributeValue;
 
     fn create_test_span(is_top_level: bool) -> SpanBytes {
         let mut span = SpanBytes {

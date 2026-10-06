@@ -8,6 +8,7 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use libdd_trace_model::{AttributeValue, TraceText, ValueMap, ValueTypes};
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
@@ -61,10 +62,24 @@ impl<K, V> Default for VecMap<K, V> {
     }
 }
 
+impl<T: ValueTypes> ValueMap<T> for VecMap<T::Text, AttributeValue<T>> {
+    fn try_get(&self, key: &str) -> Option<&AttributeValue<T>> {
+        self.get(key)
+    }
+
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a str, &'a AttributeValue<T>)>
+    where
+        T: 'a,
+    {
+        VecMap::iter(self).map(|(k, v)| (k.as_str(), v))
+    }
+}
+
 // Only enabled for tests: this allocates (builds two `HashMap`s), which would be surprising
 // behind a plain `==` in production code. Production callers should use `slow_compare` instead,
 // so the cost is visible at the call site.
-#[cfg(any(test, feature = "test-utils"))]
+//#[cfg(any(test, feature = "test-utils"))]
+// TODO: AAAAAAAAA WHAT DO HERE
 impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         self.slow_compare(other)

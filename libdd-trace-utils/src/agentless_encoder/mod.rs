@@ -538,23 +538,29 @@ fn dedup_first_wins_v1<'a, V>(leaves: &mut Vec<(Cow<'a, str>, V)>) {
 /// ```
 fn flatten_attr_into_v1<'a, T: TraceData>(
     key: &mut String,
-    v: &'a v1::AttributeValue<T>,
+    v: &'a libdd_trace_model::AttributeValue<T>,
     meta_out: &mut Vec<(Cow<'a, str>, Cow<'a, str>)>,
     metrics_out: &mut Vec<(Cow<'a, str>, f64)>,
     bytes_out: &mut Vec<(Cow<'a, str>, T::Bytes)>,
 ) {
     match v {
-        v1::AttributeValue::String(s) => {
+        libdd_trace_model::AttributeValue::String(s) => {
             meta_out.push((Cow::Owned(key.clone()), Cow::Borrowed(s.borrow())))
         }
-        v1::AttributeValue::Bool(b) => meta_out.push((
+        libdd_trace_model::AttributeValue::Bool(b) => meta_out.push((
             Cow::Owned(key.clone()),
             Cow::Borrowed(if *b { "true" } else { "false" }),
         )),
-        v1::AttributeValue::Int(i) => metrics_out.push((Cow::Owned(key.clone()), *i as f64)),
-        v1::AttributeValue::Float(f) => metrics_out.push((Cow::Owned(key.clone()), *f)),
-        v1::AttributeValue::Bytes(b) => bytes_out.push((Cow::Owned(key.clone()), b.clone())),
-        v1::AttributeValue::List(items) => {
+        libdd_trace_model::AttributeValue::Int(i) => {
+            metrics_out.push((Cow::Owned(key.clone()), *i as f64))
+        }
+        libdd_trace_model::AttributeValue::Float(f) => {
+            metrics_out.push((Cow::Owned(key.clone()), *f))
+        }
+        libdd_trace_model::AttributeValue::Bytes(b) => {
+            bytes_out.push((Cow::Owned(key.clone()), b.clone()))
+        }
+        libdd_trace_model::AttributeValue::Array(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
@@ -563,7 +569,7 @@ fn flatten_attr_into_v1<'a, T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        v1::AttributeValue::KeyValue(map) => {
+        libdd_trace_model::AttributeValue::KeyValueList(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -610,23 +616,26 @@ fn collect_attrs_v1<'a, T: TraceData>(
         match v {
             // Common case: a top-level scalar attribute maps 1:1 onto a leaf, so its key/value
             // can be borrowed straight from the source attribute — no allocation.
-            v1::AttributeValue::String(s) => {
+            libdd_trace_model::AttributeValue::String(s) => {
                 meta_leaves.push((Cow::Borrowed(k.borrow()), Cow::Borrowed(s.borrow())))
             }
-            v1::AttributeValue::Bool(b) => meta_leaves.push((
+            libdd_trace_model::AttributeValue::Bool(b) => meta_leaves.push((
                 Cow::Borrowed(k.borrow()),
                 Cow::Borrowed(if *b { "true" } else { "false" }),
             )),
-            v1::AttributeValue::Int(i) => {
+            libdd_trace_model::AttributeValue::Int(i) => {
                 metrics_leaves.push((Cow::Borrowed(k.borrow()), *i as f64))
             }
-            v1::AttributeValue::Float(f) => metrics_leaves.push((Cow::Borrowed(k.borrow()), *f)),
-            v1::AttributeValue::Bytes(b) => {
+            libdd_trace_model::AttributeValue::Float(f) => {
+                metrics_leaves.push((Cow::Borrowed(k.borrow()), *f))
+            }
+            libdd_trace_model::AttributeValue::Bytes(b) => {
                 bytes_leaves.push((Cow::Borrowed(k.borrow()), b.clone()))
             }
             // Nested case: the leaf key has to be built (`key.0`, `key.a.b`, ...), so it can no
             // longer borrow the original attribute name alone.
-            v1::AttributeValue::List(_) | v1::AttributeValue::KeyValue(_) => {
+            libdd_trace_model::AttributeValue::Array(_)
+            | libdd_trace_model::AttributeValue::KeyValueList(_) => {
                 key_buf.clear();
                 key_buf.push_str(k.borrow());
                 flatten_attr_into_v1(
@@ -942,19 +951,20 @@ fn encode_span_link_v1<T: TraceData, S: Serializer>(
     let has_attributes = attrs_dd.iter().any(|(_, v)| {
         matches!(
             v,
-            v1::AttributeValue::String(_) | v1::AttributeValue::Bool(_)
+            libdd_trace_model::AttributeValue::String(_)
+                | libdd_trace_model::AttributeValue::Bool(_)
         )
     });
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, libdd_trace_model::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter() {
                     let key: &str = k.borrow();
                     match v {
-                        v1::AttributeValue::String(s) => attrs.serialize_entry(key, s.borrow() as &str)?,
-                        v1::AttributeValue::Bool(b) => {
+                        libdd_trace_model::AttributeValue::String(s) => attrs.serialize_entry(key, s.borrow() as &str)?,
+                        libdd_trace_model::AttributeValue::Bool(b) => {
                             attrs.serialize_entry(key, if *b { "true" } else { "false" })?
                         }
                         _ => {}
@@ -998,25 +1008,25 @@ fn serialize_span_events_v1<T: TraceData>(events: &[v1::SpanEvent<T>]) -> Option
 }
 
 /// Returns `true` when `v` can be downgraded to a v0.4 event-attribute (scalar or scalar list).
-fn is_supported_event_attr_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
+fn is_supported_event_attr_v1<T: TraceData>(v: &libdd_trace_model::AttributeValue<T>) -> bool {
     matches!(
         v,
-        v1::AttributeValue::String(_)
-            | v1::AttributeValue::Bool(_)
-            | v1::AttributeValue::Int(_)
-            | v1::AttributeValue::Float(_)
-            | v1::AttributeValue::List(_)
+        libdd_trace_model::AttributeValue::String(_)
+            | libdd_trace_model::AttributeValue::Bool(_)
+            | libdd_trace_model::AttributeValue::Int(_)
+            | libdd_trace_model::AttributeValue::Float(_)
+            | libdd_trace_model::AttributeValue::Array(_)
     )
 }
 
 /// Returns `true` when `v` is a scalar that fits in a v0.4 array element (no nesting).
-fn is_scalar_array_elem_v1<T: TraceData>(v: &v1::AttributeValue<T>) -> bool {
+fn is_scalar_array_elem_v1<T: TraceData>(v: &libdd_trace_model::AttributeValue<T>) -> bool {
     matches!(
         v,
-        v1::AttributeValue::String(_)
-            | v1::AttributeValue::Bool(_)
-            | v1::AttributeValue::Int(_)
-            | v1::AttributeValue::Float(_)
+        libdd_trace_model::AttributeValue::String(_)
+            | libdd_trace_model::AttributeValue::Bool(_)
+            | libdd_trace_model::AttributeValue::Int(_)
+            | libdd_trace_model::AttributeValue::Float(_)
     )
 }
 
@@ -1034,11 +1044,11 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
     if has_attributes {
         map.serialize_entry(
             "attributes",
-            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, v1::AttributeValue<T>>| {
+            &ser_fn!(<T: TraceData> |ser, attrs_dd: &'a crate::span::vec_map::DedupedVecMap<'a, T::Text, libdd_trace_model::AttributeValue<T>>| {
                 let mut attrs = ser.serialize_map(None)?;
                 for (k, v) in attrs_dd.iter().filter(|(_, v)| is_supported_event_attr_v1(v)) {
                     let key: &str = k.borrow();
-                    attrs.serialize_entry(key, &ser_fn!(<T: TraceData> |ser, v: &'a v1::AttributeValue<T>| {
+                    attrs.serialize_entry(key, &ser_fn!(<T: TraceData> |ser, v: &'a libdd_trace_model::AttributeValue<T>| {
                         encode_event_attr_value_v1(ser, v)
                     }))?;
                 }
@@ -1054,10 +1064,10 @@ fn encode_span_event_v1<T: TraceData, S: Serializer>(
 /// `List` produces a plain JSON array, filtering out non-scalar entries (no equivalent for them).
 fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
     ser: S,
-    v: &v1::AttributeValue<T>,
+    v: &libdd_trace_model::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        v1::AttributeValue::List(items) => {
+        libdd_trace_model::AttributeValue::Array(items) => {
             let scalars: Vec<_> = items
                 .iter()
                 .filter(|e| is_scalar_array_elem_v1(e))
@@ -1065,7 +1075,7 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
             let mut seq = ser.serialize_seq(Some(scalars.len()))?;
             for elem in scalars {
                 seq.serialize_element(
-                    &ser_fn!(<T: TraceData> |ser, elem: &'a v1::AttributeValue<T>| {
+                    &ser_fn!(<T: TraceData> |ser, elem: &'a libdd_trace_model::AttributeValue<T>| {
                         encode_event_scalar_v1(ser, elem)
                     }),
                 )?;
@@ -1078,16 +1088,16 @@ fn encode_event_attr_value_v1<T: TraceData, S: Serializer>(
 
 fn encode_event_scalar_v1<T: TraceData, S: Serializer>(
     ser: S,
-    v: &v1::AttributeValue<T>,
+    v: &libdd_trace_model::AttributeValue<T>,
 ) -> Result<S::Ok, S::Error> {
     match v {
-        v1::AttributeValue::String(s) => {
+        libdd_trace_model::AttributeValue::String(s) => {
             let s: &str = s.borrow();
             ser.serialize_str(s)
         }
-        v1::AttributeValue::Bool(b) => ser.serialize_bool(*b),
-        v1::AttributeValue::Int(i) => ser.serialize_i64(*i),
-        v1::AttributeValue::Float(f) => {
+        libdd_trace_model::AttributeValue::Bool(b) => ser.serialize_bool(*b),
+        libdd_trace_model::AttributeValue::Int(i) => ser.serialize_i64(*i),
+        libdd_trace_model::AttributeValue::Float(f) => {
             if f.is_finite() {
                 ser.serialize_f64(*f)
             } else {

@@ -10,11 +10,12 @@
 
 use super::OtlpResourceInfo;
 use super::mapper::{MAX_ATTRIBUTES_PER_SPAN, OTLP_EXPORT_MARKER_KEY, build_resource, proto_kv};
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink, TraceChunk};
+use crate::span::v1::{Span, SpanEvent, SpanLink, TraceChunk};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
 use std::collections::hash_map::Entry;
 
+use libdd_trace_model::AttributeValue;
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
     AnyValue as ProtoAnyValue, ArrayValue as ProtoArrayValue, InstrumentationScope as ProtoScope,
@@ -36,33 +37,39 @@ const ERROR_MESSAGE_KEYS: [&str; 2] = ["error.msg", "error.message"];
 /// Converts a v1 `AttributeValue` directly to a prost `AnyValue::Value`. Lossless: every variant
 /// (including nested `List`/`KeyValue`) maps onto an OTLP-native shape, unlike the v0.4 downgrade
 /// encoders which have to flatten into a meta/metrics string/f64 split.
-fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
+fn attr_value_to_proto<T: TraceData>(value: &libdd_trace_model::AttributeValue<T>) -> ProtoValue {
     match value {
-        AttributeValue::String(s) => ProtoValue::StringValue(s.borrow().to_string()),
-        AttributeValue::Bool(b) => ProtoValue::BoolValue(*b),
-        AttributeValue::Int(i) => ProtoValue::IntValue(*i),
-        AttributeValue::Float(f) => ProtoValue::DoubleValue(*f),
-        AttributeValue::Bytes(b) => ProtoValue::BytesValue(b.borrow().to_vec()),
-        AttributeValue::List(items) => ProtoValue::ArrayValue(ProtoArrayValue {
-            values: items
-                .iter()
-                .map(|it| ProtoAnyValue {
-                    value: Some(attr_value_to_proto(it)),
-                })
-                .collect(),
-        }),
-        AttributeValue::KeyValue(map) => ProtoValue::KvlistValue(ProtoKvList {
-            values: map
-                .defensive_dedup()
-                .iter()
-                .map(|(k, v)| proto_kv(k.borrow().to_string(), attr_value_to_proto(v)))
-                .collect(),
-        }),
+        libdd_trace_model::AttributeValue::String(s) => {
+            ProtoValue::StringValue(s.borrow().to_string())
+        }
+        libdd_trace_model::AttributeValue::Bool(b) => ProtoValue::BoolValue(*b),
+        libdd_trace_model::AttributeValue::Int(i) => ProtoValue::IntValue(*i),
+        libdd_trace_model::AttributeValue::Float(f) => ProtoValue::DoubleValue(*f),
+        libdd_trace_model::AttributeValue::Bytes(b) => ProtoValue::BytesValue(b.borrow().to_vec()),
+        libdd_trace_model::AttributeValue::Array(items) => {
+            ProtoValue::ArrayValue(ProtoArrayValue {
+                values: items
+                    .iter()
+                    .map(|it| ProtoAnyValue {
+                        value: Some(attr_value_to_proto(it)),
+                    })
+                    .collect(),
+            })
+        }
+        libdd_trace_model::AttributeValue::KeyValueList(map) => {
+            ProtoValue::KvlistValue(ProtoKvList {
+                values: map
+                    .defensive_dedup()
+                    .iter()
+                    .map(|(k, v)| proto_kv(k.borrow().to_string(), attr_value_to_proto(v)))
+                    .collect(),
+            })
+        }
     }
 }
 
 /// Ordered, deduplicated chunk+span attribute list produced by [`merged_attrs_v1`].
-type MergedAttrs<'a, T> = Vec<(&'a str, &'a AttributeValue<T>)>;
+type MergedAttrs<'a, T> = Vec<(&'a str, &'a libdd_trace_model::AttributeValue<T>)>;
 /// Key to position index into a [`MergedAttrs`] list, for O(1) lookup of one specific key.
 type MergedAttrsIndex<'a> = std::collections::HashMap<&'a str, usize>;
 
@@ -142,7 +149,7 @@ fn span_status_v1<T: TraceData>(
 fn collect_span_attributes_v1<T: TraceData>(
     span: &Span<T>,
     chunk: &TraceChunk<T>,
-    merged: &[(&str, &AttributeValue<T>)],
+    merged: &[(&str, &libdd_trace_model::AttributeValue<T>)],
     resource_service: &str,
     effective_priority: Option<i32>,
     otel_trace_semantics_enabled: bool,
@@ -664,7 +671,7 @@ mod tests_v1 {
         let mut span = minimal_span();
         span.attributes.insert(
             bs("list"),
-            AttributeValue::List(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
+            AttributeValue::Array(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
         );
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
@@ -686,7 +693,7 @@ mod tests_v1 {
         let mut nested = crate::span::vec_map::VecMap::new();
         nested.insert(bs("nested_key"), AttributeValue::String(bs("nested_val")));
         span.attributes
-            .insert(bs("kv"), AttributeValue::KeyValue(nested));
+            .insert(bs("kv"), AttributeValue::KeyValueList(nested));
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];

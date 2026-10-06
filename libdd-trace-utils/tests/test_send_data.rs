@@ -448,9 +448,10 @@ mod tracing_integration_tests {
     /// omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once test-agent V1
     /// support catches up, add them here too.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
+        use libdd_trace_model::AttributeValue;
         use libdd_trace_utils::span::v1::{
-            AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
-            SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
+            AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
+            TraceChunkBytes, TracerPayloadBytes,
         };
 
         // Multi-key attribute map on the root span — primitive variants only.
@@ -557,9 +558,10 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
+        use libdd_trace_model::AttributeValue;
         use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v1, to_vec_from_v04};
         use libdd_trace_utils::span::v1::{
-            AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+            SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -639,9 +641,10 @@ mod tracing_integration_tests {
     /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
     /// Add them here once test-agent V1 support catches up.
     fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
+        use libdd_trace_model::AttributeValue;
         use libdd_trace_utils::span::v1::{
-            AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
-            SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
+            AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
+            TraceChunkBytes, TracerPayloadBytes,
         };
 
         // Root span attributes — primitives supported by the test-agent today.
@@ -767,10 +770,11 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
+        use libdd_trace_model::AttributeValue;
         use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;
         use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
         use libdd_trace_utils::span::v1::{
-            AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+            SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
 

@@ -17,9 +17,11 @@
 //! see [`crate::msgpack_encoder::v04::span_v1`]'s mapping table for the msgpack-side sibling
 //! of this convention.
 
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
+use crate::span::v1::{Span, SpanEvent, SpanKind, SpanLink, TraceChunk};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
+use libdd_trace_model::AttributeValue;
+use libdd_trace_model::ValueArray;
 use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;
@@ -137,7 +139,7 @@ fn flatten_attr_into<T: TraceData>(
         AttributeValue::Bytes(_) => {
             // Callers filter `Bytes` out before recursing; unreachable in practice.
         }
-        AttributeValue::List(items) => {
+        AttributeValue::Array(items) => {
             let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
                 key.push('.');
@@ -146,7 +148,7 @@ fn flatten_attr_into<T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        AttributeValue::KeyValue(map) => {
+        AttributeValue::KeyValueList(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -316,7 +318,7 @@ fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
             | AttributeValue::Bool(_)
             | AttributeValue::Int(_)
             | AttributeValue::Float(_)
-            | AttributeValue::List(_)
+            | AttributeValue::Array(_)
     )
 }
 
@@ -386,7 +388,7 @@ struct LogEventAttrValueV1<'a, T: TraceData>(&'a AttributeValue<T>);
 impl<T: TraceData> Serialize for LogEventAttrValueV1<'_, T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self.0 {
-            AttributeValue::List(items) => {
+            AttributeValue::Array(items) => {
                 let mut state = serializer.serialize_struct("attr", 2)?;
                 state.serialize_field("type", &4u8)?;
                 state.serialize_field("array_value", &LogEventArrayValueSeq(items))?;
@@ -610,11 +612,12 @@ mod tests {
     //! emitted line as `serde_json::Value` to assert on the resulting shape.
     use super::super::encode_traces_v1;
     use crate::span::v1::{
-        AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
-        TraceChunkBytes, TracerPayloadBytes,
+        AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes, TraceChunkBytes,
+        TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_model::AttributeValue;
     use serde_json::Value;
 
     const MAX: usize = 64 * 1024;
@@ -858,7 +861,7 @@ mod tests {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         attrs.insert(
             bs("a"),
-            AttributeValue::List(vec![AttributeValue::String(bs("from-list"))]),
+            AttributeValue::Array(vec![AttributeValue::String(bs("from-list"))]),
         );
         attrs.insert(bs("a.0"), AttributeValue::String(bs("from-literal")));
         attrs.dedup();
@@ -981,7 +984,7 @@ mod tests {
         let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         inner.insert(bs("b"), AttributeValue::String(bs("v")));
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-        attrs.insert(bs("a"), AttributeValue::KeyValue(inner));
+        attrs.insert(bs("a"), AttributeValue::KeyValueList(inner));
         let chunk = minimal_chunk(
             [0u8; 16],
             SpanBytes {
@@ -1132,7 +1135,7 @@ mod tests {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         attrs.insert(
             bs("list"),
-            AttributeValue::List(vec![
+            AttributeValue::Array(vec![
                 AttributeValue::String(bs("a")),
                 AttributeValue::Int(2),
             ]),

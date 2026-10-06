@@ -11,8 +11,10 @@ pub mod vec_map;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::span::v04::VecMap;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
+use libdd_trace_model::{AttributeValue, ValueTypes};
 use serde::Serialize;
 use std::borrow::{Borrow, Cow};
 use std::fmt::Debug;
@@ -98,9 +100,17 @@ impl SpanBytes for Bytes {
 /// Note: The functions are internal to the msgpack decoder and should not be used directly: they're
 /// only exposed here due to the unavailability of min_specialization in stable Rust.
 /// Also note that the Clone and PartialEq bounds are only present for tests.
-pub trait TraceData: Default + Clone + Debug + PartialEq {
-    type Text: SpanText;
-    type Bytes: SpanBytes;
+pub trait TraceData:
+    libdd_trace_model::ValueTypes<
+        Text: SpanText,
+        Bytes: SpanBytes,
+        Array = Vec<AttributeValue<Self>>,
+        Map = VecMap<<Self as ValueTypes>::Text, AttributeValue<Self>>,
+    > + Default
+    + Clone
+    + Debug
+    + PartialEq
+{
 }
 
 pub trait DeserializableTraceData: TraceData {
@@ -121,10 +131,13 @@ pub trait DeserializableTraceData: TraceData {
 /// TraceData implementation using `Bytes` and `BytesString`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct BytesData;
-impl TraceData for BytesData {
+impl ValueTypes for BytesData {
     type Text = BytesString;
     type Bytes = Bytes;
+    type Array = Vec<AttributeValue<Self>>;
+    type Map = VecMap<BytesString, AttributeValue<Self>>;
 }
+impl TraceData for BytesData {}
 
 impl DeserializableTraceData for BytesData {
     #[inline]
@@ -174,13 +187,18 @@ impl DeserializableTraceData for BytesData {
     }
 }
 
-/// TraceData implementation using `&str` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
-impl<'a> TraceData for SliceData<'a> {
+
+/// TraceData implementation using `&str` and `&[u8]`.
+impl<'a> ValueTypes for SliceData<'a> {
     type Text = Cow<'a, str>;
     type Bytes = &'a [u8];
+    type Array = Vec<AttributeValue<Self>>;
+    type Map = VecMap<Cow<'a, str>, AttributeValue<Self>>;
 }
+
+impl<'a> TraceData for SliceData<'a> {}
 
 impl<'a> DeserializableTraceData for SliceData<'a> {
     #[inline]

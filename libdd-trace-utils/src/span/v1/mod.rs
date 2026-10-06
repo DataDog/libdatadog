@@ -3,7 +3,7 @@
 
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
-use libdd_trace_model::{self, TraceBytes, TraceText};
+use libdd_trace_model::{self, AttributeValue, TraceText};
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
@@ -59,34 +59,16 @@ impl From<u32> for SpanKind {
 
 /// Typed V1 attribute value.
 /// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug)]
-pub enum AttributeValue<T: TraceData> {
-    String(T::Text),
-    Float(f64),
-    Int(i64),
-    Bool(bool),
-    Bytes(T::Bytes),
-    KeyValue(VecMap<T::Text, AttributeValue<T>>),
-    List(Vec<AttributeValue<T>>),
-}
-
-// Implemented manually rather than derived: `VecMap`'s `PartialEq` is gated to
-// test/test-utils (see its definition) to keep its allocation cost out of casual `==`, so the
-// `KeyValue` variant compares via `slow_compare` instead of relying on that trait impl.
-impl<T: TraceData> PartialEq for AttributeValue<T> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (AttributeValue::String(a), AttributeValue::String(b)) => a == b,
-            (AttributeValue::Float(a), AttributeValue::Float(b)) => a == b,
-            (AttributeValue::Int(a), AttributeValue::Int(b)) => a == b,
-            (AttributeValue::Bool(a), AttributeValue::Bool(b)) => a == b,
-            (AttributeValue::Bytes(a), AttributeValue::Bytes(b)) => a == b,
-            (AttributeValue::KeyValue(a), AttributeValue::KeyValue(b)) => a.slow_compare(b),
-            (AttributeValue::List(a), AttributeValue::List(b)) => a == b,
-            _ => false,
-        }
-    }
-}
+// #[derive(Debug)]
+// pub enum AttributeValue<T: TraceData> {
+//     String(T::Text),
+//     Float(f64),
+//     Int(i64),
+//     Bool(bool),
+//     Bytes(T::Bytes),
+//     KeyValue(VecMap<T::Text, AttributeValue<T>>),
+//     List(Vec<AttributeValue<T>>),
+// }
 
 /// The generic representation of a V1 span.
 ///
@@ -115,19 +97,16 @@ pub struct Span<T: TraceData> {
     pub env: T::Text,
     pub version: T::Text,
     pub component: T::Text,
-    pub attributes: VecMap<T::Text, libdd_trace_model::AttributeValue<T::Text, T::Bytes>>,
+    pub attributes: VecMap<T::Text, libdd_trace_model::AttributeValue<T>>,
     pub span_links: ThinVec<SpanLink<T>>,
     pub span_events: ThinVec<SpanEvent<T>>,
 }
 
-impl<T: TraceData> libdd_trace_model::Attributes for Span<T>
-where
-    T::Text: TraceText,
-    T::Bytes: TraceBytes,
-{
+impl<T: TraceData> libdd_trace_model::Attributes for Span<T> {
     // TODO: simplify by combining the TraceText type with the model's version
     type Text = T::Text;
     type Bytes = T::Bytes;
+    type Values = T;
 
     fn attribute(&self, key: &str) -> Option<&libdd_trace_model::Value<Self>> {
         self.attributes.get(key)
@@ -141,11 +120,16 @@ where
     }
 
     fn attribute_mut(&mut self, key: &str) -> Option<&mut libdd_trace_model::Value<Self>> {
-        todo!()
+        self.attributes.get_mut(key)
     }
 
     fn set_attribute(&mut self, key: impl Into<Self::Text>, value: libdd_trace_model::Value<Self>) {
-        todo!()
+        let key: Self::Text = key.into();
+        if let Some(val) = self.attributes.get_mut(key.as_str()) {
+            *val = value;
+        } else {
+            self.attributes.insert(key, value);
+        }
     }
 }
 
@@ -177,7 +161,7 @@ pub struct TraceChunk<T: TraceData> {
     pub origin: T::Text,
     pub sampling_mechanism: Option<u32>,
     pub dropped_trace: bool,
-    pub attributes: VecMap<T::Text, AttributeValue<T>>,
+    pub attributes: VecMap<T::Text, libdd_trace_model::AttributeValue<T>>,
     pub spans: Vec<Span<T>>,
 }
 
@@ -192,7 +176,7 @@ pub struct TracerPayload<T: TraceData> {
     pub env: T::Text,
     pub hostname: T::Text,
     pub app_version: T::Text,
-    pub attributes: VecMap<T::Text, AttributeValue<T>>,
+    pub attributes: VecMap<T::Text, libdd_trace_model::AttributeValue<T>>,
     pub chunks: Vec<TraceChunk<T>>,
 }
 

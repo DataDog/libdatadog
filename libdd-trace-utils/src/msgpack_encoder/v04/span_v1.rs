@@ -31,8 +31,10 @@
 //! dropped: the dedicated field always wins, so each key is written at most once.
 
 use crate::span::TraceData;
-use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
+use crate::span::v1::{Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::{DedupedVecMap, VecMap};
+use libdd_trace_model::AttributeValue;
+use libdd_trace_model::ValueArray;
 use rmp::encode::{
     RmpWrite, ValueWriteError, write_array_len, write_bin, write_bool, write_f64, write_i64,
     write_map_len, write_sint, write_str, write_u8, write_u32, write_u64,
@@ -185,7 +187,7 @@ fn flatten_attr_into<T: TraceData>(
         AttributeValue::Bytes(_) => {
             // Callers filter `Bytes` out before recursing; unreachable in practice.
         }
-        AttributeValue::List(items) => {
+        AttributeValue::Array(items) => {
             // Reuse `key`'s buffer across siblings instead of allocating a new `String` per
             // recursion level: append the suffix, recurse, then truncate back before the next
             // sibling. Only leaves actually need an owned `String` (via `.clone()` above).
@@ -197,7 +199,7 @@ fn flatten_attr_into<T: TraceData>(
                 key.truncate(base_len);
             }
         }
-        AttributeValue::KeyValue(map) => {
+        AttributeValue::KeyValueList(map) => {
             let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
                 key.push('.');
@@ -565,7 +567,7 @@ fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
             | AttributeValue::Bool(_)
             | AttributeValue::Int(_)
             | AttributeValue::Float(_)
-            | AttributeValue::List(_)
+            | AttributeValue::Array(_)
     )
 }
 
@@ -602,20 +604,19 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
             write_type!(writer, 3, "double_value");
             write_f64(writer, *f)?;
         }
-        AttributeValue::List(arr) => {
+        AttributeValue::Array(arr) => {
             write_type!(writer, 4, "array_value");
             // Only scalar elements survive the downgrade; nested structural entries are
             // skipped because v0.4 array elements must themselves be scalar.
-            let scalar_elems = arr.iter().filter(|e| is_scalar_array_elem(e));
-            let elem_count = scalar_elems.clone().count() as u32;
+            let elem_count = arr.iter().filter(|e| is_scalar_array_elem(e)).count() as u32;
             write_map_len(writer, 1)?;
             write_const_msgpack_str!(writer, "values")?;
             write_array_len(writer, elem_count)?;
-            for elem in scalar_elems {
+            for elem in arr.iter().filter(|e| is_scalar_array_elem(e)) {
                 write_event_array_element(writer, elem)?;
             }
         }
-        AttributeValue::Bytes(_) | AttributeValue::KeyValue(_) => {
+        AttributeValue::Bytes(_) | AttributeValue::KeyValueList(_) => {
             // Filtered upstream by `is_supported_event_attr`; reachable only on a bug.
             debug_assert!(false, "unsupported event attribute variant reached writer");
         }
@@ -684,11 +685,12 @@ mod tests {
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
     use crate::span::v1::{
-        AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
-        TraceChunkBytes, TracerPayloadBytes,
+        AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes, TraceChunkBytes,
+        TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_model::AttributeValue;
     use rmpv::Value;
     use thin_vec::ThinVec;
 
@@ -818,7 +820,7 @@ mod tests {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         attrs.insert(
             bs("a"),
-            AttributeValue::List(vec![AttributeValue::String(bs("from-list"))]),
+            AttributeValue::Array(vec![AttributeValue::String(bs("from-list"))]),
         );
         attrs.insert(bs("a.0"), AttributeValue::String(bs("from-literal")));
         // Mark deduped (as attributes are expected to be by the time they reach the encoder)
@@ -990,7 +992,7 @@ mod tests {
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         attrs.insert(
             bs("ids"),
-            AttributeValue::List(vec![
+            AttributeValue::Array(vec![
                 AttributeValue::Int(1),
                 AttributeValue::Int(2),
                 AttributeValue::String(bs("three")),
@@ -1023,7 +1025,7 @@ mod tests {
         inner_kv.insert(bs("active"), AttributeValue::Bool(true));
 
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-        attrs.insert(bs("user"), AttributeValue::KeyValue(inner_kv));
+        attrs.insert(bs("user"), AttributeValue::KeyValueList(inner_kv));
 
         let payload = minimal_payload(
             [0u8; 16],
@@ -1056,14 +1058,14 @@ mod tests {
         let mut middle_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         middle_kv.insert(
             bs("items"),
-            AttributeValue::List(vec![
+            AttributeValue::Array(vec![
                 AttributeValue::String(bs("a")),
-                AttributeValue::KeyValue(nested_kv),
+                AttributeValue::KeyValueList(nested_kv),
             ]),
         );
 
         let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-        attrs.insert(bs("outer"), AttributeValue::KeyValue(middle_kv));
+        attrs.insert(bs("outer"), AttributeValue::KeyValueList(middle_kv));
 
         let payload = minimal_payload(
             [0u8; 16],

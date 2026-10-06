@@ -435,12 +435,12 @@ mod tests {
     use super::*;
     use crate::msgpack_encoder::v1::to_vec_from_v1;
     use crate::span::v1::{
-        AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
-        TracerPayloadBytes,
+        Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use bolero::check;
     use libdd_tinybytes::{Bytes, BytesString};
+    use libdd_trace_model::AttributeValue;
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
@@ -454,7 +454,7 @@ mod tests {
         attrs.insert(bs("ratio"), AttributeValue::Float(0.75));
         attrs.insert(
             bs("ids"),
-            AttributeValue::List(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
+            AttributeValue::Array(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
         );
 
         let span = V1Span {
@@ -634,7 +634,7 @@ mod tests {
         let mut inner = VecMap::<BytesString, AttributeValue<_>>::new();
         inner.insert(bs("k"), AttributeValue::String(bs("v")));
         let mut attrs = VecMap::<BytesString, AttributeValue<_>>::new();
-        attrs.insert(bs("nested"), AttributeValue::KeyValue(inner));
+        attrs.insert(bs("nested"), AttributeValue::KeyValueList(inner));
 
         let span = V1Span {
             service: bs("svc"),
@@ -657,7 +657,7 @@ mod tests {
 
         let decoded_attrs = &decoded.chunks[0].spans[0].attributes;
         match decoded_attrs.get(&bs("nested")) {
-            Some(AttributeValue::KeyValue(map)) => {
+            Some(AttributeValue::KeyValueList(map)) => {
                 assert_eq!(map.len(), 1);
                 match map.get(&bs("k")) {
                     Some(AttributeValue::String(v)) => assert_eq!(v.as_str(), "v"),

@@ -3495,6 +3495,9 @@ dependencies = [
 [[package]]
 name = "libdd-trace-model"
 version = "0.1.0"
+dependencies = [
+ "libdd-tinybytes",
+]
 
 [[package]]
 name = "libdd-trace-normalization"
@@ -3561,6 +3564,7 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-shared-runtime",
  "libdd-telemetry",
+ "libdd-trace-model",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",

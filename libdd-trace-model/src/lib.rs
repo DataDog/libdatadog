@@ -28,15 +28,33 @@ impl TraceText for Arc<str> {
     }
 }
 
-pub trait TraceBytes: Borrow<[u8]> + Clone + Debug + From<Vec<u8>> {}
+impl<'a> TraceText for alloc::borrow::Cow<'a, str> {
+    fn from_static(s: &'static str) -> Self {
+        alloc::borrow::Cow::Borrowed(s)
+    }
+}
 
-impl<T: Borrow<[u8]> + Clone + Debug + From<Vec<u8>>> TraceBytes for T {}
+#[cfg(feature = "tinybytes")]
+impl TraceText for libdd_tinybytes::BytesString {
+    fn from_static(s: &'static str) -> Self {
+        Self::from_static(s)
+    }
 
-pub type Value<A> = AttributeValue<<A as Attributes>::Text, <A as Attributes>::Bytes>;
+    fn as_str(&self) -> &str {
+        self.borrow()
+    }
+}
+
+pub trait TraceBytes: Borrow<[u8]> + Clone + Debug + PartialEq {}
+
+impl<T: Borrow<[u8]> + Clone + Debug + PartialEq> TraceBytes for T {}
+
+pub type Value<A> = AttributeValue<<A as Attributes>::Values>;
 
 pub trait Attributes {
     type Text: TraceText;
     type Bytes: TraceBytes;
+    type Values: ValueTypes<Text = Self::Text, Bytes = Self::Bytes>;
 
     fn attribute(&self, key: &str) -> Option<&Value<Self>>;
     // In place mutation and removal, return False to remove.
@@ -55,16 +73,85 @@ pub trait Span: Attributes {
     fn set_resource(&mut self, value: impl Into<Self::Text>);
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum AttributeValue<S, B> {
-    String(S),
+// TODO: What other things do we need to be able to do to attribute value maps and lists?
+pub trait ValueMap<T: ValueTypes> {
+    fn try_get(&self, key: &str) -> Option<&AttributeValue<T>>;
+    fn iter<'a>(&'a self) -> impl Iterator<Item = (&'a str, &'a AttributeValue<T>)>
+    where
+        T: 'a;
+}
+
+pub trait ValueArray<T: ValueTypes> {
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a AttributeValue<T>>
+    where
+        T: 'a;
+}
+
+impl<T: ValueTypes> ValueArray<T> for Vec<AttributeValue<T>> {
+    fn iter<'a>(&'a self) -> impl Iterator<Item = &'a AttributeValue<T>>
+    where
+        T: 'a,
+    {
+        self.as_slice().iter()
+    }
+}
+
+pub trait ValueTypes: Sized {
+    type Text: TraceText;
+    type Bytes: TraceBytes;
+    type Array: ValueArray<Self> + Clone + PartialEq + Debug;
+    type Map: ValueMap<Self> + Clone + PartialEq + Debug;
+}
+
+pub enum AttributeValue<T: ValueTypes> {
+    String(T::Text),
     Bool(bool),
     Int(i64),
     Float(f64),
-    Bytes(B),
-    Array(Vec<Self>),
-    KeyValueList(Vec<(S, Self)>),
+    Bytes(T::Bytes),
+    Array(T::Array),
+    KeyValueList(T::Map),
 }
-//TODO: is it okay to basically require users use this exact attribute value implementation?
-// OR use something more like Opus suggests: "Return a borrowed view by value. For example enum AttrRef<'a, T, B> { Str(&'a T), Float(f64), Int(i64), Bool(bool), Bytes(&'a B), Opaque }, with nested lists and maps handled as Opaque or through an associated type. Any type can build this on the fly."
-// With the caveat the above would need some modifications to make it possible for logic to do things like recurse _into_ the keyvalue and array types (not shown here yet)
+
+impl<T: ValueTypes> Clone for AttributeValue<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::String(arg0) => Self::String(arg0.clone()),
+            Self::Bool(arg0) => Self::Bool(arg0.clone()),
+            Self::Int(arg0) => Self::Int(arg0.clone()),
+            Self::Float(arg0) => Self::Float(arg0.clone()),
+            Self::Bytes(arg0) => Self::Bytes(arg0.clone()),
+            Self::Array(arg0) => Self::Array(arg0.clone()),
+            Self::KeyValueList(arg0) => Self::KeyValueList(arg0.clone()),
+        }
+    }
+}
+
+impl<T: ValueTypes> PartialEq for AttributeValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(l0), Self::String(r0)) => l0 == r0,
+            (Self::Bool(l0), Self::Bool(r0)) => l0 == r0,
+            (Self::Int(l0), Self::Int(r0)) => l0 == r0,
+            (Self::Float(l0), Self::Float(r0)) => l0 == r0,
+            (Self::Bytes(l0), Self::Bytes(r0)) => l0 == r0,
+            (Self::Array(l0), Self::Array(r0)) => l0 == r0,
+            (Self::KeyValueList(l0), Self::KeyValueList(r0)) => l0 == r0,
+            _ => false,
+        }
+    }
+}
+
+impl<T: ValueTypes> Debug for AttributeValue<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(arg0) => f.debug_tuple("String").field(arg0).finish(),
+            Self::Bool(arg0) => f.debug_tuple("Bool").field(arg0).finish(),
+            Self::Int(arg0) => f.debug_tuple("Int").field(arg0).finish(),
+            Self::Float(arg0) => f.debug_tuple("Float").field(arg0).finish(),
+            Self::Bytes(arg0) => f.debug_tuple("Bytes").field(arg0).finish(),
+            Self::Array(arg0) => f.debug_tuple("Array").field(arg0).finish(),
+            Self::KeyValueList(arg0) => f.debug_tuple("KeyValueList").field(arg0).finish(),
+        }
+    }
+}

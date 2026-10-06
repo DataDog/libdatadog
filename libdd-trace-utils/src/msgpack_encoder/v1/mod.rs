@@ -1236,11 +1236,11 @@ mod v1_payload_tests {
 
     use super::*;
     use crate::span::v1::{
-        AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
-        TracerPayloadBytes,
+        Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
     use libdd_tinybytes::BytesString;
+    use libdd_trace_model::AttributeValue;
 
     fn bs(s: &str) -> BytesString {
         BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
@@ -1369,12 +1369,12 @@ mod v1_payload_tests {
         let mut attrs = VecMap::new();
         attrs.insert(
             bs("list"),
-            AttributeValue::List(vec![
+            AttributeValue::Array(vec![
                 AttributeValue::String(bs("a")),
                 AttributeValue::Bool(true),
             ]),
         );
-        attrs.insert(bs("kv"), AttributeValue::KeyValue(nested));
+        attrs.insert(bs("kv"), AttributeValue::KeyValueList(nested));
         let span = V1Span {
             service: bs("svc"),
             name: bs("op"),

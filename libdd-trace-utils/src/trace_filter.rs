@@ -9,9 +9,10 @@ use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
 use crate::span::span_pool::PooledChunks;
-use crate::span::v1::{AttributeValue, SpanKind, TraceChunk};
+use crate::span::v1::{SpanKind, TraceChunk};
 use crate::span::vec_map::VecMap;
 use crate::span::{self, TraceData, trace_utils::get_root_span_index, trace_utils_v1};
+use libdd_trace_model::AttributeValue;
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -120,7 +121,7 @@ impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
         match self.attributes.get(key) {
-            Some(AttributeValue::String(s)) => Some(s.borrow()),
+            Some(libdd_trace_model::AttributeValue::String(s)) => Some(s.borrow()),
             // `env`, `version`, `component`, and `span.kind` are "promoted" to dedicated span
             // fields rather than stored in `attributes` (see the V1 downgrade encoder). Empty
             // text / the default `Internal` kind are treated as "unset" here.
@@ -406,10 +407,9 @@ impl TraceFilterer {
 mod tests {
     use super::TraceFilterer;
     use crate::span::span_pool::PooledChunks;
-    use crate::span::v1::{
-        AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
-    };
+    use crate::span::v1::{SpanBytes as SpanBytesV1, TraceChunk};
     use crate::span::v04::{SpanBytes, VecMap};
+    use libdd_trace_model::AttributeValue;
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -445,7 +445,7 @@ mod tests {
                 parent_id: 0,
                 attributes: meta
                     .iter()
-                    .map(|(k, v)| ((*k).into(), AttributeValueV1::String((*v).into())))
+                    .map(|(k, v)| ((*k).into(), AttributeValue::String((*v).into())))
                     .collect(),
                 ..Default::default()
             }],
@@ -468,7 +468,7 @@ mod tests {
             }],
             attributes: chunk_attributes
                 .iter()
-                .map(|(k, v)| ((*k).into(), AttributeValueV1::String((*v).into())))
+                .map(|(k, v)| ((*k).into(), AttributeValue::String((*v).into())))
                 .collect(),
             ..Default::default()
         }
@@ -835,7 +835,7 @@ mod tests {
     fn v1_span_level_attribute_takes_precedence_over_chunk() {
         // The span's own value should win over the chunk-level fallback.
         let mut chunk = v1_chunk_with("r", &[("env", "staging")]);
-        chunk.attributes = [("env".into(), AttributeValueV1::String("prod".into()))]
+        chunk.attributes = [("env".into(), AttributeValue::String("prod".into()))]
             .into_iter()
             .collect();
         let mut traces = vec![chunk];
