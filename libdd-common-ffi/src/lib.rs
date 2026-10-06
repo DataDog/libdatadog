@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
@@ -8,30 +9,26 @@
 
 extern crate alloc;
 
-mod error;
+pub mod cstr;
+pub mod slice;
+pub mod vec;
+
+pub use cstr::*;
+pub use slice::{CharSlice, Slice};
+pub use vec::Vec;
 
 pub mod array_queue;
-pub mod cstr;
 pub mod endpoint;
+mod error;
 pub mod handle;
 pub mod mutable_metadata;
 pub mod option;
 pub mod result;
-pub mod slice;
 pub mod slice_mut;
 pub mod string;
 pub mod tags;
 pub mod timespec;
 pub mod utils;
-pub mod vec;
 
-pub use cstr::*;
-pub use error::*;
-pub use handle::*;
-pub use option::*;
-pub use result::*;
-pub use slice::{CharSlice, Slice};
-pub use slice_mut::MutSlice;
-pub use string::*;
-pub use timespec::*;
-pub use vec::Vec;
+#[cfg(feature = "std")]
+pub use {error::*, handle::*, option::*, result::*, slice_mut::MutSlice, string::*, timespec::*};

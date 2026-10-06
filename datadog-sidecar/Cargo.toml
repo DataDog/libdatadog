@@ -84,7 +84,7 @@ libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 nix = { workspace = true, features = ["socket", "mman"] }
 
 [target.'cfg(windows)'.dependencies]
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
 
