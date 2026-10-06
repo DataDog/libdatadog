@@ -27,6 +27,7 @@ mod writer;
 use reader::PipeReader;
 use writer::PipeWriter;
 
+use crate::platform::ProcessIdentityGuard;
 use crate::platform::message::MAX_FDS;
 use std::task::{Context, Poll};
 use std::{
@@ -109,6 +110,7 @@ fn append_handle_suffix(
     };
 
     if count > 0 {
+        let _identity = ProcessIdentityGuard::enter();
         let peer_proc = unsafe { OpenProcess(PROCESS_DUP_HANDLE, 0, peer_pid) };
         if peer_proc == 0 {
             return Err(io::Error::last_os_error());
@@ -223,6 +225,8 @@ fn create_pipe_server(name: &[u8], first_instance: bool) -> io::Result<OwnedHand
             0
         };
 
+    // Created as the process identity so that pipes are not owned by an impersonated user.
+    let _identity = ProcessIdentityGuard::enter();
     let h = unsafe {
         let buf_size = PIPE_BUFFER_SIZE.load(Ordering::Relaxed) as u32;
         let sec_attributes = SECURITY_ATTRIBUTES {
@@ -448,6 +452,7 @@ impl SeqpacketConn {
         use windows_sys::Win32::Storage::FileSystem::{CreateFileA, OPEN_EXISTING};
 
         let name = path_to_null_terminated(path.as_ref());
+        let _identity = ProcessIdentityGuard::enter();
         let h = unsafe {
             CreateFileA(
                 name.as_ptr(),
