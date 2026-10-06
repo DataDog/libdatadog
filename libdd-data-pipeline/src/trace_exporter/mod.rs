@@ -1320,17 +1320,11 @@ pub trait ResponseCallback {
 }
 
 /// Marks a span as exported natively (not over OTLP) with `_dd.sdk.otlp_export: "false"`.
-///
-/// Applied to the first span of each chunk; the OTLP encoder sets `"true"` on the resource
-/// instead. A marker already set by the tracer is left untouched, so tracers that stamp it
-/// themselves are not double-tagged.
 fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
-    if !span.meta.contains_key(OTLP_EXPORT_MARKER_KEY) {
-        span.meta.insert(
-            T::Text::from_static_str(OTLP_EXPORT_MARKER_KEY),
-            T::Text::from_static_str("false"),
-        );
-    }
+    span.meta.insert(
+        T::Text::from_static_str(OTLP_EXPORT_MARKER_KEY),
+        T::Text::from_static_str("false"),
+    );
 }
 
 #[cfg(test)]
@@ -1586,6 +1580,14 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
+    // Pre-marks chunks so the exporter sends them unchanged and sent bytes match the input.
+    fn encode_marked_v04(mut traces: Vec<Vec<SpanBytes>>) -> Vec<u8> {
+        for chunk in traces.iter_mut() {
+            add_native_export_marker(&mut chunk[0]);
+        }
+        msgpack_encoder::v04::to_vec_from_v04(&traces)
+    }
+
     pub(crate) fn build_test_exporter(
         url: String,
         dogstatsd_url: Option<String>,
@@ -1768,7 +1770,7 @@ mod tests {
             true,
         );
 
-        let mut traces: Vec<Vec<SpanBytes>> = vec![
+        let traces: Vec<Vec<SpanBytes>> = vec![
             vec![SpanBytes {
                 name: BytesString::from_slice(b"test").unwrap(),
                 ..Default::default()
@@ -1778,11 +1780,7 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
-        for chunk in traces.iter_mut() {
-            add_native_export_marker(&mut chunk[0]);
-        }
-        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let data = encode_marked_v04(traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1878,15 +1876,11 @@ mod tests {
             true,
         );
 
-        let mut traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
-        for chunk in traces.iter_mut() {
-            add_native_export_marker(&mut chunk[0]);
-        }
-        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let data = encode_marked_v04(traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1990,15 +1984,11 @@ mod tests {
             true,
         );
 
-        let mut traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
-        for chunk in traces.iter_mut() {
-            add_native_export_marker(&mut chunk[0]);
-        }
-        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let data = encode_marked_v04(traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -2506,17 +2496,18 @@ mod tests {
             Some("false")
         );
 
-        // A marker already set by the tracer is kept as-is and not duplicated.
+        // A marker already set by the tracer is overridden once the span is deduped.
         let mut span = SpanBytes::default();
         span.meta.insert(
             BytesString::from_static(OTLP_EXPORT_MARKER_KEY),
-            BytesString::from_static("custom"),
+            BytesString::from_static("true"),
         );
         add_native_export_marker(&mut span);
+        span.dedup();
         assert_eq!(span.meta.len(), 1);
         assert_eq!(
             span.meta.get(OTLP_EXPORT_MARKER_KEY).map(|v| v.as_str()),
-            Some("custom")
+            Some("false")
         );
     }
 
