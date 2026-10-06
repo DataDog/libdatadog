@@ -468,6 +468,55 @@ mod tests {
     }
 
     #[test]
+    fn scalar_and_json_entry_points_agree_on_top_level_truncation() {
+        let overlength = "x".repeat(257);
+        for count in [256, 257] {
+            for reject_first in [false, true] {
+                let names: Vec<_> = (0..count).map(|i| format!("field{i:03}")).collect();
+                let values: Vec<_> = (0..count)
+                    .map(|i| {
+                        if reject_first && i == 0 {
+                            overlength.as_str()
+                        } else {
+                            "kept"
+                        }
+                    })
+                    .collect();
+                let attrs: Vec<_> = names
+                    .iter()
+                    .zip(&values)
+                    .map(|(key, value)| attr(key, value))
+                    .collect();
+                let json = serde_json::to_string(
+                    &names
+                        .iter()
+                        .zip(&values)
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                )
+                .unwrap();
+                let mut source = event(true);
+                source.evaluation_context_json = json.as_str().into();
+                let scalar = convert(&source, &attrs, FfeSnapshotState::default());
+                let legacy = crate::ffe_flag_evaluation_from_ffi(&source, "svc").unwrap();
+                let mut expected = FieldOmissions::default();
+                if count > 256 {
+                    expected.record_context(Reason::MaxContextFields);
+                }
+                if reject_first {
+                    expected.record_context(Reason::MaxValueLength);
+                }
+                assert_eq!(scalar.field_omissions, expected);
+                assert_eq!(legacy.field_omissions, expected);
+                assert_eq!(context(&scalar), context(&legacy));
+                assert_eq!(
+                    context(&scalar).as_object().unwrap().len(),
+                    256 - usize::from(reject_first)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unicode_limits_skip_instead_of_truncating() {
         let exact = "é".repeat(256);
         let over = "é".repeat(257);
