@@ -149,14 +149,6 @@ impl ErrorsIntakeConfig {
             #[cfg(not(windows))]
             return None;
         })
-        .or_else(|| {
-            #[cfg(unix)]
-            return settings
-                .agent_uds_socket_found
-                .then(|| "unix:///var/run/datadog/apm.socket".to_string());
-            #[cfg(not(unix))]
-            return None;
-        })
         .or_else(|| match (&settings.agent_host, settings.trace_agent_port) {
             (None, None) => None,
             _ => Some(format!(
@@ -164,6 +156,14 @@ impl ErrorsIntakeConfig {
                 settings.agent_host.as_deref().unwrap_or(DEFAULT_AGENT_HOST),
                 settings.trace_agent_port.unwrap_or(DEFAULT_AGENT_PORT),
             )),
+        })
+        .or_else(|| {
+            #[cfg(unix)]
+            return settings
+                .agent_uds_socket_found
+                .then(|| "unix:///var/run/datadog/apm.socket".to_string());
+            #[cfg(not(unix))]
+            return None;
         })
         .unwrap_or_else(|| format!("http://{DEFAULT_AGENT_HOST}:{DEFAULT_AGENT_PORT}"))
     }
@@ -1075,10 +1075,12 @@ mod tests {
         assert_eq!(endpoint.url.host(), Some("custom-host"));
         assert_eq!(endpoint.url.port_u16(), Some(7777));
 
-        clear_errors_intake_env();
-
-        // Test 3: Default fallback when nothing is set
-        let cfg = ErrorsIntakeConfig::from_env();
+        // Test 3: Default fallback when nothing is set and no UDS socket
+        let settings = ErrorsIntakeSettings {
+            agent_uds_socket_found: false,
+            ..Default::default()
+        };
+        let cfg = ErrorsIntakeConfig::from_settings(&settings);
         let endpoint = cfg.endpoint().unwrap();
 
         assert_eq!(endpoint.url.host(), Some(DEFAULT_AGENT_HOST));
@@ -1127,17 +1129,14 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_errors_intake_uds_priority_over_host_port() {
+    fn test_errors_intake_host_port_priority_over_uds() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
         clear_errors_intake_env();
 
-        // Test that UDS socket takes priority over DD_AGENT_HOST/DD_TRACE_AGENT_PORT
-        unsafe { std::env::set_var("DD_AGENT_HOST", "ignored-host") };
-        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "9999") };
-
+        // Test that DD_AGENT_HOST/DD_TRACE_AGENT_PORT takes priority over UDS socket
         let settings = ErrorsIntakeSettings {
-            agent_host: Some("ignored-host".to_string()),
+            agent_host: Some("custom-host".to_string()),
             trace_agent_port: Some(9999),
             agent_uds_socket_found: true,
             ..Default::default()
@@ -1146,12 +1145,9 @@ mod tests {
         let cfg = ErrorsIntakeConfig::from_settings(&settings);
         let endpoint = cfg.endpoint().unwrap();
 
-        // Should use UDS socket, not host/port
-        assert_eq!(endpoint.url.scheme_str(), Some("unix"));
-        let decoded_path = libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap();
-        assert_eq!(
-            decoded_path.to_string_lossy(),
-            "/var/run/datadog/apm.socket"
-        );
+        // Should use host/port, not UDS socket
+        assert_eq!(endpoint.url.host(), Some("custom-host"));
+        assert_eq!(endpoint.url.port_u16(), Some(9999));
+        assert_eq!(endpoint.url.path(), AGENT_ERRORS_INTAKE_URL_PATH);
     }
 }
