@@ -8,9 +8,9 @@ use std::{
 };
 
 use nix::{
+    NixPath,
     fcntl::{FcntlArg, OFlag},
     sys::stat::Mode,
-    NixPath,
 };
 
 pub enum FLockState {

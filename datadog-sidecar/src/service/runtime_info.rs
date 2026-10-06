@@ -4,10 +4,10 @@
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::session_info::SessionInfo;
 use crate::service::{
-    remote_configs::RemoteConfigsGuard, DynamicInstrumentationConfigState, InstanceId, QueueId,
+    DynamicInstrumentationConfigState, InstanceId, QueueId, remote_configs::RemoteConfigsGuard,
 };
-use libdd_common::{tag::Tag, MutexExt};
-use libdd_live_debugger::sender::{generate_tags, PayloadSender};
+use libdd_common::{MutexExt, tag::Tag};
+use libdd_live_debugger::sender::{PayloadSender, generate_tags};
 use simd_json::prelude::ArrayTrait;
 use std::collections::HashMap;
 use std::fmt::Display;

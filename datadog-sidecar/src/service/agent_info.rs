@@ -8,17 +8,16 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
-use crate::primary_sidecar_identifier;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use futures::future::Shared;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use futures::FutureExt;
+use futures::future::Shared;
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
-use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
-use libdd_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use libdd_data_pipeline::agent_info::{FetchInfoStatus, fetch_info_with_state};
+use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::NamedShmHandle;
 use manual_future::ManualFuture;
 use std::ffi::CString;
@@ -129,7 +128,9 @@ impl AgentInfoFetcher {
                                 };
                             }
                             if let Some(ref writer) = writer {
-                                writer.write(&serde_json::to_vec(&status.info).unwrap())
+                                // A payload that does not fit is logged and dropped by the
+                                // writer; the previously published info stays readable.
+                                _ = writer.write(&serde_json::to_vec(&status.info).unwrap());
                             }
                             if let Some(completer) = completer {
                                 complete_fut = Some(completer.complete(status.info));
@@ -169,18 +170,19 @@ fn info_path(endpoint: &Endpoint) -> CString {
     endpoint.hash(&mut hasher);
     let mut path = format!(
         "/ddinf{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
-    // datadog agent info, on macOS we're restricted to 31 chars
-    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
 
 pub struct AgentInfoReader {
-    reader: OneWayShmReader<NamedShmHandle, CString>,
+    reader: OneWayShmReader<NamedShmHandle, Endpoint>,
     info: Option<AgentInfoStruct>,
 }
 
@@ -188,11 +190,17 @@ impl AgentInfoReader {
     pub fn new(endpoint: &Endpoint) -> AgentInfoReader {
         let path = info_path(endpoint);
         AgentInfoReader {
-            reader: OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
-                open_named_shm(path).ok()
-            }),
+            reader: OneWayShmReader::new_with_opener(
+                open_named_shm(&path).ok(),
+                endpoint.clone(),
+                |endpoint| open_named_shm(&info_path(endpoint)).ok(),
+            ),
             info: None,
         }
+    }
+
+    pub fn reconnect(&self) {
+        self.reader.reconnect(&info_path(&self.reader.extra));
     }
 
     pub fn read(&mut self) -> (bool, &Option<AgentInfoStruct>) {
@@ -216,6 +224,85 @@ impl AgentInfoReader {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn readers_follow_a_new_thread_master() {
+        const CHILD: &str = "DD_TEST_AGENT_INFO_MASTER_CHANGE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "service::agent_info::tests::readers_follow_a_new_thread_master",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+
+        let endpoint = Endpoint::from_slice("http://thread-master.invalid:8126");
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        let old_info = OneWayShmWriter::<NamedShmHandle>::new(info_path(&endpoint)).unwrap();
+        let old_config = crate::agent_remote_config::new_writer(&endpoint).unwrap();
+        assert!(old_info.write(TEST_INFO.as_bytes()));
+        assert!(old_config.write(b"old config"));
+        let mut info = AgentInfoReader::new(&endpoint);
+        let mut config = crate::agent_remote_config::new_reader(&endpoint);
+        assert!(info.read().0);
+        assert_eq!(config.read(), (true, b"old config".as_slice()));
+        info.reconnect();
+        config.reconnect();
+        assert!(old_info.write(TEST_INFO.as_bytes()));
+        assert!(old_config.write(b"old config"));
+
+        // Stay outside the signed PID range to avoid another process's SHM.
+        let other_master = std::process::id() | (1 << 31);
+        crate::use_thread_sidecar_shm_namespace(Some(other_master));
+        info.reconnect();
+        config.reconnect();
+        let new_info = OneWayShmWriter::<NamedShmHandle>::new(info_path(&endpoint)).unwrap();
+        let new_config = crate::agent_remote_config::new_writer(&endpoint).unwrap();
+        assert!(new_info.write(TEST_INFO.replace("testenv", "newenv").as_bytes()));
+        assert!(new_config.write(b"new config"));
+        assert!(info.read().0, "agent info must follow the new master");
+        assert_eq!(
+            info.info
+                .as_ref()
+                .unwrap()
+                .config
+                .as_ref()
+                .unwrap()
+                .default_env
+                .as_deref(),
+            Some("newenv")
+        );
+        assert_eq!(config.read(), (true, b"new config".as_slice()));
+
+        assert!(old_info.write(TEST_INFO.as_bytes()));
+        assert!(old_config.write(b"old config"));
+        info.reconnect();
+        config.reconnect();
+        assert!(new_info.write(TEST_INFO.as_bytes()));
+        assert!(new_config.write(b"same master"));
+        assert_eq!(config.read(), (true, b"same master".as_slice()));
+
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        config.reconnect();
+        let replacement = crate::agent_remote_config::new_writer(&endpoint).unwrap();
+        assert!(replacement.write(b"returned"));
+        assert_eq!(config.read(), (true, b"returned".as_slice()));
+    }
+
+    #[test]
+    fn shm_paths_distinguish_endpoints() {
+        assert_ne!(
+            info_path(&Endpoint::from_slice("http://agent-a:8126")),
+            info_path(&Endpoint::from_slice("http://agent-b:8126")),
+        );
+    }
 
     const TEST_INFO: &str = r#"{
         "config": {

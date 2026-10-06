@@ -3,31 +3,30 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
-use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
+use crate::otlp::config::{DEFAULT_OTLP_TIMEOUT, OtlpProtocol};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::otlp::{build_grpc_transport, OtlpGrpcTraceConfig};
+use crate::otlp::{OtlpGrpcTraceConfig, build_grpc_transport};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TelemetryClientBuilder;
-use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-use crate::trace_exporter::error::BuilderErrorKind;
-use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryInstrumentationSessions;
 use crate::trace_exporter::TraceExporterWorkers;
+use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
+use crate::trace_exporter::error::BuilderErrorKind;
+use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 use crate::trace_exporter::{
-    add_path, OtlpExportMode, StatsComputationStatus, TraceExporter, TraceExporterError,
-    TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer, TracerMetadata,
-    INFO_ENDPOINT,
+    INFO_ENDPOINT, OtlpExportMode, StatsComputationStatus, TraceExporter, TraceExporterError,
+    TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer, TracerMetadata, add_path,
 };
 use arc_swap::ArcSwap;
 #[cfg(feature = "telemetry")]
 use arc_swap::ArcSwapOption;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::mutable_metadata::{MutableMetadata, MutableMetadataHandle};
-use libdd_common::{parse_uri, tag, Endpoint};
+use libdd_common::{Endpoint, parse_uri, tag};
 use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -581,6 +580,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// attributes
     /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
     ///  `error.message`, `span.kind`) to the OTLP payload.
+    /// Also sets the `datadog.sdk.semantics` OTLP resource attribute to `"otel"` (it is
+    /// `"datadog"` otherwise).
     /// OTLP trace metrics are unaffected and always include available Datadog attributes.
     pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
         self.otel_trace_semantics_enabled = true;
@@ -771,6 +772,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
+        let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
+            let mut metadata = MutableMetadata::default();
+            debug!("No runtime_id provided to the TraceExporter, generating a new one");
+            metadata.runtime_id = uuid::Uuid::new_v4().to_string();
+            metadata.into()
+        });
+
         #[cfg(feature = "telemetry")]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
@@ -788,10 +796,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                         .set_tracer_version(&self.tracer_version)
                         .set_heartbeat(telemetry_config.heartbeat)
                         .set_url(base_url)
-                        .set_debug_enabled(telemetry_config.debug_enabled);
-                    if let Some(id) = telemetry_config.runtime_id {
-                        tb = tb.set_runtime_id(&id);
-                    }
+                        .set_debug_enabled(telemetry_config.debug_enabled)
+                        .set_mutable_metadata(mutable_metadata.clone());
                     if let Some(ref id) = sessions.session_id {
                         tb = tb.set_session_id(id);
                     }
@@ -887,12 +893,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 ..Default::default()
             }));
 
-        let mutable_metadata = self.mutable_metadata.unwrap_or_else(|| {
-            let mut metadata = MutableMetadata::default();
-            debug!("No runtime_id provided to the TraceExporter, generating an new one");
-            metadata.runtime_id = uuid::Uuid::new_v4().to_string();
-            metadata.into()
-        });
         let metadata = TracerMetadata {
             tracer_version: self.tracer_version,
             language_version: self.language_version,
@@ -978,7 +978,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             self.stats_bucket_size,
         ) {
             use libdd_trace_stats::stats_exporter::{
-                create_agentless_concentrator, SharedStatsExporter, StatsExporter, StatsMetadata,
+                SharedStatsExporter, StatsExporter, StatsMetadata, create_agentless_concentrator,
             };
             use std::sync::Mutex;
 
@@ -1320,7 +1320,6 @@ mod tests {
         #[cfg(feature = "telemetry")]
         builder.enable_telemetry(TelemetryConfig {
             heartbeat: 1000,
-            runtime_id: None,
             debug_enabled: false,
         });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -1352,6 +1351,46 @@ mod tests {
         assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.load().is_some());
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn mutable_metadata_fallback() {
+        // Without a shared handle, `set_runtime_id` and `set_process_tags` seed
+        // the exporter's own metadata handle.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_runtime_id("tracer-id")
+            .set_process_tags("key1:val1,key2:val2")
+            .enable_telemetry(TelemetryConfig::default());
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "tracer-id");
+        assert_eq!(snapshot.process_tags, "key1:val1,key2:val2");
+
+        // With a shared handle, the builder-level setters are ignored: the
+        // exporter uses the handle's current values.
+        let mut shared = MutableMetadata::default();
+        shared.runtime_id = "shared-id".into();
+        shared.process_tags = "shared:tag".into();
+        let shared: MutableMetadataHandle = shared.into();
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_runtime_id("ignored-id")
+            .set_process_tags("ignored:tag")
+            .set_mutable_metadata(shared.clone())
+            .enable_telemetry(TelemetryConfig::default());
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "shared-id");
+        assert_eq!(snapshot.process_tags, "shared:tag");
+
+        // The exporter shares the handle and receives updates
+        shared.set_runtime_id("updated-id".into());
+        let snapshot = exporter.metadata.mutable_metadata.load();
+        assert_eq!(snapshot.runtime_id, "updated-id");
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1511,7 +1550,6 @@ mod tests {
             )
             .enable_telemetry(TelemetryConfig {
                 heartbeat: 1000,
-                runtime_id: None,
                 debug_enabled: false,
             });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -1720,9 +1758,11 @@ mod tests {
             exporter.output_format,
             TraceExporterOutputFormat::V1
         ));
-        assert!(!exporter
-            .v1_active
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(
+            !exporter
+                .v1_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
         assert_eq!(
             exporter
                 .effective_output_format()

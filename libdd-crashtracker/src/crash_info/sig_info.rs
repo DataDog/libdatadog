@@ -116,7 +116,7 @@ mod unix {
         }
     }
 
-    extern "C" {
+    unsafe extern "C" {
         /// A bit of C code which can access the constants in <signal.h>.
         /// See the file comment on emit_sicodes.c for full details.
         fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
@@ -290,6 +290,30 @@ pub enum SiCodes {
     SI_USER,
     SYS_SECCOMP,
     UNKNOWN,
+}
+
+impl SigInfo {
+    /// Appends signal fields as ddtags entries, each prefixed with a leading comma.
+    pub fn append_ddtags(&self, tags: &mut String) {
+        use core::fmt::Write;
+        if let Some(si_addr) = &self.si_addr {
+            write!(tags, ",si_addr:{si_addr}").ok();
+        }
+        write!(tags, ",si_code:{}", self.si_code).ok();
+        write!(
+            tags,
+            ",si_code_human_readable:{:?}",
+            self.si_code_human_readable
+        )
+        .ok();
+        write!(tags, ",si_signo:{}", self.si_signo).ok();
+        write!(
+            tags,
+            ",si_signo_human_readable:{:?}",
+            self.si_signo_human_readable
+        )
+        .ok();
+    }
 }
 
 #[cfg(test)]

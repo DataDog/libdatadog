@@ -6,10 +6,10 @@
 use std::{
     mem,
     ptr::NonNull,
-    sync::atomic::{compiler_fence, Ordering},
+    sync::atomic::{Ordering, compiler_fence},
 };
 
-use super::{with_tls_slot, ThreadContext, ThreadContextRecord};
+use super::{ThreadContext, ThreadContextRecord, with_tls_slot};
 
 #[cfg(feature = "thread-exit-autoclean")]
 /// Dummy TLS variable whose sole purpose is to hook on thread exit, to drop any context still
@@ -53,7 +53,7 @@ fn init_autoclean() {
 ///
 /// If the feature isn't enabled, there is no branch at all and the whole function call should be
 /// entirely eliminated.
-fn init_autoclean_if_null<T>(prev: *mut T) {
+fn init_autoclean_if_null<T>(#[allow(unused)] prev: *mut T) {
     #[cfg(feature = "thread-exit-autoclean")]
     if prev.is_null() {
         init_autoclean();

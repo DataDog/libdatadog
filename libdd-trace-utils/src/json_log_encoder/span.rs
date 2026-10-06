@@ -15,9 +15,9 @@
 //! trait bound) rather than the whole `T`, so the encoder does not require a
 //! `T: Serialize` bound — keeping the public exporter API free of that bound.
 
-use crate::hex::{hex_low_u64, hex_u128, hex_u64};
+use crate::hex::{hex_low_u64, hex_u64, hex_u128};
 use crate::span::v04::{Span, SpanEvent, SpanLink};
-use crate::span::{TraceData, SPAN_LINK_FLAGS_SET_SENTINEL};
+use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Serialize, Serializer};
 use std::borrow::Borrow;

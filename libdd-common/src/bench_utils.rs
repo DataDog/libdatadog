@@ -74,15 +74,19 @@ impl<T: GlobalAlloc> ReportingAllocator<T> {
 
 unsafe impl<T: GlobalAlloc> GlobalAlloc for ReportingAllocator<T> {
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-        self.allocated_bytes
-            .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
-        self.allocations
-            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        self.alloc.alloc(layout)
+        unsafe {
+            self.allocated_bytes
+                .fetch_add(layout.size(), core::sync::atomic::Ordering::Relaxed);
+            self.allocations
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            self.alloc.alloc(layout)
+        }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-        self.alloc.dealloc(ptr, layout);
+        unsafe {
+            self.alloc.dealloc(ptr, layout);
+        }
     }
 }
 

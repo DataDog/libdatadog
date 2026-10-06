@@ -3,7 +3,7 @@
 
 mod common;
 
-use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync, TempFileGuard};
+use libdd_common::test_utils::{TempFileGuard, create_temp_file_path, parse_http_request_sync};
 use libdd_profiling::exporter::ProfileExporter;
 use libdd_profiling::internal::EncodedProfile;
 

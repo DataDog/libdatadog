@@ -10,14 +10,14 @@
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
 use crate::service::RuntimeMetadata;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use futures::{future::join_all, TryFutureExt};
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use futures::{TryFutureExt, future::join_all};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_ipc::shm_stats::{
-    ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
+    DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO, ShmSpanConcentrator,
 };
 use libdd_telemetry::config::Config;
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
@@ -100,10 +100,12 @@ pub fn env_stats_shm_path(env: &str, version: &str, service: &str) -> CString {
 
     let mut path = format!(
         "/ddspsc{}-{}",
-        crate::primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hash.to_ne_bytes()),
     );
-    path.truncate(31);
+    if cfg!(unix) {
+        path.truncate(31);
+    }
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
 }
@@ -183,9 +185,7 @@ pub async fn run_stats_flush_loop(
                     map_key.env, map_key.version, map_key.root_service,
                 );
                 state.concentrator.signal_reload();
-                #[cfg(unix)]
                 state.concentrator.unlink();
-                #[cfg(unix)] // on windows waiting is pointless, because we cannot unlink it
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 {
                     let mut guard = arc.lock_or_panic();
@@ -303,11 +303,8 @@ pub(crate) fn get_or_create_concentrator(
                     session_config_closure,
                     process_tags,
                 );
-                let worker = telemetry_mutex
-                    .lock_or_panic()
-                    .as_ref()
-                    .map(|c| c.worker.clone());
-                worker
+                let telemetry = telemetry_mutex.lock_or_panic();
+                telemetry.as_ref().map(|c| c.worker.clone())
             };
 
             let state = Arc::new(SpanConcentratorState {
@@ -326,7 +323,9 @@ pub(crate) fn get_or_create_concentrator(
             Some(state)
         }
         Err(e) => {
-            error!("Failed to create SHM span stats concentrator for env={env} version={version} service={service_name}: {e}");
+            error!(
+                "Failed to create SHM span stats concentrator for env={env} version={version} service={service_name}: {e}"
+            );
             None
         }
     }
@@ -361,4 +360,17 @@ pub async fn flush_all_stats_now(
         })
     }))
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shm_paths_distinguish_concentrators() {
+        let path = env_stats_shm_path("env-a", "1.0", "service-a");
+        assert_ne!(path, env_stats_shm_path("env-b", "1.0", "service-a"));
+        assert_ne!(path, env_stats_shm_path("env-a", "2.0", "service-a"));
+        assert_ne!(path, env_stats_shm_path("env-a", "1.0", "service-b"));
+    }
 }

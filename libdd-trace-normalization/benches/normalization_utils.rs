@@ -1,10 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::measurement::WallTime;
 use criterion::Throughput::Elements;
+use criterion::measurement::WallTime;
 use criterion::{
-    criterion_group, criterion_main, BatchSize, BenchmarkGroup, BenchmarkId, Criterion,
+    BatchSize, BenchmarkGroup, BenchmarkId, Criterion, criterion_group, criterion_main,
 };
 use libdd_trace_normalization::normalize_utils::{normalize_name, normalize_service};
 use libdd_trace_normalization::normalizer::normalize_trace;
@@ -15,12 +15,12 @@ use std::{collections::HashMap, time::Duration};
 fn normalize_service_bench(c: &mut Criterion) {
     let group = c.benchmark_group("normalization/normalize_service");
     let cases = &[
-            "",
-            "test_ASCII",
-            "Test Conversion 0f Weird !@#$%^&**() Characters",
-            "Data🐨dog🐶 繋がっ⛰てて",
-            "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
-        ];
+        "",
+        "test_ASCII",
+        "Test Conversion 0f Weird !@#$%^&**() Characters",
+        "Data🐨dog🐶 繋がっ⛰てて",
+        "A00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 000000000000",
+    ];
 
     normalize_fnmut_string(group, cases, 1000, "normalize_service", normalize_service);
 }

@@ -599,8 +599,8 @@ impl Display for RawExpr {
 #[cfg(test)]
 mod tests {
     use crate::{
-        parse_json, CaptureConfiguration, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind,
-        MetricProbe, Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget,
+        CaptureConfiguration, EvaluateAt, LiveDebuggingData, LogProbe, MetricKind, MetricProbe,
+        Probe, ProbeType, SpanDecorationProbe, SpanProbeTarget, parse_json,
     };
 
     #[test]
@@ -814,7 +814,10 @@ mod tests {
         {
             assert!(matches!(evaluate_at, EvaluateAt::Entry));
             assert_eq!(segments.to_string(), "Id of transaction: {transactionId}");
-            assert_eq!(when.to_string(), "(@duration > 500 && !isDefined(myField) && localVar1.field1.field2 != 15) || isEmpty(this.collectionField) || any(this.collectionField, isEmpty(@it.name))");
+            assert_eq!(
+                when.to_string(),
+                "(@duration > 500 && !isDefined(myField) && localVar1.field1.field2 != 15) || isEmpty(this.collectionField) || any(this.collectionField, isEmpty(@it.name))"
+            );
             assert_eq!(max_reference_depth, 3);
             assert_eq!(max_collection_size, 1);
             assert_eq!(max_length, 255);

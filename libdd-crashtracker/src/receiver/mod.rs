@@ -10,14 +10,8 @@ pub use entry_points::{
     async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,
     receiver_entry_point_unix_socket,
 };
-#[cfg(target_os = "linux")]
-mod ptrace_collector;
+pub use receive_report::ReceiverFileAccess;
 mod receive_report;
-
-#[cfg(target_os = "linux")]
-fn parse_hex_address(value: &str) -> Option<u64> {
-    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
-}
 
 #[cfg(feature = "benchmarking")]
 pub mod benchmark;
@@ -95,7 +89,12 @@ mod tests {
 
         let join_handle1 = tokio::spawn(async move {
             let mut stream = BufReader::new(receiver);
-            receive_report_from_stream(Duration::from_secs(1), &mut stream).await
+            receive_report_from_stream(
+                Duration::from_secs(1),
+                &mut stream,
+                super::ReceiverFileAccess::Trusted,
+            )
+            .await
         });
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(2), sender));
 
@@ -114,7 +113,12 @@ mod tests {
 
         let join_handle1 = tokio::spawn(async move {
             let mut stream = BufReader::new(receiver);
-            receive_report_from_stream(Duration::from_secs(2), &mut stream).await
+            receive_report_from_stream(
+                Duration::from_secs(2),
+                &mut stream,
+                super::ReceiverFileAccess::Trusted,
+            )
+            .await
         });
         let join_handle2 = tokio::spawn(send_report(Duration::from_secs(1), sender));
 
@@ -139,7 +143,12 @@ mod tests {
         send_report_lines(&mut sender).await?;
 
         let mut stream = BufReader::new(receiver);
-        let crash_report = receive_report_from_stream(Duration::from_secs(5), &mut stream).await?;
+        let crash_report = receive_report_from_stream(
+            Duration::from_secs(5),
+            &mut stream,
+            super::ReceiverFileAccess::Trusted,
+        )
+        .await?;
         assert!(crash_report.is_some(), "Expect a report");
 
         let mut buf = [0u8; 1];

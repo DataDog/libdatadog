@@ -8,9 +8,9 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult};
 use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::CreateEventA;
-use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult};
 
 /// Reads one message directly into the caller's buffer.
 ///

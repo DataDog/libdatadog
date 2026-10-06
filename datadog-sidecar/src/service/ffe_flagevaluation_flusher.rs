@@ -13,9 +13,8 @@ use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_ffe::telemetry::flagevaluation::{
-    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
     FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpSendConfig,
-    FlagEvaluationEvpWriterStats,
+    FlagEvaluationEvpWriterStats, flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
 };
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -170,7 +169,7 @@ mod tests {
     use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_ffe::telemetry::flagevaluation::{
-        FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, EVP_FLAGEVALUATION_PATH,
+        EVP_FLAGEVALUATION_PATH, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
     };
     use std::collections::BTreeMap;
 

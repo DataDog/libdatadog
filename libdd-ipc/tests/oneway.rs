@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_ipc::{ipc_server::OwnedServerConn, SeqpacketConn};
+use libdd_ipc::{SeqpacketConn, ipc_server::OwnedServerConn};
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 #[libdd_ipc_macros::service]
@@ -53,9 +53,11 @@ async fn oneway_packets_preserve_order_without_consuming_reply_slots() {
             .unwrap();
         assert_eq!(client.0.outstanding(), 0);
         assert_eq!(client.call_read().unwrap(), 7);
-        assert!(client
-            .call_request_blocking::<u64>(&OnewayRequest::Post { value: 8 })
-            .is_err());
+        assert!(
+            client
+                .call_request_blocking::<u64>(&OnewayRequest::Post { value: 8 })
+                .is_err()
+        );
         assert_eq!(client.call_read().unwrap(), 7);
         assert_eq!(client.0.outstanding(), 0);
     })

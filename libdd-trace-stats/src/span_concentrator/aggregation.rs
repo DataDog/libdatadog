@@ -14,11 +14,11 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{cardinality_limit_telemetry::CollapsedFieldSet, StatSpan};
+use crate::span_concentrator::{StatSpan, cardinality_limit_telemetry::CollapsedFieldSet};
 
 use super::{
-    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
     CardinalityLimitConfig,
+    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
 };
 
 /// Sentinel value used for cardinality limiting.
@@ -52,7 +52,6 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
 /// `T` is the string representation:
 /// * `&'a str`   — borrowed references used in [`BorrowedAggregationKey`]
 /// * `String`    — owned values used in `OwnedAggregationKey`
-/// * `StringRef` — offset+len into a SHM string pool, used in `ShmKeyHeader`
 #[derive(
     Clone, Default, Hash, Eq, PartialEq, Debug, PartialOrd, serde::Serialize, serde::Deserialize,
 )]

@@ -8,8 +8,8 @@
 //! subdomain header, timeout behavior, and fire-and-forget error handling.
 
 use crate::service::evp_proxy;
-use http::uri::PathAndQuery;
 use http::Method;
+use http::uri::PathAndQuery;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use std::time::Duration;

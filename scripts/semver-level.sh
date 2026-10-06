@@ -61,6 +61,11 @@ log_verbose() {
     fi
 }
 
+# Always on, and always to stderr: stdout carries only the result.
+log_progress() {
+    printf '[semver-level +%ds] %s\n' "$SECONDS" "$*" >&2
+}
+
 # Echo the higher of two semver levels. Order: major > minor > patch > none.
 max_level() {
     local a=$1 b=$2
@@ -392,7 +397,7 @@ req_min() {
 resolve_baseline() {
     local baseline=$1
 
-    # Fetch base commit
+    log_progress "Fetching baseline ref $baseline"
     git fetch origin "$baseline" --quiet
     local fetch_exit_code=$?
     if [[ $fetch_exit_code -ne 0 ]]; then
@@ -424,6 +429,7 @@ compute_semver_results() {
         return "$resolve_status"
     fi
 
+    log_progress "Checking $crate against $baseline"
     log_verbose "========================================"
     log_verbose "Checking semver for: $crate"
     log_verbose "Using baseline ref: $baseline"
@@ -484,6 +490,7 @@ compute_semver_results() {
     # ----------------------------------------------------------------
     local baseline_kinds="" baseline_has_lib=false baseline_has_proc_macro=false
     if ! $crate_is_new; then
+        log_progress "Reading target kinds at $baseline"
         if ! baseline_kinds=$(crate_target_kinds_at_rev "$crate" "$baseline"); then
             exit 1
         fi
@@ -536,8 +543,11 @@ compute_semver_results() {
     elif ! $has_lib || ! $baseline_has_lib; then
         log_verbose "Skipping cargo-semver-checks: $crate has no library target on both revs (baseline: ${baseline_kinds:-none}, now: $target_kinds)"
     else
+        local step_start=$SECONDS
+        log_progress "Running cargo-semver-checks"
         SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
         SEMVER_EXIT_CODE=$?
+        log_progress "cargo-semver-checks finished in $(( SECONDS - step_start ))s (exit code $SEMVER_EXIT_CODE)"
 
         if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
             log_verbose "cargo-semver-checks: no violations"
@@ -610,8 +620,11 @@ compute_semver_results() {
         # crates: cargo-semver-checks is skipped for them, so this is the only
         # comparison, and under the default feature set a removed or renamed
         # feature-gated macro would be invisible and pass as a patch.
+        local step_start=$SECONDS
+        log_progress "Running cargo-public-api diff"
         PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --all-features --color=never diff "$baseline..$current" 2>&1)
         EXIT_CODE=$?
+        log_progress "cargo-public-api finished in $(( SECONDS - step_start ))s (exit code $EXIT_CODE)"
 
         if [[ $EXIT_CODE -ne 0 ]]; then
           echo "Unexpected error from cargo-public-api for $crate (exit code: $EXIT_CODE)" >&2
@@ -716,6 +729,7 @@ compute_semver_results() {
     elif [[ "$level_so_far" == "major" ]]; then
         log_verbose "Skipping manifest diff: already at major"
     else
+        log_progress "Comparing manifests"
         if ! base_facts=$(manifest_facts_at_rev "$crate" "$baseline"); then
             exit 1
         fi
@@ -861,6 +875,7 @@ compute_semver_results() {
         REASON="No public API changes detected"
     fi
 
+    log_progress "$crate: $LEVEL"
     jq -n \
         --arg name "$crate" \
         --arg level "$LEVEL" \
@@ -885,7 +900,7 @@ if $LIST_AFFECTED; then
         echo "Warning: no merge base for $BASE_REF and $CURRENT_REF; comparing against the baseline tip" >&2
         FORK_POINT="$BASE_REF"
     fi
-    log_verbose "Listing crates whose manifest facts moved between $FORK_POINT and $CURRENT_REF"
+    log_progress "Listing crates whose manifest facts moved between $FORK_POINT and $CURRENT_REF"
     list_affected_crates "$FORK_POINT" "$CURRENT_REF"
     exit $?
 fi
