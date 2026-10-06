@@ -10,6 +10,7 @@
 //! encoders in sync because there is only one IR.
 
 use super::OtlpResourceInfo;
+use crate::span::trace_utils::SDK_OTLP_EXPORT_KEY;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::{SPAN_LINK_FLAGS_SET_SENTINEL, TraceData};
 use std::borrow::Borrow;
@@ -28,12 +29,6 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
 
 /// Maximum number of attributes per span; excess are dropped and counted.
 pub(crate) const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
-
-/// Resource attribute marking a payload exported by a Datadog SDK over OTLP. Always `"true"` on
-/// the OTLP resource; any span-level occurrence (the trace exporter and some tracers stamp
-/// `"false"` on native payloads, and users can set it via `DD_TAGS`) is stripped from span
-/// attributes so it can never contradict the resource value.
-pub const OTLP_EXPORT_MARKER_KEY: &str = "_dd.sdk.otlp_export";
 
 /// Resource attribute reporting which trace semantics the SDK used: `"otel"` when OTel trace
 /// semantics mode is enabled, `"datadog"` otherwise.
@@ -226,7 +221,7 @@ fn collect_span_attributes<T: TraceData>(
             break;
         }
         let key = k.borrow();
-        if key == OTLP_EXPORT_MARKER_KEY {
+        if key == SDK_OTLP_EXPORT_KEY {
             continue;
         }
         if otel_trace_semantics_enabled
@@ -266,7 +261,7 @@ fn collect_span_attributes<T: TraceData>(
     // Dropped-count accounting must mirror what was actually emitted: the stripped
     // `_dd.sdk.otlp_export` marker never counts, and with OTel-semantics on, the promoted tags
     // aren't added and the excluded `error.*`/`span.kind` meta tags drop out of the meta total.
-    let excluded_marker = span.meta.contains_key(OTLP_EXPORT_MARKER_KEY) as usize;
+    let excluded_marker = span.meta.contains_key(SDK_OTLP_EXPORT_KEY) as usize;
     let excluded_compat_tags = if otel_trace_semantics_enabled {
         span.meta.contains_key("error.msg") as usize
             + span.meta.contains_key("error.message") as usize
@@ -436,7 +431,7 @@ pub(super) fn build_resource(
     }
     // Adoption markers: this payload was exported over OTLP by a Datadog SDK, and with which
     // trace semantics.
-    push_str_attr(&mut attributes, OTLP_EXPORT_MARKER_KEY, "true");
+    push_str_attr(&mut attributes, SDK_OTLP_EXPORT_KEY, "true");
     push_str_attr(
         &mut attributes,
         SDK_SEMANTICS_KEY,
@@ -1068,7 +1063,7 @@ mod tests {
                 otel_semantics,
             );
             assert_eq!(
-                resource_str_attr(&req, OTLP_EXPORT_MARKER_KEY),
+                resource_str_attr(&req, SDK_OTLP_EXPORT_KEY),
                 Some("true"),
                 "_dd.sdk.otlp_export must always be \"true\" on the OTLP resource"
             );
@@ -1105,15 +1100,12 @@ mod tests {
             );
             let s = &req.resource_spans[0].scope_spans[0].spans[0];
             assert!(
-                !s.attributes.iter().any(|a| a.key == OTLP_EXPORT_MARKER_KEY),
+                !s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY),
                 "span-level _dd.sdk.otlp_export must be stripped"
             );
             assert!(s.attributes.iter().any(|a| a.key == "http.method"));
             assert_eq!(s.dropped_attributes_count, 0);
-            assert_eq!(
-                resource_str_attr(&req, OTLP_EXPORT_MARKER_KEY),
-                Some("true")
-            );
+            assert_eq!(resource_str_attr(&req, SDK_OTLP_EXPORT_KEY), Some("true"));
         }
     }
 
@@ -1141,7 +1133,7 @@ mod tests {
         let req = map_traces_to_otlp(&[vec![span]], &OtlpResourceInfo::default(), true);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.attributes.len(), MAX_ATTRIBUTES_PER_SPAN);
-        assert!(!s.attributes.iter().any(|a| a.key == OTLP_EXPORT_MARKER_KEY));
+        assert!(!s.attributes.iter().any(|a| a.key == SDK_OTLP_EXPORT_KEY));
         assert_eq!(s.dropped_attributes_count as usize, extra);
     }
 
