@@ -21,7 +21,7 @@ log.workspace = true
 fluent-uri.workspace = true
 libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf" }
 libdd-trace-utils = { version = "14.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 
 [features]
 default = ["https"]

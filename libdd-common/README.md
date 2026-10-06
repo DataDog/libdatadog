@@ -61,8 +61,17 @@ if let Some(container_id) = entity_id::get_container_id() {
 
 ## Features Flags
 
-- `https` (default): Enable HTTPS support with rustls
+- `std` (default): Enable the standard-library-dependent utilities
+- `alloc`: Enable allocation-backed tag creation and parsing without `std`
+- `http-client`: Enable the hyper-based HTTP client; implies `std`
+- `https` (default): Enable HTTPS support with rustls; implies `http-client`
 - `use_webpki_roots`: Use webpki roots instead of native certs
 - `cgroup_testing`: Enable cgroup stubbing for testing
 - `fips`: Use FIPS-compliant cryptographic provider (Unix only)
 
+`TagParser` and `TagValidationError` are available without feature flags. To use the allocation-backed
+`Tag` from a `no_std` crate:
+
+```bash
+cargo check -p libdd-common --lib --no-default-features --features alloc
+```

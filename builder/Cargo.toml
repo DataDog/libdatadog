@@ -55,7 +55,7 @@ tar.workspace = true
 tools = { path = "../tools" }
 toml = { workspace = true, features = ["parse"] }
 serde.workspace = true
-libdd-common = { path = "../libdd-common", default-features = false }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "release"
