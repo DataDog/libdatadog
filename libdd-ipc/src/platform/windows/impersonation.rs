@@ -3,7 +3,8 @@
 
 use std::io;
 use std::ptr::null;
-use tracing::{error, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::{debug, error, warn};
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_NO_TOKEN, HANDLE};
 use windows_sys::Win32::Security::{RevertToSelf, TOKEN_IMPERSONATE};
 use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken, SetThreadToken};
@@ -21,19 +22,29 @@ impl ProcessIdentityGuard {
         if unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_IMPERSONATE, 1, &mut token) } == 0 {
             let err = io::Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_NO_TOKEN as i32) {
-                warn!("Failed opening the thread token, keeping impersonation: {err}");
+                warn_once(format_args!(
+                    "Failed opening the thread token, keeping impersonation: {err}"
+                ));
             }
             return Self(0);
         }
         if unsafe { RevertToSelf() } == 0 {
-            warn!(
-                "Failed suspending impersonation: {}",
-                io::Error::last_os_error()
-            );
+            let err = io::Error::last_os_error();
+            warn_once(format_args!("Failed suspending impersonation: {err}"));
             unsafe { CloseHandle(token) };
             return Self(0);
         }
         Self(token)
+    }
+}
+
+/// These failures repeat on every call for a given host setup: warn only for the first one.
+fn warn_once(message: std::fmt::Arguments) {
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED.swap(true, Ordering::Relaxed) {
+        debug!("{message}");
+    } else {
+        warn!("{message}");
     }
 }
 

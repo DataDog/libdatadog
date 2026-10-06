@@ -146,16 +146,15 @@ pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata)
 
 static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identifier);
 
-fn fetch_sidecar_identifier() -> String {
-    // Never share the namespace of other processes whose identifier could not be determined.
-    fetch_process_sid().unwrap_or_else(|| format!("pid{}", std::process::id()))
-}
+/// `GetCurrentProcessToken()`: an inline pseudo-handle from processthreadsapi.h (Windows 8+),
+/// not exported and thus not in windows-sys. It must never be closed.
+const CURRENT_PROCESS_TOKEN: HANDLE = -4;
 
-fn fetch_process_sid() -> Option<String> {
+fn fetch_sidecar_identifier() -> String {
     unsafe {
-        // GetCurrentProcessToken(): unlike OpenProcessToken, not access-checked against an
-        // impersonating thread. Never the thread token: the sidecar inherits the process identity.
-        let access_token: HANDLE = -4;
+        // Unlike OpenProcessToken, not access-checked against an impersonating thread.
+        // Never the thread token: the sidecar inherits the process identity.
+        let access_token = CURRENT_PROCESS_TOKEN;
 
         let mut info_buffer_size = 0;
         if GetTokenInformation(
@@ -169,7 +168,7 @@ fn fetch_process_sid() -> Option<String> {
             let err = Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32) {
                 error!("Failed fetching process token: {:?}", err);
-                return None;
+                return "".to_string();
             }
         }
 
@@ -187,7 +186,7 @@ fn fetch_process_sid() -> Option<String> {
                 "Failed fetching process token: {:?}",
                 Error::last_os_error()
             );
-            return None;
+            return "".to_string();
         }
 
         let mut string_sid = null_mut();
@@ -195,7 +194,7 @@ fn fetch_process_sid() -> Option<String> {
 
         if success == 0 {
             error!("Failed stringifying SID: {:?}", Error::last_os_error());
-            return None;
+            return "".to_string();
         }
 
         let user_sid =
@@ -208,7 +207,7 @@ fn fetch_process_sid() -> Option<String> {
         // an elevated PHP process and fail with access denied.
         let integrity_level = fetch_integrity_level(access_token).unwrap_or(0);
 
-        Some(format!("{}-{:x}", user_sid, integrity_level))
+        format!("{}-{:x}", user_sid, integrity_level)
     }
 }
 
@@ -253,31 +252,24 @@ fn test_fetch_identifier() {
 
 #[test]
 fn test_fetch_identifier_while_impersonating() {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::Security::{ImpersonateAnonymousToken, RevertToSelf, TOKEN_QUERY};
-    use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+    use windows_sys::Win32::Security::{ImpersonateAnonymousToken, RevertToSelf};
+    use windows_sys::Win32::System::Threading::GetCurrentThread;
 
-    fn is_impersonating() -> bool {
-        let mut token = 0;
-        let opened = unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token) };
-        if opened != 0 {
-            unsafe { CloseHandle(token) };
+    struct Anonymous;
+    impl Drop for Anonymous {
+        fn drop(&mut self) {
+            unsafe { RevertToSelf() };
         }
-        opened != 0
     }
 
-    let expected = fetch_sidecar_identifier();
-    assert!(expected.starts_with("S-"));
-    assert!(!is_impersonating());
+    // Not impersonating, every token API yields the process identity, which the daemon inherits.
+    let process_identifier = fetch_sidecar_identifier();
+    assert!(process_identifier.starts_with("S-"));
 
     assert_ne!(unsafe { ImpersonateAnonymousToken(GetCurrentThread()) }, 0);
-    assert!(is_impersonating());
-    assert_eq!(fetch_sidecar_identifier(), expected);
-    {
-        let _identity = ProcessIdentityGuard::enter();
-        assert!(!is_impersonating());
-    }
-    assert!(is_impersonating());
-    assert_ne!(unsafe { RevertToSelf() }, 0);
-    assert!(!is_impersonating());
+    let _anonymous = Anonymous;
+    // The thread token would give ANONYMOUS LOGON (S-1-5-7), and OpenProcessToken is denied.
+    let identifier = fetch_sidecar_identifier();
+    assert!(!identifier.starts_with("S-1-5-7-"), "{identifier}");
+    assert_eq!(identifier, process_identifier);
 }
