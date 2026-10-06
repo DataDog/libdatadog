@@ -194,6 +194,9 @@ impl SidecarSender {
     /// Submit one FFE observation without waiting or reconnecting. `build` runs
     /// only after admission; it must bound and normalize borrowed input before
     /// ownership. No request is retained when submission is rejected.
+    /// Retains the existing transport policy: macOS `ENOBUFS` can close the
+    /// connection, unlike `WouldBlock`. Further observations are skipped until
+    /// an ordinary transport/lifecycle operation reconnects outside evaluation.
     pub fn try_submit_ffe<F>(&mut self, build: F) -> FfeSubmissionStatus
     where
         F: FnOnce() -> Result<SidecarInterfaceRequest, FfeSubmissionStatus>,
