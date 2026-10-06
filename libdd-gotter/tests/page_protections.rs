@@ -55,16 +55,42 @@ impl Drop for Page {
 
 #[test]
 fn skips_pages_missing_from_the_snapshot() {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
     let mut guard = PageProtGuard::new();
-    let page = Page::new();
-    assert_eq!(guard.original_prot(page.ptr as usize), None);
 
-    let patched = unsafe { guard.override_entry(page.ptr as usize, 99) };
+    // Find an address verified absent from the snapshot. A plain mmap after
+    // the snapshot can land on an address that was mapped at snapshot time
+    // Scanning the snapshot for a gap and using MAP_FIXED avoids this.
+    let mut gap = 0x10000; // above typical vm.mmap_min_addr
+    while guard.original_prot(gap).is_some() {
+        gap += page_size;
+    }
+    let ptr = unsafe {
+        libc::mmap(
+            gap as *mut libc::c_void,
+            page_size,
+            PROT_READ | PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(ptr, libc::MAP_FAILED);
+    unsafe { ptr.cast::<usize>().write(42) };
+
+    assert_eq!(guard.original_prot(ptr as usize), None);
+    let patched = unsafe { guard.override_entry(ptr as usize, 99) };
     drop(guard);
 
     assert!(!patched, "unknown page protections must not be guessed");
-    assert_eq!(page.value(), 42);
-    assert_eq!(page.protection(), PROT_READ | PROT_WRITE);
+    assert_eq!(unsafe { ptr.cast::<usize>().read() }, 42);
+    let prot = read_proc_maps()
+        .iter()
+        .find(|e| ptr as usize >= e.start && (ptr as usize) < e.end)
+        .expect("page is mapped")
+        .prot;
+    assert_eq!(prot, PROT_READ | PROT_WRITE);
+    unsafe { libc::munmap(ptr, page_size) };
 }
 
 #[test]
