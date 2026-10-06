@@ -127,6 +127,7 @@ impl<T: ValueTypes> Clone for AttributeValue<T> {
     }
 }
 
+// TODO: Some implementations of PartialEq (like VecMap) do allocs / could be slow
 impl<T: ValueTypes> PartialEq for AttributeValue<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

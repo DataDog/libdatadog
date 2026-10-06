@@ -544,7 +544,8 @@ mod tests {
 
     mod v1 {
         use super::super::*;
-        use libdd_trace_utils::span::v1::{AttributeValue, SpanBytes, TraceChunkBytes};
+        use libdd_trace_model::AttributeValue;
+        use libdd_trace_utils::span::v1::{SpanBytes, TraceChunkBytes};
         use libdd_trace_utils::trace_utils::TracerHeaderTags;
         use web_time::SystemTime;
 

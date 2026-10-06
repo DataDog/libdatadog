@@ -83,6 +83,7 @@ criterion.workspace = true
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [
     "test-utils",
 ] }
+libdd-trace-model = { version = "0.1.0", path = "../libdd-trace-model" }
 httpmock.workspace = true
 prost = { workspace = true, features = ["std"] }
 rand = { workspace = true, default-features = true }
