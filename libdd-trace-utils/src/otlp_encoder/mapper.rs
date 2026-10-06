@@ -30,10 +30,10 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
 pub(crate) const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 
 /// Resource attribute marking a payload exported by a Datadog SDK over OTLP. Always `"true"` on
-/// the OTLP resource; any span-level occurrence (tracers stamp `"false"` on native payloads, and
-/// users can set it via `DD_TAGS`) is stripped from span attributes so it can never contradict the
-/// resource value.
-pub(crate) const OTLP_EXPORT_MARKER_KEY: &str = "_dd.sdk.otlp_export";
+/// the OTLP resource; any span-level occurrence (the trace exporter and some tracers stamp
+/// `"false"` on native payloads, and users can set it via `DD_TAGS`) is stripped from span
+/// attributes so it can never contradict the resource value.
+pub const OTLP_EXPORT_MARKER_KEY: &str = "_dd.sdk.otlp_export";
 
 /// Resource attribute reporting which trace semantics the SDK used: `"otel"` when OTel trace
 /// semantics mode is enabled, `"datadog"` otherwise.
