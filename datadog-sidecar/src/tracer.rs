@@ -1,51 +1,69 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::service::exception_hash_rate_limiter::ManagedExceptionHashRateLimiter;
+use crossbeam_utils::atomic::AtomicCell;
 use http::uri::PathAndQuery;
 use libdd_common::Endpoint;
 use libdd_ipc::rate_limiter::ShmLimiterMemory;
 use libdd_trace_utils::config_utils::trace_intake_url_prefixed;
 use std::borrow::Cow;
 use std::ffi::CString;
-use std::mem::ManuallyDrop;
 use std::str::FromStr;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 use tracing::error;
 
-/// The shared rate limiter, or `None` when it could not be created.
-///
-/// `None` is reachable: creating the segment fails if another user is squatting its name (see
-/// `libdd_ipc::platform::shm_guard`), and refusing to map somebody else's memory must not take
-/// the sidecar down with it - in thread mode this code runs inside PHP. Callers therefore treat
-/// a missing limiter as "no rate limiting" rather than as a fatal error.
-pub static SHM_LIMITER: LazyLock<Option<Mutex<ManuallyDrop<ShmLimiterMemory<()>>>>> = LazyLock::new(
-    || match ShmLimiterMemory::create(shm_limiter_path()) {
-        Ok(memory) => {
-            unsafe { libc::atexit(drop_shm_limiter) };
-            Some(Mutex::new(ManuallyDrop::new(memory)))
-        }
-        Err(e) => {
-            error!(
-                "Could not create the shared rate limiter at {}: {e}. Continuing without rate limiting.",
-                shm_limiter_path().to_string_lossy()
-            );
-            None
-        }
-    },
-);
-
-/// Replace both arenas before serving requests, even if clients only find cached hashes.
-/// Requires a Tokio runtime for the exception limiter's cleanup task.
-pub fn init_shm_limiters() {
-    LazyLock::force(&SHM_LIMITER);
-    LazyLock::force(&crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER);
+pub(crate) struct ShmLimiters {
+    pub probes: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
+    pub exceptions: Option<Arc<Mutex<ManagedExceptionHashRateLimiter>>>,
 }
 
-extern "C" fn drop_shm_limiter() {
-    if let Some(limiter) = SHM_LIMITER.as_ref() {
-        let mut guard = limiter.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: atexit runs once at program exit; no code accesses this static afterward.
-        unsafe { ManuallyDrop::drop(&mut *guard) };
+// PHP-FPM can exit without shutting the listener down.
+static EXIT_LIMITERS: AtomicCell<Option<Arc<ShmLimiters>>> = AtomicCell::new(None);
+
+impl ShmLimiters {
+    pub fn create() -> Arc<Self> {
+        let probes = match ShmLimiterMemory::create(shm_limiter_path()) {
+            Ok(memory) => Some(Arc::new(Mutex::new(memory))),
+            Err(e) => {
+                error!(
+                    "Could not create the shared rate limiter: {e}. Continuing without rate limiting."
+                );
+                None
+            }
+        };
+        let exceptions = match ManagedExceptionHashRateLimiter::create() {
+            Ok(limiter) => Some(limiter),
+            Err(e) => {
+                error!(
+                    "Could not create the exception hash rate limiter: {e}. Continuing without rate limiting."
+                );
+                None
+            }
+        };
+        let limiters = Arc::new(Self { probes, exceptions });
+        EXIT_LIMITERS.store(Some(limiters.clone()));
+        unsafe { libc::atexit(unlink_shm_limiters) };
+        limiters
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn clear_inherited_state() {
+    EXIT_LIMITERS.store(None);
+}
+
+extern "C" fn unlink_shm_limiters() {
+    if let Some(limiters) = EXIT_LIMITERS.swap(None) {
+        if let Some(probes) = &limiters.probes {
+            probes.lock().unwrap_or_else(|e| e.into_inner()).unlink();
+        }
+        if let Some(exceptions) = &limiters.exceptions {
+            exceptions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .unlink();
+        }
     }
 }
 

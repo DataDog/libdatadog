@@ -385,9 +385,12 @@ pub extern "C" fn ddog_sidecar_is_master_listener_active() -> bool {
     MasterListener::is_active()
 }
 
+/// # Safety
+/// On Unix, call in the child after fork, before starting threads. Inherited sidecar
+/// tasks and references to their state must not be used afterward.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
-    try_c!(MasterListener::clear_inherited_state());
+pub unsafe extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    try_c!(unsafe { MasterListener::clear_inherited_state() });
 
     MaybeError::None
 }
