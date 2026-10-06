@@ -8,7 +8,7 @@
 //! in progress, even generations are stable, and 0 means nothing has been published.
 //!
 //! Named segments have two terminal generations:
-//! - [`RETIRED`]: a fresh segment replaced it under the same name. Readers reopen the name.
+//! - [`RETIRED`]: the segment is obsolete. Readers reopen through their opener.
 //! - [`ENDED`]: its writer went away. Readers take its last payload, then reopen the name.
 //!
 //! The first publication seeds the counter from monotonic microseconds.
@@ -23,6 +23,8 @@
 //! sleep so callers effectively poll. The wait always takes a timeout, so
 //! callers still get periodic wakeups even when the data is unchanged.
 
+#[cfg(unix)]
+use crate::platform::lock_shm;
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::{MutexExt, rate_limiter::now};
 use std::ffi::{CStr, CString};
@@ -31,7 +33,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering, fence};
 use std::time::Duration;
 
-/// Set after the replacement's first publication. The old payload may be incomplete.
+/// The segment is obsolete; its payload may be incomplete.
 /// Odd so readers that do not recognize this marker also refuse to read the payload.
 pub const RETIRED: u64 = u64::MAX;
 
@@ -58,10 +60,7 @@ struct WriterState<T: FileBackedHandle> {
 impl<T: FileBackedHandle> WriterState<T> {
     fn retire_replaced(&mut self) {
         for old in self.replaced.drain(..) {
-            if let Some(meta) = meta(old.as_slice()) {
-                meta.generation.store(RETIRED, Ordering::Release);
-                futex_wake(meta.generation.as_ptr().cast());
-            }
+            retire(&old);
         }
     }
 }
@@ -153,6 +152,13 @@ fn meta(slice: &[u8]) -> Option<&RawMetaData> {
 
 fn generation_of<T: FileBackedHandle>(mapped: &MappedMem<T>) -> Option<u64> {
     Some(meta(mapped.as_slice())?.generation.load(Ordering::Acquire))
+}
+
+fn retire<T: FileBackedHandle>(mapped: &MappedMem<T>) {
+    if let Some(meta) = meta(mapped.as_slice()) {
+        meta.generation.store(RETIRED, Ordering::Release);
+        futex_wake(meta.generation.as_ptr().cast());
+    }
 }
 
 // Safety: Caller needs to ensure the u8 is 8 byte aligned
@@ -406,6 +412,33 @@ impl OneWayShmWriter<NamedShmHandle> {
 
 pub fn open_named_shm(path: &CStr) -> io::Result<MappedMem<NamedShmHandle>> {
     NamedShmHandle::open(path)?.map()
+}
+
+impl<D> OneWayShmReader<NamedShmHandle, D> {
+    /// Retire a cached mapping whose name differs from `path`.
+    /// On Unix, retire only this process's view.
+    /// The opener must resolve to the new name on the next read.
+    pub fn reconnect(&self, path: &CStr) {
+        if self.opener.is_none() {
+            return;
+        }
+        if let Some(handle) = &self.handle {
+            // The reader owns this handle and never unlinks it.
+            if unsafe { handle.get_path() } != path.to_bytes() {
+                #[cfg(unix)]
+                let _guard = lock_shm();
+                if generation_of(handle) == Some(RETIRED) {
+                    return;
+                }
+                #[cfg(unix)]
+                if let Err(error) = handle.make_private() {
+                    tracing::warn!("Failed to detach SHM reader: {error}");
+                    return;
+                }
+                retire(handle);
+            }
+        }
+    }
 }
 
 fn skip_last_byte(slice: &[u8]) -> &[u8] {
@@ -767,6 +800,87 @@ mod tests {
             .unwrap()
             .generation
             .load(Ordering::Acquire)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn reconnect_retires_only_a_mapping_from_another_name() {
+        let old_path = test_path("old-name");
+        let new_path = test_path("new-name");
+        let old = OneWayShmWriter::<NamedShmHandle>::new(old_path.clone()).unwrap();
+        assert!(old.write(b"old"));
+        let mut reader = named_reader(&old_path);
+        assert_eq!(reader.read(), (true, b"old".as_slice()));
+
+        reader.reconnect(&old_path);
+        assert!(old.write(b"old"));
+        std::thread::scope(|scope| {
+            for _ in 0..16 {
+                let reader = &reader;
+                let new_path = &new_path;
+                scope.spawn(move || {
+                    reader.reconnect(new_path);
+                    // Repeated reconnects must preserve this view's writes.
+                    let handle = reader.handle.as_ref().unwrap();
+                    let counter =
+                        unsafe { &*handle.as_slice().as_ptr().add(128).cast::<AtomicU64>() };
+                    counter.fetch_add(1, Ordering::Relaxed);
+                });
+            }
+        });
+        let handle = reader.handle.as_ref().unwrap();
+        let counter = unsafe { &*handle.as_slice().as_ptr().add(128).cast::<AtomicU64>() };
+        assert_eq!(counter.load(Ordering::Relaxed), 16);
+        assert_eq!(
+            super::generation_of(reader.handle.as_ref().unwrap()),
+            Some(RETIRED)
+        );
+        assert_eq!(generation_of(&old_path) == RETIRED, cfg!(windows));
+        assert_eq!(old.write(b"still serving other readers"), cfg!(unix));
+        reader.reconnect(&new_path);
+        assert_eq!(
+            super::generation_of(reader.handle.as_ref().unwrap()),
+            Some(RETIRED)
+        );
+        reader.extra = new_path.clone();
+        assert_eq!(reader.read(), (false, b"old".as_slice()));
+
+        let new = OneWayShmWriter::<NamedShmHandle>::new(new_path.clone()).unwrap();
+        assert!(new.write(b"new"));
+        assert_eq!(reader.read(), (true, b"new".as_slice()));
+        assert!(reader.take_replaced());
+        reader.reconnect(&new_path);
+        assert!(new.write(b"same name"));
+
+        drop(reader);
+        assert!(
+            open_named_shm(&new_path).is_ok(),
+            "readers never own the name"
+        );
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg_attr(miri, ignore)]
+    fn failed_detachment_does_not_retire_shared_memory() {
+        let old_path = test_path("detach-failure");
+        let new_path = test_path("detach-retry");
+        let writer = OneWayShmWriter::<NamedShmHandle>::new(old_path.clone()).unwrap();
+        assert!(writer.write(b"old"));
+        let mut reader = named_reader(&old_path);
+        let handle = std::mem::take(&mut reader.handle.as_mut().unwrap().mem.inner.handle);
+        reader.reconnect(&new_path);
+        assert_ne!(generation_of(&old_path), RETIRED);
+        assert!(writer.write(b"still shared"));
+        assert_eq!(reader.read(), (true, b"still shared".as_slice()));
+
+        reader.handle.as_mut().unwrap().mem.inner.handle = handle;
+        reader.reconnect(&new_path);
+        assert_eq!(
+            super::generation_of(reader.handle.as_ref().unwrap()),
+            Some(RETIRED)
+        );
+        assert_ne!(generation_of(&old_path), RETIRED);
     }
 
     #[test]
