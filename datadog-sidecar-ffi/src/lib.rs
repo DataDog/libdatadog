@@ -14,7 +14,7 @@ pub mod signal_flush;
 pub mod span;
 pub mod span_v04;
 
-use crate::span::{TracerPayloadV1Builder, populate_payload_metadata};
+use crate::span::populate_payload_metadata;
 use crate::span_v04::TracesBytes;
 use datadog_sidecar::agent_remote_config::{AgentRemoteConfigWriter, new_reader, reader_from_shm};
 use datadog_sidecar::config;
@@ -55,6 +55,7 @@ use libdd_telemetry::{
 };
 use libdd_telemetry_ffi::try_c;
 use libdd_trace_utils::msgpack_encoder;
+use libdd_trace_utils::span::v1::TracerPayloadBytes;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
@@ -2120,11 +2121,13 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
-    builder: Box<TracerPayloadV1Builder>,
+    builder: Box<TracerPayloadBytes>,
     parameters: &mut SenderParameters,
     metadata: &TracerMetadataV1,
 ) {
-    let mut payload = builder.into_payload();
+    let mut payload = *builder;
+    // The one dedup of the send path: the builder's maps may hold overwritten keys.
+    payload.dedup();
     let size: usize = payload.chunks.iter().map(|c| c.spans.len()).sum();
 
     // Check connection to the sidecar
@@ -2237,9 +2240,10 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar_v1(
 /// [`crate::span_v04::ddog_free_traces`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_downgrade_v1_builder_to_v04_traces(
-    builder: Box<TracerPayloadV1Builder>,
+    builder: Box<TracerPayloadBytes>,
 ) -> Box<TracesBytes> {
-    let payload = builder.into_payload();
+    let mut payload = *builder;
+    payload.dedup();
     let v04_bytes = msgpack_encoder::v04::to_vec_from_v1(&payload);
     match libdd_trace_utils::tracer_payload::decode_to_trace_chunks(
         libdd_tinybytes::Bytes::from(v04_bytes),
@@ -2376,27 +2380,24 @@ mod tests {
 
     #[test]
     fn downgrade_v1_builder_to_v04_traces_preserves_all_traces() {
-        use crate::span::ddog_v1_new_builder;
+        use crate::span::{
+            ddog_new_chunk, ddog_new_span, ddog_set_span_name, ddog_set_span_service,
+            ddog_span_set_id, ddog_v1_new_builder,
+        };
         use crate::span_v04::{ddog_free_traces, ddog_serialize_trace_into_charslice};
-        use libdd_tinybytes::BytesString;
 
         // Two chunks (traces) with a shared service; the whole-payload CharSlice form drops the
         // second under the coms framing, the TracesBytes form must keep both.
         let mut builder = ddog_v1_new_builder();
-        let c0 = builder.push_chunk(0, 1);
-        // Safety: `c0`/`c1` are live chunk nodes, `s0`/`s1` their spans (Box-per-node handles).
-        unsafe {
-            let sp = (*(*c0).push_span()).span_mut();
-            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
-            sp.name = BytesString::from_slice(b"op-one").unwrap();
-            sp.span_id = 1;
-        }
-        let c1 = builder.push_chunk(0, 2);
-        unsafe {
-            let sp = (*(*c1).push_span()).span_mut();
-            sp.service = BytesString::from_slice(b"svc-shared").unwrap();
-            sp.name = BytesString::from_slice(b"op-two").unwrap();
-            sp.span_id = 2;
+        for (id, name) in [(1, "op-one"), (2, "op-two")] {
+            let chunk = ddog_new_chunk(&mut builder, 0, id);
+            // Safety: `chunk` and `span` were just returned and nothing was pushed since.
+            unsafe {
+                let span = ddog_new_span(chunk);
+                ddog_set_span_service(span, CharSlice::from("svc-shared"));
+                ddog_set_span_name(span, CharSlice::from(name));
+                ddog_span_set_id(span, id);
+            }
         }
 
         let mut traces = ddog_downgrade_v1_builder_to_v04_traces(builder);

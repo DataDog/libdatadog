@@ -13,8 +13,8 @@ use rmp::encode::{
     ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_map_len, write_sint,
     write_str, write_uint, write_uint8,
 };
+use rustc_hash::FxHashMap;
 use std::borrow::Borrow;
-use std::collections::HashMap;
 
 /// Integer keys for the top-level V1 trace payload map.
 mod trace_key {
@@ -113,14 +113,19 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// The string table is scoped per payload: each `to_vec_from_v04` / `to_vec_from_v1` (and
 /// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
-pub(crate) struct StringTable {
-    seen: HashMap<String, u32>,
+pub(crate) struct StringTable<'a> {
+    /// Keys borrow from the payload being encoded, so recording a string doesn't allocate.
+    seen: FxHashMap<&'a str, u32>,
 }
 
-impl StringTable {
+impl<'a> StringTable<'a> {
+    /// Room for the distinct strings of a typical payload, so small payloads never rehash.
+    const INITIAL_CAPACITY: usize = 64;
+
     fn new() -> Self {
-        let mut seen = HashMap::new();
-        seen.insert(String::new(), 0);
+        let mut seen =
+            FxHashMap::with_capacity_and_hasher(Self::INITIAL_CAPACITY, Default::default());
+        seen.insert("", 0);
         Self { seen }
     }
 
@@ -128,17 +133,16 @@ impl StringTable {
     ///
     /// - First occurrence of `s` → msgpack `str`, ID recorded for future references
     /// - Subsequent occurrence → msgpack `uint` carrying the previously assigned ID
-    pub(crate) fn write_interned<W: RmpWrite, S: AsRef<str>>(
+    pub(crate) fn write_interned<W: RmpWrite>(
         &mut self,
         writer: &mut W,
-        s: S,
+        s: &'a str,
     ) -> Result<(), ValueWriteError<W::Error>> {
-        let s = s.as_ref();
         if let Some(&id) = self.seen.get(s) {
             write_uint(writer, id as u64)?;
         } else {
             let id = self.seen.len() as u32;
-            self.seen.insert(s.to_string(), id);
+            self.seen.insert(s, id);
             write_str(writer, s)?;
         }
         Ok(())
@@ -421,10 +425,10 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ///   chunk_key::SPANS              (4) → Array[Span, ...]
 /// }
 /// ```
-fn encode_chunk_from_v04<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v04<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    spans: &[Span<T>],
-    table: &mut StringTable,
+    spans: &'a [Span<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let attrs = extract_chunk_attrs(spans);
 
@@ -588,10 +592,10 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 }
 
 /// Encodes one V1 chunk (a group of spans sharing a trace ID).
-fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v1<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    chunk: &crate::span::v1::TraceChunk<T>,
-    table: &mut StringTable,
+    chunk: &'a crate::span::v1::TraceChunk<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
     let has_attributes = !chunk.attributes.is_empty();
@@ -1594,7 +1598,7 @@ mod v1_payload_tests {
 
     // Regression: the FFI v1 builder inserts attributes without maintaining the VecMap deduped
     // invariant, so before `TracerPayload::dedup` the encoder had to dedup on the fly (and warn)
-    // on every encode. `dedup` (called from the builder's `into_payload` finalize) must leave the
+    // on every encode. `dedup` (called by the sidecar-ffi send path) must leave the
     // invariant set at every level while keeping last-write-wins, so the encode is warning-free
     // and only the winning values reach the wire.
     #[test]

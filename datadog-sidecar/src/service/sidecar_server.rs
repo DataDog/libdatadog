@@ -390,7 +390,7 @@ impl SidecarServer {
                     );
                 };
                 // The payload was encoded from a builder that already deduped every map
-                // (`TracerPayloadV1Builder::into_payload`), so don't dedup it a second time.
+                // (`ddog_send_traces_to_sidecar_v1`), so don't dedup it a second time.
                 tracer_payload.mark_deduped();
                 // Cheap refcounted clones: decouples the header strings from `payload`'s
                 // borrow so `payload` can still be moved into `enqueue_trace` below.
@@ -474,12 +474,22 @@ impl SidecarServer {
         }
         // Peek the session's `/info` (fetched since `set_session_config`) without blocking the
         // send path. A fetcher keyed by the trace endpoint would be a separate, cold one.
-        session
+        let Some(info) = session
             .agent_infos
             .lock_or_panic()
             .as_ref()
-            .and_then(|guard| guard.get().now_or_never())
-            .is_some_and(|info| agent_info_advertises_v1(&info))
+            .map(|g| g.get())
+        else {
+            return false;
+        };
+        // `peek` borrows the resolved info; polling (which clones the whole struct) is only
+        // needed until the first poll resolves it.
+        match info.peek() {
+            Some(info) => agent_info_advertises_v1(info),
+            None => info
+                .now_or_never()
+                .is_some_and(|info| agent_info_advertises_v1(&info)),
+        }
     }
 
     fn send_trace(

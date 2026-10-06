@@ -1,17 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Box-per-node FFI builder for the native V1 trace payload
-//! ([`libdd_trace_utils::span::v1::TracerPayload`]), storing readable [`BytesString`]s directly.
-//!
-//! Each chunk/span/link/event is its OWN heap allocation (`Box::into_raw`), stored as a raw pointer
-//! in its parent node. C is handed that node pointer directly and per-node mutators and getters
-//! materialize `&mut *ptr` / `&*ptr` against the node's own allocation — so a held node pointer
-//! stays valid across sibling pushes (no parent-`Vec` reallocation can move an existing node) and
-//! no mutation reborrows `&mut builder` (which would pop the tag of an outstanding node pointer).
-//! This is Stacked- and Tree-Borrows clean. The boxes are folded back into the inline payload model
-//! by [`TracerPayloadV1Builder::into_payload`], or freed by its [`Drop`]. Payload env / app_version
-//! / hostname are set on the builder; the rest is applied at send time (see
+//! FFI builder for the native V1 trace payload ([`TracerPayloadBytes`]), storing readable
+//! [`BytesString`]s directly. As with the v0.4 `TracesBytes`, C gets plain pointers into the model:
+//! a chunk/span/link/event pointer (and any [`Attributes`] handle derived from it) is invalidated
+//! by the next push into the same parent; re-fetch it by index (e.g. [`ddog_v1_get_span`]). Payload
+//! env / app_version / hostname are set on the builder; the rest is applied at send time (see
 //! [`populate_payload_metadata`]).
 
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
@@ -38,209 +32,6 @@ pub const DDOG_V1_ATTR_KEYVALUE: u32 = 5;
 pub const DDOG_V1_ATTR_LIST: u32 = 6;
 
 type AttrVecMap = VecMap<BytesString, AttributeValueBytes>;
-
-/// A chunk node in the builder: its own heap allocation, so a `*mut ChunkNode` handed to C stays
-/// valid across sibling chunk pushes. Its spans live as separate `Box` allocations.
-pub struct ChunkNode {
-    chunk: TraceChunkBytes,
-    spans: Vec<*mut SpanNode>,
-}
-
-impl ChunkNode {
-    pub fn chunk(&self) -> &TraceChunkBytes {
-        &self.chunk
-    }
-
-    pub fn chunk_mut(&mut self) -> &mut TraceChunkBytes {
-        &mut self.chunk
-    }
-
-    pub fn spans(&self) -> &[*mut SpanNode] {
-        &self.spans
-    }
-
-    /// Appends an empty span, returning a pointer to its own (heap) node.
-    pub fn push_span(&mut self) -> *mut SpanNode {
-        let node = Box::into_raw(Box::new(SpanNode {
-            span: SpanBytes::default(),
-            links: Vec::new(),
-            events: Vec::new(),
-        }));
-        self.spans.push(node);
-        node
-    }
-}
-
-/// A span node in the builder: its own heap allocation, so a held `*mut SpanNode` stays valid
-/// across sibling span pushes into the same chunk (the inferred-span case). Links/events are
-/// likewise separate `Box` allocations.
-pub struct SpanNode {
-    span: SpanBytes,
-    links: Vec<*mut SpanLinkBytes>,
-    events: Vec<*mut SpanEventBytes>,
-}
-
-impl SpanNode {
-    pub fn span(&self) -> &SpanBytes {
-        &self.span
-    }
-
-    pub fn span_mut(&mut self) -> &mut SpanBytes {
-        &mut self.span
-    }
-
-    pub fn links(&self) -> &[*mut SpanLinkBytes] {
-        &self.links
-    }
-
-    pub fn events(&self) -> &[*mut SpanEventBytes] {
-        &self.events
-    }
-
-    /// Appends an empty link, returning a pointer to its own (heap) allocation.
-    pub fn push_link(&mut self) -> *mut SpanLinkBytes {
-        let link = Box::into_raw(Box::new(SpanLinkBytes::default()));
-        self.links.push(link);
-        link
-    }
-
-    /// Appends an empty event, returning a pointer to its own (heap) allocation.
-    pub fn push_event(&mut self) -> *mut SpanEventBytes {
-        let event = Box::into_raw(Box::new(SpanEventBytes::default()));
-        self.events.push(event);
-        event
-    }
-}
-
-/// Frees a chunk node and everything below it.
-///
-/// # Safety
-/// `ptr` must be a live `Box::into_raw(ChunkNode)` allocation not freed elsewhere.
-unsafe fn free_chunk_node(ptr: *mut ChunkNode) {
-    // Safety: per the fn contract; each span pointer is likewise a live, unshared allocation.
-    let node = unsafe { Box::from_raw(ptr) };
-    for &span in &node.spans {
-        unsafe { free_span_node(span) };
-    }
-}
-
-/// Frees a span node and its links/events.
-///
-/// # Safety
-/// `ptr` must be a live `Box::into_raw(SpanNode)` allocation not freed elsewhere.
-unsafe fn free_span_node(ptr: *mut SpanNode) {
-    // Safety: per the fn contract; link/event pointers are live, unshared allocations.
-    let node = unsafe { Box::from_raw(ptr) };
-    for &link in &node.links {
-        drop(unsafe { Box::from_raw(link) });
-    }
-    for &event in &node.events {
-        drop(unsafe { Box::from_raw(event) });
-    }
-}
-
-/// Builds a native V1 [`TracerPayloadBytes`] holding readable strings. Each node is its own heap
-/// allocation (see the module docs); the builder owns the top-level chunk pointers.
-#[derive(Default)]
-pub struct TracerPayloadV1Builder {
-    chunks: Vec<*mut ChunkNode>,
-    attributes: AttrVecMap,
-    env: BytesString,
-    app_version: BytesString,
-    hostname: BytesString,
-}
-
-// SAFETY: the builder owns its node boxes and is only ever driven from a single tracer thread,
-// then consumed synchronously by the send path; the raw pointers carry no cross-thread state.
-unsafe impl Send for TracerPayloadV1Builder {}
-
-impl TracerPayloadV1Builder {
-    pub fn chunks(&self) -> &[*mut ChunkNode] {
-        &self.chunks
-    }
-
-    /// Payload-level attributes (the TracerPayload `attributes` map).
-    pub fn attributes(&self) -> &AttrVecMap {
-        &self.attributes
-    }
-
-    /// Sets the payload `env` / `app_version` / `hostname` fields.
-    pub fn set_metadata(
-        &mut self,
-        env: BytesString,
-        app_version: BytesString,
-        hostname: BytesString,
-    ) {
-        self.env = env;
-        self.app_version = app_version;
-        self.hostname = hostname;
-    }
-
-    /// Appends an empty chunk with the given 128-bit trace id (high/low halves), returning a
-    /// pointer to its own (heap) node.
-    pub fn push_chunk(&mut self, trace_id_high: u64, trace_id_low: u64) -> *mut ChunkNode {
-        let node = Box::into_raw(Box::new(ChunkNode {
-            chunk: TraceChunkBytes {
-                trace_id: trace_id_bytes(trace_id_high, trace_id_low),
-                ..Default::default()
-            },
-            spans: Vec::new(),
-        }));
-        self.chunks.push(node);
-        node
-    }
-
-    /// Consumes the builder, folding the node boxes back into the inline payload model. The one
-    /// dedup of the send path runs here, where the maps were filled (possibly overwriting keys).
-    pub fn into_payload(mut self) -> TracerPayloadBytes {
-        // Move the chunk pointers out so `Drop` (which runs at the end of this fn over the
-        // now-empty `chunks`) never double-frees the nodes reclaimed below.
-        let chunks = std::mem::take(&mut self.chunks);
-        let mut payload = TracerPayloadBytes {
-            attributes: std::mem::take(&mut self.attributes),
-            env: std::mem::take(&mut self.env),
-            app_version: std::mem::take(&mut self.app_version),
-            hostname: std::mem::take(&mut self.hostname),
-            ..Default::default()
-        };
-        for cptr in chunks {
-            // Safety: `cptr` is a live `Box::into_raw` allocation, moved out of `self` and
-            // reclaimed exactly once here.
-            let ChunkNode { mut chunk, spans } = *unsafe { Box::from_raw(cptr) };
-            for sptr in spans {
-                // Safety: as above.
-                let SpanNode {
-                    mut span,
-                    links,
-                    events,
-                } = *unsafe { Box::from_raw(sptr) };
-                span.span_links = links
-                    .into_iter()
-                    .map(|l| *unsafe { Box::from_raw(l) })
-                    .collect();
-                span.span_events = events
-                    .into_iter()
-                    .map(|e| *unsafe { Box::from_raw(e) })
-                    .collect();
-                chunk.spans.push(span);
-            }
-            payload.chunks.push(chunk);
-        }
-        payload.dedup();
-        payload
-    }
-}
-
-impl Drop for TracerPayloadV1Builder {
-    fn drop(&mut self) {
-        for &cptr in &self.chunks {
-            // Safety: every pointer in `chunks` is a live `Box::into_raw` allocation;
-            // `into_payload` empties `chunks` before drop, so a node is never freed
-            // twice.
-            unsafe { free_chunk_node(cptr) };
-        }
-    }
-}
 
 /// Composes a 128-bit trace id from its high/low 64-bit halves into 16 big-endian bytes.
 pub fn trace_id_bytes(high: u64, low: u64) -> [u8; 16] {
@@ -327,75 +118,101 @@ fn clone_attr(value: &AttributeValueBytes) -> AttributeValueBytes {
 /// Creates a new, empty V1 payload builder. Free it with [`ddog_v1_free_builder`], or hand it to
 /// `ddog_send_traces_to_sidecar_v1`, which consumes it.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_new_builder() -> Box<TracerPayloadV1Builder> {
+pub extern "C" fn ddog_v1_new_builder() -> Box<TracerPayloadBytes> {
     Box::default()
 }
 
 /// Frees a V1 payload builder.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadV1Builder>) {}
+pub extern "C" fn ddog_v1_free_builder(_builder: Box<TracerPayloadBytes>) {}
 
 /// Sets the payload `env` / `app_version` / `hostname` fields (empty = unset).
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_set_payload_metadata(
-    builder: &mut TracerPayloadV1Builder,
+    builder: &mut TracerPayloadBytes,
     env: CharSlice,
     app_version: CharSlice,
     hostname: CharSlice,
 ) {
-    builder.set_metadata(
-        bytes_string_from_slice(env),
-        bytes_string_from_slice(app_version),
-        bytes_string_from_slice(hostname),
-    );
+    builder.env = bytes_string_from_slice(env);
+    builder.app_version = bytes_string_from_slice(app_version);
+    builder.hostname = bytes_string_from_slice(hostname);
 }
 
 // ------------------- Chunk / span / link / event creation -------------------
 
-/// Appends a chunk carrying the 128-bit trace id (high/low halves), returning its node pointer.
+/// Pushes `item`, returning a pointer to it. `as_mut_ptr` materializes no reference to the other
+/// elements, so pointers to them stay valid unless the push reallocates.
+fn push_item<T>(vec: &mut Vec<T>, item: T) -> *mut T {
+    vec.push(item);
+    // Safety: `len - 1` is in bounds after the push.
+    unsafe { vec.as_mut_ptr().add(vec.len() - 1) }
+}
+
+/// Pointer to element `idx` (null if out of range), without materializing a reference to the
+/// others.
+fn item_at<T>(vec: &mut Vec<T>, idx: usize) -> *mut T {
+    if idx < vec.len() {
+        // Safety: in bounds.
+        unsafe { vec.as_mut_ptr().add(idx) }
+    } else {
+        ptr::null_mut()
+    }
+}
+
+/// Appends a chunk carrying the 128-bit trace id (high/low halves).
 #[unsafe(no_mangle)]
 pub extern "C" fn ddog_new_chunk(
-    builder: &mut TracerPayloadV1Builder,
+    builder: &mut TracerPayloadBytes,
     trace_id_high: u64,
     trace_id_low: u64,
-) -> *mut ChunkNode {
-    builder.push_chunk(trace_id_high, trace_id_low)
+) -> *mut TraceChunkBytes {
+    let chunk = TraceChunkBytes {
+        trace_id: trace_id_bytes(trace_id_high, trace_id_low),
+        ..Default::default()
+    };
+    push_item(&mut builder.chunks, chunk)
 }
 
 /// Number of spans already in `chunk`.
 ///
 /// # Safety
-/// `chunk` must be a live chunk node pointer from [`ddog_new_chunk`] (applies to every chunk fn).
+/// `chunk` must be a live pointer from [`ddog_new_chunk`] (applies to every chunk fn).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_chunk_span_count(chunk: *mut ChunkNode) -> usize {
+pub unsafe extern "C" fn ddog_chunk_span_count(chunk: *mut TraceChunkBytes) -> usize {
     unsafe { (*chunk).spans.len() }
 }
 
-/// Appends an empty span to `chunk`, returning its node pointer.
+/// Appends an empty span to `chunk`.
 ///
 /// # Safety
 /// See [`ddog_chunk_span_count`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_new_span(chunk: *mut ChunkNode) -> *mut SpanNode {
-    unsafe { (*chunk).push_span() }
+pub unsafe extern "C" fn ddog_new_span(chunk: *mut TraceChunkBytes) -> *mut SpanBytes {
+    unsafe { push_item(&mut (*chunk).spans, SpanBytes::default()) }
 }
 
-/// Appends an empty link to `span`, returning its node pointer.
+/// Appends an empty link to `span`.
 ///
 /// # Safety
-/// `span` must be a live span node pointer from [`ddog_new_span`] (applies to every span fn).
+/// `span` must be a live pointer from [`ddog_new_span`] or [`ddog_v1_get_span`] (applies to every
+/// span fn).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_new_link(span: *mut SpanNode) -> *mut SpanLinkBytes {
-    unsafe { (*span).push_link() }
+pub unsafe extern "C" fn ddog_new_link(span: *mut SpanBytes) -> *mut SpanLinkBytes {
+    let links = unsafe { &mut (*span).span_links };
+    links.push(SpanLinkBytes::default());
+    links.last_mut().map_or(ptr::null_mut(), ptr::from_mut)
 }
 
-/// Appends an empty event to `span`, returning its node pointer.
+/// Appends an empty event to `span`.
 ///
 /// # Safety
 /// See [`ddog_new_link`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_new_event(span: *mut SpanNode) -> *mut SpanEventBytes {
-    unsafe { (*span).push_event() }
+pub unsafe extern "C" fn ddog_new_event(span: *mut SpanBytes) -> *mut SpanEventBytes {
+    let events = unsafe { &mut (*span).span_events };
+    events.push(SpanEventBytes::default());
+    events.last_mut().map_or(ptr::null_mut(), ptr::from_mut)
 }
 
 // ------------------- Span fields -------------------
@@ -403,36 +220,36 @@ pub unsafe extern "C" fn ddog_new_event(span: *mut SpanNode) -> *mut SpanEventBy
 /// # Safety
 /// See [`ddog_new_link`] (applies to every `ddog_span_set_*` / `ddog_set_span_*`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_set_id(span: *mut SpanNode, value: u64) {
-    unsafe { (*span).span.span_id = value };
+pub unsafe extern "C" fn ddog_span_set_id(span: *mut SpanBytes, value: u64) {
+    unsafe { (*span).span_id = value };
 }
 
 /// # Safety
 /// See [`ddog_span_set_id`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_set_parent_id(span: *mut SpanNode, value: u64) {
-    unsafe { (*span).span.parent_id = value };
+pub unsafe extern "C" fn ddog_span_set_parent_id(span: *mut SpanBytes, value: u64) {
+    unsafe { (*span).parent_id = value };
 }
 
 /// # Safety
 /// See [`ddog_span_set_id`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_set_start(span: *mut SpanNode, value: i64) {
-    unsafe { (*span).span.start = value };
+pub unsafe extern "C" fn ddog_span_set_start(span: *mut SpanBytes, value: i64) {
+    unsafe { (*span).start = value };
 }
 
 /// # Safety
 /// See [`ddog_span_set_id`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_set_duration(span: *mut SpanNode, value: i64) {
-    unsafe { (*span).span.duration = value };
+pub unsafe extern "C" fn ddog_span_set_duration(span: *mut SpanBytes, value: i64) {
+    unsafe { (*span).duration = value };
 }
 
 /// # Safety
 /// See [`ddog_span_set_id`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_set_error(span: *mut SpanNode, error: bool) {
-    unsafe { (*span).span.error = error };
+pub unsafe extern "C" fn ddog_span_set_error(span: *mut SpanBytes, error: bool) {
+    unsafe { (*span).error = error };
 }
 
 /// Reads the span error flag (e.g. to mirror it onto an inferred span).
@@ -440,57 +257,57 @@ pub unsafe extern "C" fn ddog_span_set_error(span: *mut SpanNode, error: bool) {
 /// # Safety
 /// See [`ddog_new_link`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_get_error(span: *mut SpanNode) -> bool {
-    unsafe { (*span).span.error }
+pub unsafe extern "C" fn ddog_span_get_error(span: *mut SpanBytes) -> bool {
+    unsafe { (*span).error }
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_service(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.service, value) };
+pub unsafe extern "C" fn ddog_set_span_service(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).service, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_name(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.name, value) };
+pub unsafe extern "C" fn ddog_set_span_name(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).name, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_resource(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.resource, value) };
+pub unsafe extern "C" fn ddog_set_span_resource(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).resource, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_type(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.r#type, value) };
+pub unsafe extern "C" fn ddog_set_span_type(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).r#type, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_env(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.env, value) };
+pub unsafe extern "C" fn ddog_set_span_env(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).env, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_version(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.version, value) };
+pub unsafe extern "C" fn ddog_set_span_version(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).version, value) };
 }
 
 /// # Safety
 /// See [`ddog_span_get_error`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_component(span: *mut SpanNode, value: CharSlice) {
-    unsafe { set_field(&mut (*span).span.component, value) };
+pub unsafe extern "C" fn ddog_set_span_component(span: *mut SpanBytes, value: CharSlice) {
+    unsafe { set_field(&mut (*span).component, value) };
 }
 
 /// Sets the span kind from an OTEL wire value (unset/unknown → Unspecified).
@@ -498,8 +315,8 @@ pub unsafe extern "C" fn ddog_set_span_component(span: *mut SpanNode, value: Cha
 /// # Safety
 /// See [`ddog_new_link`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_kind(span: *mut SpanNode, kind: u32) {
-    unsafe { (*span).span.span_kind = SpanKind::from(kind) };
+pub unsafe extern "C" fn ddog_set_span_kind(span: *mut SpanBytes, kind: u32) {
+    unsafe { (*span).span_kind = SpanKind::from(kind) };
 }
 
 /// Sets the span kind from a v0.4 `span.kind` string. Returns `false` for a non-canonical kind,
@@ -508,9 +325,9 @@ pub unsafe extern "C" fn ddog_set_span_kind(span: *mut SpanNode, kind: u32) {
 /// # Safety
 /// See [`ddog_new_link`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_span_kind_str(span: *mut SpanNode, value: CharSlice) -> bool {
+pub unsafe extern "C" fn ddog_set_span_kind_str(span: *mut SpanBytes, value: CharSlice) -> bool {
     let kind = SpanKind::from_meta(&String::from_utf8_lossy(value.as_bytes()));
-    unsafe { (*span).span.span_kind = kind };
+    unsafe { (*span).span_kind = kind };
     kind != SpanKind::Unspecified
 }
 
@@ -519,29 +336,34 @@ pub unsafe extern "C" fn ddog_set_span_kind_str(span: *mut SpanNode, value: Char
 /// # Safety
 /// See [`ddog_chunk_span_count`] (applies to every `ddog_set_chunk_*`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_chunk_origin(chunk: *mut ChunkNode, origin: CharSlice) {
-    unsafe { set_field(&mut (*chunk).chunk.origin, origin) };
+pub unsafe extern "C" fn ddog_set_chunk_origin(chunk: *mut TraceChunkBytes, origin: CharSlice) {
+    unsafe { set_field(&mut (*chunk).origin, origin) };
 }
 
 /// # Safety
 /// See [`ddog_set_chunk_origin`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_chunk_sampling_priority(chunk: *mut ChunkNode, priority: i32) {
-    unsafe { (*chunk).chunk.priority = Some(priority) };
+pub unsafe extern "C" fn ddog_set_chunk_sampling_priority(
+    chunk: *mut TraceChunkBytes,
+    priority: i32,
+) {
+    unsafe { (*chunk).priority = Some(priority) };
 }
 
 /// # Safety
 /// See [`ddog_set_chunk_origin`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_set_chunk_sampling_mechanism(chunk: *mut ChunkNode, mechanism: u32) {
-    unsafe { (*chunk).chunk.sampling_mechanism = Some(mechanism) };
+pub unsafe extern "C" fn ddog_set_chunk_sampling_mechanism(
+    chunk: *mut TraceChunkBytes,
+    mechanism: u32,
+) {
+    unsafe { (*chunk).sampling_mechanism = Some(mechanism) };
 }
 
 // ------------------- Link / event fields -------------------
 
 /// # Safety
-/// `link` must be a live link node pointer from [`ddog_new_link`] (applies to every
-/// `ddog_link_*`).
+/// `link` must be a live pointer from [`ddog_new_link`] (applies to every `ddog_link_*`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_link_set_trace_id(
     link: *mut SpanLinkBytes,
@@ -573,8 +395,7 @@ pub unsafe extern "C" fn ddog_link_set_tracestate(link: *mut SpanLinkBytes, valu
 }
 
 /// # Safety
-/// `event` must be a live event node pointer from [`ddog_new_event`] (applies to every
-/// `ddog_event_*`).
+/// `event` must be a live pointer from [`ddog_new_event`] (applies to every `ddog_event_*`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_event_set_name(event: *mut SpanEventBytes, value: CharSlice) {
     unsafe { set_field(&mut (*event).name, value) };
@@ -590,9 +411,9 @@ pub unsafe extern "C" fn ddog_event_set_time(event: *mut SpanEventBytes, time_un
 // ------------------- Attributes -------------------
 //
 // Every attribute map is filled through the `ddog_attributes_add_*` family and read through the
-// `ddog_v1_attributes_*` family, on an `Attributes` handle. A node's handle is a raw place
-// projection off the node pointer (no intermediate `&mut`), so it shares the node pointer's tag
-// and stays valid across other calls on the same node (Stacked and Tree Borrows).
+// `ddog_v1_attributes_*` family, on an `Attributes` handle. A model handle is a raw place
+// projection off the chunk/span/link/event pointer (no intermediate `&mut`), so it stays valid
+// across other calls on the same element (Stacked and Tree Borrows).
 
 /// Opaque handle to an attribute map: the payload's, a chunk's, span's, link's or event's
 /// (`ddog_*_get_attributes`), or an owned nested map's ([`ddog_attr_map_get_attributes`]).
@@ -627,7 +448,7 @@ unsafe fn attrs_ref<'a>(attrs: *const Attributes) -> &'a AttrVecMap {
 /// `builder` must be a live builder from [`ddog_v1_new_builder`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_payload_get_attributes(
-    builder: *mut TracerPayloadV1Builder,
+    builder: *mut TracerPayloadBytes,
 ) -> *mut Attributes {
     attributes_handle(unsafe { &raw mut (*builder).attributes })
 }
@@ -635,15 +456,15 @@ pub unsafe extern "C" fn ddog_payload_get_attributes(
 /// # Safety
 /// See [`ddog_chunk_span_count`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_chunk_get_attributes(chunk: *mut ChunkNode) -> *mut Attributes {
-    attributes_handle(unsafe { &raw mut (*chunk).chunk.attributes })
+pub unsafe extern "C" fn ddog_chunk_get_attributes(chunk: *mut TraceChunkBytes) -> *mut Attributes {
+    attributes_handle(unsafe { &raw mut (*chunk).attributes })
 }
 
 /// # Safety
 /// See [`ddog_new_link`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_span_get_attributes(span: *mut SpanNode) -> *mut Attributes {
-    attributes_handle(unsafe { &raw mut (*span).span.attributes })
+pub unsafe extern "C" fn ddog_span_get_attributes(span: *mut SpanBytes) -> *mut Attributes {
+    attributes_handle(unsafe { &raw mut (*span).attributes })
 }
 
 /// # Safety
@@ -761,24 +582,24 @@ pub unsafe extern "C" fn ddog_attributes_add_map(
 /// removes it from the source when `delete_source` is set. Type-preserving.
 ///
 /// # Safety
-/// `from_span`/`to_span` must be live, distinct span node pointers from [`ddog_new_span`]; `key`
-/// a static NUL-terminated string.
+/// `from_span`/`to_span` must be live, distinct span pointers; `key` a static NUL-terminated
+/// string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_transfer_span_attr(
-    from_span: *mut SpanNode,
-    to_span: *mut SpanNode,
+    from_span: *mut SpanBytes,
+    to_span: *mut SpanBytes,
     key: *const c_char,
     delete_source: bool,
 ) -> bool {
     let key = unsafe { bytes_string_from_literal(key) };
-    // The two spans are distinct allocations, so the read-clone and the writes don't alias.
-    let value = match unsafe { (*from_span).span.attributes.get(&key) } {
+    // The two spans are distinct elements, so the read-clone and the writes don't alias.
+    let value = match unsafe { (*from_span).attributes.get(&key) } {
         Some(v) => clone_attr(v),
         None => return false,
     };
-    unsafe { (*to_span).span.attributes.insert(key.clone(), value) };
+    unsafe { (*to_span).attributes.insert(key.clone(), value) };
     if delete_source {
-        unsafe { (*from_span).span.attributes.remove_slow(&key) };
+        unsafe { (*from_span).attributes.remove_slow(&key) };
     }
     true
 }
@@ -882,150 +703,174 @@ pub unsafe extern "C" fn ddog_attr_list_push_map(list: *mut AttrList, child: *mu
 
 // ------------------- Read-back -------------------
 //
-// Getters take the node pointers directly; children come as the parent's node-pointer array, so a
-// reader walks the tree without re-resolving any index. Returned slices borrow the builder and are
-// valid until it is next mutated or freed.
-
-/// The builder's chunk node pointers; `len` receives their count.
-#[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunks(
-    builder: &TracerPayloadV1Builder,
-    len: &mut usize,
-) -> *const *mut ChunkNode {
-    *len = builder.chunks.len();
-    builder.chunks.as_ptr()
-}
+// Children are fetched by index; returned values borrow the builder and are valid until the next
+// push into the same parent, or until it is freed.
 
 /// Number of chunks in the builder.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_count(builder: &TracerPayloadV1Builder) -> usize {
+pub extern "C" fn ddog_v1_get_chunk_count(builder: &TracerPayloadBytes) -> usize {
     builder.chunks.len()
 }
 
-/// The chunk's span node pointers; `len` receives their count.
+/// Chunk `idx` (null if out of range).
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_spans(chunk: &ChunkNode, len: &mut usize) -> *const *mut SpanNode {
-    *len = chunk.spans.len();
-    chunk.spans.as_ptr()
+pub extern "C" fn ddog_v1_get_chunk(
+    builder: &mut TracerPayloadBytes,
+    idx: usize,
+) -> *mut TraceChunkBytes {
+    item_at(&mut builder.chunks, idx)
+}
+
+/// Span `idx` of `chunk` (null if out of range), e.g. to re-fetch a span after a sibling push.
+///
+/// # Safety
+/// See [`ddog_chunk_span_count`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_v1_get_span(
+    chunk: *mut TraceChunkBytes,
+    idx: usize,
+) -> *mut SpanBytes {
+    unsafe { item_at(&mut (*chunk).spans, idx) }
 }
 
 /// The chunk's local-root span, as the v0.4 wire picks it (`local_root_idx`), or null if empty.
 /// Chunk-level trace tags (trace_id_high, sampling priority/mechanism, origin) belong on it only.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_root_span(chunk: &ChunkNode) -> *mut SpanNode {
-    // Safety: the span pointers are live allocations owned by the chunk.
-    let root = local_root_idx(chunk.spans.iter().map(|&s| unsafe { &(*s).span }));
-    chunk.spans.get(root).copied().unwrap_or(ptr::null_mut())
-}
-
-/// The span's link node pointers; `len` receives their count.
-#[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_links(span: &SpanNode, len: &mut usize) -> *const *mut SpanLinkBytes {
-    *len = span.links.len();
-    span.links.as_ptr()
-}
-
-/// The span's event node pointers; `len` receives their count.
-#[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_events(
-    span: &SpanNode,
-    len: &mut usize,
-) -> *const *mut SpanEventBytes {
-    *len = span.events.len();
-    span.events.as_ptr()
+pub extern "C" fn ddog_v1_get_chunk_root_span(chunk: &TraceChunkBytes) -> *const SpanBytes {
+    let root = local_root_idx(chunk.spans.iter());
+    chunk.spans.get(root).map_or(ptr::null(), ptr::from_ref)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_trace_id_high(chunk: &ChunkNode) -> u64 {
-    trace_id_high(&chunk.chunk.trace_id)
+pub extern "C" fn ddog_v1_get_link_count(span: &SpanBytes) -> usize {
+    span.span_links.len()
+}
+
+/// Link `idx` of `span` (null if out of range).
+///
+/// # Safety
+/// See [`ddog_new_link`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_v1_get_link(span: *mut SpanBytes, idx: usize) -> *mut SpanLinkBytes {
+    let items = unsafe { &mut (*span).span_links };
+    items.get_mut(idx).map_or(ptr::null_mut(), ptr::from_mut)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_trace_id_low(chunk: &ChunkNode) -> u64 {
-    trace_id_low(&chunk.chunk.trace_id)
+pub extern "C" fn ddog_v1_get_event_count(span: &SpanBytes) -> usize {
+    span.span_events.len()
+}
+
+/// Event `idx` of `span` (null if out of range).
+///
+/// # Safety
+/// See [`ddog_new_link`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_v1_get_event(
+    span: *mut SpanBytes,
+    idx: usize,
+) -> *mut SpanEventBytes {
+    let items = unsafe { &mut (*span).span_events };
+    items.get_mut(idx).map_or(ptr::null_mut(), ptr::from_mut)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_v1_get_chunk_trace_id_high(chunk: &TraceChunkBytes) -> u64 {
+    trace_id_high(&chunk.trace_id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ddog_v1_get_chunk_trace_id_low(chunk: &TraceChunkBytes) -> u64 {
+    trace_id_low(&chunk.trace_id)
 }
 
 /// Reads the chunk sampling priority; returns `false` (and leaves `out` untouched) when unset.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_sampling_priority(chunk: &ChunkNode, out: &mut i32) -> bool {
-    chunk.chunk.priority.map(|p| *out = p).is_some()
+pub extern "C" fn ddog_v1_get_chunk_sampling_priority(
+    chunk: &TraceChunkBytes,
+    out: &mut i32,
+) -> bool {
+    chunk.priority.map(|p| *out = p).is_some()
 }
 
 /// Reads the chunk sampling mechanism; returns `false` (and leaves `out` untouched) when unset.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_sampling_mechanism(chunk: &ChunkNode, out: &mut u32) -> bool {
-    chunk.chunk.sampling_mechanism.map(|m| *out = m).is_some()
+pub extern "C" fn ddog_v1_get_chunk_sampling_mechanism(
+    chunk: &TraceChunkBytes,
+    out: &mut u32,
+) -> bool {
+    chunk.sampling_mechanism.map(|m| *out = m).is_some()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_chunk_origin(chunk: &ChunkNode) -> CharSlice<'_> {
-    char_slice_of(&chunk.chunk.origin)
+pub extern "C" fn ddog_v1_get_chunk_origin(chunk: &TraceChunkBytes) -> CharSlice<'_> {
+    char_slice_of(&chunk.origin)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_service(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.service)
+pub extern "C" fn ddog_v1_get_span_service(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.service)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_name(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.name)
+pub extern "C" fn ddog_v1_get_span_name(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.name)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_resource(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.resource)
+pub extern "C" fn ddog_v1_get_span_resource(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.resource)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_type(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.r#type)
+pub extern "C" fn ddog_v1_get_span_type(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.r#type)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_env(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.env)
+pub extern "C" fn ddog_v1_get_span_env(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.env)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_version(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.version)
+pub extern "C" fn ddog_v1_get_span_version(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.version)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_component(span: &SpanNode) -> CharSlice<'_> {
-    char_slice_of(&span.span.component)
+pub extern "C" fn ddog_v1_get_span_component(span: &SpanBytes) -> CharSlice<'_> {
+    char_slice_of(&span.component)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_id(span: &SpanNode) -> u64 {
-    span.span.span_id
+pub extern "C" fn ddog_v1_get_span_id(span: &SpanBytes) -> u64 {
+    span.span_id
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_parent_id(span: &SpanNode) -> u64 {
-    span.span.parent_id
+pub extern "C" fn ddog_v1_get_span_parent_id(span: &SpanBytes) -> u64 {
+    span.parent_id
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_start(span: &SpanNode) -> i64 {
-    span.span.start
+pub extern "C" fn ddog_v1_get_span_start(span: &SpanBytes) -> i64 {
+    span.start
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_duration(span: &SpanNode) -> i64 {
-    span.span.duration
+pub extern "C" fn ddog_v1_get_span_duration(span: &SpanBytes) -> i64 {
+    span.duration
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_error(span: &SpanNode) -> bool {
-    span.span.error
+pub extern "C" fn ddog_v1_get_span_error(span: &SpanBytes) -> bool {
+    span.error
 }
 
 /// The span kind as its OTEL wire value.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_v1_get_span_kind(span: &SpanNode) -> u32 {
-    span.span.span_kind as u32
+pub extern "C" fn ddog_v1_get_span_kind(span: &SpanBytes) -> u32 {
+    span.span_kind as u32
 }
 
 #[unsafe(no_mangle)]
@@ -1309,19 +1154,10 @@ fn render_attr_value(value: &AttributeValueBytes) -> String {
     }
 }
 
-/// Renders a V1 span (plus its chunk's trace id) as a readable diagnostic string. Link/event counts
-/// are passed explicitly because, mid-build, they live on the [`SpanNode`], not the span's own
-/// (still-empty) inline vectors.
-fn render_span_debug(
-    span: &SpanBytes,
-    chunk: Option<&TraceChunkBytes>,
-    links: usize,
-    events: usize,
-) -> String {
+/// Renders a V1 span (plus its chunk's trace id) as a readable diagnostic string.
+fn render_span_debug(span: &SpanBytes, chunk: &TraceChunkBytes) -> String {
     let mut out = String::new();
-    if let Some(c) = chunk {
-        let _ = write!(out, "trace_id={} ", hex16(&c.trace_id));
-    }
+    let _ = write!(out, "trace_id={} ", hex16(&chunk.trace_id));
     let _ = write!(
         out,
         "service={:?} name={:?} resource={:?} type={:?} span_id={} parent_id={} \
@@ -1349,33 +1185,20 @@ fn render_span_debug(
         out,
         " attributes={{{}}} links={} events={}",
         attrs.join(", "),
-        links,
-        events,
+        span.span_links.len(),
+        span.span_events.len(),
     );
     out
 }
 
-/// Renders a span for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line. Takes the owning
-/// chunk/span node pointers (the outer frame's still-live handles), so it works mid-build before
-/// the nodes are folded into the inline payload. The returned owned slice must be freed with
-/// [`ddog_free_charslice`].
-///
-/// # Safety
-/// `chunk`/`span` must be live node pointers previously returned by
-/// `ddog_new_chunk`/`ddog_new_span` (with `span` a span of `chunk`).
+/// Renders a span for dd-trace-php's `DD_TRACE_DEBUG` "Encoding span" line. The returned owned
+/// slice must be freed with [`ddog_free_charslice`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ddog_v1_span_debug_log(
-    chunk: *mut ChunkNode,
-    span: *mut SpanNode,
+pub extern "C" fn ddog_v1_span_debug_log(
+    chunk: &TraceChunkBytes,
+    span: &SpanBytes,
 ) -> CharSlice<'static> {
-    // Safety: per the fn contract, both are live node pointers.
-    let (chunk_node, span_node) = unsafe { (&*chunk, &*span) };
-    let debug_str = render_span_debug(
-        span_node.span(),
-        Some(&chunk_node.chunk),
-        span_node.links.len(),
-        span_node.events.len(),
-    );
+    let debug_str = render_span_debug(span, chunk);
     // An empty (or NUL-containing, hence unrepresentable) render owns no allocation: return a
     // borrowed empty slice so a zero length always means "nothing to free" in
     // `ddog_free_charslice`.

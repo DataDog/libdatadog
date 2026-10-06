@@ -39,6 +39,7 @@ use rmp::encode::{
     RmpWrite, ValueWriteError, write_bin, write_f64, write_i64, write_map_len, write_sint,
     write_str, write_u64,
 };
+use serde::ser::{Serialize, SerializeStruct, Serializer};
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -490,7 +491,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
 }
 
 /// Writes the native v0.4 `span_links` field. v0.4 link attributes are `String → String`, so
-/// scalars stringify and nested values carry their `json_encode` string.
+/// scalars stringify and nested values carry their JSON string.
 fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
@@ -526,7 +527,7 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
                     AttributeValue::Bool(b) => {
                         write_str(writer, if *b { "true" } else { "false" })?
                     }
-                    _ => write_str(writer, &attr_to_php_json(v))?,
+                    _ => write_str(writer, &to_json(&JsonAttr(v)))?,
                 }
             }
         }
@@ -542,201 +543,61 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Serializes native v1 span events to the LEGACY v0.4 `events` meta value: a
-/// `json_encode`-byte-identical JSON array of `{name, time_unix_nano, attributes?}` objects,
-/// exactly as master's `DDTrace\SpanEvent::jsonSerialize` produced. On the v0.4 downgrade (agent
-/// speaks only v0.4) old agents understand this legacy meta tag; the native top-level `span_events`
-/// field is not emitted.
-///
-/// Format (matching master + master's `dd_trace_span_event.phpt`, byte-for-byte):
-/// * `name` — the event name (json string).
-/// * `time_unix_nano` — the timestamp as an unquoted JSON number.
-/// * `attributes` — emitted only when non-empty. Unlike links (which are `String → String`), event
-///   attributes keep their NATIVE JSON types: `Int`/`Float` → numbers, `Bool` → `true`/`false`,
-///   nested `List`/`KeyValue` → real JSON arrays/objects (recursively typed) — the exact
-///   `json_encode` of the PHP attributes array. Values are produced by [`attr_to_php_json`].
+/// Serializes native v1 span events to the legacy v0.4 `events` meta value: a JSON array of
+/// `{name, time_unix_nano, attributes?}` objects, attribute values keeping their JSON types. Old
+/// agents understand this meta tag; the native top-level `span_events` field is not emitted.
 fn span_events_to_legacy_json<T: TraceData>(span_events: &[SpanEvent<T>]) -> String {
-    let mut out = String::from("[");
-    for (i, event) in span_events.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":");
-        json_escape_str(&mut out, event.name.borrow());
-        out.push_str(",\"time_unix_nano\":");
-        let _ = write!(out, "{}", event.time_unix_nano);
-
-        // Iterate attributes in their original (PHP insertion) order — `events` is a literal JSON
-        // string, so order must match master byte-for-byte. Event attributes come from a PHP array
-        // (unique keys), so no dedup is needed. All types are kept (json_encode types faithfully).
-        if !event.attributes.is_empty() {
-            out.push_str(",\"attributes\":{");
-            for (j, (k, v)) in event.attributes.iter().enumerate() {
-                if j > 0 {
-                    out.push(',');
-                }
-                json_escape_str(&mut out, k.borrow());
-                out.push(':');
-                write_attr_json(&mut out, v);
-            }
-            out.push('}');
-        }
-
-        out.push('}');
-    }
-    out.push(']');
-    out
+    to_json(&span_events.iter().map(JsonEvent).collect::<Vec<_>>())
 }
 
-/// Serializes a non-scalar link/event `AttributeValue` (`List`/`KeyValue`/`Bytes`) into a JSON
-/// string byte-identical to PHP's `json_encode($value)` with default flags — the exact bytes the
-/// tracer's C serializer produced for these attributes before native nested attributes existed.
-///
-/// v0.4 link/event attributes have no nested representation, so the pre-native wire always carried
-/// the `json_encode` string; reproducing it here keeps that wire unchanged for old agents. Floats
-/// follow PHP's `serialize_precision=-1` format (see [`write_php_json_float`]). `Bytes` cannot
-/// originate from a PHP value and is encoded defensively as a (lossy-UTF-8) JSON string.
-fn attr_to_php_json<T: TraceData>(v: &AttributeValue<T>) -> String {
-    let mut out = String::new();
-    write_attr_json(&mut out, v);
-    out
+fn to_json<V: Serialize>(value: &V) -> String {
+    // Serializing these types to a String can't fail: map keys are strings.
+    serde_json::to_string(value).unwrap_or_default()
 }
 
-fn write_attr_json<T: TraceData>(out: &mut String, v: &AttributeValue<T>) {
-    match v {
-        AttributeValue::String(s) => json_escape_str(out, s.borrow()),
-        AttributeValue::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        AttributeValue::Int(i) => {
-            let _ = write!(out, "{i}");
+/// Serializes a span event for the legacy `events` meta.
+struct JsonEvent<'a, T: TraceData>(&'a SpanEvent<T>);
+
+impl<T: TraceData> Serialize for JsonEvent<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let event = self.0;
+        let has_attrs = !event.attributes.is_empty();
+        let mut st = serializer.serialize_struct("SpanEvent", 2 + has_attrs as usize)?;
+        st.serialize_field("name", event.name.borrow())?;
+        st.serialize_field("time_unix_nano", &event.time_unix_nano)?;
+        if has_attrs {
+            st.serialize_field("attributes", &JsonAttrs(&event.attributes))?;
         }
-        AttributeValue::Float(f) => write_php_json_float(out, *f),
-        AttributeValue::Bytes(b) => json_escape_str(out, &String::from_utf8_lossy(b.borrow())),
-        AttributeValue::List(items) => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_attr_json(out, item);
-            }
-            out.push(']');
-        }
-        AttributeValue::KeyValue(map) => {
-            out.push('{');
-            for (i, (k, val)) in map.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                json_escape_str(out, k.borrow());
-                out.push(':');
-                write_attr_json(out, val);
-            }
-            out.push('}');
-        }
+        st.end()
     }
 }
 
-/// Appends `f` exactly as PHP's `json_encode` prints it (`zend_gcvt` mode 0): shortest round-trip
-/// digits, in exponent form (`1.0e+20`, `1.0e-5`) when the decimal point position is > 17 or < -3.
-fn write_php_json_float(out: &mut String, f: f64) {
-    if !f.is_finite() {
-        // json_encode rejects Inf/NaN; 0 is what it substitutes with JSON_PARTIAL_OUTPUT_ON_ERROR.
-        out.push('0');
-        return;
-    }
-    if f.is_sign_negative() {
-        out.push('-');
-    }
-    let (digits, exp) = php_shortest_digits(f.abs());
-    let decpt = exp + 1; // zend_dtoa convention: value = 0.DIGITS * 10^decpt
-    if !(-3..=17).contains(&decpt) {
-        out.push_str(&digits[..1]);
-        out.push('.');
-        out.push_str(if digits.len() > 1 { &digits[1..] } else { "0" });
-        let sign = if exp < 0 { '-' } else { '+' };
-        let _ = write!(out, "e{sign}{}", exp.unsigned_abs());
-    } else if decpt <= 0 {
-        out.push_str("0.");
-        out.push_str(&"0".repeat(decpt.unsigned_abs() as usize));
-        out.push_str(&digits);
-    } else {
-        let int_len = decpt as usize;
-        if digits.len() <= int_len {
-            out.push_str(&digits);
-            out.push_str(&"0".repeat(int_len - digits.len()));
-        } else {
-            out.push_str(&digits[..int_len]);
-            out.push('.');
-            out.push_str(&digits[int_len..]);
-        }
+/// Serializes an attribute map as a JSON object, in insertion order.
+struct JsonAttrs<'a, T: TraceData>(&'a VecMap<T::Text, AttributeValue<T>>);
+
+impl<T: TraceData> Serialize for JsonAttrs<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(k, v)| (k.borrow(), JsonAttr(v))))
     }
 }
 
-/// Shortest round-trip significant digits and scientific exponent of a finite `f >= 0`. Rust rounds
-/// exact halfway ties up where zend_dtoa rounds them to even (e.g. 110767565253548.125 -> ...12).
-fn php_shortest_digits(f: f64) -> (String, i32) {
-    let split = |s: &str| -> (String, i32) {
-        let (m, e) = s.split_once('e').unwrap_or((s, "0"));
-        (m.replace('.', ""), e.parse().unwrap_or(0))
-    };
-    let (digits, exp) = split(&format!("{f:e}"));
-    let last = digits.as_bytes()[digits.len() - 1] - b'0';
-    if last % 2 == 1 {
-        let head = &digits[..digits.len() - 1];
-        for alt in [last - 1, last + 1].into_iter().filter(|&d| d <= 9) {
-            let cand = format!("{head}{alt}");
-            if format!("{}.{}e{exp}", &cand[..1], &cand[1..]).parse::<f64>() != Ok(f) {
-                continue;
-            }
-            // A tie iff f's exact decimal expansion (<= 767 digits) is "<lower candidate>5000...".
-            let (exact, exact_exp) = split(&format!("{f:.800e}"));
-            let lower = if alt < last { &cand } else { &digits };
-            if exact_exp == exp {
-                if let Some(rest) = exact.strip_prefix(lower.as_str()) {
-                    if rest.starts_with('5') && rest[1..].bytes().all(|b| b == b'0') {
-                        return (cand, exp);
-                    }
-                }
-            }
-        }
-    }
-    (digits, exp)
-}
+/// Serializes an attribute value with its JSON type; `Bytes` become a (lossy UTF-8) string.
+struct JsonAttr<'a, T: TraceData>(&'a AttributeValue<T>);
 
-/// Appends `s` as a JSON string literal (surrounding quotes included), escaped exactly like PHP's
-/// `json_encode` with default flags: `"`, `\`, `/`, the `\b \f \n \r \t` shorthands, other control
-/// chars and every non-ASCII code point as a lowercase `\uXXXX` escape (UTF-16, surrogate pairs
-/// above U+FFFF). The result is therefore pure ASCII.
-fn json_escape_str(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '/' => out.push_str("\\/"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
+impl<T: TraceData> Serialize for JsonAttr<'_, T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            AttributeValue::String(s) => serializer.serialize_str(s.borrow()),
+            AttributeValue::Bool(b) => serializer.serialize_bool(*b),
+            AttributeValue::Int(i) => serializer.serialize_i64(*i),
+            AttributeValue::Float(f) => serializer.serialize_f64(*f),
+            AttributeValue::Bytes(b) => {
+                serializer.serialize_str(&String::from_utf8_lossy(b.borrow()))
             }
-            c if c.is_ascii() => out.push(c),
-            c => {
-                let cp = c as u32;
-                if cp <= 0xFFFF {
-                    let _ = write!(out, "\\u{cp:04x}");
-                } else {
-                    let v = cp - 0x10000;
-                    let hi = 0xD800 + (v >> 10);
-                    let lo = 0xDC00 + (v & 0x3FF);
-                    let _ = write!(out, "\\u{hi:04x}\\u{lo:04x}");
-                }
-            }
+            AttributeValue::List(items) => serializer.collect_seq(items.iter().map(JsonAttr)),
+            AttributeValue::KeyValue(map) => JsonAttrs(map).serialize(serializer),
         }
     }
-    out.push('"');
 }
 
 #[cfg(test)]
@@ -745,7 +606,6 @@ mod tests {
     //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
-    use super::attr_to_php_json;
     use crate::span::v1::{
         AttributeValue, AttributeValueBytes, SpanBytes, SpanEventBytes, SpanKind, SpanLinkBytes,
         TraceChunkBytes, TracerPayloadBytes,
@@ -788,6 +648,11 @@ mod tests {
 
     /// Looks up `key` in a msgpack `Value::Map`. Returns `None` when absent so callers can
     /// distinguish "field missing" from "field empty".
+    /// Parses the JSON string stored under `key` (key order is not compared).
+    fn json_meta(map: &Value, key: &str) -> serde_json::Value {
+        serde_json::from_str(map_get(map, key).unwrap().as_str().unwrap()).unwrap()
+    }
+
     fn map_get<'a>(map: &'a Value, key: &str) -> Option<&'a Value> {
         let entries = match map {
             Value::Map(m) => m,
@@ -1621,7 +1486,7 @@ mod tests {
                 ..Default::default()
             }
         };
-        // Deduped like `into_payload` output: an undeduped map iterates in HashMap order.
+        // Deduped like the send path's payload: an undeduped map iterates in HashMap order.
         let mut payload = TracerPayloadBytes {
             attributes: payload_attrs,
             chunks: vec![chunk(1), chunk(10)],
@@ -1901,120 +1766,23 @@ mod tests {
         let traces = encode_and_decode(&payload);
         let span = &traces[0][0];
         // No native span_events field on the v0.4 downgrade — events go to the legacy `events`
-        // meta, json_encode-byte-identical to master (native attribute types preserved:
-        // bool/int/float stay JSON bool/number, NOT the native `{"type":..}` shape).
+        // meta as JSON (native attribute types preserved: bool/int/float stay JSON bool/number,
+        // NOT the native `{"type":..}` shape).
         assert!(map_get(span, "span_events").is_none());
         let meta = map_get(span, "meta").expect("meta present");
-        let expected = "[{\"name\":\"oops\",\"time_unix_nano\":1700000000000000000,\
-\"attributes\":{\"kind\":\"exception\",\"escaped\":true,\"count\":3,\"ratio\":0.75}}]";
-        assert_eq!(map_get(meta, "events").unwrap().as_str(), Some(expected));
-    }
-
-    /// Locks `attr_to_php_json` to PHP `json_encode($v)` (default flags): slash + non-ASCII
-    /// escaping, whole-number floats without a trailing `.0`, list vs object, nested structures.
-    /// The right-hand strings are the literal bytes captured from `php -r 'echo json_encode(...)'`.
-    #[test]
-    fn attr_to_php_json_matches_php_json_encode() {
-        let list = |v: Vec<AttributeValueBytes>| AttributeValue::List(v);
-        let s = |x: &str| AttributeValue::String(bs(x));
-        let mut ab: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-        ab.insert(bs("a"), AttributeValue::Int(1));
-        ab.insert(
-            bs("b"),
-            list(vec![AttributeValue::Int(2), AttributeValue::Int(3)]),
-        );
-
         assert_eq!(
-            attr_to_php_json(&list(vec![AttributeValue::Int(3), AttributeValue::Int(4)])),
-            "[3,4]"
+            json_meta(meta, "events"),
+            serde_json::json!([{
+                "name": "oops",
+                "time_unix_nano": 1_700_000_000_000_000_000u64,
+                "attributes": {"kind": "exception", "escaped": true, "count": 3, "ratio": 0.75},
+            }])
         );
-        assert_eq!(
-            attr_to_php_json(&list(vec![s("5"), s("6")])),
-            r#"["5","6"]"#
-        );
-        assert_eq!(
-            attr_to_php_json(&AttributeValue::KeyValue(ab)),
-            r#"{"a":1,"b":[2,3]}"#
-        );
-        // Whole-number floats drop the fractional part; decimal-range floats round-trip shortest.
-        assert_eq!(
-            attr_to_php_json(&list(vec![AttributeValue::Float(1.0)])),
-            "[1]"
-        );
-        assert_eq!(
-            attr_to_php_json(&list(vec![AttributeValue::Float(0.75)])),
-            "[0.75]"
-        );
-        assert_eq!(
-            attr_to_php_json(&list(vec![AttributeValue::Float(1.5)])),
-            "[1.5]"
-        );
-        // String escaping: forward slash, quote/backslash, control shorthands, non-ASCII, astral.
-        assert_eq!(attr_to_php_json(&list(vec![s("a/b")])), r#"["a\/b"]"#);
-        assert_eq!(attr_to_php_json(&list(vec![s("q\"\\")])), r#"["q\"\\"]"#);
-        assert_eq!(attr_to_php_json(&list(vec![s("t\tn\n")])), r#"["t\tn\n"]"#);
-        // Build expected `\uXXXX` escapes via an explicit backslash so no literal `\u` bigram
-        // appears in this source (non-ASCII escapes are what json_encode's default flags emit).
-        let bslash = '\\';
-        assert_eq!(
-            attr_to_php_json(&list(vec![s("é")])),
-            format!("[\"{bslash}u00e9\"]")
-        );
-        assert_eq!(
-            attr_to_php_json(&list(vec![s("😀")])),
-            format!("[\"{bslash}ud83d{bslash}ude00\"]")
-        );
-        assert_eq!(
-            attr_to_php_json(&list(vec![AttributeValue::Bool(true)])),
-            "[true]"
-        );
-    }
-
-    /// Locks float formatting to PHP `json_encode($f)` (serialize_precision=-1). The right-hand
-    /// strings are the literal output of `php -r 'echo json_encode($f);'` (PHP 8.3).
-    #[test]
-    fn attr_to_php_json_floats_match_php_json_encode() {
-        let cases: &[(f64, &str)] = &[
-            (1e20, "1.0e+20"),
-            (-1e20, "-1.0e+20"),
-            (1e-5, "1.0e-5"),
-            (9.99e-5, "9.99e-5"),
-            (1e-4, "0.0001"),
-            (0.1, "0.1"),
-            (0.05, "0.05"),
-            (1.5, "1.5"),
-            (1e15, "1000000000000000"),
-            (1e16, "10000000000000000"),
-            (1e17, "1.0e+17"),
-            (123456789012345678.0, "1.2345678901234568e+17"),
-            (12345678901234567.0, "12345678901234568"),
-            (1.0 / 3.0, "0.3333333333333333"),
-            (-2.5e-7, "-2.5e-7"),
-            (1e100, "1.0e+100"),
-            (f64::MAX, "1.7976931348623157e+308"),
-            (5e-324, "5.0e-324"),
-            (0.0, "0"),
-            (-0.0, "-0"),
-            (1.0, "1"),
-            (3.0, "3"),
-            (100.0, "100"),
-            // 110767565253548.125 exactly, a halfway tie: zend_dtoa rounds to even, Rust up.
-            (f64::from_bits(0x42d9_2f85_584a_eb08), "110767565253548.12"),
-        ];
-        for &(f, want) in cases {
-            assert_eq!(
-                attr_to_php_json(&AttributeValueBytes::Float(f)),
-                want,
-                "{f:e}"
-            );
-        }
-        // Inf/NaN have no JSON form; json_encode's partial-output substitute is 0.
-        assert_eq!(attr_to_php_json(&AttributeValueBytes::Float(f64::NAN)), "0");
     }
 
     #[test]
     fn span_link_nested_attr_downgrades_to_json_string() {
-        // v0.4 link attributes are strings: a native nested value carries its json_encode string.
+        // v0.4 link attributes are strings: a native nested value carries its JSON string.
         let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         link_attrs.insert(bs("plain"), AttributeValue::String(bs("v")));
         link_attrs.insert(
@@ -2042,15 +1810,14 @@ mod tests {
         let traces = encode_and_decode(&payload);
         let attrs = map_get(native_link(&traces[0][0], 0), "attributes").unwrap();
         assert_eq!(map_get(attrs, "plain").unwrap().as_str(), Some("v"));
-        assert_eq!(map_get(attrs, "nums").unwrap().as_str(), Some("[3,4]"));
-        assert_eq!(map_get(attrs, "obj").unwrap().as_str(), Some("{\"a\":1}"));
+        assert_eq!(json_meta(attrs, "nums"), serde_json::json!([3, 4]));
+        assert_eq!(json_meta(attrs, "obj"), serde_json::json!({"a": 1}));
     }
 
     #[test]
     fn span_event_nested_attr_in_legacy_events_meta_keeps_native_json_arrays() {
         // Unlike links (String → String), event attributes keep native JSON types in the legacy
         // `events` meta: a nested list is a real JSON array, not a stringified `string_value`.
-        // Byte target: master's tests/ext/request-replayer/dd_trace_span_event.phpt.
         let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
         event_attrs.insert(bs("arg1"), AttributeValue::String(bs("value1")));
         event_attrs.insert(
@@ -2081,8 +1848,13 @@ mod tests {
         let span = &traces[0][0];
         assert!(map_get(span, "span_events").is_none());
         let meta = map_get(span, "meta").expect("meta present");
-        let expected = "[{\"name\":\"event-name\",\"time_unix_nano\":1720037568765201300,\
-\"attributes\":{\"arg1\":\"value1\",\"int_array\":[3,4],\"string_array\":[\"5\",\"6\"]}}]";
-        assert_eq!(map_get(meta, "events").unwrap().as_str(), Some(expected));
+        assert_eq!(
+            json_meta(meta, "events"),
+            serde_json::json!([{
+                "name": "event-name",
+                "time_unix_nano": 1720037568765201300u64,
+                "attributes": {"arg1": "value1", "int_array": [3, 4], "string_array": ["5", "6"]},
+            }])
+        );
     }
 }

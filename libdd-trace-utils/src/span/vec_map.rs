@@ -8,9 +8,10 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use rustc_hash::FxHashSet;
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -294,7 +295,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
         let keep: Vec<bool> = {
-            let mut seen = HashSet::with_capacity(self.len());
+            let mut seen = FxHashSet::with_capacity_and_hasher(self.len(), Default::default());
             self.data.iter().map(|(k, _)| seen.insert(k)).collect()
         };
 

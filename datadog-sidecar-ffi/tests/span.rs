@@ -7,6 +7,7 @@
 use datadog_sidecar_ffi::span::*;
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
+use libdd_trace_utils::span::v1::{SpanBytes, TraceChunkBytes, TracerPayloadBytes};
 use std::collections::HashMap;
 use std::ffi::CStr;
 
@@ -36,18 +37,14 @@ unsafe fn attrs_by_key(attrs: *const Attributes) -> HashMap<String, *const AttrV
     }
 }
 
-/// Node pointers returned as a C array.
-unsafe fn nodes<T>(ptr: *const *mut T, len: usize) -> Vec<*mut T> {
-    unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
-}
-
-fn spans_of(chunk: *mut ChunkNode) -> Vec<*mut SpanNode> {
-    let mut len = 0;
-    unsafe { nodes(ddog_v1_get_spans(&*chunk, &mut len), len) }
-}
-
 /// A builder with one chunk holding one span, the common fixture.
-fn one_span(trace_id_low: u64) -> (Box<TracerPayloadV1Builder>, *mut ChunkNode, *mut SpanNode) {
+fn one_span(
+    trace_id_low: u64,
+) -> (
+    Box<TracerPayloadBytes>,
+    *mut TraceChunkBytes,
+    *mut SpanBytes,
+) {
     let mut b = ddog_v1_new_builder();
     let chunk = ddog_new_chunk(&mut b, 0, trace_id_low);
     let span = unsafe { ddog_new_span(chunk) };
@@ -71,7 +68,7 @@ fn builds_span_with_promoted_and_typed_attributes() {
         ddog_attributes_add_int(attrs, cs("k_int"), 7);
     }
 
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     let expected_tid = [
         0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
     ];
@@ -139,24 +136,24 @@ fn getters_round_trip_setters() {
         ddog_attributes_add_int(ddog_event_get_attributes(event), cs("e_int"), 5);
     }
 
-    // Tree walk: the node arrays hand back the pointers the creators returned.
-    let mut len = 0;
-    assert_eq!(
-        unsafe { nodes(ddog_v1_get_chunks(&b, &mut len), len) },
-        [chunk]
-    );
+    // Tree walk: the index getters hand back the pointers the creators returned.
     assert_eq!(ddog_v1_get_chunk_count(&b), 1);
-    assert_eq!(spans_of(chunk), [span]);
-    assert_eq!(ddog_v1_get_chunk_root_span(unsafe { &*chunk }), span);
+    assert_eq!(ddog_v1_get_chunk(&mut b, 0), chunk);
+    assert!(ddog_v1_get_chunk(&mut b, 1).is_null());
+    let (link, event) = unsafe {
+        assert_eq!(ddog_chunk_span_count(chunk), 1);
+        assert_eq!(ddog_v1_get_span(chunk, 0), span);
+        assert!(ddog_v1_get_span(chunk, 1).is_null());
+        assert_eq!(ddog_v1_get_chunk_root_span(&*chunk), span.cast_const());
+        assert_eq!(ddog_v1_get_link_count(&*span), 1);
+        assert_eq!(ddog_v1_get_event_count(&*span), 1);
+        assert_eq!(ddog_v1_get_link(span, 0), link);
+        assert_eq!(ddog_v1_get_event(span, 0), event);
+        assert!(ddog_v1_get_link(span, 1).is_null());
+        // Read back through the re-fetched pointers, as a reader walking the tree does.
+        (ddog_v1_get_link(span, 0), ddog_v1_get_event(span, 0))
+    };
     let (s, l, e) = unsafe { (&*span, &*link, &*event) };
-    assert_eq!(
-        unsafe { nodes(ddog_v1_get_links(s, &mut len), len) },
-        [link]
-    );
-    assert_eq!(
-        unsafe { nodes(ddog_v1_get_events(s, &mut len), len) },
-        [event]
-    );
 
     // Chunk and payload.
     let c = unsafe { &*chunk };
@@ -274,7 +271,7 @@ fn nested_attributes_round_trip() {
         assert!(!ddog_v1_value_bool(ddog_v1_value_list_get(nested, 0)));
     }
 
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     for s in [b"root" as &[u8], b"items", b"first", b"flag", b"nums"] {
         assert!(
             contains(&encoded, s),
@@ -298,39 +295,42 @@ fn an_overwritten_key_is_encoded_once_with_the_last_value() {
             "last-value"
         );
     }
-    let payload = b.into_payload();
-    assert_eq!(payload.chunks[0].spans[0].attributes.len(), 1);
-    let encoded = to_vec_from_v1(&payload);
+    let encoded = to_vec_from_v1(&b);
     assert!(contains(&encoded, b"last-value"));
     assert!(!contains(&encoded, b"first-value"));
 }
 
 #[test]
-fn node_pointers_stay_valid_across_sibling_pushes() {
+fn span_refetched_by_index_after_sibling_pushes() {
     let mut b = ddog_v1_new_builder();
     let first_chunk = ddog_new_chunk(&mut b, 0, 1);
-    let first_span = unsafe { ddog_new_span(first_chunk) };
-    let first_link = unsafe { ddog_new_link(first_span) };
-    // Enough siblings to reallocate every parent vector.
+    unsafe {
+        let first_span = ddog_new_span(first_chunk);
+        ddog_span_set_id(first_span, 77);
+        ddog_link_set_span_id(ddog_new_link(first_span), 88);
+    }
+    // Enough siblings to reallocate every parent vector; held pointers are re-fetched by index.
     for i in 0..64 {
         let chunk = ddog_new_chunk(&mut b, 0, i + 2);
         unsafe {
             ddog_new_span(chunk);
+            let first_chunk = ddog_v1_get_chunk(&mut b, 0);
             ddog_new_span(first_chunk);
-            ddog_new_link(first_span);
+            ddog_new_link(ddog_v1_get_span(first_chunk, 0));
         }
     }
-    unsafe {
-        ddog_span_set_id(first_span, 77);
-        ddog_link_set_span_id(first_link, 88);
-    }
     assert_eq!(ddog_v1_get_chunk_count(&b), 65);
-    assert_eq!(spans_of(first_chunk).len(), 65);
-    assert_eq!(ddog_v1_get_span_id(unsafe { &*first_span }), 77);
-    assert_eq!(ddog_v1_get_link_span_id(unsafe { &*first_link }), 88);
-    let payload = b.into_payload();
-    assert_eq!(payload.chunks[0].spans[0].span_id, 77);
-    assert_eq!(payload.chunks[0].spans[0].span_links[0].span_id, 88);
+    let first_chunk = ddog_v1_get_chunk(&mut b, 0);
+    unsafe {
+        assert_eq!(ddog_chunk_span_count(first_chunk), 65);
+        let first_span = ddog_v1_get_span(first_chunk, 0);
+        assert_eq!(ddog_v1_get_span_id(&*first_span), 77);
+        assert_eq!(ddog_v1_get_link_count(&*first_span), 65);
+        assert_eq!(
+            ddog_v1_get_link_span_id(&*ddog_v1_get_link(first_span, 0)),
+            88
+        );
+    }
 }
 
 #[test]
@@ -347,7 +347,7 @@ fn encoder_streams_repeated_string_once() {
             ddog_span_set_id(span, i);
         }
     }
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     let occurrences = encoded
         .windows(b"shared".len())
         .filter(|w| *w == b"shared")
@@ -380,7 +380,7 @@ fn builds_links_and_events() {
         ddog_attributes_add_int(ddog_event_get_attributes(event), cs("ev.attr"), 5);
     }
 
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     for s in [
         b"exception" as &[u8],
         b"dd=s:1",
@@ -408,7 +408,7 @@ fn chunk_level_fields_encoded() {
         ddog_set_span_service(span, cs("svc"));
         ddog_span_set_id(span, 1);
     }
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     assert!(contains(&encoded, b"lambda"));
     // sampling_mechanism = 4 (chunk key 0x07 + fixint 0x04)
     assert!(contains(&encoded, &[0x07, 0x04]));
@@ -422,17 +422,15 @@ fn populate_metadata_sets_container_id_and_fields() {
         ddog_span_set_id(span, 1);
     }
     ddog_set_payload_metadata(&mut b, cs("prod"), cs("4.5.6"), cs("my-host"));
-    let mut payload = b.into_payload();
-
     populate_payload_metadata(
-        &mut payload,
+        &mut b,
         "container-xyz",
         "php",
         "8.3",
         "1.2.3",
         "runtime-uuid",
     );
-    let encoded = to_vec_from_v1(&payload);
+    let encoded = to_vec_from_v1(&b);
     for s in [
         b"container-xyz" as &[u8],
         b"php",
@@ -465,13 +463,17 @@ fn span_kind_str_maps_canonical_kinds_only() {
 #[test]
 fn transfer_span_attr_copies_and_optionally_deletes() {
     let (b, chunk, root) = one_span(1);
-    let inferred = unsafe { ddog_new_span(chunk) };
     let key = |k: &'static CStr| k.as_ptr();
     unsafe {
         let root_attrs = ddog_span_get_attributes(root);
-        let inferred_attrs = ddog_span_get_attributes(inferred);
         ddog_attributes_add_str(root_attrs, cs("error.message"), cs("boom"));
         ddog_attributes_add_double(root_attrs, cs("_dd.agent_psr"), 0.5);
+
+        // The inferred span is a sibling push, so the root (and its handle) is re-fetched after it.
+        let inferred = ddog_new_span(chunk);
+        let root = ddog_v1_get_span(chunk, 0);
+        let root_attrs = ddog_span_get_attributes(root);
+        let inferred_attrs = ddog_span_get_attributes(inferred);
 
         // Copy, keeping the source.
         assert!(ddog_transfer_span_attr(
@@ -507,7 +509,7 @@ fn transfer_span_attr_copies_and_optionally_deletes() {
         assert_eq!(ddog_v1_attributes_len(inferred_attrs), 2);
         assert_eq!(ddog_v1_attributes_len(root_attrs), 1);
     }
-    let encoded = to_vec_from_v1(&b.into_payload());
+    let encoded = to_vec_from_v1(&b);
     for s in [b"error.message" as &[u8], b"boom", b"_dd.agent_psr"] {
         assert!(
             contains(&encoded, s),
@@ -536,7 +538,7 @@ fn span_debug_log_renders_readable_string() {
         ddog_new_event(span);
     }
 
-    let slice = unsafe { ddog_v1_span_debug_log(chunk, span) };
+    let slice = unsafe { ddog_v1_span_debug_log(&*chunk, &*span) };
     let rendered = string(slice);
     for part in [
         "my-service",
@@ -556,52 +558,49 @@ fn span_debug_log_renders_readable_string() {
     unsafe { ddog_free_charslice(slice) };
 }
 
-/// Builds one chunk from `(span_id, parent_id)` pairs and returns its spans.
-fn chunk_with(
-    ids: &[(u64, u64)],
-) -> (
-    Box<TracerPayloadV1Builder>,
-    *mut ChunkNode,
-    Vec<*mut SpanNode>,
-) {
+/// Builds one chunk from `(span_id, parent_id)` pairs.
+fn chunk_with(ids: &[(u64, u64)]) -> (Box<TracerPayloadBytes>, *mut TraceChunkBytes) {
     let mut b = ddog_v1_new_builder();
     let chunk = ddog_new_chunk(&mut b, 0, 1);
-    let spans = ids
-        .iter()
-        .map(|&(id, parent)| unsafe {
+    for &(id, parent) in ids {
+        unsafe {
             let span = ddog_new_span(chunk);
             ddog_span_set_id(span, id);
             ddog_span_set_parent_id(span, parent);
-            span
-        })
-        .collect();
-    (b, chunk, spans)
+        }
+    }
+    (b, chunk)
+}
+
+/// Whether the chunk's root is span `idx`.
+fn root_is(chunk: *mut TraceChunkBytes, idx: usize) -> bool {
+    unsafe { ddog_v1_get_chunk_root_span(&*chunk) == ddog_v1_get_span(chunk, idx).cast_const() }
 }
 
 #[test]
 fn chunk_root_span_picks_local_root_not_the_first_span() {
     // The first span has a parent in the chunk, so the later parent-less span is the root.
-    let (_b, chunk, spans) = chunk_with(&[(1, 2), (2, 0)]);
-    assert_eq!(ddog_v1_get_chunk_root_span(unsafe { &*chunk }), spans[1]);
+    let (_b, chunk) = chunk_with(&[(1, 2), (2, 0)]);
+    assert!(root_is(chunk, 1));
 }
 
 #[test]
 fn chunk_root_span_picks_remote_parent_root() {
     // A remote-parent root (e.g. amqp deliver, an inferred span) whose parent isn't in the chunk.
-    let (_b, chunk, spans) = chunk_with(&[(7, 9), (9, 2)]);
-    assert_eq!(ddog_v1_get_chunk_root_span(unsafe { &*chunk }), spans[1]);
+    let (_b, chunk) = chunk_with(&[(7, 9), (9, 2)]);
+    assert!(root_is(chunk, 1));
 }
 
 #[test]
 fn chunk_root_span_falls_back_to_the_first_span_without_a_recognizable_root() {
     // Every parent is in the chunk (malformed cycle): fall back to the first span, as the wire
     // does.
-    let (_b, chunk, spans) = chunk_with(&[(1, 2), (2, 1)]);
-    assert_eq!(ddog_v1_get_chunk_root_span(unsafe { &*chunk }), spans[0]);
+    let (_b, chunk) = chunk_with(&[(1, 2), (2, 1)]);
+    assert!(root_is(chunk, 0));
 }
 
 #[test]
 fn chunk_root_span_is_null_for_an_empty_chunk() {
-    let (_b, chunk, _) = chunk_with(&[]);
+    let (_b, chunk) = chunk_with(&[]);
     assert!(ddog_v1_get_chunk_root_span(unsafe { &*chunk }).is_null());
 }
