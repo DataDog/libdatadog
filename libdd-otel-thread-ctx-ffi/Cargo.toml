@@ -15,7 +15,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true, features = ["std"] }
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
 
 [features]

@@ -2,14 +2,13 @@
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
-use crate::tracer::SHM_LIMITER;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{MutexExt, tag::Tag};
 use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
 use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
-use libdd_ipc::rate_limiter::ShmLimiter;
+use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
 use libdd_live_debugger::LiveDebuggingData;
 use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
@@ -133,6 +132,13 @@ impl RemoteConfigReader {
         self.0.read()
     }
 
+    fn reconnect(&mut self, path: CString) {
+        if self.0.extra != path {
+            self.0.reconnect(&path);
+            self.0.extra = path;
+        }
+    }
+
     /// See [`OneWayShmReader::take_replaced`].
     pub fn take_replaced(&mut self) -> bool {
         self.0.take_replaced()
@@ -167,6 +173,7 @@ struct TargetInfo {
 #[derive(Clone)]
 struct ConfigFileStorage<N: NotifyTarget + 'static> {
     invariants: ConfigInvariants,
+    limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
     targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
@@ -201,7 +208,7 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
             // No limiter means no rate limiting: the segment could not be created, which is
             // already reported where it happened.
             limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
-                SHM_LIMITER.as_ref().and_then(|limiter| {
+                self.limiter.as_ref().and_then(|limiter| {
                     let allocated = limiter.lock_or_panic().alloc();
                     if allocated.is_none() {
                         warn!(
@@ -471,9 +478,11 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         invariants: ConfigInvariants,
         on_dead: Box<dyn Fn() + Sync + Send>,
         interval: Duration,
+        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     ) -> Self {
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
+            limiter,
             writers: Default::default(),
             targets: Arc::new(Mutex::new(Default::default())),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
@@ -661,6 +670,23 @@ impl RemoteConfigManager {
             .as_ref()
             .map(|r| r.0.last_read_generation())
             .unwrap_or(0)
+    }
+
+    /// Rebind cached targets when reconnecting to another sidecar namespace.
+    pub fn reconnect(&mut self) {
+        for (target, (reader, _)) in &mut self.encountered_targets {
+            reader.reconnect(path_for_remote_config(&self.invariants, target));
+        }
+        if let (Some(reader), Some(target)) = (&mut self.active_reader, &self.active_target) {
+            reader.reconnect(path_for_remote_config(&self.invariants, target));
+        }
+    }
+
+    /// The active directory's name in the connected sidecar's namespace.
+    pub fn get_path(&self) -> Option<&CStr> {
+        self.active_reader
+            .as_ref()
+            .map(RemoteConfigReader::get_path)
     }
 
     /// Polls one configuration change.
@@ -931,8 +957,12 @@ mod tests {
             assert!(old.write(b"old-runtime\n"));
         }
 
-        let sidecar =
-            ShmRemoteConfigs::new(invariants.clone(), Box::new(|| {}), Duration::from_secs(60));
+        let sidecar = ShmRemoteConfigs::new(
+            invariants.clone(),
+            Box::new(|| {}),
+            Duration::from_secs(60),
+            None,
+        );
         let mut client = RemoteConfigManager::new(invariants.clone());
         client.track_target(&DUMMY_TARGET);
         assert!(matches!(client.fetch_update(), RemoteConfigUpdate::None));
@@ -1000,6 +1030,7 @@ mod tests {
                 }
             }),
             Duration::from_millis(10),
+            None,
         );
 
         let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
@@ -1192,6 +1223,7 @@ mod tests {
             server.dummy_options().invariants,
             Box::new(|| {}),
             Duration::from_millis(10),
+            None,
         );
 
         let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
@@ -1257,6 +1289,16 @@ mod tests {
     #[cfg(unix)]
     #[cfg_attr(miri, ignore)]
     fn a_replaced_directory_is_reapplied_even_when_identical() {
+        const CHILD: &str = "DD_TEST_RC_MASTER_CHANGE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "shm_remote_config::tests::a_replaced_directory_is_reapplied_even_when_identical"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
         let invariants = ConfigInvariants {
             language: "php".to_string(),
             tracer_version: "1.0.0".to_string(),
@@ -1346,6 +1388,60 @@ mod tests {
                 limiter_index: 8,
                 ..
             }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        let old_path = manager.get_path().unwrap().to_owned();
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        manager.reconnect();
+        let promoted_file = store_shm(
+            1,
+            &PATH_FIRST,
+            serde_json::to_vec(&dummy_dynamic_config(true)).unwrap(),
+        )
+        .unwrap();
+        let promoted_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert_ne!(manager.get_path().unwrap(), old_path.as_c_str());
+        assert_eq!(
+            manager.get_path().unwrap(),
+            path_for_remote_config(&invariants, &DUMMY_TARGET).as_c_str()
+        );
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        publish(&promoted_writer, &promoted_file);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add { .. }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        manager.reset_target();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        crate::use_thread_sidecar_shm_namespace(None);
+        manager.reconnect();
+        let returned_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&returned_writer, &new_file);
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add { .. }
+        ));
+        assert_eq!(manager.get_path().unwrap(), old_path.as_c_str());
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        manager.reset_target();
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        manager.reconnect();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
         ));
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
     }

@@ -8,7 +8,7 @@ pub mod private_dir;
 pub mod process;
 pub mod shm_guard;
 mod shm_names;
-pub(crate) use shm_names::NameOwnership;
+pub(crate) use shm_names::{NameOwnership, lock_shm};
 
 /// Open an existing named segment exactly as its creator named it - with this platform's name
 /// normalization and the filesystem fallback - refusing one another user could have created.

@@ -21,7 +21,9 @@
 //! [`encode_flag_evaluation_payloads`] strips null / empty placeholder entries
 //! from the JSON before the HTTP POST, reproducing the old skip semantics only
 //! on the outbound wire. `#[serde(default)]` is kept on fields that have it for
-//! deserialize robustness.
+//! named-format deserialize robustness; it does not make changed bincode
+//! layouts backward compatible. Build and release the native sender and
+//! sidecar receiver together using matching headers and artifacts.
 
 use super::FfeTelemetryContext;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,8 @@ use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+mod privacy;
+pub use privacy::{ContextTruncationReason, FieldOmissions};
 mod sender;
 pub use sender::{
     EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT, EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
@@ -60,7 +64,7 @@ pub const MAX_EVENTS_PER_POST: usize = 512;
 // ── Context pruning bounds ───────────────────────────────────────────────────
 /// Maximum number of context fields to include in a full-tier event.
 pub const MAX_CONTEXT_FIELDS: usize = 256;
-/// Maximum byte length of a context field value string. Values exceeding this
+/// Maximum Unicode character count of a context key or string. Values exceeding this
 /// are skipped entirely (not truncated) to avoid partial-data misattribution.
 pub const MAX_FIELD_LENGTH: usize = 256;
 /// Maximum nested context path depth accepted from FFI callers. A scalar at
@@ -93,7 +97,7 @@ pub struct FfeFlagEvaluationBatch {
 /// as `null`/`false` on the wire; the EVP payload encoder
 /// ([`encode_flag_evaluation_payloads`]) strips those null/empty placeholders
 /// before the EVP POST so the flageval-worker schema sees no null placeholders.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FfeFlagEvaluationEvent {
     /// Unix timestamp of the aggregation window (milliseconds).
     pub timestamp: i64,
@@ -135,6 +139,41 @@ pub struct FfeFlagEvaluationEvent {
     /// `#[serde(default)]` keeps deserialization robust when the field is absent.
     #[serde(default)]
     pub runtime_default_used: bool,
+
+    /// Consent from the configuration used for this evaluation. Internal IPC
+    /// metadata only; never included in the EVP payload.
+    #[serde(default)]
+    pub observe_full_evaluation_data: bool,
+    /// Explicit tier prevents a keyless full row being mistaken for a degraded
+    /// row. Degraded output always omits targeting identity and context.
+    #[serde(default)]
+    pub is_degraded: bool,
+    /// Internal omission reasons accumulated before aggregation, never EVP data.
+    #[serde(default)]
+    pub field_omissions: FieldOmissions,
+}
+
+impl FfeFlagEvaluationEvent {
+    /// Normalize optional telemetry fields without changing the evaluation.
+    /// Called at ingress and repeated independently before aggregation.
+    pub fn normalize(&mut self) {
+        normalize_for_aggregation(self);
+    }
+}
+
+impl std::fmt::Debug for FfeFlagEvaluationEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // IPC request Debug is used by both oversized-message warnings and
+        // receiver trace logging. Never include customer-controlled fields.
+        f.debug_struct("FfeFlagEvaluationEvent")
+            .field("evaluation_count", &self.evaluation_count)
+            .field(
+                "observe_full_evaluation_data",
+                &self.observe_full_evaluation_data,
+            )
+            .field("is_degraded", &self.is_degraded)
+            .finish_non_exhaustive()
+    }
 }
 
 // ── Field sub-types ──────────────────────────────────────────────────────────
@@ -167,6 +206,15 @@ pub struct TargetingRuleKey {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvalError {
     pub message: String,
+}
+
+impl EvalError {
+    /// Omit empty errors and copy only the allowed code, never the original text.
+    pub fn from_message(message: &str) -> Option<Self> {
+        (!message.is_empty()).then(|| Self {
+            message: privacy::error_code(message).to_owned(),
+        })
+    }
 }
 
 /// Per-event context object.
@@ -209,29 +257,28 @@ pub struct ContextDD {
 
 // ── Context pruning ──────────────────────────────────────────────────────────
 
+/// Parse borrowed JSON and return an owned, pruned context using the same limits
+/// as aggregation and output. The input is neither modified nor retained.
+/// Callers must check consent before inspecting context. Parsing still visits the
+/// full JSON input; only the subsequent snapshot traversal/retention is bounded.
+/// Invalid or non-object JSON is omitted and records `SnapshotError`.
+pub fn prune_context_json(raw: &str, omissions: &mut FieldOmissions) -> Option<String> {
+    privacy::context_json(raw, omissions)
+}
+
 /// Prune evaluation context attributes to satisfy the flagevaluation bounds:
-/// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
+/// - Only the first `MAX_CONTEXT_FIELDS` (256) entries are inspected. Rejected fields consume
+///   inspection slots, so fewer entries may be retained.
 /// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
 ///   avoid partial-data misattribution.
-/// - Non-string values (bool, number, null) are kept regardless of their display length.
+/// - Scalar non-string values (bool, number, null) are kept regardless of their display length.
+///   Nested containers are subject to the snapshot's width, depth, and node limits.
 /// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
 ///   `BTreeMap` preserves that order.
 pub fn prune_context(
     attrs: &BTreeMap<String, serde_json::Value>,
 ) -> BTreeMap<String, serde_json::Value> {
-    attrs
-        .iter()
-        .filter(|(_, v)| {
-            // Skip string values that exceed the per-field byte limit.
-            if let serde_json::Value::String(s) = v {
-                s.len() <= MAX_FIELD_LENGTH
-            } else {
-                true
-            }
-        })
-        .take(MAX_CONTEXT_FIELDS)
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
+    privacy::context_map(attrs)
 }
 
 #[derive(Default)]
@@ -244,6 +291,10 @@ pub struct FlagEvaluationEvpPayloadBuildResult {
 
 #[derive(Default)]
 pub struct FlagEvaluationEvpWriterStats {
+    /// Represented evaluations affected by each finite context-loss reason.
+    pub context_truncated: [u64; ContextTruncationReason::COUNT],
+    /// Represented evaluations with invalid targeting text, not dropped rows.
+    pub targeting_key_omitted: u64,
     pub rows_dropped_degraded_cap: u64,
     pub rows_dropped_payload_limit: u64,
     pub rows_degraded_cardinality_cap: u64,
@@ -253,6 +304,8 @@ pub struct FlagEvaluationEvpWriterStats {
 
 #[derive(Default)]
 struct FlagEvaluationEvpWriterCounters {
+    context_truncated: [AtomicU64; ContextTruncationReason::COUNT],
+    targeting_key_omitted: AtomicU64,
     rows_dropped_degraded_cap: AtomicU64,
     rows_dropped_payload_limit: AtomicU64,
     rows_degraded_cardinality_cap: AtomicU64,
@@ -261,6 +314,20 @@ struct FlagEvaluationEvpWriterCounters {
 }
 
 impl FlagEvaluationEvpWriterCounters {
+    fn record_field_omissions(&self, event: &mut FfeFlagEvaluationEvent) {
+        let omissions = std::mem::take(&mut event.field_omissions);
+        for reason in ContextTruncationReason::iter() {
+            if omissions.contains_context(reason) {
+                add_counter(
+                    &self.context_truncated[reason as usize],
+                    event.evaluation_count,
+                );
+            }
+        }
+        if omissions.targeting_key_invalid {
+            add_counter(&self.targeting_key_omitted, event.evaluation_count);
+        }
+    }
     fn add_rows_dropped_degraded_cap(&self, count: u64) {
         add_counter(&self.rows_dropped_degraded_cap, count);
     }
@@ -283,6 +350,11 @@ impl FlagEvaluationEvpWriterCounters {
 
     fn collect_writer_stats(&self) -> FlagEvaluationEvpWriterStats {
         FlagEvaluationEvpWriterStats {
+            context_truncated: self
+                .context_truncated
+                .each_ref()
+                .map(|c| c.swap(0, Ordering::Relaxed)),
+            targeting_key_omitted: self.targeting_key_omitted.swap(0, Ordering::Relaxed),
             rows_dropped_degraded_cap: self.rows_dropped_degraded_cap.swap(0, Ordering::Relaxed),
             rows_dropped_payload_limit: self.rows_dropped_payload_limit.swap(0, Ordering::Relaxed),
             rows_degraded_cardinality_cap: self
@@ -302,8 +374,10 @@ fn add_counter(counter: &AtomicU64, count: u64) {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 struct EventKey {
+    // Degraded rows intentionally ignore consent, unlike full-detail rows.
+    consent: Option<bool>,
     flag_key: String,
     variant_key: Option<String>,
     allocation_key: Option<String>,
@@ -317,7 +391,11 @@ struct EventKey {
 
 impl EventKey {
     fn new(event: &FfeFlagEvaluationEvent) -> Self {
+        if event.is_degraded {
+            return Self::degraded(event);
+        }
         Self {
+            consent: Some(event.observe_full_evaluation_data),
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -338,6 +416,7 @@ impl EventKey {
 
     fn degraded(event: &FfeFlagEvaluationEvent) -> Self {
         Self {
+            consent: None,
             flag_key: event.flag.key.clone(),
             variant_key: event.variant.as_ref().map(|v| v.key.clone()),
             allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
@@ -417,9 +496,15 @@ where
     D: Clone + Eq + Hash,
 {
     /// Enqueue a batch and return whether the caller should start a flush loop.
-    pub fn enqueue(&self, destination: D, batch: FfeFlagEvaluationBatch) -> bool {
+    pub fn enqueue(&self, destination: D, mut batch: FfeFlagEvaluationBatch) -> bool {
         if batch.flag_evaluations.is_empty() {
             return false;
+        }
+
+        // Parsing and pruning only need the owned event, not shared aggregation
+        // state. Keep that work out of the lock used by other enqueues and flushes.
+        for event in &mut batch.flag_evaluations {
+            normalize_for_aggregation(event);
         }
 
         let mut state = lock_or_recover(&self.state);
@@ -433,6 +518,7 @@ where
             });
 
         for mut event in batch.flag_evaluations {
+            self.writer_stats.record_field_omissions(&mut event);
             let key = EventKey::new(&event);
             if merge_pending_event(&mut state, &destination, &key, &event) {
                 continue;
@@ -445,7 +531,10 @@ where
                 .copied()
                 .unwrap_or(0);
 
-            if state.full_bucket_count < GLOBAL_CAP && full_bucket_count_for_flag < PER_FLAG_CAP {
+            if !event.is_degraded
+                && state.full_bucket_count < GLOBAL_CAP
+                && full_bucket_count_for_flag < PER_FLAG_CAP
+            {
                 if insert_pending_event(&mut state, &destination, key, event) {
                     state.full_bucket_count += 1;
                     *state.full_bucket_count_by_flag.entry(flag_key).or_default() += 1;
@@ -453,13 +542,17 @@ where
                 continue;
             }
 
+            let was_degraded_on_arrival = event.is_degraded;
             event.targeting_key = None;
             event.context = None;
+            event.is_degraded = true;
             let evaluation_count = event.evaluation_count;
             let degraded_key = EventKey::degraded(&event);
             if merge_pending_event(&mut state, &destination, &degraded_key, &event) {
-                self.writer_stats
-                    .add_rows_degraded_cardinality_cap(evaluation_count);
+                if !was_degraded_on_arrival {
+                    self.writer_stats
+                        .add_rows_degraded_cardinality_cap(evaluation_count);
+                }
                 continue;
             }
 
@@ -474,8 +567,10 @@ where
 
             if insert_pending_event(&mut state, &destination, degraded_key, event) {
                 state.degraded_bucket_count += 1;
-                self.writer_stats
-                    .add_rows_degraded_cardinality_cap(evaluation_count);
+                if !was_degraded_on_arrival {
+                    self.writer_stats
+                        .add_rows_degraded_cardinality_cap(evaluation_count);
+                }
             }
         }
 
@@ -596,7 +691,34 @@ where
     true
 }
 
+fn normalize_for_aggregation(event: &mut FfeFlagEvaluationEvent) {
+    if event.is_degraded {
+        event.targeting_key = None;
+        event.context = None;
+    } else if !event.observe_full_evaluation_data {
+        if let Some(context) = event.context.as_mut() {
+            context.evaluation = None;
+        }
+    } else if let Some(context) = event.context.as_mut() {
+        context.evaluation = context
+            .evaluation
+            .as_deref()
+            .and_then(|raw| privacy::context_json(raw, &mut event.field_omissions));
+    }
+    if let Some(error) = event.error.as_mut() {
+        if error.message.is_empty() {
+            event.error = None;
+        } else {
+            let code = privacy::error_code(&error.message);
+            if error.message != code {
+                error.message = code.to_owned();
+            }
+        }
+    }
+}
+
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
+    existing.observe_full_evaluation_data &= incoming.observe_full_evaluation_data;
     existing.timestamp = existing.timestamp.max(incoming.timestamp);
     existing.first_evaluation = existing.first_evaluation.min(incoming.first_evaluation);
     existing.last_evaluation = existing.last_evaluation.max(incoming.last_evaluation);
@@ -733,14 +855,27 @@ fn push_payload(
 fn degrade_event_for_payload_limit(
     event: &FfeFlagEvaluationEvent,
 ) -> Option<FfeFlagEvaluationEvent> {
-    if event.targeting_key.is_none() && event.context.is_none() {
+    if event.is_degraded || (event.targeting_key.is_none() && event.context.is_none()) {
         return None;
     }
 
-    let mut degraded = event.clone();
-    degraded.targeting_key = None;
-    degraded.context = None;
-    Some(degraded)
+    Some(FfeFlagEvaluationEvent {
+        timestamp: event.timestamp,
+        flag: event.flag.clone(),
+        first_evaluation: event.first_evaluation,
+        last_evaluation: event.last_evaluation,
+        evaluation_count: event.evaluation_count,
+        variant: event.variant.clone(),
+        allocation: event.allocation.clone(),
+        targeting_rule: event.targeting_rule.clone(),
+        targeting_key: None,
+        context: None,
+        error: event.error.clone(),
+        runtime_default_used: event.runtime_default_used,
+        observe_full_evaluation_data: event.observe_full_evaluation_data,
+        is_degraded: true,
+        field_omissions: event.field_omissions,
+    })
 }
 
 #[cfg(test)]
@@ -765,6 +900,38 @@ fn build_context_payload(context: &FfeTelemetryContext) -> Result<String, serde_
 
 fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(event)?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("observe_full_evaluation_data");
+        object.remove("is_degraded");
+        object.remove("field_omissions");
+        if event.is_degraded {
+            object.remove("targeting_key");
+            object.remove("context");
+        } else if !event.observe_full_evaluation_data {
+            if let Some(key) = &event.targeting_key {
+                object.insert(
+                    "targeting_key".into(),
+                    privacy::protected_targeting_key(key).into(),
+                );
+            }
+            if let Some(context) = object
+                .get_mut("context")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                context.remove("evaluation");
+            }
+        }
+        if let Some(error) = &event.error {
+            if error.message.is_empty() {
+                object.remove("error");
+            } else {
+                object.insert(
+                    "error".into(),
+                    serde_json::json!({"message": privacy::error_code(&error.message)}),
+                );
+            }
+        }
+    }
     expand_event_context(&mut value);
     strip_placeholders(&mut value);
     serde_json::to_string(&value)
@@ -807,9 +974,9 @@ fn expand_event_context(event: &mut serde_json::Value) {
         return;
     };
 
-    match serde_json::from_str::<serde_json::Value>(s) {
-        Ok(parsed) => *evaluation = parsed,
-        Err(_) => {
+    match privacy::context_value(s, &mut FieldOmissions::default()) {
+        Some(parsed) => *evaluation = parsed,
+        None => {
             if let Some(obj) = context.as_object_mut() {
                 obj.remove("evaluation");
             }
@@ -891,6 +1058,371 @@ mod tests {
         }
     }
 
+    #[test]
+    fn normalization_reuses_canonical_error_storage() {
+        for code in ["FLAG_NOT_FOUND", "GENERAL"] {
+            let mut event = full_event();
+            event.error = Some(EvalError {
+                message: code.into(),
+            });
+            let original = event.error.as_ref().unwrap().message.as_ptr();
+            for _ in 0..2 {
+                event.normalize();
+                let error = event.error.as_ref().unwrap();
+                assert_eq!(error.message, code);
+                assert_eq!(error.message.as_ptr(), original);
+            }
+        }
+    }
+
+    #[test]
+    fn protected_wire_omits_canary_without_upstream_normalization() {
+        let mut event = full_event();
+        event.observe_full_evaluation_data = false;
+        event.targeting_key = Some("jane.doe@datadoghq.com".into());
+        event.error = Some(EvalError {
+            message: "private-error-canary".into(),
+        });
+        let raw = build_event_payload(&event).unwrap();
+        assert!(!raw.contains("jane.doe@datadoghq.com"));
+        assert!(!raw.contains("private-error-canary"));
+        assert!(!raw.contains("premium"));
+        assert!(
+            raw.contains("sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b")
+        );
+    }
+
+    #[test]
+    fn event_debug_redacts_sensitive_fields() {
+        let mut event = full_event();
+        event.targeting_key = Some("private-identity-canary".into());
+        event.error = Some(EvalError {
+            message: "private-error-canary".into(),
+        });
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![event],
+        };
+        let debug = format!("{batch:?}");
+        assert!(!debug.contains("private-identity-canary"));
+        assert!(!debug.contains("private-error-canary"));
+        assert!(!debug.contains("premium"));
+    }
+
+    #[test]
+    fn privacy_wire_modes_and_optional_identity() {
+        for consent in [false, true] {
+            for key in [None, Some(""), Some("jane.doe@datadoghq.com")] {
+                let mut input = serde_json::to_value(full_event()).unwrap();
+                input["observe_full_evaluation_data"] = json!(consent);
+                input["targeting_key"] = json!(key);
+                input["error"] = json!({"message": "private-error-canary"});
+                let event: FfeFlagEvaluationEvent = serde_json::from_value(input).unwrap();
+                let raw = build_event_payload(&event).unwrap();
+                let wire: Value = serde_json::from_str(&raw).unwrap();
+                assert!(!raw.contains("private-error-canary"));
+                assert_eq!(wire["error"]["message"], "GENERAL");
+                assert!(wire.get("observe_full_evaluation_data").is_none());
+                assert!(wire.get("is_degraded").is_none());
+                assert!(wire.get("runtime_default_used").is_none());
+                assert_eq!(wire["context"]["evaluation"].is_object(), consent);
+                let expected = match key {
+                    None => Value::Null,
+                    Some("") => json!(""),
+                    Some(key) if consent => json!(key),
+                    _ => json!(
+                        "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b"
+                    ),
+                };
+                assert_eq!(wire["targeting_key"], expected);
+                assert_eq!(raw, build_event_payload(&event).unwrap());
+                assert_eq!(event.targeting_key.as_deref(), key);
+            }
+        }
+    }
+
+    #[test]
+    fn protected_wire_hashes_exact_text_even_when_hash_looking() {
+        for (key, expected) in [
+            (
+                " ユーザー ",
+                "sha256_d775f0ec7cd3d73f48f9e160952e6c8776715a8ba7ca0757539c3104f6482e00",
+            ),
+            (
+                "sha256_customer-supplied",
+                "sha256_73b799a7a2b0a51aece81180632904cb575cd74b96664fca80b226712f5e6703",
+            ),
+        ] {
+            let mut event = full_event();
+            event.observe_full_evaluation_data = false;
+            event.targeting_key = Some(key.into());
+            event.context.as_mut().unwrap().evaluation = Some("malformed-context-canary".into());
+            let raw = build_event_payload(&event).unwrap();
+            let wire: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(wire["targeting_key"], expected);
+            assert_eq!(wire["context"]["dd"]["service"], "frontend");
+            assert!(wire["context"].get("evaluation").is_none());
+            assert!(!raw.contains("malformed-context-canary"));
+        }
+    }
+
+    #[test]
+    fn consent_separates_full_but_not_degraded_identity() {
+        let mut protected = full_event();
+        protected.observe_full_evaluation_data = false;
+        let mut consented = protected.clone();
+        consented.observe_full_evaluation_data = true;
+        assert!(EventKey::new(&protected) != EventKey::new(&consented));
+        assert!(EventKey::degraded(&protected) == EventKey::degraded(&consented));
+        protected.targeting_key = None;
+        protected.context = None;
+        assert!(EventKey::new(&protected) != EventKey::degraded(&protected));
+        protected.is_degraded = true;
+        consented.is_degraded = true;
+        assert!(EventKey::new(&protected) == EventKey::degraded(&protected));
+        assert!(EventKey::new(&consented) == EventKey::degraded(&consented));
+        assert!(EventKey::new(&protected) == EventKey::new(&consented));
+    }
+
+    #[test]
+    fn mixed_consent_stays_separate_through_aggregation_and_encoding() {
+        for protected_first in [false, true] {
+            let coalescer = FlagEvaluationEvpCoalescer::default();
+            let mut protected = full_event();
+            protected.context = None;
+            protected.targeting_key = Some("jane.doe@datadoghq.com".into());
+            protected.observe_full_evaluation_data = false;
+            protected.evaluation_count = 5;
+            let mut consented = protected.clone();
+            consented.observe_full_evaluation_data = true;
+            consented.evaluation_count = 7;
+            let events = if protected_first {
+                [protected, consented]
+            } else {
+                [consented, protected]
+            };
+            for event in events {
+                coalescer.enqueue(
+                    "destination",
+                    FfeFlagEvaluationBatch {
+                        context: context(),
+                        flag_evaluations: vec![event],
+                    },
+                );
+            }
+            let mut batches = coalescer.take_batches();
+            assert_eq!(batches.len(), 1);
+            let encoded =
+                encode_flag_evaluation_payloads(batches.pop().unwrap().1, usize::MAX).unwrap();
+            assert_eq!(encoded.payloads.len(), 1);
+            let payload: Value = serde_json::from_str(&encoded.payloads[0]).unwrap();
+            let rows = payload["flagEvaluations"].as_array().unwrap();
+            assert_eq!(rows.len(), 2);
+            for (identity, count) in [
+                ("jane.doe@datadoghq.com", 7),
+                (
+                    "sha256_b4698f9b6d186781fa8dc59e533578fa2d8379a46b1cf6db85cda6aa9c99e51b",
+                    5,
+                ),
+            ] {
+                let row = rows
+                    .iter()
+                    .find(|row| row["targeting_key"] == identity)
+                    .unwrap();
+                assert_eq!(row["evaluation_count"], count);
+                assert!(row.get("context").is_none());
+                assert!(row.get("observe_full_evaluation_data").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn pre_degraded_rows_coalesce_without_counting_a_cardinality_transition() {
+        for first_consent in [false, true] {
+            let coalescer = FlagEvaluationEvpCoalescer::default();
+            let mut first = full_event();
+            first.is_degraded = true;
+            first.observe_full_evaluation_data = first_consent;
+            first.evaluation_count = 5;
+            let mut second = first.clone();
+            second.observe_full_evaluation_data = !first_consent;
+            second.targeting_key = Some("another-identity".into());
+            second.context.as_mut().unwrap().evaluation = Some(r#"{"other":true}"#.into());
+            second.evaluation_count = 7;
+            for event in [first, second] {
+                coalescer.enqueue(
+                    "destination",
+                    FfeFlagEvaluationBatch {
+                        context: context(),
+                        flag_evaluations: vec![event],
+                    },
+                );
+                let stats = coalescer.collect_writer_stats();
+                assert_eq!(stats.rows_degraded_cardinality_cap, 0);
+                assert_eq!(stats.rows_dropped_degraded_cap, 0);
+            }
+            let state = coalescer.state.lock().unwrap();
+            assert_eq!(state.full_bucket_count, 0);
+            assert_eq!(state.degraded_bucket_count, 1);
+            drop(state);
+            let batches = coalescer.take_batches();
+            let events = &batches[0].1.flag_evaluations;
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].evaluation_count, 12);
+            assert!(events[0].is_degraded);
+            assert!(!events[0].observe_full_evaluation_data);
+            assert!(events[0].targeting_key.is_none());
+            assert!(events[0].context.is_none());
+        }
+    }
+
+    #[test]
+    fn privacy_merge_folds_consent_and_preserves_weighted_times() {
+        for (first, second) in [(true, false), (false, true)] {
+            let mut event = full_event();
+            event.observe_full_evaluation_data = first;
+            let mut incoming = event.clone();
+            incoming.observe_full_evaluation_data = second;
+            incoming.first_evaluation -= 100;
+            incoming.last_evaluation += 100;
+            incoming.timestamp += 100;
+            merge_event(&mut event, &incoming);
+            assert!(!event.observe_full_evaluation_data);
+            assert_eq!(event.evaluation_count, 84);
+            assert_eq!(event.first_evaluation, incoming.first_evaluation);
+            assert_eq!(event.last_evaluation, incoming.last_evaluation);
+            assert_eq!(event.timestamp, incoming.timestamp);
+        }
+    }
+
+    #[test]
+    fn privacy_aggregation_discards_protected_context_and_raw_errors() {
+        let coalescer = FlagEvaluationEvpCoalescer::default();
+        let mut first = full_event();
+        first.observe_full_evaluation_data = false;
+        first.error = Some(EvalError {
+            message: "private-error-one".into(),
+        });
+        let mut second = first.clone();
+        second.context.as_mut().unwrap().evaluation =
+            Some(r#"{"other":"private-context-two"}"#.into());
+        second.error.as_mut().unwrap().message = "private-error-two".into();
+        coalescer.enqueue(
+            "destination",
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![first, second],
+            },
+        );
+        let batches = coalescer.take_batches();
+        let events = &batches[0].1.flag_evaluations;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].evaluation_count, 84);
+        assert_eq!(events[0].targeting_key.as_deref(), Some("user-123"));
+        assert!(events[0].context.as_ref().unwrap().evaluation.is_none());
+        assert_eq!(events[0].error.as_ref().unwrap().message, "GENERAL");
+    }
+
+    #[test]
+    fn privacy_degraded_wire_rejects_injected_sensitive_fields() {
+        for consent in [false, true] {
+            let mut event = full_event();
+            event.is_degraded = true;
+            event.observe_full_evaluation_data = consent;
+            let raw = build_event_payload(&event).unwrap();
+            let wire: Value = serde_json::from_str(&raw).unwrap();
+            assert!(wire.get("targeting_key").is_none());
+            assert!(wire.get("context").is_none());
+        }
+    }
+
+    #[test]
+    fn direct_encoder_bounds_consented_context_and_omits_empty_errors() {
+        let mut event = full_event();
+        event.error = Some(EvalError {
+            message: String::new(),
+        });
+        let short_key = "é".repeat(256);
+        let long_key = "é".repeat(257);
+        event.context.as_mut().unwrap().evaluation = Some(
+            json!({
+                short_key.clone(): "é".repeat(256),
+                long_key.clone(): "key-canary",
+                "long": "value-canary".repeat(256),
+                "deep": {"a": {"b": {"c": {"d": "depth-canary"}}}},
+            })
+            .to_string(),
+        );
+        let raw = build_event_payload(&event).unwrap();
+        let wire: Value = serde_json::from_str(&raw).unwrap();
+        assert!(wire.get("error").is_none());
+        assert_eq!(wire["context"]["evaluation"][&short_key], "é".repeat(256));
+        for canary in ["key-canary", "value-canary", "depth-canary"] {
+            assert!(!raw.contains(canary), "{canary}");
+        }
+    }
+
+    #[test]
+    fn prune_context_inspects_prefix_before_filtering_and_preserves_unicode() {
+        let mut attrs = BTreeMap::new();
+        attrs.insert("000".into(), json!("x".repeat(257)));
+        for i in 1..=256 {
+            attrs.insert(format!("{i:03}"), json!("é".repeat(256)));
+        }
+        let pruned = prune_context(&attrs);
+        assert_eq!(pruned.len(), 255);
+        assert_eq!(pruned["001"], "é".repeat(256));
+        assert!(!pruned.contains_key("256"));
+    }
+
+    #[test]
+    fn field_omissions_are_counted_once_per_evaluation_not_as_drops() {
+        let mut event = full_event();
+        event.evaluation_count = 7;
+        event.field_omissions.targeting_key_invalid = true;
+        event.context.as_mut().unwrap().evaluation = Some(
+            json!({
+                "a": "x".repeat(257), "b": "y".repeat(257), "valid": true,
+            })
+            .to_string(),
+        );
+        event.normalize();
+        event.normalize();
+        let coalescer = FlagEvaluationEvpCoalescer::<String>::default();
+        coalescer.enqueue(
+            "agent".into(),
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![event.clone(), event],
+            },
+        );
+        let stats = coalescer.collect_writer_stats();
+        assert_eq!(stats.targeting_key_omitted, 14);
+        assert_eq!(
+            stats.context_truncated[ContextTruncationReason::MaxValueLength as usize],
+            14
+        );
+        assert_eq!(stats.context_truncated.iter().sum::<u64>(), 14);
+        assert_eq!(
+            stats.rows_dropped_degraded_cap + stats.rows_dropped_payload_limit,
+            0
+        );
+        let next = coalescer.collect_writer_stats();
+        assert_eq!(next.targeting_key_omitted, 0);
+        assert_eq!(next.context_truncated, [0; ContextTruncationReason::COUNT]);
+        let batches = coalescer.take_batches();
+        assert_eq!(batches[0].1.flag_evaluations[0].evaluation_count, 14);
+        assert_eq!(
+            batches[0].1.flag_evaluations[0].field_omissions,
+            FieldOmissions::default()
+        );
+        assert!(
+            !build_payload(&batches[0].1)
+                .unwrap()
+                .contains("field_omissions")
+        );
+    }
+
     fn full_event() -> FfeFlagEvaluationEvent {
         FfeFlagEvaluationEvent {
             timestamp: 1_700_000_000_000,
@@ -923,6 +1455,9 @@ mod tests {
             }),
             error: None,
             runtime_default_used: false,
+            observe_full_evaluation_data: true,
+            is_degraded: false,
+            field_omissions: Default::default(),
         }
     }
 
@@ -967,6 +1502,9 @@ mod tests {
             context: None,
             error: None,
             runtime_default_used: false,
+            observe_full_evaluation_data: false,
+            is_degraded: true,
+            field_omissions: Default::default(),
         }
     }
 
@@ -1194,7 +1732,10 @@ mod tests {
             ev["targeting_key"], "user-123",
             "targeting_key must be kept"
         );
-        assert_eq!(ev["error"]["message"], "boom", "error must be kept");
+        assert_eq!(
+            ev["error"]["message"], "GENERAL",
+            "raw error must be sanitized"
+        );
         assert_eq!(
             ev["runtime_default_used"], true,
             "runtime_default_used=true must be kept"
@@ -1432,6 +1973,7 @@ mod tests {
             message: "boom".to_owned(),
         });
         oversized.runtime_default_used = true;
+        oversized.field_omissions.targeting_key_invalid = true;
         oversized.context = Some(FlagEvalEventContext {
             evaluation: Some(json!({ "blob": "x".repeat(1024) }).to_string()),
             dd: Some(ContextDD {
@@ -1441,6 +1983,20 @@ mod tests {
 
         let degraded = degrade_event_for_payload_limit(&oversized)
             .expect("full event should have a degraded form");
+        assert_eq!(degraded.timestamp, oversized.timestamp);
+        assert_eq!(degraded.first_evaluation, oversized.first_evaluation);
+        assert_eq!(degraded.last_evaluation, oversized.last_evaluation);
+        assert_eq!(degraded.evaluation_count, oversized.evaluation_count);
+        assert_eq!(degraded.flag.key, oversized.flag.key);
+        assert_eq!(
+            degraded.observe_full_evaluation_data,
+            oversized.observe_full_evaluation_data
+        );
+        assert_eq!(degraded.field_omissions, oversized.field_omissions);
+        assert!(degraded.runtime_default_used);
+        assert!(degraded.is_degraded);
+        assert!(degraded.targeting_key.is_none());
+        assert!(degraded.context.is_none());
         let degraded_limit = build_payload(&FfeFlagEvaluationBatch {
             context: context(),
             flag_evaluations: vec![degraded],
@@ -1486,7 +2042,7 @@ mod tests {
         assert_eq!(ev["variant"]["key"], "on");
         assert_eq!(ev["allocation"]["key"], "alloc-a");
         assert_eq!(ev["targeting_rule"]["key"], "rule-1");
-        assert_eq!(ev["error"]["message"], "boom");
+        assert_eq!(ev["error"]["message"], "GENERAL");
     }
 
     #[test]

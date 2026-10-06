@@ -19,6 +19,8 @@ use aggregation::StatsBucket;
 use aggregation::BorrowedAggregationKey;
 pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
 use cardinality_limit_telemetry::CollapsedFieldsMetrics;
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 
 pub use stat_span::{ChunkSpanView, StatSpan};
 
@@ -125,7 +127,7 @@ where
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct StatsComputationObfuscationConfig {
     pub enabled: bool,
-    pub sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
+    pub obfuscation_config: libdd_trace_obfuscation::obfuscation_config::SqlConfig,
 }
 
 #[cfg(feature = "stats-obfuscation")]
@@ -343,7 +345,7 @@ impl SpanConcentrator {
         });
         #[cfg(feature = "stats-obfuscation")]
         let obfuscated_resource = if target_bucket.obfuscated {
-            Self::compute_obfuscated_span(self.obfuscation_config.load().sql_obfuscation_mode, span)
+            Self::compute_obfuscated_span(&self.obfuscation_config.load().obfuscation_config, span)
         } else {
             None
         };
@@ -379,7 +381,7 @@ impl SpanConcentrator {
 
     #[cfg(feature = "stats-obfuscation")]
     fn compute_obfuscated_span<'a>(
-        sql_obfuscation_mode: libdd_trace_obfuscation::obfuscation_config::SqlObfuscationMode,
+        obfuscation_config: &SqlConfig,
         span: &'a impl StatSpan<'a>,
     ) -> Option<String> {
         let dbms_hint: Option<&str> = span.get_meta("db.type");
@@ -387,7 +389,7 @@ impl SpanConcentrator {
             span.r#type(),
             span.resource(),
             dbms_hint,
-            sql_obfuscation_mode,
+            obfuscation_config,
         )
     }
 
