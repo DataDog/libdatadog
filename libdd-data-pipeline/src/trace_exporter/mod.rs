@@ -56,11 +56,12 @@ use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 #[cfg(feature = "telemetry")]
 use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
+use libdd_trace_utils::otlp_encoder::mapper::OTLP_EXPORT_MARKER_KEY;
 use libdd_trace_utils::send_with_retry::{
     CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult, send_with_retry,
 };
 use libdd_trace_utils::span::span_pool::PooledChunks;
-use libdd_trace_utils::span::{TraceData, v04::Span};
+use libdd_trace_utils::span::{SpanText, TraceData, v04::Span};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 #[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
 use prost::Message;
@@ -996,7 +997,15 @@ impl<
             self.telemetry.load_full().as_deref(),
         );
 
+        // Agentless takes precedence over OTLP below, so a payload leaves in the native format
+        // whenever agentless is configured or OTLP is not.
+        let native_export = self.agentless_config.is_some() || self.otlp.is_none();
         for chunk in traces.iter_mut() {
+            if native_export {
+                if let Some(first) = chunk.first_mut() {
+                    add_native_export_marker(first);
+                }
+            }
             for span in chunk.iter_mut() {
                 span.dedup();
             }
@@ -1308,6 +1317,20 @@ pub struct TelemetryConfig {
 pub trait ResponseCallback {
     #[allow(missing_docs)]
     fn call(&self, response: &str);
+}
+
+/// Marks a span as exported natively (not over OTLP) with `_dd.sdk.otlp_export: "false"`.
+///
+/// Applied to the first span of each chunk; the OTLP encoder sets `"true"` on the resource
+/// instead. A marker already set by the tracer is left untouched, so tracers that stamp it
+/// themselves are not double-tagged.
+fn add_native_export_marker<T: TraceData>(span: &mut Span<T>) {
+    if !span.meta.contains_key(OTLP_EXPORT_MARKER_KEY) {
+        span.meta.insert(
+            T::Text::from_static_str(OTLP_EXPORT_MARKER_KEY),
+            T::Text::from_static_str("false"),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1745,7 +1768,7 @@ mod tests {
             true,
         );
 
-        let traces: Vec<Vec<SpanBytes>> = vec![
+        let mut traces: Vec<Vec<SpanBytes>> = vec![
             vec![SpanBytes {
                 name: BytesString::from_slice(b"test").unwrap(),
                 ..Default::default()
@@ -1755,6 +1778,10 @@ mod tests {
                 ..Default::default()
             }],
         ];
+        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
+        for chunk in traces.iter_mut() {
+            add_native_export_marker(&mut chunk[0]);
+        }
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
@@ -1851,10 +1878,14 @@ mod tests {
             true,
         );
 
-        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+        let mut traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
+        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
+        for chunk in traces.iter_mut() {
+            add_native_export_marker(&mut chunk[0]);
+        }
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
@@ -1959,10 +1990,14 @@ mod tests {
             true,
         );
 
-        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+        let mut traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
+        // Pre-mark the input so the exporter forwards it unchanged and sent bytes match it.
+        for chunk in traces.iter_mut() {
+            add_native_export_marker(&mut chunk[0]);
+        }
         let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
@@ -2460,6 +2495,88 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    #[test]
+    fn test_add_native_export_marker() {
+        let mut span = SpanBytes::default();
+        add_native_export_marker(&mut span);
+        assert_eq!(
+            span.meta.get(OTLP_EXPORT_MARKER_KEY).map(|v| v.as_str()),
+            Some("false")
+        );
+
+        // A marker already set by the tracer is kept as-is and not duplicated.
+        let mut span = SpanBytes::default();
+        span.meta.insert(
+            BytesString::from_static(OTLP_EXPORT_MARKER_KEY),
+            BytesString::from_static("custom"),
+        );
+        add_native_export_marker(&mut span);
+        assert_eq!(span.meta.len(), 1);
+        assert_eq!(
+            span.meta.get(OTLP_EXPORT_MARKER_KEY).map(|v| v.as_str()),
+            Some("custom")
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agent_export_marks_first_span_of_each_chunk() {
+        let server = MockServer::start();
+        let mock_agent = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT).is_true(|req| {
+                let Ok((chunks, _)) = msgpack_decoder::v04::from_slice(req.body_ref()) else {
+                    return false;
+                };
+                let is_marked = |span: &libdd_trace_utils::span::v04::SpanSlice| {
+                    span.meta
+                        .get(OTLP_EXPORT_MARKER_KEY)
+                        .is_some_and(|v| v == "false")
+                };
+                chunks.len() == 2
+                    && chunks[0].len() == 2
+                    && chunks[1].len() == 1
+                    && is_marked(&chunks[0][0])
+                    && !chunks[0][1].meta.contains_key(OTLP_EXPORT_MARKER_KEY)
+                    && is_marked(&chunks[1][0])
+            });
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"rate_by_service": {}}"#);
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("svc")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let span = |trace_id, span_id, parent_id| SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            trace_id,
+            span_id,
+            parent_id,
+            ..Default::default()
+        };
+        let traces: Vec<Vec<SpanBytes>> =
+            vec![vec![span(1, 1, 0), span(1, 2, 1)], vec![span(2, 3, 0)]];
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agent send should succeed: {:?}",
+            result.err()
+        );
+        mock_agent.assert();
     }
 
     #[test]
