@@ -177,25 +177,20 @@ fn optional_text(slice: CharSlice<'_>) -> Result<Option<&str>, FfeSubmissionStat
     }
 }
 
-fn safe_error(slice: CharSlice<'_>) -> Option<&'static str> {
+fn safe_error(slice: CharSlice<'_>) -> Option<service::EvalError> {
     if slice.as_raw_parts().1 == 0 {
         return None;
     }
     // Long errors cannot be a canonical code. Do not scan or copy their body.
     if slice.as_raw_parts().1 > 32 {
-        return Some("GENERAL");
+        return service::EvalError::from_message("GENERAL");
     }
-    let bytes = slice.try_as_bytes().unwrap_or_default();
-    Some(match bytes {
-        b"PROVIDER_NOT_READY" => "PROVIDER_NOT_READY",
-        b"PROVIDER_FATAL" => "PROVIDER_FATAL",
-        b"FLAG_NOT_FOUND" => "FLAG_NOT_FOUND",
-        b"PARSE_ERROR" => "PARSE_ERROR",
-        b"TYPE_MISMATCH" => "TYPE_MISMATCH",
-        b"TARGETING_KEY_MISSING" => "TARGETING_KEY_MISSING",
-        b"INVALID_CONTEXT" => "INVALID_CONTEXT",
-        _ => "GENERAL",
-    })
+    let message = slice
+        .try_as_bytes()
+        .ok()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .unwrap_or("GENERAL");
+    service::EvalError::from_message(message)
 }
 
 fn build_request(
@@ -264,7 +259,7 @@ fn build_request(
     let dd = (!service.is_empty()).then(|| service::ContextDD {
         service: service.to_owned(),
     });
-    let mut event = service::FfeFlagEvaluationEvent {
+    let event = service::FfeFlagEvaluationEvent {
         timestamp: source.timestamp_ms,
         flag: service::FlagKey {
             key: flag.to_owned(),
@@ -284,15 +279,14 @@ fn build_request(
         targeting_key: target.map(str::to_owned),
         context: (evaluation.is_some() || dd.is_some())
             .then_some(service::FlagEvalEventContext { evaluation, dd }),
-        error: safe_error(source.error_message).map(|message| service::EvalError {
-            message: message.to_owned(),
-        }),
+        error: safe_error(source.error_message),
         runtime_default_used: source.runtime_default_used,
         observe_full_evaluation_data: source.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions: omissions,
     };
-    event.normalize();
+    // Context and errors are already sanitized above; the sidecar independently
+    // validates them again at aggregation, without another JSON pass here.
     Ok(SidecarInterfaceRequest::EnqueueActions {
         instance_id: instance_id.clone(),
         queue_id: *queue_id,
@@ -588,6 +582,70 @@ mod tests {
             assert!(row.targeting_key.is_none());
             assert!(row.field_omissions.targeting_key_invalid);
             assert_eq!(row.error.as_ref().map(|e| e.message.as_str()), expected);
+        }
+    }
+
+    #[test]
+    fn error_capture_preserves_canonical_codes_and_sanitizes_malformed_input() {
+        let mut source = event(false);
+        for (input, expected) in [
+            ("PROVIDER_NOT_READY", Some("PROVIDER_NOT_READY")),
+            ("PROVIDER_FATAL", Some("PROVIDER_FATAL")),
+            ("FLAG_NOT_FOUND", Some("FLAG_NOT_FOUND")),
+            ("PARSE_ERROR", Some("PARSE_ERROR")),
+            ("TYPE_MISMATCH", Some("TYPE_MISMATCH")),
+            ("TARGETING_KEY_MISSING", Some("TARGETING_KEY_MISSING")),
+            ("INVALID_CONTEXT", Some("INVALID_CONTEXT")),
+            ("GENERAL", Some("GENERAL")),
+            ("flag_not_found", Some("GENERAL")),
+            (" FLAG_NOT_FOUND ", Some("GENERAL")),
+            ("", None),
+        ] {
+            source.error_message = input.into();
+            let row = convert(&source, &[], FfeSnapshotState::default());
+            assert_eq!(row.error.as_ref().map(|e| e.message.as_str()), expected);
+        }
+        let invalid = [0xffu8];
+        for input in [
+            CharSlice::from_bytes(&invalid),
+            // Malformed descriptors must not be mistaken for an absent error.
+            unsafe { CharSlice::from_raw_parts(std::ptr::null(), 1) },
+            unsafe { CharSlice::from_raw_parts(std::ptr::null(), 33) },
+        ] {
+            source.error_message = input;
+            let row = convert(&source, &[], FfeSnapshotState::default());
+            assert_eq!(row.error.unwrap().message, "GENERAL");
+        }
+    }
+
+    #[test]
+    fn captured_context_needs_no_further_pruning() {
+        let over = "é".repeat(257);
+        let mut attrs = vec![attr("kept", "é"), attr("omitted", &over), attr("min", "")];
+        attrs[2].kind = 2;
+        attrs[2].integer_value = i64::MIN;
+        for consent in [false, true] {
+            for snapshot_error in [false, true] {
+                let mut row = convert(
+                    &event(consent),
+                    &attrs,
+                    FfeSnapshotState {
+                        context_truncated: true,
+                        snapshot_error,
+                        targeting_key_invalid: false,
+                    },
+                );
+                if consent && !snapshot_error {
+                    assert_eq!(context(&row), json!({"kept":"é", "min":i64::MIN}));
+                } else {
+                    assert!(row.context.as_ref().unwrap().evaluation.is_none());
+                }
+                let before = serde_json::to_value(&row).unwrap();
+                let omissions = row.field_omissions;
+                row.normalize();
+                assert_eq!(serde_json::to_value(&row).unwrap(), before);
+                assert_eq!(row.field_omissions, omissions);
+            }
         }
     }
 
