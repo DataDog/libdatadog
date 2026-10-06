@@ -85,7 +85,7 @@ pub struct ExceptionSnapshot<'a> {
     pub capture: *mut DebuggerCapture<'a>,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_create_exception_snapshot<'a>(
     buffer: &mut Vec<DebuggerPayload<'a>>,
     service: CharSlice<'a>,
@@ -136,8 +136,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     buffer.push(snapshot);
 
     #[allow(clippy::unwrap_used)]
-    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger
-    else {
+    let DebuggerData::Snapshot(ref mut snapshot) = buffer.last_mut().unwrap().debugger else {
         unreachable!();
     };
 
@@ -157,14 +156,14 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
 
 /// Returns a mutable pointer to the last DebuggerPayload in the Vec.
 /// Used to push stack frames to exception replay snapshots after creation.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_vec_last_debugger_payload<'a>(
     buffer: &'a mut Vec<DebuggerPayload<'a>>,
 ) -> Option<&'a mut DebuggerPayload<'a>> {
     buffer.last_mut()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
     probe: &'a Probe,
     message: Option<&CharSlice<'a>>,
@@ -196,7 +195,7 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_update_payload_message<'a>(
     payload: &mut DebuggerPayload<'a>,
     message: CharSlice<'a>,
@@ -204,94 +203,100 @@ pub extern "C" fn ddog_update_payload_message<'a>(
     payload.message = Some(message.to_utf8_lossy());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_entry<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .entry
-            .insert(Capture::default()),
-    )
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .entry
+                .insert(Capture::default()),
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_lines<'a>(
     payload: &mut DebuggerPayload<'a>,
     line: u32,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        match snapshot.captures.as_mut().unwrap().lines.entry(line) {
-            hash_map::Entry::Occupied(e) => e.into_mut(),
-            hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
-        },
-    )
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            match snapshot.captures.as_mut().unwrap().lines.entry(line) {
+                hash_map::Entry::Occupied(e) => e.into_mut(),
+                hash_map::Entry::Vacant(e) => e.insert(Capture::default()),
+            },
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_exit<'a>(
     payload: &mut DebuggerPayload<'a>,
 ) -> *mut DebuggerCapture<'a> {
-    let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
-        unreachable!();
-    };
+    unsafe {
+        let DebuggerData::Snapshot(ref mut snapshot) = payload.debugger else {
+            unreachable!();
+        };
 
-    #[allow(clippy::unwrap_used)]
-    transmute(
-        snapshot
-            .captures
-            .as_mut()
-            .unwrap()
-            .r#return
-            .insert(Capture::default()),
-    )
+        #[allow(clippy::unwrap_used)]
+        transmute(
+            snapshot
+                .captures
+                .as_mut()
+                .unwrap()
+                .r#return
+                .insert(Capture::default()),
+        )
+    }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_redacted_name(name: CharSlice) -> bool {
     is_redacted_name(name.as_bytes())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_add_redacted_name(name: CharSlice) {
-    add_redacted_name(name.as_bytes())
+    unsafe { add_redacted_name(name.as_bytes()) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_add_excluded_name(name: CharSlice) {
-    add_excluded_name(name.as_bytes())
+    unsafe { add_excluded_name(name.as_bytes()) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
     is_redacted_type(name.as_bytes())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_add_redacted_type(name: CharSlice) {
-    add_redacted_type(name.as_bytes())
+    unsafe { add_redacted_type(name.as_bytes()) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn ddog_snapshot_set_throwable<'a, 'b: 'a>(
     capture: &mut DebuggerCapture<'a>,
@@ -305,7 +310,7 @@ pub extern "C" fn ddog_snapshot_set_throwable<'a, 'b: 'a>(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn ddog_snapshot_throwable_add_frame<'a, 'b: 'a>(
     capture: &mut DebuggerCapture<'a>,
@@ -323,7 +328,7 @@ pub extern "C" fn ddog_snapshot_throwable_add_frame<'a, 'b: 'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn ddog_snapshot_add_capture_fields<'a, 'b: 'a, 'c: 'a>(
     capture: &mut DebuggerCapture<'a>,
@@ -336,7 +341,7 @@ pub extern "C" fn ddog_snapshot_add_capture_fields<'a, 'b: 'a, 'c: 'a>(
         .insert(name.to_utf8_lossy(), value.into());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
     capture: &mut DebuggerCapture<'a>,
@@ -352,7 +357,7 @@ pub extern "C" fn ddog_snapshot_add_field<'a, 'b: 'a, 'c: 'a>(
     fields.insert(name.to_utf8_lossy(), value.into());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_capture_value_add_element<'a, 'b: 'a>(
     value: &mut CaptureValue<'a>,
@@ -361,7 +366,7 @@ pub extern "C" fn ddog_capture_value_add_element<'a, 'b: 'a>(
     value.elements.push(DebuggerValue(element.into()));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_capture_value_add_entry<'a, 'b: 'a, 'c: 'a>(
     value: &mut CaptureValue<'a>,
@@ -371,7 +376,7 @@ pub extern "C" fn ddog_capture_value_add_entry<'a, 'b: 'a, 'c: 'a>(
     value.entries.push(Entry(key.into(), element.into()));
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(improper_ctypes_definitions)] // Vec has a fixed size, and we care only about that here
 pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
     value: &mut CaptureValue<'a>,
@@ -390,7 +395,7 @@ pub extern "C" fn ddog_capture_value_add_field<'a, 'b: 'a, 'c: 'a>(
     fields.insert(key.to_utf8_lossy(), element.into());
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_format_new_uuid(buf: &mut [u8; 36]) {
     generate_new_id().as_hyphenated().encode_lower(buf);
 }
@@ -420,7 +425,7 @@ fn ddog_snapshot_push_stack_frame_internal<'a, 'b: 'a, 'c: 'a>(
     });
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_push_stack_frame<'a, 'b: 'a, 'c: 'a>(
     payload: &mut DebuggerPayload<'a>,
     file_name: CharSlice<'b>,
@@ -438,7 +443,7 @@ pub extern "C" fn ddog_snapshot_push_stack_frame<'a, 'b: 'a, 'c: 'a>(
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_snapshot_push_stack_frame_with_column<'a, 'b: 'a, 'c: 'a>(
     payload: &mut DebuggerPayload<'a>,
     file_name: CharSlice<'b>,
@@ -457,7 +462,7 @@ pub extern "C" fn ddog_snapshot_push_stack_frame_with_column<'a, 'b: 'a, 'c: 'a>
     )
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::ptr_arg)]
 pub extern "C" fn ddog_evaluation_error_first_msg(
     vec: &Vec<SnapshotEvaluationError>,
@@ -465,10 +470,10 @@ pub extern "C" fn ddog_evaluation_error_first_msg(
     CharSlice::from(vec[0].message.as_str())
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluation_error_drop(_: Box<Vec<SnapshotEvaluationError>>) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
     probe: &'a Probe,
     service: CharSlice<'a>,
@@ -501,7 +506,7 @@ pub fn serialize_debugger_payload(payload: &DebuggerPayload) -> String {
     serde_json::to_string(payload).unwrap()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_serialize_debugger_payload(
     payload: &DebuggerPayload,
     callback: extern "C" fn(CharSlice),
@@ -510,7 +515,7 @@ pub extern "C" fn ddog_serialize_debugger_payload(
     callback(CharSlice::from(payload.as_str()))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_drop_debugger_payload(_: Box<DebuggerPayload>) {}
 
 pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
@@ -577,7 +582,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_debugger_diagnostics_create<'a>(
     probe: &'a Probe,
     service: CharSlice<'a>,
@@ -592,7 +597,7 @@ pub extern "C" fn ddog_debugger_diagnostics_create<'a>(
     ))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_debugger_diagnostics_set_parent_id<'a>(
     payload: &mut DebuggerPayload<'a>,
     parent_id: CharSlice<'a>,

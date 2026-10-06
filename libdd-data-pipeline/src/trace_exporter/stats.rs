@@ -11,23 +11,28 @@ pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::span::span_pool::PooledChunks;
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 
-use super::add_path;
 use super::TracerMetadata;
+use super::add_path;
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_obfuscation::obfuscation_config::SqlConfig;
 pub(crate) use libdd_trace_stats::span_concentrator::default_stats_eligible_span_kinds;
 use libdd_trace_stats::span_concentrator::{ChunkSpanView, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
 };
-use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_stats::stats_exporter::{
+    FlushableStatsExport, SharedStatsExporter, StatsExporter, StatsMetadata,
+};
 use libdd_trace_utils::trace_filter::TraceFilterer;
-use std::sync::{Arc, Mutex};
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use tracing::{debug, error};
 // std::time::SystemTime::now() panics on wasm32.
@@ -35,9 +40,16 @@ use web_time::SystemTime;
 
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
-/// The maximum obfuscation version this tracer supports.
+/// The obfuscation version this tracer supports.
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+/// The second obfuscation version this tracer supports, used when a custom obfuscation config is in
+/// effect. The agent sends this version to prevent tracers that don't implement custom-config
+/// following from enabling CSS obfuscation.
+///
+/// See https://github.com/DataDog/datadog-agent/blob/6cab2eaede9fd73ebf0d275c0b43cf5443a49d3a/pkg/trace/api/info.go#L196
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG: u32 = 2;
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
@@ -75,6 +87,9 @@ pub(crate) enum StatsComputationStatus {
     Enabled {
         stats_concentrator: Arc<Mutex<SpanConcentrator>>,
         worker_handle: WorkerHandle,
+        /// Weak handle to trigger an immediate forced flush of the stats
+        /// exporter without holding a strong reference to the background worker.
+        flush_handle: Weak<dyn FlushableStatsExport>,
     },
 }
 
@@ -108,10 +123,14 @@ fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
 /// Return true if the agent's obfuscation version is supported by this tracer
 #[cfg(feature = "stats-obfuscation")]
 fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
-    agent_info
-        .info
-        .obfuscation_version
-        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
+    agent_info.info.obfuscation_version.is_some_and(|v| {
+        v >= 1
+            && [
+                SUPPORTED_OBFUSCATION_VERSION,
+                SUPPORTED_OBFUSCATION_VERSION_CUSTOM_CONFIG,
+            ]
+            .contains(&v)
+    })
 }
 
 /// Get span kinds for stats computation with default fallback
@@ -177,9 +196,10 @@ fn create_and_start_stats_worker<
         ctx.telemetry.clone(),
         ctx.dogstatsd.clone(),
     );
+    let (shared, weak) = SharedStatsExporter::wrap(stats_exporter);
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, ctx.restart_after_fork)
+        .spawn_worker(shared, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -188,6 +208,7 @@ fn create_and_start_stats_worker<
         .store(Arc::new(StatsComputationStatus::Enabled {
             stats_concentrator: stats_concentrator.clone(),
             worker_handle,
+            flush_handle: weak,
         }));
 
     Ok(())
@@ -263,24 +284,28 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
-        // FIXME(APMSP-3720): there is more than this to obfuscation config
-        let sql_obfuscation_mode = (|| {
-            Some(
-                agent_info
-                    .info
-                    .config
-                    .as_ref()?
-                    .obfuscation
-                    .as_ref()?
-                    .sql_obfuscation_mode,
-            )
-        })()
-        .unwrap_or_default();
+        let obfuscation_config = agent_info
+            .info
+            .config
+            .as_ref()
+            .and_then(|cfg| cfg.obfuscation.as_ref());
+        let sql_obfuscation_config = match obfuscation_config {
+            Some(obfuscation_config) => match &obfuscation_config.sql {
+                Some(sql_config) => sql_config.clone(),
+                // Fallback for the previous /info config format
+                None => SqlConfig {
+                    obfuscation_mode: obfuscation_config.sql_obfuscation_mode.unwrap_or_default(),
+                    ..Default::default()
+                },
+            },
+            None => SqlConfig::default(),
+        };
+
         client_side_stats
             .obfuscation_config
             .store(Arc::new(StatsComputationObfuscationConfig {
                 enabled: obfuscation_active,
-                sql_obfuscation_mode,
+                obfuscation_config: sql_obfuscation_config,
             }));
     }
 }
@@ -493,7 +518,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     mod is_stats_computation_supported {
         use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
-        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+        use crate::trace_exporter::stats::{STATS_ENDPOINT, is_stats_computation_supported};
 
         fn make_agent_info(
             client_drop_p0s: Option<bool>,

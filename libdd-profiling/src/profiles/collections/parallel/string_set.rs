@@ -40,9 +40,11 @@ impl ParallelStringSet {
     /// and be returned unchanged.
     #[inline]
     pub unsafe fn from_raw(raw: ptr::NonNull<c_void>) -> Self {
-        let arc = Arc::from_raw(raw.cast::<ParallelSliceStorage<u8>>());
-        Self {
-            inner: ParallelSliceSet { arc },
+        unsafe {
+            let arc = Arc::from_raw(raw.cast::<ParallelSliceStorage<u8>>());
+            Self {
+                inner: ParallelSliceSet { arc },
+            }
         }
     }
 
@@ -70,8 +72,10 @@ impl ParallelStringSet {
     /// The string must not have been inserted yet, as it skips checking if
     /// the string is already present.
     pub unsafe fn insert_unique_uncontended(&self, str: &str) -> Result<StringRef, SetError> {
-        let thin_slice = self.inner.insert_unique_uncontended(str.as_bytes())?;
-        Ok(StringRef(thin_slice.into()))
+        unsafe {
+            let thin_slice = self.inner.insert_unique_uncontended(str.as_bytes())?;
+            Ok(StringRef(thin_slice.into()))
+        }
     }
 
     /// Adds the string to the string set if it isn't present already, and
@@ -97,8 +101,8 @@ impl ParallelStringSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profiles::collections::parallel::slice_set::N_SHARDS;
     use crate::profiles::collections::SetHasher as Hasher;
+    use crate::profiles::collections::parallel::slice_set::N_SHARDS;
     use std::hash::BuildHasher;
 
     #[test]

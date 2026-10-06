@@ -4,11 +4,11 @@
 //! Native v0.4 span encoder: `crate::span::v04::Span` → v0.4 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use rmp::encode::{
-    write_bin, write_bool, write_f64, write_i64, write_sint, write_str, write_u32, write_u64,
-    write_u8, RmpWrite, ValueWriteError,
+    RmpWrite, ValueWriteError, write_bin, write_bool, write_f64, write_i64, write_sint, write_str,
+    write_u8, write_u32, write_u64,
 };
 use std::borrow::Borrow;
 
@@ -285,8 +285,8 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 #[cfg(test)]
 mod tests {
     use super::super::to_vec_from_v04;
-    use crate::span::v04::SpanLink;
     use crate::span::BytesData;
+    use crate::span::v04::SpanLink;
 
     #[test]
     fn span_link_flags_are_not_masked_on_the_native_v04_wire() {

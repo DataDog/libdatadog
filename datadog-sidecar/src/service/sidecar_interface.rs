@@ -55,11 +55,15 @@ pub trait SidecarInterface {
     /// # Arguments
     ///
     /// * `session_id` - The ID of the session.
-    /// * `pid` - The pid of the sidecar client.
+    /// * `remote_config_notify_target` - The client's notification event (Windows only).
     /// * `config` - The configuration to be set.
     async fn set_session_config(
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)]
+        #[SerializedHandle]
+        remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
         config: SessionConfig,
         is_fork: bool,
     );
@@ -277,6 +281,14 @@ pub trait SidecarInterface {
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
 
+    /// Flush in the normal connection's packet order, then close the completion pipe.
+    /// The raw signal worker can send this packet concurrently without disturbing normal replies.
+    #[oneway]
+    async fn flush_signal(
+        options: SidecarFlushOptions,
+        #[SerializedHandle] completion: libdd_ipc::platform::PlatformHandle<std::io::PipeWriter>,
+    );
+
     /// Sets x-datadog-test-session-token on all requests for the given session.
     ///
     /// # Arguments
@@ -286,12 +298,7 @@ pub trait SidecarInterface {
     async fn set_test_session_token(token: String);
 
     /// IPC fallback: add a span directly to the sidecar's SHM concentrator for (env, version).
-    ///
-    /// Used when the PHP side cannot open the SHM concentrator yet (startup race: SHM is
-    /// created by the sidecar after processing `set_universal_service_tags`, but span
-    /// serialization may run before that message is processed).  Because the sidecar processes
-    /// IPC messages sequentially and `set_universal_service_tags` is sent first (via the
-    /// priority outbox), the concentrator is guaranteed to exist when this message is processed.
+    /// Creates the concentrator if needed, retiring any stale segment.
     async fn add_span_to_concentrator(
         env: String,
         version: String,

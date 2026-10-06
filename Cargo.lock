@@ -324,13 +324,13 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 
 [[package]]
 name = "async-trait"
-version = "0.1.89"
+version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.87",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -468,6 +468,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -801,7 +802,6 @@ version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "975982cdb7ad6a142be15bdf84aea7ec6a9e5d4d797c004d43185b24cfe4e684"
 dependencies = [
- "clap",
  "heck",
  "indexmap 2.12.1",
  "log",
@@ -1413,6 +1413,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
+ "serial_test",
  "sha2",
  "simd-json",
  "spawn_worker",
@@ -1423,7 +1424,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
- "winapi 0.3.9",
+ "windows-sys 0.52.0",
  "zwohash",
 ]
 
@@ -2680,16 +2681,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kernel32-sys"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
-dependencies = [
- "winapi 0.2.8",
- "winapi-build",
-]
-
-[[package]]
 name = "kv-log-macro"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2709,6 +2700,12 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+
+[[package]]
+name = "libc_alloc"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7581282928bc99698341d1de7590964c28db747c164eaac9409432a3eaed098a"
 
 [[package]]
 name = "libdd-agent-client"
@@ -2739,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "3.0.1"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2751,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "5.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2765,9 +2762,10 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "6.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "cc",
  "const_format",
@@ -2882,7 +2880,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "10.0.0"
+version = "12.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2918,6 +2916,7 @@ dependencies = [
  "regex",
  "rmp-serde",
  "serde",
+ "serde_ignored",
  "serde_json",
  "sha2",
  "tempfile",
@@ -2933,7 +2932,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-core"
-version = "1.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2957,6 +2956,7 @@ dependencies = [
  "build_common",
  "httpmock",
  "libdd-capabilities-impl",
+ "libdd-common",
  "libdd-common-ffi",
  "libdd-data-pipeline",
  "libdd-shared-runtime",
@@ -2972,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.1.1"
+version = "1.1.3"
 dependencies = [
  "criterion",
  "prost",
@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "6.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3087,6 +3087,7 @@ name = "libdd-ipc"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bincode",
  "criterion",
  "glibc_version",
@@ -3106,8 +3107,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "winapi 0.3.9",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
  "zwohash",
 ]
 
@@ -3123,7 +3123,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "4.0.0"
+version = "4.2.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3133,9 +3133,9 @@ dependencies = [
  "rand 0.8.8",
  "rmp-serde",
  "serde",
- "serde_yaml",
  "serial_test",
  "tempfile",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3145,6 +3145,7 @@ dependencies = [
  "anyhow",
  "build_common",
  "constcat",
+ "libc_alloc",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-library-config",
@@ -3223,7 +3224,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-otel-thread-ctx"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "elf",
@@ -3262,6 +3263,7 @@ dependencies = [
  "libdd-common",
  "libdd-profiling",
  "libdd-profiling-protobuf",
+ "opentelemetry-proto",
  "parking_lot",
  "proptest",
  "prost",
@@ -3312,7 +3314,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-allocator"
-version = "1.0.0"
+version = "1.2.0"
 dependencies = [
  "criterion",
  "libc",
@@ -3344,7 +3346,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
-version = "1.0.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -3363,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "5.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3401,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "6.0.0"
+version = "8.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3413,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "4.0.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3438,7 +3440,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "8.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3485,7 +3487,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.3"
+version = "1.1.5"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3499,7 +3501,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "4.0.0"
+version = "4.2.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3511,7 +3513,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "8.0.0"
+version = "10.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3525,11 +3527,12 @@ dependencies = [
  "percent-encoding",
  "serde",
  "serde_json",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "bolero",
  "prost",
@@ -3543,7 +3546,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "9.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3573,7 +3576,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "12.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3693,6 +3696,12 @@ dependencies = [
  "libc",
  "redox_syscall",
 ]
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "libz-rs-sys"
@@ -3991,7 +4000,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
 dependencies = [
- "winapi 0.3.9",
+ "winapi",
 ]
 
 [[package]]
@@ -4213,6 +4222,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf"
 
 [[package]]
+name = "opentelemetry"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6cdb0b1b267eb9db3331b434ed9ddab10d50e280a9adf9d13e5233e2002b61b5"
+dependencies = [
+ "js-sys",
+]
+
+[[package]]
+name = "opentelemetry-proto"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25da1ac11a0aeccf38d7f77ee0348715adaf8340f65ad46c94a02c6b20e2f65d"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "prost",
+]
+
+[[package]]
+name = "opentelemetry_sdk"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb39533d9d1c912123efd7d41d7e0c29d16917b60ce15b4c8d87cb1af7f67520"
+dependencies = [
+ "opentelemetry",
+ "portable-atomic",
+]
+
+[[package]]
 name = "os_info"
 version = "3.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4234,7 +4273,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
 dependencies = [
  "libc",
- "winapi 0.3.9",
+ "winapi",
 ]
 
 [[package]]
@@ -4508,9 +4547,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.89"
+version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f139b0662de085916d1fb67d2b4169d1addddda1919e696f3252b740b629986e"
+checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
@@ -5347,6 +5386,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_ignored"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde_json"
 version = "1.0.132"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5405,19 +5454,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap 2.12.1",
- "itoa 1.0.11",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -5572,14 +5608,13 @@ dependencies = [
  "cc_utils",
  "fastrand",
  "io-lifetimes",
- "kernel32-sys",
  "libc",
  "memfd",
  "nix 0.29.0",
  "rlimit",
  "tempfile",
- "winapi 0.2.8",
  "windows 0.51.1",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5773,6 +5808,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8593e8e72159ed2257d083c7a454a85cbf854f37a0966d8d483aff8c8a3ebcee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5813,7 +5859,7 @@ dependencies = [
  "libc",
  "ntapi",
  "once_cell",
- "winapi 0.3.9",
+ "winapi",
 ]
 
 [[package]]
@@ -6392,12 +6438,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
-
-[[package]]
 name = "untrusted"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6699,12 +6739,6 @@ checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "winapi"
-version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "167dc9d6949a9b857f3451275e911c3f44255842c1f7a76f33c55103a909087a"
-
-[[package]]
-name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
@@ -6712,12 +6746,6 @@ dependencies = [
  "winapi-i686-pc-windows-gnu",
  "winapi-x86_64-pc-windows-gnu",
 ]
-
-[[package]]
-name = "winapi-build"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d315eee3b34aca4797b2da6b13ed88266e6d612562a0c46390af8299fc699bc"
 
 [[package]]
 name = "winapi-i686-pc-windows-gnu"
@@ -7200,6 +7228,19 @@ name = "writeable"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e9df38ee2d2c3c5948ea468a8406ff0db0b29ae1ffde1bcf20ef305bcc95c51"
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33b729a08a9a6be689bbad3e2bf8015926db54b6622cc89c3a5f7dc174b9e918"
+dependencies = [
+ "indexmap 2.12.1",
+ "itoa 1.0.11",
+ "libyaml-rs",
+ "ryu",
+ "serde",
+]
 
 [[package]]
 name = "yansi"

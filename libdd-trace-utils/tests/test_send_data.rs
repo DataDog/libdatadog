@@ -9,14 +9,14 @@ mod tracing_integration_tests {
     use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{Endpoint, http_common};
     use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;
     use libdd_trace_utils::span::vec_map::VecMap;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_no_alloc_span};
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
-    use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+    use libdd_trace_utils::tracer_payload::{TraceEncoding, decode_to_trace_chunks};
     use serde_json::json;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
@@ -557,11 +557,11 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v04, to_vec_from_v1};
-        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v1, to_vec_from_v04};
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
+        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
@@ -767,12 +767,12 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
         use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;
-        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
+        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_v04_native_and_v1_to_v04_encoders_snapshot_test";

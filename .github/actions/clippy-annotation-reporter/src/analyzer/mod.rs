@@ -10,7 +10,7 @@ use crate::analyzer::annotation::{
     count_annotations_by_crate, count_annotations_by_rule, create_annotation_regex,
     find_annotations,
 };
-use crate::analyzer::git::{get_changed_files, GitOperations};
+use crate::analyzer::git::{GitOperations, get_changed_files};
 use anyhow::Result;
 use log::{debug, info};
 use octocrab::Octocrab;

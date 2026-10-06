@@ -12,8 +12,8 @@
 
 use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
-    KEY_WOW64_64KEY, REG_SZ,
+    HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY, REG_SZ, RegCloseKey, RegOpenKeyExW,
+    RegQueryValueExW,
 };
 
 fn to_wide_null(s: &str) -> Vec<u16> {

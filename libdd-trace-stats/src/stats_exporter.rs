@@ -3,8 +3,8 @@
 
 use std::{
     sync::{
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
     },
     time,
 };
@@ -15,16 +15,17 @@ use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use futures::future::join;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::mutable_metadata::MutableMetadataHandle;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy,
+    CompressionStrategy, RetryBackoffType, RetryStrategy, send_with_retry,
 };
 use libdd_trace_utils::span::trace_utils::compute_top_level_span;
 use libdd_trace_utils::stats_payload_encoder::{
-    build_stats_payload, encode_stats_payload_msgpack, split_stats_buckets,
-    MAX_GROUPED_STATS_PER_PAYLOAD,
+    MAX_GROUPED_STATS_PER_PAYLOAD, build_stats_payload, encode_stats_payload_msgpack,
+    split_stats_buckets,
 };
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
@@ -75,7 +76,7 @@ pub struct AgentlessStatsTarget {
 pub const COLLAPSED_SPANS_HEALTH_METRIC: &str = "datadog.tracer.stats.collapsed_spans";
 
 /// Telemetry metric name for the number of spans collapsed.
-pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "tracers.stats_collapsed_spans";
+pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "stats_collapsed_spans";
 
 /// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
 #[derive(Clone, Default, Debug)]
@@ -83,14 +84,13 @@ pub struct StatsMetadata {
     pub hostname: String,
     pub env: String,
     pub app_version: String,
-    pub runtime_id: String,
+    pub mutable_metadata: MutableMetadataHandle,
     pub language: String,
     pub lang_version: String,
     pub lang_interpreter: String,
     pub lang_vendor: String,
     pub tracer_version: String,
     pub git_commit_sha: String,
-    pub process_tags: String,
     pub service: String,
     pub container_id: String,
 }
@@ -114,17 +114,53 @@ impl From<TracerMetadata> for StatsMetadata {
             hostname: m.hostname,
             env: m.env,
             app_version: m.app_version,
-            runtime_id: m.runtime_id,
+            mutable_metadata: m.mutable_metadata,
             language: m.language,
             lang_version: m.language_version,
             lang_interpreter: m.language_interpreter,
             lang_vendor: m.language_interpreter_vendor,
             tracer_version: m.tracer_version,
             git_commit_sha: m.git_commit_sha,
-            process_tags: m.process_tags,
             service: m.service,
             container_id: m.container_id,
         }
+    }
+}
+pub trait StatsCap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static {}
+
+impl<T: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> StatsCap for T {}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait FlushableStatsExport: Debug + MaybeSend + Sync + 'static {
+    /// Flush all currently-buffered stats and send them.
+    /// Best-effort: errors are logged by the exporter and swallowed here.
+    async fn force_flush(&self);
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'static>
+    FlushableStatsExport for StatsExporter<Cap, Con>
+{
+    async fn force_flush(&self) {
+        let _ = self.send(true).await;
+    }
+}
+
+/// Cloneable handle to a [`StatsExporter`] hosted on a [`SharedRuntime`].
+#[derive(Debug, Clone)]
+pub struct SharedStatsExporter<Cap: StatsCap, Con: FlushableConcentrator = SpanConcentrator>(
+    Arc<StatsExporter<Cap, Con>>,
+);
+
+impl<Cap: StatsCap, Con: FlushableConcentrator + Debug + MaybeSend + Sync + 'static>
+    SharedStatsExporter<Cap, Con>
+{
+    pub fn wrap(exporter: StatsExporter<Cap, Con>) -> (Self, Weak<dyn FlushableStatsExport>) {
+        let arc = Arc::new(exporter);
+        let weak = Arc::downgrade(&arc) as Weak<dyn FlushableStatsExport>;
+        (Self(arc), weak)
     }
 }
 
@@ -376,9 +412,9 @@ pub struct StatsExporter<
 }
 
 impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator,
-    > StatsExporter<Cap, Con>
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    Con: FlushableConcentrator,
+> StatsExporter<Cap, Con>
 {
     /// Return a new StatsExporter targeting the Datadog Agent's `/v0.6/stats`.
     ///
@@ -518,7 +554,7 @@ impl<
                 let _ = handle.add_point(
                     flush.collapsed_spans as f64,
                     key,
-                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                    vec![libdd_common::tag!("collapsed", "whole_key")],
                 );
             }
             flush.collapsed_fields_metrics.emit_telemetry(handle, key);
@@ -530,7 +566,7 @@ impl<
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
-                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                    [libdd_common::tag!("collapsed", "whole_key")].iter(),
                 )]);
             }
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
@@ -690,27 +726,29 @@ fn payload_errors(mut errors: Vec<anyhow::Error>) -> anyhow::Result<()> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator + Send + Debug,
-    > Worker for StatsExporter<Cap, Con>
+impl<Cap: StatsCap, Con: FlushableConcentrator + Send + Debug> Worker
+    for SharedStatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
-        self.sender.capabilities.sleep(self.flush_interval).await;
+        self.0
+            .sender
+            .capabilities
+            .sleep(self.0.flush_interval)
+            .await;
     }
 
     /// Flush and send stats on every trigger.
     async fn run(&mut self) {
-        let _ = self.send(false).await; // bool return ignored by Worker
+        let _ = self.0.send(false).await; // bool return ignored by Worker
     }
 
     fn reset(&mut self) {
-        let _ = self.concentrator.lock_or_panic().flush_buckets(true);
-        self.sender.sequence_id.store(0, Ordering::Relaxed);
+        let _ = self.0.concentrator.lock_or_panic().flush_buckets(true);
+        self.0.sender.sequence_id.store(0, Ordering::Relaxed);
     }
 
     async fn shutdown(&mut self) {
-        let _ = self.send(true).await;
+        let _ = self.0.send(true).await;
     }
 }
 
@@ -719,6 +757,7 @@ fn encode_stats_payload(
     sequence: u64,
     buckets: Vec<pb::ClientStatsBucket>,
 ) -> pb::ClientStatsPayload {
+    let mutable_metadata = meta.mutable_metadata.load();
     pb::ClientStatsPayload {
         hostname: meta.hostname.clone(),
         env: if meta.env.is_empty() {
@@ -727,12 +766,12 @@ fn encode_stats_payload(
             meta.env.clone()
         },
         version: meta.app_version.clone(),
-        runtime_id: meta.runtime_id.clone(),
+        runtime_id: mutable_metadata.runtime_id.clone(),
         sequence,
         service: meta.service.clone(),
         stats: buckets,
         git_commit_sha: meta.git_commit_sha.clone(),
-        process_tags: meta.process_tags.clone(),
+        process_tags: mutable_metadata.process_tags.clone(),
         // These fields will be set by the Agent
         container_id: String::new(),
         tags: Vec::new(),
@@ -754,8 +793,8 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
@@ -774,6 +813,17 @@ mod tests {
     fn test_stats_exporter_sync_send() {
         let _ = is_send::<StatsExporter<NativeCapabilities>>;
         let _ = is_sync::<StatsExporter<NativeCapabilities>>;
+        // The shared handle must be Send + Sync so it can be spawned on a multi-threaded
+        // runtime.
+        let _ = is_send::<SharedStatsExporter<NativeCapabilities>>;
+        let _ = is_sync::<SharedStatsExporter<NativeCapabilities>>;
+        // The weak trait-object handle must be Send + Sync so the trace exporter can store
+        // it across await points.
+        let _ = is_send::<Weak<dyn FlushableStatsExport>>;
+        let _ = is_sync::<Weak<dyn FlushableStatsExport>>;
+        // The upgraded strong trait object must also be Send + Sync.
+        let _ = is_send::<Arc<dyn FlushableStatsExport>>;
+        let _ = is_sync::<Arc<dyn FlushableStatsExport>>;
     }
 
     #[cfg(feature = "stats-obfuscation")]
@@ -806,15 +856,17 @@ mod tests {
             exporter,
             Err(AgentlessStatsExporterError::InvalidBucketSize)
         ));
-        assert!(AgentlessStatsExporter::new(
-            Duration::from_nanos(1),
-            get_test_metadata(),
-            target(),
-            NativeCapabilities::new_client(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .is_ok());
+        assert!(
+            AgentlessStatsExporter::new(
+                Duration::from_nanos(1),
+                get_test_metadata(),
+                target(),
+                NativeCapabilities::new_client(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .is_ok()
+        );
     }
 
     #[cfg(feature = "stats-obfuscation")]
@@ -859,15 +911,39 @@ mod tests {
         mock.assert_calls_async(2).await;
     }
 
+    #[test]
+    fn mutable_metadata_updates_propagate_to_encoded_payloads() {
+        let meta = get_test_metadata();
+        let handle = meta.mutable_metadata.clone();
+
+        let buckets = vec![pb::ClientStatsBucket::default()];
+        let payload = encode_stats_payload(&meta, 1, buckets.clone());
+        assert_eq!(payload.runtime_id, "e39d6d12-0752-489f-b488-cf80006c0378");
+        assert_eq!(payload.process_tags, "key1:value1,key2:value2");
+
+        // Update the shared handle after the exporter was built: the next encode
+        // must pick up the new values.
+        handle.update(|mut metadata| {
+            metadata.runtime_id = "11111111-2222-3333-4444-555555555555".into();
+            metadata.process_tags = "k2:v2".into();
+            metadata
+        });
+        let payload = encode_stats_payload(&meta, 2, buckets);
+        assert_eq!(payload.runtime_id, "11111111-2222-3333-4444-555555555555");
+        assert_eq!(payload.process_tags, "k2:v2");
+    }
+
     fn get_test_metadata() -> StatsMetadata {
+        let mutable_metadata = MutableMetadataHandle::default();
+        mutable_metadata.set_runtime_id("e39d6d12-0752-489f-b488-cf80006c0378".into());
+        mutable_metadata.set_process_tags("key1:value1,key2:value2".into());
         StatsMetadata {
             hostname: "libdatadog-test".into(),
             env: "test".into(),
             app_version: "0.0.0".into(),
             language: "rust".into(),
             tracer_version: "0.0.0".into(),
-            runtime_id: "e39d6d12-0752-489f-b488-cf80006c0378".into(),
-            process_tags: "key1:value1,key2:value2".into(),
+            mutable_metadata,
             ..Default::default()
         }
     }
@@ -947,6 +1023,66 @@ mod tests {
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    /// `SharedStatsExporter::wrap` returns a strong handle and a weak handle whose
+    /// `force_flush` upgrades and sends stats. The weak handle also works behind the
+    /// `Weak<dyn FlushableStatsExport>` used by the trace exporter.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_shared_stats_exporter_wrap_force_flush() {
+        let server = MockServer::start_async().await;
+
+        let mut mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .path("/v0.6/stats")
+                    .body_includes("libdatadog-test");
+                then.status(200).body("");
+            })
+            .await;
+
+        // Each concentrator holds exactly one flush worth of data, so use a fresh
+        // wrapped exporter per forced flush.
+        let build_wrapped = || {
+            let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+                BUCKETS_DURATION,
+                Arc::new(Mutex::new(get_test_concentrator())),
+                get_test_metadata(),
+                Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+                NativeCapabilities::new_client(),
+                #[cfg(feature = "stats-obfuscation")]
+                "1",
+                #[cfg(feature = "telemetry")]
+                None,
+                #[cfg(feature = "dogstatsd")]
+                None,
+            );
+            SharedStatsExporter::wrap(stats_exporter)
+        };
+
+        // The weak handle flushes through the shared allocation without holding a strong ref.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        };
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 1).await,
+            "weak force_flush should send stats once"
+        );
+
+        // The weak handle is a `Weak<dyn FlushableStatsExport>`: upgrading yields an
+        // `Arc<dyn FlushableStatsExport>` whose `force_flush` is dispatched dynamically,
+        // which is how the trace exporter drives it.
+        let (_shared, weak) = build_wrapped();
+        if let Some(e) = weak.upgrade() {
+            e.force_flush().await;
+        }
+        assert!(
+            poll_for_mock_hits(&mut mock, 20, 50, 2).await,
+            "second weak force_flush should send stats again"
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -1130,8 +1266,9 @@ mod tests {
             #[cfg(feature = "dogstatsd")]
             None,
         );
+        let (shared, _weak) = SharedStatsExporter::wrap(stats_exporter);
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(shared, true)
             .expect("Failed to spawn worker");
 
         // Wait for stats to be flushed
@@ -1178,8 +1315,9 @@ mod tests {
             None,
         );
 
+        let (shared, _weak) = SharedStatsExporter::wrap(stats_exporter);
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true)
+            .spawn_worker(shared, true)
             .expect("Failed to spawn worker");
 
         shared_runtime.shutdown(None).unwrap();
@@ -1432,7 +1570,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
             "DogStatsD datagram must match the expected format"
         );
     }
@@ -1485,7 +1623,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:whole_key",
             "DogStatsD datagram must match the expected format"
         );
 
@@ -1495,7 +1633,7 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed_spans:resource",
+            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed:resource",
             "DogStatsD datagram must match the expected format"
         );
         let n = socket
@@ -1503,7 +1641,8 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:resource,collapsed_spans:http_endpoint",
+            datagram,
+            "datadog.tracer.stats.collapsed_spans:2|c|#collapsed:resource,collapsed:http_endpoint",
             "DogStatsD datagram must match the expected format"
         );
     }

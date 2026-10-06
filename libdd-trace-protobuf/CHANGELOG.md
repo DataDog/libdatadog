@@ -2,6 +2,30 @@
 
 
 
+## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v5.0.1..libdd-trace-protobuf-v5.1.0) - 2026-10-02
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+### Fixed
+
+- Revert changes that made /info un-parsable ([#2586](https://github.com/datadog/libdatadog/issues/2586)) - ([8040933](https://github.com/datadog/libdatadog/commit/804093337c593c6e9134c494470749bd8e8a1af1))
+
+
+
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v5.0.0..libdd-trace-protobuf-v5.0.1) - 2026-09-24
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Build script change detection ([#2467](https://github.com/datadog/libdatadog/issues/2467)) - ([bdbad40](https://github.com/datadog/libdatadog/commit/bdbad408e9fd870de260d3688730f66b94445aef))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v4.0.1..libdd-trace-protobuf-v5.0.0) - 2026-08-25
 
 ### Changed

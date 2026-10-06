@@ -6,7 +6,7 @@ use crate::dd_constants::{
     RL_EFFECTIVE_RATE, SAMPLING_AGENT_RATE_TAG_KEY, SAMPLING_DECISION_MAKER_TAG_KEY,
     SAMPLING_KNUTH_RATE_TAG_KEY, SAMPLING_PRIORITY_TAG_KEY, SAMPLING_RULE_RATE_TAG_KEY,
 };
-use crate::dd_sampling::{mechanism, priority, SamplingMechanism, SamplingPriority};
+use crate::dd_sampling::{SamplingMechanism, SamplingPriority, mechanism, priority};
 use crate::sampling_rule_config::SamplingRuleConfig;
 
 /// Type alias for sampling rules update callback
@@ -999,12 +999,16 @@ mod tests {
         assert_eq!(sampler.service_samplers.len(), 2);
 
         // Verify keys exist
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:web,env:prod"));
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:api,env:prod"));
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:web,env:prod")
+        );
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:api,env:prod")
+        );
 
         // Verify the sampling rates are correctly set
         if let Some(web_sampler) = sampler.service_samplers.get("service:web,env:prod") {
@@ -1390,9 +1394,11 @@ mod tests {
 
         // Should inherit the sampling decision from parent
         assert!(result_sampled.get_priority().is_keep());
-        assert!(result_sampled
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_none());
+        assert!(
+            result_sampled
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_none()
+        );
 
         // Test with non-sampled parent context
         let data_not_sampled = create_sampling_data(Some(false), &trace_id, "span", empty_attrs);
@@ -1400,9 +1406,11 @@ mod tests {
 
         // Should inherit the sampling decision from parent
         assert!(!result_not_sampled.get_priority().is_keep());
-        assert!(result_not_sampled
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_none());
+        assert!(
+            result_not_sampled
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1438,9 +1446,11 @@ mod tests {
 
         // Should still sample (default behavior when no rules match) and add attributes
         assert!(result_no_match.get_priority().is_keep());
-        assert!(result_no_match
-            .to_dd_sampling_tags(&TestAttributeFactory)
-            .is_some());
+        assert!(
+            result_no_match
+                .to_dd_sampling_tags(&TestAttributeFactory)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1664,7 +1674,10 @@ mod tests {
         let span = TestSpan::new("test-span", attrs.as_slice());
 
         let matching_rule = sampler.find_matching_rule(&span);
-        assert!(matching_rule.is_some(), "Expected to find a matching rule for service 'web-frontend' and name 'http.client.request'");
+        assert!(
+            matching_rule.is_some(),
+            "Expected to find a matching rule for service 'web-frontend' and name 'http.client.request'"
+        );
         let rule = matching_rule.unwrap();
         assert_eq!(rule.sample_rate, 0.5);
         assert_eq!(rule.provenance, "customer");
@@ -1682,9 +1695,11 @@ mod tests {
         // Valid JSON with rate_by_service
         let json = r#"{"rate_by_service":{"service:web,env:prod":0.5}}"#;
         callback(json);
-        assert!(sampler
-            .service_samplers
-            .contains_key("service:web,env:prod"));
+        assert!(
+            sampler
+                .service_samplers
+                .contains_key("service:web,env:prod")
+        );
 
         // Invalid JSON — should not panic
         callback("not json");

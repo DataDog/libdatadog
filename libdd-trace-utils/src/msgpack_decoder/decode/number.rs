@@ -4,7 +4,7 @@
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::DeserializableTraceData;
-use rmp::{decode::RmpRead, Marker};
+use rmp::{Marker, decode::RmpRead};
 use std::fmt;
 
 #[derive(Debug, PartialEq)]

@@ -95,8 +95,8 @@ fn check_tracer_pid_line(line: &[u8], marker: &[u8]) -> io::Result<Option<bool>>
 #[cfg(target_os = "linux")]
 pub fn alt_fork() -> libc::pid_t {
     use libc::{
-        c_ulong, c_void, pid_t, syscall, SYS_clone, CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID,
-        CLONE_PTRACE, SIGCHLD,
+        CLONE_CHILD_CLEARTID, CLONE_CHILD_SETTID, CLONE_PTRACE, SIGCHLD, SYS_clone, c_ulong,
+        c_void, pid_t, syscall,
     };
 
     let mut _ptid: pid_t = 0;
@@ -134,8 +134,8 @@ pub fn alt_fork() -> libc::pid_t {
 #[cfg(target_os = "linux")]
 #[cfg(test)]
 mod tests {
-    use crate::unix_utils::fork::is_being_traced_internal;
     use crate::unix_utils::fork::BUFFER_SIZE;
+    use crate::unix_utils::fork::is_being_traced_internal;
     use std::fs::File;
     use std::io::Seek;
     use std::io::Write;

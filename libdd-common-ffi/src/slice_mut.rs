@@ -1,5 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
 use crate::slice::{AsBytes, SliceConversionError};
 use core::fmt::{Debug, Display, Formatter};
@@ -7,8 +8,8 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::slice;
-use serde::ser::Error;
 use serde::Serializer;
+use serde::ser::Error;
 use std::os::raw::c_char;
 
 #[repr(C)]

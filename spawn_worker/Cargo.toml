@@ -1,11 +1,18 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 [package]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 name = "spawn_worker"
 version = "0.0.1"
 publish = false
 
 [lib]
 bench = false
+
+[features]
+trampoline-host-loader = []
 
 [dependencies]
 anyhow.workspace = true
@@ -16,6 +23,9 @@ libc.workspace = true
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
+# allow(workspace-deps): this crate is still on the windows 0.51 bindings,
+# while the workspace entry tracks 0.59 for the crashtracker crates. Moving
+# it over is an API migration that needs a Windows build to validate.
 [target.'cfg(windows)'.dependencies.windows]
 features = [
   "Win32_Foundation",
@@ -28,8 +38,12 @@ features = [
 version = "0.51.1"
 
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "=0.2.8" }
-kernel32-sys = "0.2.2"
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Threading",
+] }
 
 [target.'cfg(not(windows))'.dependencies]
 memfd.workspace = true
@@ -44,4 +58,3 @@ rlimit.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage,coverage_nightly)'] }
-

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "6.0.0"
+version = "8.0.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
+arc-swap.workspace = true
 futures = { workspace = true, features = ["alloc", "executor"] }
 futures-util.workspace = true
 hex = { workspace = true, default-features = true }
@@ -62,7 +63,7 @@ libc.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"], optional = true }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
-version = "0.52"
+workspace = true
 features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",

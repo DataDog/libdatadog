@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
+use crate::span::{BytesData, SharedDictBytes, TraceData, v1, v04, v05};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
@@ -239,7 +239,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 /// use libdd_tinybytes;
 /// use libdd_trace_protobuf::pb;
 /// use libdd_trace_utils::trace_utils::TracerHeaderTags;
-/// use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
+/// use libdd_trace_utils::tracer_payload::{TraceEncoding, decode_to_trace_chunks};
 /// use std::convert::TryInto;
 /// // This will likely be a &[u8] slice in practice.
 /// let data: Vec<u8> = Vec::new();

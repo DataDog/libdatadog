@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::msgpack_decoder::decode::{buffer::Buffer, error::DecodeError};
-use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
-use rmp::{decode, decode::RmpRead, Marker};
+use crate::span::vec_map::VecMap;
+use rmp::{Marker, decode, decode::RmpRead};
 use std::collections::HashMap;
 
 /// Reads a map from the buffer and returns it as a `HashMap`.

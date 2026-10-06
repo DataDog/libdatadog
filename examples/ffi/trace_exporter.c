@@ -185,6 +185,7 @@ int main(int argc, char** argv)
     ddog_CharSlice env = DDOG_CHARSLICE_C("staging");
     ddog_CharSlice version = DDOG_CHARSLICE_C("1.0");
     ddog_CharSlice service = DDOG_CHARSLICE_C("test_app");
+    ddog_CharSlice runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc");
 
     ddog_TraceExporterError *ret = NULL;
     ddog_TraceExporterConfig *config = NULL;
@@ -200,10 +201,10 @@ int main(int argc, char** argv)
     ddog_trace_exporter_config_set_version(config, version);
     ddog_trace_exporter_config_set_service(config, service);
     ddog_trace_exporter_config_set_connection_timeout(config, 1000);
+    ddog_trace_exporter_config_set_runtime_id(config, runtime_id);
 
     ddog_TelemetryClientConfig telemetry_config = {
         .interval = 60000,
-        .runtime_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
         .debug_enabled = true,
         .session_id = DDOG_CHARSLICE_C("12345678-1234-1234-1234-123456789abc"),
         .root_session_id = DDOG_CHARSLICE_C("87654321-1234-1234-1234-123456789abc"),

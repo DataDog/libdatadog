@@ -1,8 +1,8 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::slice::AsBytes;
 use libdd_live_debugger::debugger_defs::SnapshotEvaluationError;
 use libdd_live_debugger::{DslString, ProbeCondition, ProbeValue, ResultError, ResultValue};
 use std::borrow::Cow;
@@ -209,10 +209,12 @@ impl<'e> libdd_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_register_expr_evaluator(eval: &Evaluator) {
-    FFI_EVALUATOR = Some(eval.clone());
+    unsafe {
+        FFI_EVALUATOR = Some(eval.clone());
+    }
 }
 
 #[repr(C)]
@@ -222,7 +224,7 @@ pub enum ConditionEvaluationResult {
     Error(Box<Vec<SnapshotEvaluationError>>),
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluate_condition(
     condition: &ProbeCondition,
     context: &mut c_void,
@@ -252,7 +254,7 @@ pub fn ddog_evaluate_string<'a>(
 }
 
 // This is unsafe, but we want to use it as function pointer...
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn ddog_drop_void_collection_string(void: VoidCollection) {
     unsafe {
         String::from_raw_parts(
@@ -274,7 +276,7 @@ fn into_void_collection_string(s: &dyn ToString) -> VoidCollection {
     new
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluate_unmanaged_string(
     segments: &DslString,
     context: &mut c_void,
@@ -291,7 +293,7 @@ pub enum ValueEvaluationResult<'a> {
     Error(Box<Vec<SnapshotEvaluationError>>),
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluate_value<'a>(
     value: &'a ProbeValue,
     context: &'a mut c_void,
@@ -303,14 +305,14 @@ pub extern "C" fn ddog_evaluate_value<'a>(
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluated_value_get<'a>(
     value: &'a InternalIntermediateValue<'a>,
 ) -> IntermediateValue<'a> {
     (&value.0).into()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluated_value_drop(_: Box<InternalIntermediateValue>) {}
 
 #[allow(clippy::boxed_local)]
@@ -322,7 +324,7 @@ pub fn ddog_evaluated_value_into_string<'a>(
     libdd_live_debugger::eval_intermediate_to_string(&mut ctx, value.0)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_evaluated_value_into_unmanaged_string<'a>(
     value: Box<InternalIntermediateValue<'a>>,
     context: &'a mut c_void,

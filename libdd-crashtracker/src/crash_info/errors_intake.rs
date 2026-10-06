@@ -5,16 +5,18 @@ use alloc::borrow::Cow;
 use core::time::Duration;
 use std::time::SystemTime;
 
+use crate::parse_tags;
+
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
-    telemetry::CrashPing, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, ThreadData,
-    TARGET_TRIPLE,
+    CrashInfo, ErrorKind, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE, ThreadData,
+    telemetry::CrashPing,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use http::{uri::PathAndQuery, Uri};
-use libdd_common::{config::parse_env, parse_uri, Endpoint};
+use http::{Uri, uri::PathAndQuery};
+use libdd_common::{Endpoint, config::parse_env, parse_uri};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -248,6 +250,8 @@ pub struct ErrorObject {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_crash: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ErrorKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
@@ -281,8 +285,12 @@ pub struct ErrorsIntakePayload {
 #[derive(Debug, Default)]
 struct ExtractedMetadata {
     env: Option<String>,
+    family: String,
     language_name: Option<String>,
     language_version: Option<String>,
+    library_name: String,
+    library_version: String,
+    process_tags: Option<String>,
     service_name: String,
     service_version: Option<String>,
     tracer_version: Option<String>,
@@ -290,32 +298,28 @@ struct ExtractedMetadata {
 
 impl ExtractedMetadata {
     fn from_metadata(metadata: &Metadata) -> Self {
-        let mut result = Self {
-            service_name: "unknown".to_string(),
-            ..Default::default()
-        };
-
-        for tag in &metadata.tags {
-            if let Some((key, value)) = tag.split_once(':') {
-                match key {
-                    "service" => result.service_name = value.to_string(),
-                    "env" => result.env = Some(value.to_string()),
-                    "version" | "service_version" => {
-                        result.service_version = Some(value.to_string())
-                    }
-                    "language" => result.language_name = Some(value.to_string()),
-                    "language_version" | "runtime_version" => {
-                        result.language_version = Some(value.to_string())
-                    }
-                    "library_version" | "profiler_version" => {
-                        result.tracer_version = Some(value.to_string())
-                    }
-                    _ => {}
-                }
-            }
+        parse_tags!(
+            metadata.tags.iter(),
+            "service" => service,
+            "env" => env,
+            "version" | "service_version" => service_version,
+            "language" => language_name,
+            "language_version" | "runtime_version" => language_version,
+            "library_version" | "profiler_version" => tracer_version,
+            "process_tags" => process_tags,
+        );
+        Self {
+            env: env.map(str::to_owned),
+            family: metadata.family.clone(),
+            language_name: language_name.map(str::to_owned),
+            language_version: language_version.map(str::to_owned),
+            library_name: metadata.library_name.clone(),
+            library_version: metadata.library_version.clone(),
+            process_tags: process_tags.filter(|v| !v.is_empty()).map(str::to_owned),
+            service_name: service.unwrap_or("unknown").to_owned(),
+            service_version: service_version.map(str::to_owned),
+            tracer_version: tracer_version.map(str::to_owned),
         }
-
-        result
     }
 
     fn append_base_tags(&self, tags: &mut String) {
@@ -326,6 +330,13 @@ impl ExtractedMetadata {
         if let Some(version) = &self.service_version {
             tags.push_str(&format!(",version:{version}"));
         }
+        self.append_library_tags(tags);
+    }
+
+    fn append_library_tags(&self, tags: &mut String) {
+        tags.push_str(&format!(",library_name:{}", self.library_name));
+        tags.push_str(&format!(",library_version:{}", self.library_version));
+        tags.push_str(&format!(",family:{}", self.family));
     }
 
     fn append_runtime_tags(&self, tags: &mut String) {
@@ -339,45 +350,16 @@ impl ExtractedMetadata {
             tags.push_str(&format!(",tracer_version:{tracer_version}"));
         }
     }
-}
 
-fn append_signal_tags(tags: &mut String, sig_info: &SigInfo) {
-    tags.push_str(&format!(
-        ",si_code_human_readable:{:?}",
-        sig_info.si_code_human_readable
-    ));
-    tags.push_str(&format!(",si_signo:{}", sig_info.si_signo));
-    tags.push_str(&format!(
-        ",si_signo_human_readable:{:?}",
-        sig_info.si_signo_human_readable
-    ));
-}
-
-fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
-    let mut tags = format!("data_schema_version:{}", crash_info.data_schema_version);
-
-    if let Some(fingerprint) = &crash_info.fingerprint {
-        tags.push_str(&format!(",fingerprint:{fingerprint}"));
-    }
-
-    tags.push_str(&format!(",incomplete:{}", crash_info.incomplete));
-    tags.push_str(&format!(",is_crash:{}", crash_info.error.is_crash));
-    tags.push_str(&format!(",uuid:{}", crash_info.uuid));
-
-    for (counter, value) in &crash_info.counters {
-        tags.push_str(&format!(",{counter}:{value}"));
-    }
-
-    if let Some(siginfo) = &crash_info.sig_info {
-        if let Some(si_addr) = &siginfo.si_addr {
-            tags.push_str(&format!(",si_addr:{si_addr}"));
+    // Process tags don't get a key because they are already formatted as a
+    // key1:value1,key2:value2,... string. Empty values are filtered out at
+    // parse time in from_metadata, so process_tags is always None or non empty
+    fn append_process_tags(&self, tags: &mut String) {
+        if let Some(process_tags) = &self.process_tags {
+            tags.push(',');
+            tags.push_str(process_tags);
         }
-        tags.push_str(&format!(",si_code:{}", siginfo.si_code));
-        append_signal_tags(&mut tags, siginfo);
     }
-
-    tags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
-    tags
 }
 
 impl ErrorsIntakePayload {
@@ -396,9 +378,9 @@ impl ErrorsIntakePayload {
         let mut ddtags = String::new();
         metadata.append_base_tags(&mut ddtags);
         metadata.append_runtime_tags(&mut ddtags);
-
-        let crash_tags = build_crash_info_tags(crash_info);
-        ddtags.push_str(&format!(",{crash_tags}"));
+        metadata.append_process_tags(&mut ddtags);
+        ddtags.push(',');
+        ddtags.push_str(&crash_info.ddtags());
 
         let error_type = if let Some(sig_info) = &crash_info.sig_info {
             Some(format!("{:?}", sig_info.si_signo_human_readable))
@@ -432,6 +414,7 @@ impl ErrorsIntakePayload {
                 thread_name: crash_info.error.thread_name.clone(),
                 stack: error_stack,
                 is_crash: Some(true),
+                kind: Some(crash_info.error.kind.clone()),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: crash_info.experimental.clone(),
                 threads: crash_info.error.threads.clone(),
@@ -456,23 +439,17 @@ impl ErrorsIntakePayload {
         let metadata = crash_ping.metadata();
 
         let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
-        let mut ddtags = format!(
-            "uuid:{},is_crash_ping:true,service:{}",
-            crash_uuid, extracted_metadata.service_name
-        );
+        let mut ddtags = String::new();
+        extracted_metadata.append_base_tags(&mut ddtags);
         extracted_metadata.append_runtime_tags(&mut ddtags);
-        if let Some(env) = &extracted_metadata.env {
-            ddtags.push_str(&format!(",env:{env}"));
-        }
-        if let Some(version) = &extracted_metadata.service_version {
-            ddtags.push_str(&format!(",version:{version}"));
-        }
+        extracted_metadata.append_process_tags(&mut ddtags);
 
+        use core::fmt::Write;
+        write!(ddtags, ",uuid:{crash_uuid},is_crash_ping:true").ok();
         if let Some(sig_info) = sig_info {
-            append_signal_tags(&mut ddtags, sig_info);
+            sig_info.append_ddtags(&mut ddtags);
         }
-
-        ddtags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
+        write!(ddtags, ",runtime_platform:{TARGET_TRIPLE}").ok();
 
         let error_type = Some(
             sig_info
@@ -491,6 +468,7 @@ impl ErrorsIntakePayload {
                 thread_name: None,
                 stack: None,
                 is_crash: Some(false),
+                kind: Some(crash_ping.kind()),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
                 threads: None,
@@ -544,6 +522,26 @@ impl ErrorsIntakeUploader {
                 .context("errors intake file path is not valid")?;
 
             let file_path = path.with_extension("errors");
+            // Apply the same path policy as the crash JSON output to its .errors companion.
+            #[cfg(unix)]
+            let file = if libdd_common::unix_utils::worker_file_outputs_restricted() {
+                libdd_common::unix_utils::open_regular_for_create(&file_path).with_context(
+                    || {
+                        format!(
+                            "Failed to create errors intake file {}",
+                            file_path.display()
+                        )
+                    },
+                )?
+            } else {
+                std::fs::File::create(&file_path).with_context(|| {
+                    format!(
+                        "Failed to create errors intake file {}",
+                        file_path.display()
+                    )
+                })?
+            };
+            #[cfg(not(unix))]
             let file = std::fs::File::create(&file_path).with_context(|| {
                 format!(
                     "Failed to create errors intake file {}",
@@ -605,16 +603,16 @@ mod tests {
     static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn clear_errors_intake_env() {
-        std::env::remove_var("DD_TRACE_AGENT_URL");
-        std::env::remove_var("DD_AGENT_HOST");
-        std::env::remove_var("DD_TRACE_AGENT_PORT");
-        std::env::remove_var("DD_TRACE_PIPE_NAME");
-        std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED");
-        std::env::remove_var("DD_API_KEY");
-        std::env::remove_var("DD_SITE");
-        std::env::remove_var("DD_ERRORS_INTAKE_DD_URL");
-        std::env::remove_var("_DD_SHARED_LIB_DEBUG");
-        std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED");
+        unsafe { std::env::remove_var("DD_TRACE_AGENT_URL") };
+        unsafe { std::env::remove_var("DD_AGENT_HOST") };
+        unsafe { std::env::remove_var("DD_TRACE_AGENT_PORT") };
+        unsafe { std::env::remove_var("DD_TRACE_PIPE_NAME") };
+        unsafe { std::env::remove_var("_DD_DIRECT_SUBMISSION_ENABLED") };
+        unsafe { std::env::remove_var("DD_API_KEY") };
+        unsafe { std::env::remove_var("DD_SITE") };
+        unsafe { std::env::remove_var("DD_ERRORS_INTAKE_DD_URL") };
+        unsafe { std::env::remove_var("_DD_SHARED_LIB_DEBUG") };
+        unsafe { std::env::remove_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED") };
     }
 
     #[cfg_attr(miri, ignore)]
@@ -650,6 +648,9 @@ mod tests {
             ))
         );
 
+        // error.kind inherits from crash_info.error.kind
+        assert_eq!(payload.error.kind, Some(crash_info.error.kind.clone()));
+
         // experimental inherits from crash_info
         assert_eq!(payload.error.experimental, crash_info.experimental);
 
@@ -670,6 +671,9 @@ mod tests {
         assert!(ddtags.contains("service:foo"));
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
+        assert!(ddtags.contains("library_name:libdatadog"));
+        assert!(ddtags.contains("library_version:1.2.3"));
+        assert!(ddtags.contains("family:native"));
 
         assert!(ddtags.contains("data_schema_version:1.8"));
         assert!(ddtags.contains("incomplete:true"));
@@ -711,6 +715,7 @@ mod tests {
             payload.error.error_type,
             Some(format!("{:?}", sig_info.si_signo_human_readable))
         );
+        assert_eq!(payload.error.kind, Some(crash_ping.kind()));
 
         let ddtags = &payload.ddtags;
 
@@ -721,6 +726,10 @@ mod tests {
         assert!(ddtags.contains("language_name:native"));
 
         assert!(ddtags.contains("version:bar"));
+
+        assert!(ddtags.contains("library_name:libdatadog"));
+        assert!(ddtags.contains("library_version:1.2.3"));
+        assert!(ddtags.contains("family:native"));
 
         assert!(ddtags.contains("si_code_human_readable:SEGV_BNDERR"));
         assert!(ddtags.contains("si_signo:11"));
@@ -806,6 +815,55 @@ mod tests {
         }
     }
 
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_process_tags_in_crash_info_ddtags() {
+        let mut crash_info = CrashInfo::test_instance(1);
+        crash_info
+            .metadata
+            .tags
+            .push("process_tags:entrypoint.name:cli,entrypoint.type:script".to_string());
+
+        let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
+        assert!(
+            payload.ddtags.contains("entrypoint.name:cli"),
+            "Missing entrypoint.name:cli in ddtags: {}",
+            payload.ddtags
+        );
+        assert!(
+            payload.ddtags.contains("entrypoint.type:script"),
+            "Missing entrypoint.type:script in ddtags: {}",
+            payload.ddtags
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_process_tags_in_crash_ping_ddtags() {
+        let mut metadata = Metadata::test_instance(1);
+        metadata
+            .tags
+            .push("process_tags:entrypoint.name:cli,entrypoint.type:script".to_string());
+
+        let crash_ping = crate::CrashPingBuilder::new(uuid::Uuid::from_u128(0x03))
+            .with_metadata(metadata)
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
+        assert!(
+            payload.ddtags.contains("entrypoint.name:cli"),
+            "Missing entrypoint.name:cli in ddtags: {}",
+            payload.ddtags
+        );
+        assert!(
+            payload.ddtags.contains("entrypoint.type:script"),
+            "Missing entrypoint.type:script in ddtags: {}",
+            payload.ddtags
+        );
+    }
+
     #[test]
     fn test_errors_intake_config_from_env() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -813,8 +871,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test direct submission configuration
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -838,9 +896,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test direct submission with custom site
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
-        std::env::set_var("DD_SITE", "us3.datadoghq.com");
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
+        unsafe { std::env::set_var("DD_SITE", "us3.datadoghq.com") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -861,7 +919,7 @@ mod tests {
 
         clear_errors_intake_env();
 
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -881,8 +939,8 @@ mod tests {
 
         // API key is set but direct submission is NOT enabled
         // Should still use agent proxy
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126");
-        std::env::set_var("DD_API_KEY", "test-key");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://localhost:9126") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -910,7 +968,7 @@ mod tests {
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
 
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
+        unsafe { std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false") };
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(!uploader.is_enabled());
     }
@@ -952,7 +1010,7 @@ mod tests {
         clear_errors_intake_env();
 
         // Test named pipe configuration
-        std::env::set_var("DD_TRACE_PIPE_NAME", "my_custom_pipe");
+        unsafe { std::env::set_var("DD_TRACE_PIPE_NAME", "my_custom_pipe") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -974,7 +1032,7 @@ mod tests {
         clear_errors_intake_env();
 
         // Test unix:// URL in DD_TRACE_AGENT_URL
-        std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/custom.socket");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "unix:///tmp/custom.socket") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -995,9 +1053,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test 1: DD_TRACE_AGENT_URL takes highest priority
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://priority-url:9999");
-        std::env::set_var("DD_AGENT_HOST", "ignored-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "1111");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://priority-url:9999") };
+        unsafe { std::env::set_var("DD_AGENT_HOST", "ignored-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "1111") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1008,8 +1066,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test 2: DD_AGENT_HOST + DD_TRACE_AGENT_PORT used when no DD_TRACE_AGENT_URL
-        std::env::set_var("DD_AGENT_HOST", "custom-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "7777");
+        unsafe { std::env::set_var("DD_AGENT_HOST", "custom-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "7777") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1034,9 +1092,9 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that direct submission takes priority over agent configuration
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
-        std::env::set_var("DD_API_KEY", "test-key");
-        std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
+        unsafe { std::env::set_var("_DD_DIRECT_SUBMISSION_ENABLED", "true") };
 
         let cfg = ErrorsIntakeConfig::from_env();
         let endpoint = cfg.endpoint().unwrap();
@@ -1053,8 +1111,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that without direct submission enabled, agent URL is used
-        std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888");
-        std::env::set_var("DD_API_KEY", "test-key");
+        unsafe { std::env::set_var("DD_TRACE_AGENT_URL", "http://agent-host:8888") };
+        unsafe { std::env::set_var("DD_API_KEY", "test-key") };
         // _DD_DIRECT_SUBMISSION_ENABLED not set (defaults to false)
 
         let cfg = ErrorsIntakeConfig::from_env();
@@ -1075,8 +1133,8 @@ mod tests {
         clear_errors_intake_env();
 
         // Test that UDS socket takes priority over DD_AGENT_HOST/DD_TRACE_AGENT_PORT
-        std::env::set_var("DD_AGENT_HOST", "ignored-host");
-        std::env::set_var("DD_TRACE_AGENT_PORT", "9999");
+        unsafe { std::env::set_var("DD_AGENT_HOST", "ignored-host") };
+        unsafe { std::env::set_var("DD_TRACE_AGENT_PORT", "9999") };
 
         let settings = ErrorsIntakeSettings {
             agent_host: Some("ignored-host".to_string()),
