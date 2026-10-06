@@ -208,6 +208,15 @@ pub struct EvalError {
     pub message: String,
 }
 
+impl EvalError {
+    /// Omit empty errors and copy only the allowed code, never the original text.
+    pub fn from_message(message: &str) -> Option<Self> {
+        (!message.is_empty()).then(|| Self {
+            message: privacy::error_code(message).to_owned(),
+        })
+    }
+}
+
 /// Per-event context object.
 ///
 /// `evaluation` carries the pruned context attributes; `dd.service` carries the
@@ -247,6 +256,15 @@ pub struct ContextDD {
 }
 
 // ── Context pruning ──────────────────────────────────────────────────────────
+
+/// Parse borrowed JSON and return an owned, pruned context using the same limits
+/// as aggregation and output. The input is neither modified nor retained.
+/// Callers must check consent before inspecting context. Parsing still visits the
+/// full JSON input; only the subsequent snapshot traversal/retention is bounded.
+/// Invalid or non-object JSON is omitted and records `SnapshotError`.
+pub fn prune_context_json(raw: &str, omissions: &mut FieldOmissions) -> Option<String> {
+    privacy::context_json(raw, omissions)
+}
 
 /// Prune evaluation context attributes to satisfy the flagevaluation bounds:
 /// - Only the first `MAX_CONTEXT_FIELDS` (256) entries are inspected. Rejected fields consume
@@ -298,7 +316,7 @@ struct FlagEvaluationEvpWriterCounters {
 impl FlagEvaluationEvpWriterCounters {
     fn record_field_omissions(&self, event: &mut FfeFlagEvaluationEvent) {
         let omissions = std::mem::take(&mut event.field_omissions);
-        for &reason in ContextTruncationReason::ALL {
+        for reason in ContextTruncationReason::iter() {
             if omissions.contains_context(reason) {
                 add_counter(
                     &self.context_truncated[reason as usize],
@@ -687,13 +705,16 @@ fn normalize_for_aggregation(event: &mut FfeFlagEvaluationEvent) {
             .as_deref()
             .and_then(|raw| privacy::context_json(raw, &mut event.field_omissions));
     }
-    event.error = event
-        .error
-        .as_ref()
-        .filter(|error| !error.message.is_empty())
-        .map(|error| EvalError {
-            message: privacy::error_code(&error.message).to_owned(),
-        });
+    if let Some(error) = event.error.as_mut() {
+        if error.message.is_empty() {
+            event.error = None;
+        } else {
+            let code = privacy::error_code(&error.message);
+            if error.message != code {
+                error.message = code.to_owned();
+            }
+        }
+    }
 }
 
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
@@ -838,11 +859,23 @@ fn degrade_event_for_payload_limit(
         return None;
     }
 
-    let mut degraded = event.clone();
-    degraded.targeting_key = None;
-    degraded.context = None;
-    degraded.is_degraded = true;
-    Some(degraded)
+    Some(FfeFlagEvaluationEvent {
+        timestamp: event.timestamp,
+        flag: event.flag.clone(),
+        first_evaluation: event.first_evaluation,
+        last_evaluation: event.last_evaluation,
+        evaluation_count: event.evaluation_count,
+        variant: event.variant.clone(),
+        allocation: event.allocation.clone(),
+        targeting_rule: event.targeting_rule.clone(),
+        targeting_key: None,
+        context: None,
+        error: event.error.clone(),
+        runtime_default_used: event.runtime_default_used,
+        observe_full_evaluation_data: event.observe_full_evaluation_data,
+        is_degraded: true,
+        field_omissions: event.field_omissions,
+    })
 }
 
 #[cfg(test)]
@@ -1022,6 +1055,23 @@ mod tests {
             service: "svc".to_owned(),
             env: "prod".to_owned(),
             version: "1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn normalization_reuses_canonical_error_storage() {
+        for code in ["FLAG_NOT_FOUND", "GENERAL"] {
+            let mut event = full_event();
+            event.error = Some(EvalError {
+                message: code.into(),
+            });
+            let original = event.error.as_ref().unwrap().message.as_ptr();
+            for _ in 0..2 {
+                event.normalize();
+                let error = event.error.as_ref().unwrap();
+                assert_eq!(error.message, code);
+                assert_eq!(error.message.as_ptr(), original);
+            }
         }
     }
 
@@ -1923,6 +1973,7 @@ mod tests {
             message: "boom".to_owned(),
         });
         oversized.runtime_default_used = true;
+        oversized.field_omissions.targeting_key_invalid = true;
         oversized.context = Some(FlagEvalEventContext {
             evaluation: Some(json!({ "blob": "x".repeat(1024) }).to_string()),
             dd: Some(ContextDD {
@@ -1932,6 +1983,20 @@ mod tests {
 
         let degraded = degrade_event_for_payload_limit(&oversized)
             .expect("full event should have a degraded form");
+        assert_eq!(degraded.timestamp, oversized.timestamp);
+        assert_eq!(degraded.first_evaluation, oversized.first_evaluation);
+        assert_eq!(degraded.last_evaluation, oversized.last_evaluation);
+        assert_eq!(degraded.evaluation_count, oversized.evaluation_count);
+        assert_eq!(degraded.flag.key, oversized.flag.key);
+        assert_eq!(
+            degraded.observe_full_evaluation_data,
+            oversized.observe_full_evaluation_data
+        );
+        assert_eq!(degraded.field_omissions, oversized.field_omissions);
+        assert!(degraded.runtime_default_used);
+        assert!(degraded.is_degraded);
+        assert!(degraded.targeting_key.is_none());
+        assert!(degraded.context.is_none());
         let degraded_limit = build_payload(&FfeFlagEvaluationBatch {
             context: context(),
             flag_evaluations: vec![degraded],

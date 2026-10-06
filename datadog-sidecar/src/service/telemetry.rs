@@ -3,8 +3,8 @@
 
 use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
 use anyhow::{Result, anyhow};
+use arc_swap::ArcSwapOption;
 use libdd_common::MutexExt;
-use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -17,7 +17,7 @@ use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
@@ -27,7 +27,6 @@ use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
 use std::ops::Sub;
-use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use libdd_telemetry::config::Config;
@@ -371,12 +370,27 @@ struct PerClientTelemetryBatch {
 
 type ComposerCache = HashMap<PathBuf, (SystemTime, Arc<Vec<data::Dependency>>)>;
 
-static COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
+// Only replaced by the fork hook, before the child starts any sidecar work.
+static mut COMPOSER_CACHE: LazyLock<tokio::sync::Mutex<ComposerCache>> =
     LazyLock::new(|| tokio::sync::Mutex::new(Default::default()));
 
 static LAST_CACHE_CLEAN: AtomicU64 = AtomicU64::new(0);
 
-static TELEMETRY_ACTION_SENDER: OnceLock<mpsc::Sender<InternalTelemetryActions>> = OnceLock::new();
+static TELEMETRY_ACTION_SENDER: ArcSwapOption<mpsc::Sender<InternalTelemetryActions>> =
+    ArcSwapOption::const_empty();
+
+#[cfg(unix)]
+pub(crate) unsafe fn clear_inherited_state() {
+    // SAFETY: Abandon the old mutex: it may be locked by a thread that did not survive fork.
+    unsafe {
+        (&raw mut COMPOSER_CACHE).write(LazyLock::new(|| {
+            tokio::sync::Mutex::new(Default::default())
+        }));
+    }
+    LAST_CACHE_CLEAN.store(0, Ordering::Relaxed);
+    // An inherited sender must not wake the parent's Tokio reactor.
+    std::mem::forget(TELEMETRY_ACTION_SENDER.swap(None));
+}
 
 #[serde_as]
 #[derive(Deserialize)]
@@ -539,7 +553,8 @@ impl TelemetryCachedClient {
     pub fn extract_composer_telemetry(path: PathBuf) -> ManualFuture<Arc<Vec<data::Dependency>>> {
         let (deps, completer) = ManualFuture::new();
         tokio::spawn(async {
-            let mut cache = COMPOSER_CACHE.lock().await;
+            // SAFETY: global which isn't &mut-accessed outside of single-threaded stage
+            let mut cache = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.lock().await;
             // Worker paths need constrained opens in thread mode. Use one handle so the timestamp
             // and contents come from the same file.
             let opened = async {
@@ -769,22 +784,19 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 
 pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
     TELEMETRY_ACTION_SENDER
-        .get()
-        .cloned()
+        .load()
+        .as_ref()
+        .map(|sender| (**sender).clone())
         .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
 }
 
 pub(crate) fn init_telemetry_sender() -> (
     InProcessTelemetryClientFactory,
-    Option<mpsc::Receiver<InternalTelemetryActions>>,
+    mpsc::Receiver<InternalTelemetryActions>,
 ) {
     let (tx, rx) = mpsc::channel(1000);
-    if TELEMETRY_ACTION_SENDER.set(tx.clone()).is_err() {
-        warn!("Telemetry action sender already initialized");
-        let sender = TELEMETRY_ACTION_SENDER.get().cloned().unwrap_or(tx);
-        return (InProcessTelemetryClientFactory::new(sender), None);
-    }
-    (InProcessTelemetryClientFactory::new(tx), Some(rx))
+    TELEMETRY_ACTION_SENDER.store(Some(Arc::new(tx.clone())));
+    (InProcessTelemetryClientFactory::new(tx), rx)
 }
 
 fn get_telemetry_client(
@@ -831,6 +843,72 @@ mod tests {
     use super::*;
     use libdd_ipc::one_way_shared_memory::{OneWayShmReader, open_named_shm};
     use libdd_telemetry::worker::LifecycleAction;
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn fork_cleanup_does_not_wait_for_the_old_composer_cache() {
+        const CHILD: &str = "DD_TEST_COMPOSER_FORK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "service::telemetry::tests::fork_cleanup_does_not_wait_for_the_old_composer_cache",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("installed.json");
+        std::fs::write(
+            &path,
+            br#"{"packages":[{"name":"test/package","version":"1.0.0"}]}"#,
+        )
+        .unwrap();
+        let mut held = unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }.blocking_lock();
+        held.insert(path.clone(), (SystemTime::UNIX_EPOCH, Arc::new(vec![])));
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            unsafe { libc::alarm(10) };
+            // Do not use or drop an inherited guard after replacing its mutex.
+            std::mem::forget(held);
+            let result = std::panic::catch_unwind(|| {
+                unsafe { clear_inherited_state() };
+                assert!(
+                    unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                        .try_lock()
+                        .unwrap()
+                        .is_empty()
+                );
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let packages =
+                            TelemetryCachedClient::extract_composer_telemetry(path).await;
+                        assert_eq!(packages.len(), 1);
+                        assert_eq!(packages[0].name, "test/package");
+                    });
+            });
+            unsafe { libc::_exit(if result.is_ok() { 0 } else { 1 }) };
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status), "child hung or crashed: {status}");
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+        assert!(held.get(&path).unwrap().1.is_empty());
+        drop(held);
+        assert!(
+            unsafe { &*std::ptr::addr_of!(COMPOSER_CACHE) }
+                .try_lock()
+                .is_ok()
+        );
+    }
 
     #[test]
     fn shm_paths_distinguish_services_and_environments() {

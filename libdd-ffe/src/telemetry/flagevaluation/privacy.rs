@@ -7,9 +7,10 @@ use super::{MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 /// Finite context-loss reasons shared with the other FFE SDKs.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, strum_macros::EnumIter, strum_macros::EnumCount)]
 #[repr(usize)]
 pub enum ContextTruncationReason {
     MaxContextFields,
@@ -23,20 +24,13 @@ pub enum ContextTruncationReason {
 }
 
 impl ContextTruncationReason {
-    /// Every possible reason, in counter order.
-    pub const ALL: &'static [Self] = &[
-        Self::MaxContextFields,
-        Self::MaxKeyLength,
-        Self::MaxValueLength,
-        Self::MaxListElements,
-        Self::MaxStructureProperties,
-        Self::MaxSnapshotDepth,
-        Self::MaxVisitedNodes,
-        Self::SnapshotError,
-    ];
+    /// Number of counters, derived from the enum variants.
+    pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
 
-    /// Number of counters, derived from the complete reason list.
-    pub const COUNT: usize = Self::ALL.len();
+    /// Every possible reason, in counter order.
+    pub fn iter() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
 
     /// Stable telemetry tag; never contains customer-controlled text.
     pub fn as_str(self) -> &'static str {
@@ -94,9 +88,7 @@ pub(super) fn context_value(raw: &str, omissions: &mut FieldOmissions) -> Option
     Some(Value::Object(snapshot.object(attrs.iter(), attrs.len(), 1)))
 }
 
-pub(super) fn context_map(
-    attrs: &std::collections::BTreeMap<String, Value>,
-) -> std::collections::BTreeMap<String, Value> {
+pub(super) fn context_map(attrs: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
     let mut omissions = FieldOmissions::default();
     Snapshot::new(&mut omissions)
         .object(attrs.iter(), attrs.len(), 1)
@@ -104,6 +96,10 @@ pub(super) fn context_map(
         .collect()
 }
 
+/// Builds a bounded copy of a context, sharing budgets across all nested values.
+/// Retained scalars and empty containers consume the leaf budget; inspected
+/// entries (including rejected ones) consume the visited-node budget. Omission
+/// reasons are recorded without retaining the rejected data.
 struct Snapshot<'a> {
     omissions: &'a mut FieldOmissions,
     leaves: usize,
@@ -111,6 +107,7 @@ struct Snapshot<'a> {
 }
 
 impl<'a> Snapshot<'a> {
+    /// Start fresh traversal budgets while preserving any prior omission reasons.
     fn new(omissions: &'a mut FieldOmissions) -> Self {
         Self {
             omissions,
@@ -119,6 +116,7 @@ impl<'a> Snapshot<'a> {
         }
     }
 
+    /// Reserve one inspected entry, or record the exhausted budget and stop.
     fn visit(&mut self) -> bool {
         if self.leaves >= MAX_CONTEXT_FIELDS {
             self.omissions
@@ -136,6 +134,9 @@ impl<'a> Snapshot<'a> {
         true
     }
 
+    /// Inspect only the bounded prefix in the map's existing order. Rejected
+    /// entries still consume that prefix; later entries cannot replace them.
+    /// `depth` counts this object, with the root object at depth one.
     fn object<'v>(
         &mut self,
         entries: impl Iterator<Item = (&'v String, &'v Value)>,
@@ -165,6 +166,9 @@ impl<'a> Snapshot<'a> {
         result
     }
 
+    /// Copy an admitted value at its containing object's/array's depth. Oversized
+    /// strings and too-deep containers are omitted, not truncated. Nested
+    /// containers share the same budgets and are omitted if pruning empties them.
     fn value(&mut self, value: &Value, depth: usize) -> Option<Value> {
         match value {
             Value::String(s) if !within_character_cap(s) => {

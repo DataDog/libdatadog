@@ -75,6 +75,7 @@ pub struct TraceExporterConfig {
     output_format: TraceExporterOutputFormat,
     compute_stats: bool,
     client_computed_stats: bool,
+    client_computed_top_level: bool,
     telemetry_cfg: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     health_metrics_enabled: bool,
@@ -367,6 +368,24 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_compute_stats(
     catch_panic!(
         if let Option::Some(config) = config {
             config.compute_stats = is_enabled;
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Indicates that the tracer has already marked top-level spans with `_dd.top_level`.
+/// Sets the `Datadog-Client-Computed-Top-Level` header without enabling stats computation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_top_level(
+    config: Option<&mut TraceExporterConfig>,
+    client_computed_top_level: bool,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(config) = config {
+            config.client_computed_top_level = client_computed_top_level;
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -852,6 +871,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                     builder.set_client_computed_stats();
                 }
 
+                if config.client_computed_top_level {
+                    builder.set_client_computed_top_level();
+                }
+
                 if let Some(cfg) = &config.telemetry_cfg {
                     builder.enable_telemetry(cfg.clone());
                 }
@@ -1294,6 +1317,74 @@ mod tests {
             ddog_trace_exporter_error_free(error);
 
             ddog_mutable_metadata_free(metadata);
+        }
+    }
+
+    #[test]
+    fn config_client_computed_top_level_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_client_computed_top_level(None, true);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = TraceExporterConfig::default();
+            assert!(!config.client_computed_top_level);
+            for enabled in [true, false] {
+                let error = ddog_trace_exporter_config_set_client_computed_top_level(
+                    Some(&mut config),
+                    enabled,
+                );
+                assert_eq!(error, None);
+                assert_eq!(config.client_computed_top_level, enabled);
+                assert!(!config.compute_stats);
+                assert!(!config.client_computed_stats);
+            }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn exporter_send_client_computed_top_level_test() {
+        unsafe {
+            let server = MockServer::start();
+            for enabled in [false, true] {
+                let mut mock = server.mock(|when, then| {
+                    let when = when
+                        .method(POST)
+                        .path("/v0.4/traces")
+                        .header_missing("Datadog-Client-Computed-Stats");
+                    if enabled {
+                        when.header("Datadog-Client-Computed-Top-Level", "true");
+                    } else {
+                        when.header_missing("Datadog-Client-Computed-Top-Level");
+                    }
+                    then.status(200).body("{}");
+                });
+                let mut config = TraceExporterConfig {
+                    url: Some(server.url("/")),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    ddog_trace_exporter_config_set_client_computed_top_level(
+                        Some(&mut config),
+                        enabled,
+                    ),
+                    None
+                );
+                let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
+                assert_eq!(
+                    ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&config),),
+                    None
+                );
+                let exporter = ptr.assume_init();
+                let data = rmp_serde::to_vec_named::<Vec<Vec<SpanSlice>>>(&vec![vec![]]).unwrap();
+                assert_eq!(
+                    ddog_trace_exporter_send(Some(exporter.as_ref()), ByteSlice::new(&data), None,),
+                    None
+                );
+                mock.assert();
+                mock.delete();
+            }
         }
     }
 

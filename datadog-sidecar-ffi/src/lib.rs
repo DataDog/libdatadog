@@ -31,6 +31,7 @@ use datadog_sidecar::service::{
     FlagKey, InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig,
     SidecarAction, SidecarFlushOptions, TargetingRuleKey, VariantKey,
     blocking::{self, SidecarTransport},
+    prune_context_json,
 };
 use datadog_sidecar::service::{InternalTelemetryActions, get_telemetry_action_sender};
 use datadog_sidecar::shm_remote_config::{RemoteConfigReader, path_for_remote_config};
@@ -386,9 +387,12 @@ pub extern "C" fn ddog_sidecar_is_master_listener_active() -> bool {
     MasterListener::is_active()
 }
 
+/// # Safety
+/// On Unix, call in the child after fork, before starting threads. Inherited sidecar
+/// tasks and references to their state must not be used afterward.
 #[unsafe(no_mangle)]
-pub extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
-    try_c!(MasterListener::clear_inherited_state());
+pub unsafe extern "C" fn ddog_sidecar_clear_inherited_listener() -> MaybeError {
+    try_c!(unsafe { MasterListener::clear_inherited_state() });
 
     MaybeError::None
 }
@@ -1568,10 +1572,10 @@ fn ffe_flag_evaluation_from_ffi(
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
     let mut field_omissions = FieldOmissions::default();
-    let evaluation =
+    let raw_evaluation =
         if event.observe_full_evaluation_data && !event.evaluation_context_json.is_empty() {
             match event.evaluation_context_json.try_to_utf8() {
-                Ok(raw) => Some(raw.to_owned()),
+                Ok(raw) => Some(raw),
                 Err(_) => {
                     field_omissions.record_context(ContextTruncationReason::SnapshotError);
                     None
@@ -1594,13 +1598,19 @@ fn ffe_flag_evaluation_from_ffi(
     let dd = (!service.is_empty()).then(|| ContextDD {
         service: service.to_owned(),
     });
-    let context = if evaluation.is_some() || dd.is_some() {
-        Some(FlagEvalEventContext { evaluation, dd })
+    let context = if raw_evaluation.is_some() || dd.is_some() {
+        Some(FlagEvalEventContext {
+            evaluation: raw_evaluation
+                .and_then(|raw| prune_context_json(raw, &mut field_omissions)),
+            dd,
+        })
     } else {
         None
     };
 
-    let mut converted = SidecarFfeFlagEvaluationEvent {
+    // Build the event from borrowed input, storing only the pruned context.
+    // Aggregation and output still apply their independent privacy checks.
+    Ok(SidecarFfeFlagEvaluationEvent {
         timestamp: event.timestamp_ms,
         flag: FlagKey {
             key: char_slice_to_string(event.flag_key)?,
@@ -1608,25 +1618,23 @@ fn ffe_flag_evaluation_from_ffi(
         first_evaluation: event.first_evaluation_ms,
         last_evaluation: event.last_evaluation_ms,
         evaluation_count: event.evaluation_count,
-        variant: optional_utf8(event.variant).map(|key| VariantKey { key }),
-        allocation: optional_utf8(event.allocation_key).map(|key| AllocationKey { key }),
-        targeting_rule: optional_utf8(event.targeting_rule_key).map(|key| TargetingRuleKey { key }),
+        variant: optional_string_if_valid_utf8(event.variant).map(|key| VariantKey { key }),
+        allocation: optional_string_if_valid_utf8(event.allocation_key)
+            .map(|key| AllocationKey { key }),
+        targeting_rule: optional_string_if_valid_utf8(event.targeting_rule_key)
+            .map(|key| TargetingRuleKey { key }),
         targeting_key,
         context,
-        error: (!event.error_message.is_empty()).then(|| EvalError {
-            message: event
-                .error_message
-                .try_to_utf8()
-                .unwrap_or("GENERAL")
-                .to_owned(),
-        }),
+        error: if event.error_message.is_empty() {
+            None
+        } else {
+            EvalError::from_message(event.error_message.try_to_utf8().unwrap_or("GENERAL"))
+        },
         runtime_default_used: event.runtime_default_used,
         observe_full_evaluation_data: event.observe_full_evaluation_data,
         is_degraded: false,
         field_omissions,
-    };
-    converted.normalize();
-    Ok(converted)
+    })
 }
 
 fn ffe_metric_from_ffi(
@@ -1641,15 +1649,14 @@ fn ffe_metric_from_ffi(
     })
 }
 
-// Malformed optional flagevaluation dimensions must not discard healthy batch siblings.
-fn optional_utf8(slice: CharSlice) -> Option<String> {
-    if slice.is_empty() {
-        None
-    } else {
-        slice.try_to_utf8().ok().map(str::to_owned)
-    }
+// Omit empty or invalid UTF-8 flagevaluation dimensions, keeping the event and
+// healthy batch siblings. Unlike optional_string, conversion errors are discarded.
+fn optional_string_if_valid_utf8(slice: CharSlice) -> Option<String> {
+    optional_string(slice).ok().flatten()
 }
 
+// Empty means absent; invalid UTF-8 is an error. Preserve the existing metrics
+// path's error handling rather than silently omitting malformed metric fields.
 fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
     if slice.is_empty() {
         Ok(None)
@@ -2291,6 +2298,27 @@ mod tests {
     }
 
     #[test]
+    fn ffe_flag_evaluation_error_codes_preserve_existing_policy() {
+        let long_error = "private-error-canary".repeat(4096);
+        for (message, expected) in [
+            ("", None),
+            ("FLAG_NOT_FOUND", Some("FLAG_NOT_FOUND")),
+            ("GENERAL", Some("GENERAL")),
+            ("flag_not_found", Some("GENERAL")),
+            (" FLAG_NOT_FOUND ", Some("GENERAL")),
+            (long_error.as_str(), Some("GENERAL")),
+        ] {
+            let mut event = ffi_flag_evaluation("");
+            event.error_message = CharSlice::from(message);
+            let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
+            assert_eq!(
+                converted.error.as_ref().map(|error| error.message.as_str()),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn ffe_flag_evaluation_malformed_optional_fields_preserve_siblings() {
         let invalid = [0xffu8];
         // SAFETY: the borrowed bytes outlive every conversion below.
@@ -2363,6 +2391,83 @@ mod tests {
             let converted = ffe_flag_evaluation_from_ffi(&event, "svc").unwrap();
             assert_eq!(converted.targeting_key.as_deref(), expected);
             assert_eq!(converted.evaluation_count, 7);
+        }
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_context_owns_pruned_output_without_changing_input() {
+        let original = serde_json::json!({
+            "keep": "value",
+            "omit": "x".repeat(257)
+        })
+        .to_string();
+        let mut raw = original.clone();
+        let mut converted =
+            ffe_flag_evaluation_from_ffi(&ffi_flag_evaluation(&raw), "svc").unwrap();
+        assert_eq!(raw, original);
+        // The caller can change or release its input as soon as conversion returns.
+        raw.clear();
+        drop(raw);
+        assert_eq!(
+            converted.context.as_ref().unwrap().evaluation.as_deref(),
+            Some(r#"{"keep":"value"}"#)
+        );
+        assert_eq!(
+            converted
+                .context
+                .as_ref()
+                .unwrap()
+                .dd
+                .as_ref()
+                .unwrap()
+                .service,
+            "svc"
+        );
+        assert!(
+            converted
+                .field_omissions
+                .contains_context(ContextTruncationReason::MaxValueLength)
+        );
+        let before_normalization = converted.clone();
+        converted.normalize();
+        assert_eq!(converted, before_normalization);
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_context_preserves_empty_and_invalid_input_policy() {
+        for consent in [false, true] {
+            for service in ["", "svc"] {
+                for raw in ["", "{}", "not-json", "[]"] {
+                    let mut event = ffi_flag_evaluation(raw);
+                    event.observe_full_evaluation_data = consent;
+                    let converted = ffe_flag_evaluation_from_ffi(&event, service).unwrap();
+                    assert_eq!(
+                        converted.context.is_some(),
+                        !service.is_empty() || (consent && !raw.is_empty())
+                    );
+                    assert_eq!(
+                        converted
+                            .context
+                            .as_ref()
+                            .and_then(|context| context.evaluation.as_deref()),
+                        (consent && raw == "{}").then_some("{}")
+                    );
+                    assert_eq!(
+                        converted
+                            .context
+                            .as_ref()
+                            .and_then(|context| context.dd.as_ref())
+                            .map(|dd| dd.service.as_str()),
+                        (!service.is_empty()).then_some(service)
+                    );
+                    assert_eq!(
+                        converted
+                            .field_omissions
+                            .contains_context(ContextTruncationReason::SnapshotError),
+                        consent && matches!(raw, "not-json" | "[]")
+                    );
+                }
+            }
         }
     }
 
