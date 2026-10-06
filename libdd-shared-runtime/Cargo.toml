@@ -23,7 +23,7 @@ tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tokio-util.workspace = true
 tracing.workspace = true
 libdd-capabilities = { path = "../libdd-capabilities", version = "4.0.1" }
-libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "8.0.0", path = "../libdd-common", default-features = false, features = ["std"] }
 
 [features]
 default = ["https"]

@@ -16,19 +16,19 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-anyhow.workspace = true
-arc-swap.workspace = true
-futures = { workspace = true, features = ["alloc", "executor"] }
-futures-util.workspace = true
-hex = { workspace = true, default-features = true }
+anyhow = { workspace = true, optional = true }
+arc-swap = { workspace = true, optional = true }
+futures = { workspace = true, features = ["alloc", "executor"], optional = true }
+futures-util = { workspace = true, optional = true }
+hex = { workspace = true, default-features = true, optional = true }
 httparse = { workspace = true, features = ["std"], optional = true }
-http = { workspace = true, features = ["std"] }
+http = { workspace = true, features = ["std"], optional = true }
 mime = { workspace = true, optional = true }
 multer = { workspace = true, optional = true }
-bytes = { workspace = true, features = ["std"] }
-pin-project.workspace = true
+bytes = { workspace = true, features = ["std"], optional = true }
+pin-project = { workspace = true, optional = true }
 rand = { workspace = true, default-features = true, optional = true }
-regex = { workspace = true, features = ["std", "unicode", "perf"] }
+regex = { workspace = true, features = ["std", "unicode", "perf"], optional = true }
 regex-lite = { workspace = true, default-features = true, optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
@@ -38,10 +38,10 @@ regex-lite = { workspace = true, default-features = true, optional = true }
 reqwest = { workspace = true, features = ["rustls-no-provider", "hickory-dns"], optional = true }
 criterion = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
-thiserror = { workspace = true, default-features = true }
-serde = { workspace = true, default-features = true, features = ["derive"] }
-static_assertions.workspace = true
-const_format.workspace = true
+thiserror = { workspace = true, default-features = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+static_assertions = { workspace = true, optional = true }
+const_format = { workspace = true, optional = true }
 # Declare rustls and hyper-rustls without a crypto provider. The provider is
 # selected via features: `https` enables ring, `fips` enables aws-lc-rs.
 rustls = { workspace = true, optional = true }
@@ -57,13 +57,13 @@ hyper-util = { workspace = true, features = ["http1", "client", "client-legacy"]
 http-body = { workspace = true, optional = true }
 http-body-util = {workspace = true, optional = true }
 tower-service = { workspace = true, optional = true }
-cc.workspace = true
-pin-project.workspace = true
-libc.workspace = true
+cc = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"], optional = true }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 workspace = true
+optional = true
 features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",
@@ -73,7 +73,7 @@ features = [
 ]
 
 [target.'cfg(unix)'.dependencies]
-nix = { workspace = true, features = ["process"] }
+nix = { workspace = true, features = ["process"], optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true, features = ["std"] }
@@ -88,8 +88,33 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 
 [features]
-default = ["https"]
+default = ["std", "https"]
+alloc = [
+    "dep:anyhow",
+    "dep:const_format",
+    "dep:static_assertions",
+    "serde/alloc",
+]
+std = [
+    "alloc",
+    "anyhow/std",
+    "dep:arc-swap",
+    "dep:bytes",
+    "dep:cc",
+    "dep:futures",
+    "dep:futures-util",
+    "dep:hex",
+    "dep:http",
+    "dep:libc",
+    "dep:nix",
+    "dep:pin-project",
+    "dep:regex",
+    "dep:thiserror",
+    "dep:windows-sys",
+    "serde/std",
+]
 http-client = [
+    "std",
     "dep:hyper",
     "dep:hyper-util",
     "dep:http-body",
@@ -101,15 +126,15 @@ http-client = [
 tls-core = ["http-client", "rustls", "hyper-rustls", "rustls-platform-verifier"]
 # Default HTTPS: ring as crypto provider
 https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
-use_webpki_roots = ["hyper-rustls/webpki-roots"]
+use_webpki_roots = ["std", "hyper-rustls/webpki-roots"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
-cgroup_testing = []
+cgroup_testing = ["std"]
 # Use regex-lite instead of regex for smaller binary size
-regex-lite = ["dep:regex-lite"]
+regex-lite = ["std", "dep:regex-lite"]
 # Consumers that handle user-provided regexes can enable this feature to force
 # the full `regex` crate, overriding `regex-lite` when both are active.
-require-regex-full = []
+require-regex-full = ["std"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Honor HTTP(S)_PROXY/NO_PROXY environment variables for the hyper connector,
@@ -117,9 +142,9 @@ hyper-proxy = ["http-client", "hyper-util/client-proxy"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["http-client", "dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
-test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
+test-utils = ["std", "dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
 # Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
-bench-utils = ["dep:criterion"]
+bench-utils = ["std", "dep:criterion"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with
