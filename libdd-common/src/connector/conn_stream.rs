@@ -114,7 +114,7 @@ impl ConnStream {
         {
             let path = super::uds::socket_path_from_uri(&uri)?;
             // Filesystem endpoints need validated paths. Abstract sockets do not resolve paths.
-            #[cfg(unix)]
+            #[cfg(not(target_os = "aix"))]
             {
                 let bytes = path.as_os_str().as_encoded_bytes();
                 let is_abstract = bytes.first().is_none_or(|b| *b == 0);

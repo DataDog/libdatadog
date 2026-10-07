@@ -382,7 +382,7 @@ fn reconstruct_with_content_length(
 
 /// Create or truncate a dump file, applying worker path restrictions when enabled by the sidecar.
 async fn create_dump_file(path: &std::path::Path) -> anyhow::Result<tokio::fs::File> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "aix")))]
     if crate::unix_utils::worker_file_outputs_restricted() {
         let std_file = crate::unix_utils::open_regular_for_create(path)?;
         return Ok(tokio::fs::File::from_std(std_file));
@@ -407,7 +407,7 @@ async fn write_request_to_file(
     if path_str.ends_with('/') || path_str.ends_with(std::path::MAIN_SEPARATOR) {
         // Directory mode creates and renames paths without constrained resolution, so disable it
         // for worker endpoints.
-        #[cfg(unix)]
+        #[cfg(all(unix, not(target_os = "aix")))]
         if crate::unix_utils::worker_file_outputs_restricted() {
             anyhow::bail!("directory-mode request dumping is disabled under output restriction");
         }

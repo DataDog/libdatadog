@@ -105,11 +105,10 @@ where
         });
     }
 
-    if loop_config.init_shm_eagerly {
-        crate::tracer::init_shm_limiters();
-    }
-
     let server = SidecarServer::default();
+    if loop_config.init_shm_eagerly {
+        server.shm_limiters();
+    }
     // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
     // actions before the receiver task gets its first poll.
     let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
@@ -125,9 +124,7 @@ where
     #[cfg(not(unix))]
     drop(in_process_telemetry);
 
-    if let Some(rx) = telemetry_rx {
-        tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
-    }
+    tokio::spawn(telemetry_action_receiver_task(server.clone(), telemetry_rx));
 
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -162,6 +159,7 @@ where
             #[cfg(unix)]
             if defer_shm_init {
                 setup::thread_listener::initialize_worker(&peer);
+                server.shm_limiters();
             }
 
             let connection = connections.accept();
@@ -374,6 +372,11 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
     if cfg.pipe_buffer_size > 0 {
         libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
+
+    // The pipes and the spawned daemon must belong to the process identity, not to an
+    // impersonated user.
+    #[cfg(windows)]
+    let _identity = libdd_ipc::platform::ProcessIdentityGuard::enter();
 
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 

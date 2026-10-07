@@ -127,7 +127,6 @@ pub(crate) fn initialize_worker(peer: &PeerCredentials) {
         (peer.uid, peer.gid)
     });
     drop_listener_thread_privileges(uid, gid);
-    crate::tracer::init_shm_limiters();
 }
 
 pub struct MasterListener {
@@ -164,7 +163,6 @@ impl MasterListener {
     /// Only one listener can be active per process.
     pub fn start(config: Config) -> io::Result<()> {
         let pid = std::process::id();
-        crate::use_thread_sidecar_shm_namespace(Some(pid));
 
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
@@ -190,6 +188,7 @@ impl MasterListener {
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
+        crate::use_thread_sidecar_shm_namespace(Some(pid));
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
@@ -289,11 +288,15 @@ impl MasterListener {
         }
     }
 
-    /// Clear inherited listener state after fork.
+    /// Clear inherited sidecar state after fork.
     ///
-    /// Child processes must call this to prevent attempting to use the
-    /// parent's listener thread, which doesn't exist in the child.
-    pub fn clear_inherited_state() -> io::Result<()> {
+    /// # Safety
+    /// Call in the child after fork, before starting threads. Inherited sidecar tasks
+    /// and references to their state must not be used afterward.
+    pub unsafe fn clear_inherited_state() -> io::Result<()> {
+        crate::tracer::clear_inherited_state();
+        unsafe { crate::service::telemetry::clear_inherited_state() };
+
         let listener_mutex = MASTER_LISTENER.get_or_init(|| Mutex::new(None));
         let mut listener_guard = listener_mutex
             .lock()
@@ -315,6 +318,9 @@ impl MasterListener {
             }
             #[cfg(not(unix))]
             let _ = master;
+
+            // Dropping the sender could wake the parent's inherited Tokio reactor.
+            std::mem::forget(master);
         }
 
         Ok(())
@@ -403,7 +409,6 @@ fn run_listener(
 /// Connect to the master listener as a worker.
 pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
     info!("Connecting to master listener (PID {})", pid);
-    crate::use_thread_sidecar_shm_namespace(Some(pid as u32));
 
     #[cfg(target_os = "linux")]
     let liaison = AbstractUnixSocketLiaison::ipc_for_pid(pid as u32);
@@ -414,6 +419,7 @@ pub fn connect_to_master(pid: i32) -> io::Result<Box<SidecarTransport>> {
         .connect_to_server()
         .map_err(|e| io::Error::other(format!("Failed to connect to master listener: {}", e)))?;
 
+    crate::use_thread_sidecar_shm_namespace(Some(pid as u32));
     info!("Successfully connected to master listener");
     Ok(Box::new(SidecarTransport::from(conn)))
 }
