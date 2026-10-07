@@ -156,9 +156,6 @@ pub enum TraceExporterInputFormat {
     #[default]
     V04,
     V05,
-    /// Native v1 msgpack input (`v1::TracerPayload`-shaped), routed through a fully v1-native
-    /// pipeline independent of the v0.4 one.
-    V1,
 }
 
 /// TraceExporterOutputFormat represents the format of the output traces.
@@ -258,7 +255,6 @@ pub(crate) struct TraceExporterWorkers {
 enum DeserInputFormat {
     V04,
     V05,
-    V1,
 }
 
 impl From<TraceExporterInputFormat> for DeserInputFormat {
@@ -266,7 +262,6 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
         match f {
             TraceExporterInputFormat::V04 => DeserInputFormat::V04,
             TraceExporterInputFormat::V05 => DeserInputFormat::V05,
-            TraceExporterInputFormat::V1 => DeserInputFormat::V1,
         }
     }
 }
@@ -537,28 +532,6 @@ impl<
                 );
                 self.send_trace_chunks_inner(PooledChunks::unpooled(traces))
                     .await?
-            }
-            DeserInputFormat::V1 => {
-                let (payload, _) = msgpack_decoder::v1::from_slice(data).map_err(|e| {
-                    error!("Error deserializing trace from request body: {e}");
-                    self.emit_metric(
-                        HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                        None,
-                    );
-                    TraceExporterError::Deserialization(e)
-                })?;
-                debug!(
-                    trace_count = payload.chunks.len(),
-                    "Trace deserialization completed successfully"
-                );
-                self.emit_metric(
-                    HealthMetric::Count(
-                        health_metrics::DESERIALIZE_TRACES,
-                        payload.chunks.len() as i64,
-                    ),
-                    None,
-                );
-                self.send_trace_chunks_inner_v1(payload).await?
             }
         };
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
@@ -1293,6 +1266,61 @@ impl<
         result
     }
 
+    /// Send a list of v1 trace chunks to the agent (or OTLP endpoint when configured).
+    ///
+    /// Sync facade over [`Self::send_trace_chunks_async_v1`]; panics inside an existing tokio
+    /// context.
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of native v1 trace chunks.
+    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn send_trace_chunks_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+        cancellation_token: Option<&CancellationToken>,
+    ) -> Result<AgentResponse, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
+        self.shared_runtime.block_on(async {
+            match cancellation_token {
+                Some(token) => {
+                    tokio::select! {
+                        res = self.send_trace_chunks_async_v1(trace_chunks) => res,
+                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "send cancelled via cancellation token",
+                        ))),
+                    }
+                }
+                None => self.send_trace_chunks_async_v1(trace_chunks).await,
+            }
+        })?
+    }
+
+    /// V1-native counterpart of [`Self::send_trace_chunks_async`]. There is no byte-decode path
+    /// for v1: tracer identity always comes from this exporter's own metadata (the v0.4 path has
+    /// no such identity to carry either: v0.4 chunks are plain span lists with no tracer-level
+    /// metadata of their own).
+    pub async fn send_trace_chunks_async_v1<T: TraceData>(
+        &self,
+        trace_chunks: PooledTraceChunks<'_, T>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        if self.log_output.is_none() && self.agentless_config.is_none() {
+            self.check_agent_info().await;
+        }
+        self.send_trace_chunks_inner_v1(trace_chunks).await
+    }
+
     /// V1-native counterpart of [`Self::send_trace_chunks_inner`]. The pipeline up to
     /// serialization (stats, dedup, agentless/OTLP dispatch) stays v1-native throughout: no
     /// v0.4↔v1 conversion happens for those paths.
@@ -1305,12 +1333,28 @@ impl<
     /// does not turn this function into a general v0.4↔v1 conversion path.
     async fn send_trace_chunks_inner_v1<T: TraceData>(
         &self,
-        payload: libdd_trace_utils::span::v1::TracerPayload<T>,
+        mut traces: PooledTraceChunks<'_, T>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        use libdd_trace_utils::span::SpanText;
+
         // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here,
         // mirroring `send_trace_chunks_inner`. The builder should reject conflicting
         // destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
+            let payload = libdd_trace_utils::span::v1::TracerPayload {
+                container_id: T::Text::from_owned(self.metadata.container_id.clone()),
+                language_name: T::Text::from_owned(self.metadata.language.clone()),
+                language_version: T::Text::from_owned(self.metadata.language_version.clone()),
+                tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
+                runtime_id: T::Text::from_owned(
+                    self.metadata.mutable_metadata.load().runtime_id.clone(),
+                ),
+                env: T::Text::from_owned(self.metadata.env.clone()),
+                hostname: T::Text::from_owned(self.metadata.hostname.clone()),
+                app_version: T::Text::from_owned(self.metadata.app_version.clone()),
+                attributes: Default::default(),
+                chunks: traces.into_chunks(),
+            };
             let stats = write_log_traces_v1(&self.capabilities, &payload, max_line_size)
                 .map_err(TraceExporterError::Io)?;
             debug!(
@@ -1320,21 +1364,6 @@ impl<
             );
             return Ok(AgentResponse::Unchanged);
         }
-
-        let libdd_trace_utils::span::v1::TracerPayload {
-            container_id,
-            language_name,
-            language_version,
-            tracer_version,
-            runtime_id,
-            env,
-            hostname,
-            app_version,
-            attributes,
-            chunks,
-        } = payload;
-
-        let mut traces = PooledTraceChunks::unpooled(chunks);
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
@@ -1402,15 +1431,17 @@ impl<
             self.agent_payload_response_version.as_ref(),
         );
         let out_payload = libdd_trace_utils::span::v1::TracerPayload {
-            container_id,
-            language_name,
-            language_version,
-            tracer_version,
-            runtime_id,
-            env,
-            hostname,
-            app_version,
-            attributes,
+            container_id: T::Text::from_owned(self.metadata.container_id.clone()),
+            language_name: T::Text::from_owned(self.metadata.language.clone()),
+            language_version: T::Text::from_owned(self.metadata.language_version.clone()),
+            tracer_version: T::Text::from_owned(self.metadata.tracer_version.clone()),
+            runtime_id: T::Text::from_owned(
+                self.metadata.mutable_metadata.load().runtime_id.clone(),
+            ),
+            env: T::Text::from_owned(self.metadata.env.clone()),
+            hostname: T::Text::from_owned(self.metadata.hostname.clone()),
+            app_version: T::Text::from_owned(self.metadata.app_version.clone()),
+            attributes: Default::default(),
             chunks: traces.into_chunks(),
         };
         let mp_payload = if v1_supported {
@@ -2051,9 +2082,10 @@ mod tests {
         assert_eq!(v["traces"][0][0]["name"], "aws.lambda");
     }
 
-    // V1-native counterpart of `test_log_mode_send_writes_forwarder_json`: the real `send`
-    // entry point decodes v1 msgpack, hits the log branch in `send_trace_chunks_inner_v1`,
-    // and writes Forwarder-format JSON bytes through the log-output capability.
+    // V1-native counterpart of `test_log_mode_send_writes_forwarder_json`: sends native v1
+    // chunks (no msgpack decode — there is no byte-decode path for v1 input), hits the log
+    // branch in `send_trace_chunks_inner_v1`, and writes Forwarder-format JSON bytes through
+    // the log-output capability.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_log_mode_send_v1_writes_forwarder_json() {
@@ -2062,26 +2094,23 @@ mod tests {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_service("test")
-            .set_input_format(TraceExporterInputFormat::V1)
             .set_output_format(TraceExporterOutputFormat::V1)
             .set_output_to_log(None);
         let exporter = builder.build::<CapturingCapabilities>().unwrap();
 
-        let payload = libdd_trace_utils::span::v1::TracerPayloadBytes {
-            chunks: vec![TraceChunkBytes {
-                trace_id: [0; 16],
-                spans: vec![SpanBytesV1 {
-                    name: BytesString::from_slice(b"aws.lambda").unwrap(),
-                    span_id: 2,
-                    ..Default::default()
-                }],
+        let chunks = vec![TraceChunkBytes {
+            trace_id: [0; 16],
+            spans: vec![SpanBytesV1 {
+                name: BytesString::from_slice(b"aws.lambda").unwrap(),
+                span_id: 2,
                 ..Default::default()
             }],
             ..Default::default()
-        };
-        let data = msgpack_encoder::v1::to_vec_from_v1(&payload);
+        }];
 
-        let resp = exporter.send(data.as_ref()).unwrap();
+        let resp = exporter
+            .send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None)
+            .unwrap();
         assert!(matches!(resp, AgentResponse::Unchanged));
 
         let text = String::from_utf8(captured_log()).unwrap();
@@ -2920,8 +2949,9 @@ mod tests {
         assert_eq!(mock_intake.calls(), 1);
     }
 
-    /// V1-native counterpart of [`test_agentless_export_via_builder`]: sends already
-    /// v1-decoded chunks through the agentless JSON dispatch path.
+    /// V1-native counterpart of [`test_agentless_export_via_builder`]: sends native v1 chunks
+    /// (no msgpack decode — there is no byte-decode path for v1 input) through the agentless
+    /// JSON dispatch path.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_agentless_export_via_builder_v1() {
@@ -2949,29 +2979,24 @@ mod tests {
             .set_language_version("v20.11.0")
             .set_language_interpreter("v8")
             .set_agentless_endpoint(&intake_url, "test-api-key")
-            .set_input_format(TraceExporterInputFormat::V1)
             .set_output_format(TraceExporterOutputFormat::V1);
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        let payload = libdd_trace_utils::span::v1::TracerPayloadBytes {
-            chunks: vec![TraceChunkBytes {
-                trace_id: [0; 16],
-                spans: vec![SpanBytesV1 {
-                    name: BytesString::from_slice(b"op").unwrap(),
-                    service: BytesString::from_static("svc"),
-                    resource: BytesString::from_static("res"),
-                    span_id: 2,
-                    parent_id: 0,
-                    start: 2_500_000_000,
-                    duration: 1_000_000,
-                    ..Default::default()
-                }],
+        let chunks = vec![TraceChunkBytes {
+            trace_id: [0; 16],
+            spans: vec![SpanBytesV1 {
+                name: BytesString::from_slice(b"op").unwrap(),
+                service: BytesString::from_static("svc"),
+                resource: BytesString::from_static("res"),
+                span_id: 2,
+                parent_id: 0,
+                start: 2_500_000_000,
+                duration: 1_000_000,
                 ..Default::default()
             }],
             ..Default::default()
-        };
-        let data = msgpack_encoder::v1::to_vec_from_v1(&payload);
-        let result = exporter.send(data.as_ref());
+        }];
+        let result = exporter.send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None);
 
         assert!(
             result.is_ok(),
@@ -2982,21 +3007,18 @@ mod tests {
         assert_eq!(mock_intake.calls(), 1);
     }
 
-    /// V1-native counterpart of a default (non-agentless, non-OTLP) msgpack-agent export: sends
-    /// already v1-decoded chunks to the agent's `/v1.0/traces` endpoint, natively encoded via
-    /// `msgpack_encoder::v1::to_vec_from_v1`.
+    /// `send_trace_chunks_v1` is the sync facade over `send_trace_chunks_async_v1`, sending
+    /// native v1 chunks with no msgpack involved (unlike `send`/`send_async`).
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_v1_input_default_output_sends_msgpack_v1() {
+    fn test_send_trace_chunks_v1_sync_facade() {
         use libdd_trace_utils::span::v1::{SpanBytes as SpanBytesV1, TraceChunkBytes};
 
         agent_info::clear_cache_for_test();
 
         let server = MockServer::start();
         let mock_traces = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1.0/traces")
-                .header("Content-Type", "application/msgpack");
+            when.method(POST).path("/v1.0/traces");
             then.status(200)
                 .header("content-type", "application/json")
                 .body(r#"{ "rate_by_service": { "service:,env:": 1.0 } }"#);
@@ -3015,15 +3037,12 @@ mod tests {
         let exporter = build_test_exporter(
             server.url("/"),
             None,
-            TraceExporterInputFormat::V1,
+            TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V1,
             false,
             false,
         );
 
-        // Wait until /info has been fetched; `v1_active` itself is only refreshed from within
-        // `send_async` (via `check_agent_info`), so the send below is what promotes it to true
-        // before `send_trace_chunks_inner_v1` makes its negotiation decision.
         let start = std::time::Instant::now();
         while agent_info::get_agent_info().is_none() {
             if start.elapsed() > Duration::from_secs(5) {
@@ -3032,29 +3051,25 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        let payload = libdd_trace_utils::span::v1::TracerPayloadBytes {
-            chunks: vec![TraceChunkBytes {
-                trace_id: [0; 16],
-                spans: vec![SpanBytesV1 {
-                    name: BytesString::from_slice(b"op").unwrap(),
-                    service: BytesString::from_static("svc"),
-                    resource: BytesString::from_static("res"),
-                    span_id: 2,
-                    parent_id: 0,
-                    start: 0,
-                    duration: 1,
-                    ..Default::default()
-                }],
+        let chunks = vec![TraceChunkBytes {
+            trace_id: [0; 16],
+            spans: vec![SpanBytesV1 {
+                name: BytesString::from_slice(b"op").unwrap(),
+                service: BytesString::from_static("svc"),
+                resource: BytesString::from_static("res"),
+                span_id: 2,
+                parent_id: 0,
+                start: 0,
+                duration: 1,
                 ..Default::default()
             }],
             ..Default::default()
-        };
-        let data = msgpack_encoder::v1::to_vec_from_v1(&payload);
-        let result = exporter.send(data.as_ref());
+        }];
+        let result = exporter.send_trace_chunks_v1(PooledTraceChunks::unpooled(chunks), None);
 
         assert!(
             result.is_ok(),
-            "V1 default-output send should succeed: {:?}",
+            "sync v1 native send should succeed: {:?}",
             result.err()
         );
         mock_traces.assert();

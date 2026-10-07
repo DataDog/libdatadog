@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Span, TraceChunk};
+use super::TraceChunk;
 use crate::span::TraceData;
 use rand::{Rng as _, SeedableRng as _};
 use std::cell::RefCell;
@@ -34,38 +34,30 @@ fn drop_policy() -> bool {
     RNG.with_borrow_mut(|r| r.gen_bool(PCT_OF_CHUNKS_RETURNED_DROPPED))
 }
 
-/// Reset fields to default, keeping collection capacity for reuse.
-fn reset_span<T: TraceData>(span: &mut Span<T>) {
-    span.service = Default::default();
-    span.name = Default::default();
-    span.resource = Default::default();
-    span.r#type = Default::default();
-    span.span_id = Default::default();
-    span.parent_id = Default::default();
-    span.start = Default::default();
-    span.duration = Default::default();
-    span.error = Default::default();
-    span.span_kind = Default::default();
-    span.env = Default::default();
-    span.version = Default::default();
-    span.component = Default::default();
-    span.attributes.clear();
-    span.span_links.clear();
-    span.span_events.clear();
-}
-
-/// Reset a chunk's own fields, keeping collection capacity for reuse (both `attributes` and the
-/// `spans` vec itself, whose elements are reset in place rather than dropped).
-fn reset_chunk<T: TraceData>(chunk: &mut TraceChunk<T>) {
-    chunk.trace_id = Default::default();
-    chunk.priority = Default::default();
-    chunk.origin = Default::default();
-    chunk.sampling_mechanism = Default::default();
-    chunk.dropped_trace = Default::default();
-    chunk.attributes.clear();
-    for span in &mut chunk.spans {
-        reset_span(span);
-    }
+/// Reset a chunk's own fields, keeping the `attributes` map's and `spans` vec's capacity for
+/// reuse. `spans` is emptied (its elements dropped), so a reset chunk always comes back with zero
+/// spans.
+///
+/// Destructures `chunk` so that a newly added field fails to compile here rather than being
+/// silently left unreset.
+fn reset_chunk<T: TraceData>(
+    TraceChunk {
+        trace_id,
+        priority,
+        origin,
+        sampling_mechanism,
+        dropped_trace,
+        attributes,
+        spans,
+    }: &mut TraceChunk<T>,
+) {
+    *trace_id = Default::default();
+    *priority = Default::default();
+    *origin = Default::default();
+    *sampling_mechanism = Default::default();
+    *dropped_trace = Default::default();
+    attributes.clear();
+    spans.clear();
 }
 
 /// Max chunks per recycled batch. Larger batches are split so no thread hoards a big batch in its
@@ -332,7 +324,7 @@ impl<T: TraceData> Drop for PooledTraceChunks<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v1::AttributeValue;
+    use crate::span::v1::{AttributeValue, Span};
     use libdd_tinybytes::BytesString;
 
     fn chunk_with_span(name: &str) -> TraceChunk<crate::span::BytesData> {

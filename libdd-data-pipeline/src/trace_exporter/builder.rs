@@ -1252,11 +1252,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     | TraceExporterOutputFormat::V1
             ),
             TraceExporterInputFormat::V05 => matches!(output, TraceExporterOutputFormat::V05),
-            // Only V1 is a valid *configured* output for V1 input. At runtime,
-            // `send_trace_chunks_inner_v1` may still downgrade the wire encoding to v0.4 when
-            // the agent hasn't advertised `/v1.0/traces` (see `v1_active`) — that's a transport
-            // fallback, not an alternative output format the caller can configure here.
-            TraceExporterInputFormat::V1 => matches!(output, TraceExporterOutputFormat::V1),
         }
     }
 }
