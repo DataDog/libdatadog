@@ -194,6 +194,8 @@ impl SidecarSender {
     /// Submit one FFE observation without waiting or reconnecting. `build` runs
     /// only after admission; it must bound and normalize borrowed input before
     /// ownership. No request is retained when submission is rejected.
+    /// A size rejection gets one retry without targeting key or event context.
+    /// Both full and degraded observations return `Accepted` on success.
     /// Retains the existing transport policy: macOS `ENOBUFS` can close the
     /// connection, unlike `WouldBlock`. Further observations are skipped until
     /// an ordinary transport/lifecycle operation reconnects outside evaluation.
@@ -222,7 +224,7 @@ impl SidecarSender {
                 return FfeSubmissionStatus::LoadShed;
             }
         }
-        let request = match build() {
+        let mut request = match build() {
             Ok(request) => request,
             Err(status) => return status,
         };
@@ -232,6 +234,27 @@ impl SidecarSender {
         {
             return FfeSubmissionStatus::InvalidInput;
         }
+        let status = self.try_send_ffe_request(&request);
+        if status != FfeSubmissionStatus::PayloadTooLarge {
+            return status;
+        }
+        if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut request
+            && let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice()
+            && let [event] = batch.flag_evaluations.as_mut_slice()
+            && !event.is_degraded
+            && (event.targeting_key.is_some() || event.context.is_some())
+        {
+            // Match the final EVP size fallback. Move straight to the reduced
+            // send: no second admission, load-shed decision, or retained copy.
+            event.targeting_key = None;
+            event.context = None;
+            event.is_degraded = true;
+            return self.try_send_ffe_request(&request);
+        }
+        status
+    }
+
+    fn try_send_ffe_request(&mut self, request: &SidecarInterfaceRequest) -> FfeSubmissionStatus {
         let size = match bincode::serialized_size(&request) {
             Ok(size) => size,
             Err(_) => return FfeSubmissionStatus::EncodingError,

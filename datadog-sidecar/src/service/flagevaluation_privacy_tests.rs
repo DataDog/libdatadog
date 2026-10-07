@@ -289,7 +289,20 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
                 .body_excludes("protected-context-canary")
                 .body_excludes("private-error-canary")
                 .body_excludes("oversize-canary")
-                .body_excludes("observe_full_evaluation_data");
+                .body_excludes("rejected-flag-canary")
+                .body_excludes("observe_full_evaluation_data")
+                .is_true(|request| {
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(request.body_ref()).unwrap();
+                    let rows = payload["flagEvaluations"].as_array().unwrap();
+                    rows.len() == 3
+                        && rows.iter().any(|row| {
+                            row["flag"]["key"] == "ipc-degraded"
+                                && row["evaluation_count"] == 2
+                                && row.get("targeting_key").is_none()
+                                && row.get("context").is_none()
+                        })
+                });
             then.status(202);
         })
         .await;
@@ -351,10 +364,21 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         FfeSubmissionStatus::Accepted
     );
     let mut oversized = event();
+    oversized.flag.key = "ipc-degraded".into();
     oversized.targeting_key =
         Some("oversize-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
+    for consent in [false, true] {
+        oversized.observe_full_evaluation_data = consent;
+        assert_eq!(
+            try_submit_ffe(&transport, || Ok(single(oversized.clone()))),
+            FfeSubmissionStatus::Accepted
+        );
+    }
+    // Removing identity/context cannot rescue oversized retained dimensions.
+    let mut rejected = event();
+    rejected.flag.key = "rejected-flag-canary".repeat(libdd_ipc::max_message_size() / 20 + 1);
     assert_eq!(
-        try_submit_ffe(&transport, || Ok(single(oversized))),
+        try_submit_ffe(&transport, || Ok(single(rejected))),
         FfeSubmissionStatus::PayloadTooLarge
     );
     let mut consented = event();
@@ -386,7 +410,7 @@ async fn bounded_ffe_submission_preserves_http_privacy_and_survives_rejection() 
         );
     }
     tokio::time::timeout(Duration::from_secs(5), async {
-        while handler.submitted_payloads.load(Ordering::Relaxed) < 5 {
+        while handler.submitted_payloads.load(Ordering::Relaxed) < 7 {
             tokio::task::yield_now().await;
         }
     })

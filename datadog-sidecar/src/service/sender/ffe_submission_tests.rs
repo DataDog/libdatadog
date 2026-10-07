@@ -53,6 +53,86 @@ fn receive(peer: &SeqpacketConn) -> SidecarInterfaceRequest {
     codec::decode(&buf[..len]).unwrap()
 }
 
+fn event_mut(request: &mut SidecarInterfaceRequest) -> &mut FfeFlagEvaluationEvent {
+    let SidecarInterfaceRequest::EnqueueActions { actions, .. } = request else {
+        panic!("wrong request")
+    };
+    let SidecarAction::FfeFlagEvaluationBatch(batch) = &mut actions[0] else {
+        panic!("wrong action")
+    };
+    &mut batch.flag_evaluations[0]
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn ffe_advertised_size_fallback_preserves_count_and_omits_context() {
+    let (mut sender, peer) = pair();
+    let mut oversized = request();
+    let event = event_mut(&mut oversized);
+    event.targeting_key = Some("private-canary".repeat(libdd_ipc::max_message_size() / 14 + 1));
+    event.context = Some(crate::service::FlagEvalEventContext {
+        evaluation: Some(r#"{"email":"private-canary"}"#.into()),
+        dd: None,
+    });
+    event.observe_full_evaluation_data = true;
+    assert_eq!(sender.try_submit_ffe(|| Ok(oversized)), Status::Accepted);
+    let mut received = receive(&peer);
+    let event = event_mut(&mut received);
+    assert!(event.is_degraded);
+    assert!(event.context.is_none());
+    assert!(event.targeting_key.is_none());
+    assert_eq!(event.evaluation_count, 1);
+    assert_eq!(event.flag.key, "flag");
+    assert!(event.observe_full_evaluation_data);
+    assert_eq!(sender.channel.0.outstanding(), 1);
+    let encoded = bincode::serialize(&received).unwrap();
+    assert!(
+        !encoded
+            .windows(b"private-canary".len())
+            .any(|w| w == b"private-canary")
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn ffe_kernel_size_fallback_runs_admission_and_ack_accounting_once() {
+    let (mut sender, peer) = pair();
+    sender.max_outstanding = 21;
+    outstanding(&mut sender, &peer, 11);
+    sender.enqueue_actions_counter = 9;
+    let bytes: libc::c_int = 4096;
+    // SAFETY: a live socket and a valid pointer/length describing `bytes`.
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                sender.channel.0.conn.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&bytes as *const libc::c_int).cast(),
+                std::mem::size_of_val(&bytes).try_into().unwrap(),
+            )
+        },
+        0
+    );
+    let mut oversized = request();
+    event_mut(&mut oversized).targeting_key = Some("x".repeat(16 * 1024));
+    assert!(bincode::serialized_size(&oversized).unwrap() < libdd_ipc::max_message_size() as u64);
+    assert_eq!(sender.try_submit_ffe(|| Ok(oversized)), Status::Accepted);
+    let mut received = receive(&peer);
+    let event = event_mut(&mut received);
+    assert!(event.is_degraded);
+    assert!(event.targeting_key.is_none());
+    assert_eq!(event.evaluation_count, 1);
+    assert_eq!(sender.enqueue_actions_counter, 0);
+    assert_eq!(sender.channel.0.outstanding(), 12);
+    assert!(!sender.channel.0.is_closed());
+    assert_eq!(
+        peer.try_recv_raw(&mut [0; 1024]).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+}
+
 // Send real ordinary requests and drain the peer without ACKing, keeping the
 // shared outstanding count high without conflating it with socket capacity.
 fn outstanding(sender: &mut SidecarSender, peer: &SeqpacketConn, count: u64) {

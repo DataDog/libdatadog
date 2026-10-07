@@ -54,6 +54,9 @@ pub extern "C" fn ddog_sidecar_check_ffe_submission(
 
 /// Try to submit one evaluation; never wait for the sender, reconnect, or retain
 /// rejected input. `Accepted` means local transport acceptance, not delivery.
+/// Oversized observations are retried once without targeting key or event context;
+/// a successfully accepted reduced observation also returns `Accepted`. Required
+/// metadata and optional flag dimensions must still fit the IPC packet limit.
 /// The sidecar owns hashing, aggregation, final EVP encoding and HTTP delivery.
 ///
 /// Context comes exclusively from `attributes`; `evaluation_context_json` is
@@ -216,6 +219,7 @@ fn build_request(
     let rule = optional_text(source.targeting_rule_key)?;
     let mut omissions = FieldOmissions::default();
     omissions.targeting_key_invalid = snapshot.targeting_key_invalid;
+    let mut is_degraded = false;
     let target = if snapshot.targeting_key_invalid
         || source.targeting_key.as_raw_parts() == (std::ptr::null(), 0)
     {
@@ -227,6 +231,10 @@ fn build_request(
                 omissions.targeting_key_invalid = true;
                 None
             }
+            Err(FfeSubmissionStatus::PayloadTooLarge) => {
+                is_degraded = true;
+                None
+            }
             Err(status) => return Err(status),
         }
     };
@@ -235,14 +243,12 @@ fn build_request(
         instance_id.session_id.as_str(),
         instance_id.runtime_id.as_str(),
         service,
-        service,
         env,
         version,
         flag,
         variant.unwrap_or_default(),
         allocation.unwrap_or_default(),
         rule.unwrap_or_default(),
-        target.unwrap_or_default(),
     ] {
         bytes = bytes
             .checked_add(value.len())
@@ -251,12 +257,18 @@ fn build_request(
             return Err(FfeSubmissionStatus::PayloadTooLarge);
         }
     }
-    let evaluation = if source.observe_full_evaluation_data {
+    // Do not copy identity that already exceeds the budget. Retained metadata
+    // must fit by itself; the sender checks exact serialized size and overhead.
+    is_degraded |= bytes
+        .checked_add(service.len())
+        .and_then(|bytes| bytes.checked_add(target.map_or(0, str::len)))
+        .is_none_or(|bytes| bytes > libdd_ipc::max_message_size());
+    let evaluation = if !is_degraded && source.observe_full_evaluation_data {
         capture_context(attributes, snapshot, &mut omissions)
     } else {
         None
     };
-    let dd = (!service.is_empty()).then(|| service::ContextDD {
+    let dd = (!is_degraded && !service.is_empty()).then(|| service::ContextDD {
         service: service.to_owned(),
     });
     let event = service::FfeFlagEvaluationEvent {
@@ -276,13 +288,13 @@ fn build_request(
         targeting_rule: rule.map(|key| service::TargetingRuleKey {
             key: key.to_owned(),
         }),
-        targeting_key: target.map(str::to_owned),
+        targeting_key: target.filter(|_| !is_degraded).map(str::to_owned),
         context: (evaluation.is_some() || dd.is_some())
             .then_some(service::FlagEvalEventContext { evaluation, dd }),
         error: safe_error(source.error_message),
         runtime_default_used: source.runtime_default_used,
         observe_full_evaluation_data: source.observe_full_evaluation_data,
-        is_degraded: false,
+        is_degraded,
         field_omissions: omissions,
     };
     // Context and errors are already sanitized above; the sidecar independently
@@ -373,6 +385,80 @@ mod tests {
 
     fn context(event: &service::FfeFlagEvaluationEvent) -> Value {
         serde_json::from_str(event.context.as_ref().unwrap().evaluation.as_ref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn oversized_identity_degrades_without_losing_evaluation_dimensions() {
+        let oversized = "private-canary".repeat(libdd_ipc::max_message_size() / 14 + 1);
+        for consent in [false, true] {
+            let mut source = event(consent);
+            source.targeting_key = oversized.as_str().into();
+            source.targeting_rule_key = "rule".into();
+            source.error_message = "FLAG_NOT_FOUND".into();
+            source.runtime_default_used = true;
+            let captured = convert(
+                &source,
+                &[attr("email", "private-canary")],
+                Default::default(),
+            );
+            assert!(captured.is_degraded);
+            assert!(captured.targeting_key.is_none());
+            assert!(captured.context.is_none());
+            assert_eq!(captured.evaluation_count, 1);
+            assert_eq!(captured.timestamp, 100);
+            assert_eq!(captured.first_evaluation, 100);
+            assert_eq!(captured.last_evaluation, 100);
+            assert_eq!(captured.flag.key, "flag");
+            assert_eq!(captured.variant.unwrap().key, "blue");
+            assert_eq!(captured.allocation.unwrap().key, "allocation");
+            assert_eq!(captured.targeting_rule.unwrap().key, "rule");
+            assert!(captured.error.is_some());
+            assert!(captured.runtime_default_used);
+            assert_eq!(captured.observe_full_evaluation_data, consent);
+        }
+    }
+
+    #[test]
+    fn combined_input_size_degrades_before_copying_identity_or_context() {
+        // The key itself fits; adding retained metadata exceeds the ceiling.
+        let target = "x".repeat(libdd_ipc::max_message_size());
+        let mut source = event(true);
+        source.targeting_key = target.as_str().into();
+        let captured = convert(
+            &source,
+            &[],
+            FfeSnapshotState {
+                snapshot_error: true,
+                ..Default::default()
+            },
+        );
+        assert!(captured.is_degraded);
+        assert!(captured.targeting_key.is_none());
+        assert!(captured.context.is_none());
+        assert!(
+            !captured
+                .field_omissions
+                .contains_context(Reason::SnapshotError)
+        );
+        assert_eq!(captured.evaluation_count, 1);
+    }
+
+    #[test]
+    fn oversized_retained_dimension_still_rejects_the_observation() {
+        let oversized = "x".repeat(libdd_ipc::max_message_size() + 1);
+        let mut source = event(true);
+        source.variant = oversized.as_str().into();
+        assert!(matches!(
+            build_request(
+                &InstanceId::new("session", "runtime"),
+                &QueueId::from(1),
+                &metadata(),
+                &source,
+                (&[][..]).into(),
+                &Default::default(),
+            ),
+            Err(FfeSubmissionStatus::PayloadTooLarge)
+        ));
     }
 
     #[test]
