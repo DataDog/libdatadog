@@ -1,8 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "std")]
 use crate::data::*;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -14,11 +16,12 @@ pub enum ApiVersion {
 impl ApiVersion {
     pub fn to_str(&self) -> &'static str {
         match self {
-            ApiVersion::V2 => "v2",
+            ApiVersion::V2 => crate::protocol::API_VERSION,
         }
     }
 }
 
+#[cfg(feature = "std")]
 #[derive(Serialize, Debug)]
 pub struct Telemetry<'a> {
     pub api_version: ApiVersion,

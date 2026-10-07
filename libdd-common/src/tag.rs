@@ -23,7 +23,8 @@ use alloc::{
 use core::fmt::Debug;
 use core::fmt::{Display, Formatter};
 #[cfg(feature = "alloc")]
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::{Serialize, Serializer};
 
 #[cfg(feature = "alloc")]
 pub use static_assertions::{const_assert, const_assert_ne};
@@ -75,6 +76,18 @@ impl Display for InvalidTag<'_> {
 
 impl core::error::Error for InvalidTag<'_> {}
 
+/// Validates a tag key and value pair.
+#[inline]
+fn validate_pair(key: &str, value: &str) -> Result<(), TagValidationError> {
+    if key.is_empty() || key.starts_with(':') {
+        Err(TagValidationError::BeginsWithColon)
+    } else if value.is_empty() || value.ends_with(':') {
+        Err(TagValidationError::EndsWithColon)
+    } else {
+        Ok(())
+    }
+}
+
 /// Validates a tag that has already been serialized.
 #[inline]
 fn validate_serialized(value: &str) -> Result<(), TagValidationError> {
@@ -86,6 +99,81 @@ fn validate_serialized(value: &str) -> Result<(), TagValidationError> {
         Err(TagValidationError::EndsWithColon)
     } else {
         Ok(())
+    }
+}
+
+/// A borrowed validated Datadog tag.
+///
+/// The key and value can be borrowed separately, avoiding the allocation that
+/// would otherwise be needed to join them with a colon.
+#[derive(Clone, Copy, Debug)]
+pub struct TagRef<'a> {
+    key: Option<&'a str>,
+    value: &'a str,
+}
+
+impl<'a> TagRef<'a> {
+    /// Creates a borrowed tag from separate key and value strings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the resulting tag would begin or end with a
+    /// colon.
+    pub fn new(key: &'a str, value: &'a str) -> Result<Self, TagValidationError> {
+        validate_pair(key, value)?;
+        Ok(Self {
+            key: Some(key),
+            value,
+        })
+    }
+
+    /// Creates a borrowed tag from an already formatted value.
+    ///
+    /// Both keyed (`key:value`) and unkeyed (`value`) tags are accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the tag is empty, begins with a colon, or ends
+    /// with a colon.
+    pub fn from_value(value: &'a str) -> Result<Self, TagValidationError> {
+        validate_serialized(value)?;
+        Ok(Self::from_valid_value(value))
+    }
+
+    fn from_valid_value(value: &'a str) -> Self {
+        match value.split_once(':') {
+            Some((key, value)) => Self {
+                key: Some(key),
+                value,
+            },
+            None => Self { key: None, value },
+        }
+    }
+
+    /// Returns the borrowed key and value components.
+    ///
+    /// Unkeyed tags return `None` for the key.
+    pub const fn parts(self) -> (Option<&'a str>, &'a str) {
+        (self.key, self.value)
+    }
+}
+
+impl Display for TagRef<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        if let Some(key) = self.key {
+            f.write_str(key)?;
+            f.write_str(":")?;
+        }
+        f.write_str(self.value)
+    }
+}
+
+impl Serialize for TagRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.collect_str(self)
     }
 }
 
@@ -182,13 +270,7 @@ impl Tag {
     /// Validates a tag key and value pair.
     #[inline]
     pub fn validate(key: &str, value: &str) -> Result<(), TagValidationError> {
-        if key.is_empty() || key.starts_with(':') {
-            Err(TagValidationError::BeginsWithColon)
-        } else if value.is_empty() || value.ends_with(':') {
-            Err(TagValidationError::EndsWithColon)
-        } else {
-            Ok(())
-        }
+        validate_pair(key, value)
     }
 
     /// Validates a tag that has already been serialized.
@@ -256,6 +338,13 @@ impl<'a> Iterator for TagParser<'a> {
                 .map(|()| tag)
                 .map_err(|error| InvalidTag { value: tag, error }),
         )
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> From<&'a Tag> for TagRef<'a> {
+    fn from(tag: &'a Tag) -> Self {
+        TagRef::from_valid_value(tag.as_ref())
     }
 }
 
@@ -347,6 +436,47 @@ mod tests {
             true
         }
         assert!(is_send(tag!("src_library", "libdatadog")));
+    }
+
+    #[test]
+    fn borrowed_tags_support_split_and_formatted_values() {
+        let split = TagRef::new("env", "staging:east").unwrap();
+        let formatted = TagRef::from_value("env:staging:east").unwrap();
+        let unkeyed = TagRef::from_value("staging").unwrap();
+
+        assert_eq!(split.to_string(), "env:staging:east");
+        assert_eq!(formatted.parts(), (Some("env"), "staging:east"));
+        assert_eq!(unkeyed.parts(), (None, "staging"));
+    }
+
+    #[test]
+    fn borrowed_tags_reject_invalid_boundaries() {
+        assert_eq!(
+            TagRef::from_value("").unwrap_err(),
+            TagValidationError::Empty
+        );
+        assert_eq!(
+            TagRef::from_value(":value").unwrap_err(),
+            TagValidationError::BeginsWithColon
+        );
+        assert_eq!(
+            TagRef::from_value("value:").unwrap_err(),
+            TagValidationError::EndsWithColon
+        );
+        assert_eq!(
+            TagRef::new("", "value").unwrap_err(),
+            TagValidationError::BeginsWithColon
+        );
+        assert_eq!(
+            TagRef::new("key", "").unwrap_err(),
+            TagValidationError::EndsWithColon
+        );
+    }
+
+    #[test]
+    fn borrowed_tag_from_owned_tag() {
+        let tag = Tag::new("env", "staging:east").unwrap();
+        assert_eq!(TagRef::from(&tag).parts(), (Some("env"), "staging:east"));
     }
 
     #[test]

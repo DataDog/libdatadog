@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::data::*;
+use alloc::vec::Vec;
 use serde::Serialize;
 
 #[derive(Serialize, Debug)]
