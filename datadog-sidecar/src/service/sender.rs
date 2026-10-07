@@ -207,12 +207,8 @@ impl SidecarSender {
         if status != FfeSubmissionStatus::Ready {
             return status;
         }
-        if !self.try_drain_outbox() {
-            return if self.channel.0.is_closed() {
-                FfeSubmissionStatus::Unavailable
-            } else {
-                FfeSubmissionStatus::PriorityPending
-            };
+        if let Err(status) = self.try_drain_ffe_outbox() {
+            return status;
         }
         let status = self.check_ffe_submission();
         if status != FfeSubmissionStatus::Ready {
@@ -234,7 +230,7 @@ impl SidecarSender {
         {
             return FfeSubmissionStatus::InvalidInput;
         }
-        let status = self.try_send_ffe_request(&request);
+        let status = Self::try_send_ffe_request(&mut self.channel, &request);
         if status != FfeSubmissionStatus::PayloadTooLarge {
             return status;
         }
@@ -253,12 +249,38 @@ impl SidecarSender {
             event.targeting_key = None;
             event.context = None;
             event.is_degraded = true;
-            return self.try_send_ffe_request(&request);
+            return Self::try_send_ffe_request(&mut self.channel, &request);
         }
         status
     }
 
-    fn try_send_ffe_request(&mut self, request: &SidecarInterfaceRequest) -> FfeSubmissionStatus {
+    /// FFE also sends pending configuration, which can fail serialization (for
+    /// example, a non-UTF-8 log path). Keep that failure out of the C boundary and
+    /// leave the failed slot, and all later slots, queued for lifecycle recovery.
+    fn try_drain_ffe_outbox(&mut self) -> Result<(), FfeSubmissionStatus> {
+        for slot in self.outbox.slots_mut() {
+            if let Some(request) = slot {
+                if self.channel.0.outstanding() >= self.max_outstanding {
+                    return Err(FfeSubmissionStatus::PriorityPending);
+                }
+                match Self::try_send_ffe_request(&mut self.channel, request) {
+                    FfeSubmissionStatus::Accepted => *slot = None,
+                    FfeSubmissionStatus::WouldBlock => {
+                        return Err(FfeSubmissionStatus::PriorityPending);
+                    }
+                    status => return Err(status),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Fallible send for an observation or the configuration that precedes it.
+    /// Other producers retain their existing generated send path.
+    fn try_send_ffe_request(
+        channel: &mut SidecarInterfaceChannel,
+        request: &SidecarInterfaceRequest,
+    ) -> FfeSubmissionStatus {
         let size = match bincode::serialized_size(&request) {
             Ok(size) => size,
             Err(_) => return FfeSubmissionStatus::EncodingError,
@@ -276,7 +298,17 @@ impl SidecarSender {
         if bincode::serialize_into(&mut data, &request).is_err() {
             return FfeSubmissionStatus::EncodingError;
         }
-        match self.channel.0.try_send_with_rejection(data, &[]) {
+        // Configuration can transfer handles on Windows. Preserve those and the
+        // request's ACK policy, just like the ordinary generated send method.
+        let mut sink = libdd_ipc::handles::FdSink::new();
+        let Ok(()) = libdd_ipc::handles::TransferHandles::copy_handles(request, &mut sink);
+        let handles = sink.into_fds();
+        let result = if request.expects_response() {
+            channel.0.try_send_with_rejection(data, &handles)
+        } else {
+            channel.0.conn.try_send_raw(data, &handles)
+        };
+        match result {
             Ok(()) => FfeSubmissionStatus::Accepted,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => FfeSubmissionStatus::WouldBlock,
             #[cfg(unix)]

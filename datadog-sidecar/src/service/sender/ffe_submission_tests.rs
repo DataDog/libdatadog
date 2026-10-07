@@ -65,6 +65,88 @@ fn event_mut(request: &mut SidecarInterfaceRequest) -> &mut FfeFlagEvaluationEve
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn ffe_invalid_pending_configuration_returns_encoding_error_and_preserves_order() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let (mut sender, peer) = pair();
+    let config = SessionConfig {
+        endpoint: Default::default(),
+        dogstatsd_endpoint: Default::default(),
+        language: "php".into(),
+        language_version: Default::default(),
+        tracer_version: Default::default(),
+        flush_interval: Default::default(),
+        remote_config_poll_interval: Default::default(),
+        telemetry_heartbeat_interval: Default::default(),
+        telemetry_extended_heartbeat_interval: Default::default(),
+        force_flush_size: 0,
+        force_drop_size: 0,
+        retry_interval: Default::default(),
+        log_level: "warn".into(),
+        log_file: crate::config::LogMethod::File(std::ffi::OsString::from_vec(vec![0xff]).into()),
+        remote_config_products: vec![],
+        remote_config_capabilities: vec![],
+        remote_config_enabled: false,
+        process_tags: vec![],
+        peer_tag_keys: vec![],
+        span_kinds_stats_computed: vec![],
+        hostname: Default::default(),
+        root_service: Default::default(),
+        root_session_id: None,
+        parent_session_id: None,
+        otlp_metrics_endpoint: None,
+    };
+    // Seed a configuration that could not be sent earlier, without invoking an
+    // ordinary lifecycle send. The FFE path must handle its encoding failure.
+    sender.outbox.set_session_config = Some(SidecarInterfaceRequest::SetSessionConfig {
+        session_id: "ffe".into(),
+        config,
+        is_fork: false,
+    });
+    sender.outbox.set_session_default_service_name =
+        Some(SidecarInterfaceRequest::SetSessionDefaultServiceName {
+            name: Some("configured".into()),
+        });
+    for _ in 0..2 {
+        assert_eq!(
+            sender.try_submit_ffe(|| panic!("invalid configuration before capture")),
+            Status::EncodingError
+        );
+        assert!(!sender.channel.0.is_closed());
+        assert_eq!(sender.channel.0.outstanding(), 0);
+        assert!(sender.outbox.set_session_config.is_some());
+        assert!(sender.outbox.set_session_default_service_name.is_some());
+        assert_eq!(
+            peer.try_recv_raw(&mut [0; 1024]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+    let Some(SidecarInterfaceRequest::SetSessionConfig { config, .. }) =
+        &mut sender.outbox.set_session_config
+    else {
+        panic!("configuration must remain queued")
+    };
+    config.log_file = crate::config::LogMethod::Disabled;
+    assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
+    assert!(matches!(
+        receive(&peer),
+        SidecarInterfaceRequest::SetSessionConfig { .. }
+    ));
+    assert!(matches!(
+        receive(&peer),
+        SidecarInterfaceRequest::SetSessionDefaultServiceName { .. }
+    ));
+    assert!(matches!(
+        receive(&peer),
+        SidecarInterfaceRequest::EnqueueActions { .. }
+    ));
+    assert_eq!(sender.channel.0.outstanding(), 3);
+    assert!(sender.outbox.set_session_config.is_none());
+    assert!(sender.outbox.set_session_default_service_name.is_none());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn ffe_advertised_size_fallback_preserves_count_and_omits_context() {
     let (mut sender, peer) = pair();
     let mut oversized = request();
