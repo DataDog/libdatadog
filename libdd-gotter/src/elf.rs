@@ -805,7 +805,9 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 /// `/proc/self/maps` reported at guard-construction time when it is
 /// dropped (including on panic or early return).
 /// For loaded objects, construct and drop the guard inside the same
-/// [`iterate_libraries`] callback so the loader lock protects the mappings.
+/// For loaded objects, construct and drop the guard inside the same
+/// [`iterate_libraries`] callback, so the loader lock keeps the object
+/// mapped while it is patched.
 pub struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
