@@ -28,7 +28,7 @@ impl TraceText for Arc<str> {
     }
 }
 
-impl<'a> TraceText for alloc::borrow::Cow<'a, str> {
+impl TraceText for alloc::borrow::Cow<'_, str> {
     fn from_static(s: &'static str) -> Self {
         alloc::borrow::Cow::Borrowed(s)
     }
@@ -62,9 +62,19 @@ pub trait Attributes {
 
     fn attribute_mut(&mut self, key: &str) -> Option<&mut Value<Self>>;
     fn set_attribute(&mut self, key: impl Into<Self::Text>, value: Value<Self>);
+
+    /// Returns an iterator over all attributes as `(key, value)` pairs.
+    fn iter_attributes(&self) -> impl Iterator<Item = (&str, &Value<Self>)>;
 }
 
 pub trait Span: Attributes {
+    /// Returns the operation name of the span.
+    fn name(&self) -> &str;
+
+    /// Returns the environment the span belongs to, if any.
+    /// Implementations without an environment return an empty string.
+    fn env(&self) -> &str;
+
     fn service(&self) -> &str;
     fn resource(&self) -> &str;
     fn r#type(&self) -> &str;
@@ -117,9 +127,9 @@ impl<T: ValueTypes> Clone for AttributeValue<T> {
     fn clone(&self) -> Self {
         match self {
             Self::String(arg0) => Self::String(arg0.clone()),
-            Self::Bool(arg0) => Self::Bool(arg0.clone()),
-            Self::Int(arg0) => Self::Int(arg0.clone()),
-            Self::Float(arg0) => Self::Float(arg0.clone()),
+            Self::Bool(arg0) => Self::Bool(*arg0),
+            Self::Int(arg0) => Self::Int(*arg0),
+            Self::Float(arg0) => Self::Float(*arg0),
             Self::Bytes(arg0) => Self::Bytes(arg0.clone()),
             Self::Array(arg0) => Self::Array(arg0.clone()),
             Self::KeyValueList(arg0) => Self::KeyValueList(arg0.clone()),
@@ -144,7 +154,7 @@ impl<T: ValueTypes> PartialEq for AttributeValue<T> {
 }
 
 impl<T: ValueTypes> Debug for AttributeValue<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::String(arg0) => f.debug_tuple("String").field(arg0).finish(),
             Self::Bool(arg0) => f.debug_tuple("Bool").field(arg0).finish(),

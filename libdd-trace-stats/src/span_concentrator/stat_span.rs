@@ -9,10 +9,10 @@ use libdd_trace_utils::span::v1::{Span as SpanV1, SpanKind, TraceChunk};
 // trace_utils (v04), trace_utils_v1, and trace_utils_pb (aliased below) all expose functions
 // with the same names (is_measured, is_partial_snapshot, has_top_level), one per span
 // representation.
+use libdd_trace_model::AttributeValue;
 use libdd_trace_utils::span::{TraceData, trace_utils, trace_utils_v1, v04::Span};
 use libdd_trace_utils::trace_utils as trace_utils_pb;
 use std::borrow::Borrow;
-use libdd_trace_model::AttributeValue;
 
 /// Common interface for spans used in stats computation
 pub trait StatSpan<'a> {

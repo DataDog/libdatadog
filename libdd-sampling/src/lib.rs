@@ -45,6 +45,9 @@ pub(crate) mod types;
 #[cfg(feature = "v04_span")]
 pub mod v04_span;
 
+#[cfg(feature = "trace_model")]
+pub mod trace_model_span;
+
 // Re-export key types for convenience
 pub use agent_service_sampler::ServicesSampler;
 pub use datadog_sampler::{DatadogSampler, OtelConsistentSampling, SamplingRulesCallback};

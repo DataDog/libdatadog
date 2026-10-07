@@ -4,6 +4,7 @@
 use crate::span::vec_map::VecMap;
 use crate::span::{BytesData, SliceData, TraceData};
 use libdd_trace_model::{self, AttributeValue, TraceText};
+use std::borrow::Borrow;
 pub use thin_vec::ThinVec;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
@@ -57,8 +58,8 @@ impl From<u32> for SpanKind {
     }
 }
 
-/// Typed V1 attribute value.
-/// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
+// Typed V1 attribute value.
+// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
 // #[derive(Debug)]
 // pub enum AttributeValue<T: TraceData> {
 //     String(T::Text),
@@ -130,6 +131,42 @@ impl<T: TraceData> libdd_trace_model::Attributes for Span<T> {
         } else {
             self.attributes.insert(key, value);
         }
+    }
+
+    fn iter_attributes(&self) -> impl Iterator<Item = (&str, &libdd_trace_model::Value<Self>)> {
+        self.attributes
+            .iter()
+            .map(|(key, value)| (key.borrow(), value))
+    }
+}
+
+impl<T: TraceData> libdd_trace_model::Span for Span<T> {
+    fn name(&self) -> &str {
+        self.name.borrow()
+    }
+
+    fn env(&self) -> &str {
+        self.env.borrow()
+    }
+
+    fn service(&self) -> &str {
+        self.service.borrow()
+    }
+
+    fn resource(&self) -> &str {
+        self.resource.borrow()
+    }
+
+    fn r#type(&self) -> &str {
+        self.r#type.borrow()
+    }
+
+    fn set_service(&mut self, value: impl Into<Self::Text>) {
+        self.service = value.into();
+    }
+
+    fn set_resource(&mut self, value: impl Into<Self::Text>) {
+        self.resource = value.into();
     }
 }
 
@@ -229,5 +266,47 @@ mod tests {
         assert_eq!(s.span_kind, SpanKind::Internal);
         assert!(!s.error);
         assert!(s.attributes.is_empty());
+    }
+
+    #[test]
+    fn span_implements_model_span_trait() {
+        use libdd_trace_model as model;
+        use libdd_trace_model::Attributes;
+
+        let mut span = Span::<SliceData> {
+            name: "my-op".into(),
+            env: "staging".into(),
+            service: "my-service".into(),
+            resource: "GET /".into(),
+            r#type: "web".into(),
+            ..Default::default()
+        };
+        span.set_attribute(
+            "http.request.method",
+            model::AttributeValue::String("GET".into()),
+        );
+        span.set_attribute("http.status_code", model::AttributeValue::Int(200));
+
+        fn check<S: model::Span>(span: &S) {
+            assert_eq!(span.name(), "my-op");
+            assert_eq!(span.env(), "staging");
+            assert_eq!(span.service(), "my-service");
+            assert_eq!(span.resource(), "GET /");
+            assert_eq!(span.r#type(), "web");
+            assert_eq!(
+                span.attribute("http.status_code"),
+                Some(&model::AttributeValue::Int(200))
+            );
+            assert_eq!(span.iter_attributes().count(), 2);
+        }
+        check(&span);
+
+        fn update<S: model::Span>(span: &mut S) {
+            span.set_service("other".to_string());
+            span.set_resource("POST /".to_string());
+        }
+        update(&mut span);
+        assert_eq!(span.service, "other");
+        assert_eq!(span.resource, "POST /");
     }
 }

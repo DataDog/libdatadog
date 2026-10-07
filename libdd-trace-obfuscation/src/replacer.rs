@@ -129,7 +129,8 @@ pub fn replace_span_tags_v04<T: TraceData>(span: &mut v04::Span<T>, rules: &[Rep
 }
 
 /// `replace_span_tags` replaces the tag values of a span with a given set of rules.
-/// TODO: This function should probably recurse into arrays and keyvalue attributes and should act on non-string types for full trace-agent parity
+/// TODO: This function should probably recurse into arrays and keyvalue attributes and should act
+/// on non-string types for full trace-agent parity
 pub fn replace_span_tags_trait<S: Span>(span: &mut S, rules: &[ReplaceRule]) {
     for rule in rules {
         match rule.name.as_ref() {
