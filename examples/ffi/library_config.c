@@ -69,6 +69,19 @@ int main(int argc, const char *const *argv) {
     return 0;
   }
 
+  ddog_TracerMetadata *metadata = ddog_tracer_metadata_new();
+  ddog_VoidResult metadata_result =
+      ddog_tracer_metadata_include_otel_thread_context(metadata);
+  ddog_tracer_metadata_free(metadata);
+
+  if (metadata_result.tag == DDOG_VOID_RESULT_ERR) {
+    ddog_CharSlice message = ddog_Error_message(&metadata_result.err);
+    fwrite(message.ptr, 1, message.len, stderr);
+    fputc('\n', stderr);
+    ddog_Error_drop(&metadata_result.err);
+    return EXIT_FAILURE;
+  }
+
   ddog_CharSlice language = DDOG_CHARSLICE_C("java");
   ddog_Configurator *configurator = ddog_library_configurator_new(true, language);
 

@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::send_data::SendData;
 use crate::span::v04::{SpanBytes, VecMap};
-use crate::span::{v05, SharedDictBytes};
+use crate::span::{SharedDictBytes, v05};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use httpmock::Mock;

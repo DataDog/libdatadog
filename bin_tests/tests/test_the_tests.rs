@@ -5,7 +5,7 @@
 
 use std::{fs, process};
 
-use bin_tests::{fetch_built_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use bin_tests::{ArtifactType, ArtifactsBuild, BuildProfile, fetch_built_artifacts};
 
 #[test]
 #[cfg_attr(miri, ignore)]

@@ -7,7 +7,7 @@ use libdd_common::timeout::TimeoutManager;
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
-use libdd_common::unix_utils::{alt_fork, open_file_or_quiet, terminate, PreparedExecve};
+use libdd_common::unix_utils::{PreparedExecve, alt_fork, open_file_or_quiet, terminate};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use std::os::unix::io::{IntoRawFd, RawFd};

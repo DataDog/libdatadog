@@ -17,6 +17,50 @@ Core profiling library for collecting, aggregating, and exporting profiling data
 - **Upscaling**: Statistical upscaling for sampled data
 - **HTTP Export**: Built-in HTTP exporter with multipart form data support
 
+## C++ bindings
+
+The optional `cxx` feature builds CXX bindings for C++ consumers. Include the convenience header from the generated CXX include directory:
+
+```cpp
+#include "datadog/profiling.hpp"
+```
+
+The convenience header includes the generated bridge header and provides helper utilities under `datadog::profiling::views`, such as `views::slice(...)` for creating `rust::Slice` values from C++ containers and `views::sample(...)` / `views::dictionary_sample(...)` for constructing sample views.
+
+```cpp
+using namespace datadog::profiling;
+
+std::vector<Location> locations{location};
+std::vector<std::int64_t> values{1000000};
+std::vector<Label> labels{label};
+
+Sample sample = views::sample(locations, values, labels);
+```
+
+Factory APIs return result wrappers with `ok()`, `message()`, `check_and_print()`, and `take_value()`. `take_value()` must be called at most once and only after a successful check.
+
+```cpp
+auto result = Profile::create({SampleType::WallTime}, period);
+if (!result->check_and_print()) return false;
+auto profile = result->take_value();
+```
+
+Object mutation APIs on `Profile` and `ProfileDictionary` return `bool`; detailed errors are drained from the owning object via `take_errors()`.
+Profiles and profile dictionaries are quiet by default and store the first error per operation unless configured with `set_error_policy(...)`.
+Error policies are scoped to the owning `Profile` or `ProfileDictionary`.
+Available policies are `StoreFirstPerOperation`, `StoreEveryOccurrence`, `PrintImmediately`, and `PrintOncePerOperation`.
+
+Exporter APIs send serialized profiles and return `Status`, which exposes `ok()`, `operation_name()`, `message()`, and `check_and_print()`:
+
+```cpp
+auto encoded_result = profile->serialize();
+if (!encoded_result->check_and_print()) return false;
+auto encoded = encoded_result->take_value();
+if (!exporter->send_encoded_profile(std::move(encoded), ...).check_and_print()) return false;
+```
+
+The existing release builder packages the C ABI artifacts. CXX consumers should use the cargo-built CXX bridge artifacts produced with the `cxx` feature.
+
 ## Modules
 
 - `api`: Core API types (ValueType, Period, Mapping, Function, etc.)

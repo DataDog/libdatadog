@@ -2,6 +2,32 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v6.0.0..libdd-remote-config-v7.0.0) - 2026-10-02
+
+### Added
+
+- Authenticate sidecar connections and shared memory ([#2551](https://github.com/datadog/libdatadog/issues/2551)) - ([d120c10](https://github.com/datadog/libdatadog/commit/d120c1090a03fa7274fed4121344d25660081895))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v5.0.0..libdd-remote-config-v6.0.0) - 2026-09-24
+
+### Changed
+
+- Apply small timeout pooling strategy to libdd-http-client as well ([#2449](https://github.com/datadog/libdatadog/issues/2449)) - ([16e10db](https://github.com/datadog/libdatadog/commit/16e10db927db4adcdf386cd09535e100bdf4f587))
+- Remove unused dependencies (v2) ([#2511](https://github.com/datadog/libdatadog/issues/2511)) - ([308e5c2](https://github.com/datadog/libdatadog/commit/308e5c2d6c5192fbc882239f7f6cf8112e465d68))
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Remove AsmRawResponseBody ([#2540](https://github.com/datadog/libdatadog/issues/2540)) - ([03cead9](https://github.com/datadog/libdatadog/commit/03cead969a90638a41fc3637746a296723c9d2a9))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v4.0.0..libdd-remote-config-v5.0.0) - 2026-09-08
 
 ### Changed

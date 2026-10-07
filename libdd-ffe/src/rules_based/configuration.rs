@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Utc};
 
-use crate::rules_based::{ufc::UniversalFlagConfig, Str};
+use crate::rules_based::{Str, ufc::UniversalFlagConfig};
 
 /// Remote configuration for the feature flagging client. It's a central piece that defines client
 /// behavior.

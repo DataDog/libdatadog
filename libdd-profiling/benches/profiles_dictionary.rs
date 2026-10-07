@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use criterion::{black_box, criterion_group, BatchSize, BenchmarkId, Criterion, Throughput};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, black_box, criterion_group};
 use libdd_profiling::profiles::datatypes::ProfilesDictionary;
 use std::sync::Barrier;
 use std::thread;
