@@ -15,6 +15,12 @@
 //! on Unix platforms. It does not allocate, resolve names, or start an async
 //! runtime.
 
+pub mod dns;
+pub mod env;
+
+#[cfg(feature = "libc_dns")]
+pub mod libc_dns;
+
 #[cfg(all(feature = "rustix-tcp", unix))]
 pub mod rustix;
 
