@@ -8,6 +8,9 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod agent_remote_config;
+#[cfg(unix)]
+pub mod appsec;
+pub mod auth;
 pub mod config;
 #[cfg(unix)]
 pub mod crashtracker;
@@ -31,10 +34,13 @@ pub use unix::*;
 pub mod service;
 mod tokio_util;
 #[cfg(windows)]
-mod windows;
+pub mod windows;
 
 #[cfg(windows)]
-pub use self::windows::*;
+pub use self::windows::{
+    ddog_daemon_entry_point, ddog_setup_crashtracking, primary_sidecar_identifier,
+    setup_daemon_process, shm_namespace,
+};
 
 macro_rules! sidecar_version {
     () => {

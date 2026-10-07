@@ -3,11 +3,16 @@
 
 // imports for structs defined in this file
 use crate::config;
-pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
-pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
-pub use datadog_ffe::telemetry::FfeTelemetryContext;
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_common::tag::Tag;
+pub use libdd_ffe::telemetry::FfeTelemetryContext;
+pub use libdd_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
+pub use libdd_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
+pub use libdd_ffe::telemetry::flagevaluation::{
+    AllocationKey, ContextDD, ContextTruncationReason, EvalError, FfeFlagEvaluationBatch,
+    FfeFlagEvaluationEvent, FieldOmissions, FlagEvalEventContext, FlagKey, MAX_CONTEXT_DEPTH,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH, TargetingRuleKey, VariantKey, prune_context_json,
+};
 use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
@@ -30,8 +35,11 @@ pub(crate) use sidecar_interface::SidecarInterface;
 pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
+pub(crate) mod evp_proxy;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_evp_proxy;
 pub(crate) mod ffe_exposures_flusher;
+pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
@@ -43,14 +51,16 @@ mod serialized_tracer_header_tags;
 mod session_info;
 pub mod sidecar_interface;
 pub(crate) mod sidecar_server;
+#[cfg(target_os = "linux")]
+pub mod signal_flush;
 pub mod stats_flusher;
 pub mod telemetry;
 pub(crate) mod tracing;
 
 #[cfg(windows)]
-pub use remote_configs::RemoteConfigNotifyFunction;
+pub use remote_configs::RemoteConfigNotifyTarget;
 pub use sidecar_interface::{DynamicInstrumentationConfigState, SidecarFlushOptions};
-pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
+pub use telemetry::{InternalTelemetryActions, get_telemetry_action_sender};
 pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -100,4 +110,12 @@ pub enum SidecarAction {
         context: FfeTelemetryContext,
         metrics: Vec<FfeEvaluationMetric>,
     },
+    /// Structured FFE flag evaluation batch for the EVP flagevaluation track.
+    /// The sidecar serializes and POSTs the batch to
+    /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget).
+    ///
+    /// Keep this appended after pre-existing variants: this enum crosses the
+    /// bincode sidecar IPC boundary, so inserting a variant before existing
+    /// variants changes their wire ordinals.
+    FfeFlagEvaluationBatch(FfeFlagEvaluationBatch),
 }

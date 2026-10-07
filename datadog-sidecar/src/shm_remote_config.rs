@@ -1,31 +1,29 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
-use crate::tracer::SHM_LIMITER;
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
-use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
-use datadog_ipc::rate_limiter::ShmLimiter;
-use datadog_live_debugger::LiveDebuggingData;
-use libdd_capabilities_impl::NativeHttpClient;
-use libdd_common::{tag::Tag, MutexExt};
-use libdd_remote_config::config::dynamic::{parse_json, Configs};
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
+use libdd_common::{MutexExt, tag::Tag};
+use libdd_ipc::one_way_shared_memory::{OneWayShmReader, OneWayShmWriter, open_named_shm};
+use libdd_ipc::platform::{FileBackedHandle, NamedShmHandle};
+use libdd_ipc::rate_limiter::{ShmLimiter, ShmLimiterMemory};
+use libdd_live_debugger::LiveDebuggingData;
+use libdd_remote_config::config::dynamic::{Configs, parse_json};
 use libdd_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
 use libdd_remote_config::{
-    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
-    Target,
+    ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
+    default_registry,
 };
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
 use std::cmp::Reverse;
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::default::Default;
 use std::ffi::{CStr, CString};
 use std::hash::{Hash, Hasher};
@@ -59,19 +57,21 @@ pub struct RemoteConfigReader(OneWayShmReader<NamedShmHandle, CString>);
 ///
 /// # Safety
 /// Pointers should be valid and non-null.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn debug_dump_inv_tar(
     id: *const ConfigInvariants,
     target: *const Arc<Target>,
 ) {
-    let id = &*id;
-    let target = &*target;
-    debug!("ConfigInvariants: {:#?}", id);
-    debug!("Target: {:#?}", target);
-    debug!(
-        "Shared memory path: {:?}",
-        path_for_remote_config(id, target)
-    );
+    unsafe {
+        let id = &*id;
+        let target = &*target;
+        debug!("ConfigInvariants: {:#?}", id);
+        debug!("Target: {:#?}", target);
+        debug!(
+            "Shared memory path: {:?}",
+            path_for_remote_config(id, target)
+        );
+    }
 }
 
 type InProcNotifyFn = extern "C" fn(*const ConfigInvariants, *const Arc<Target>);
@@ -80,9 +80,11 @@ static mut IN_PROC_NOTIFY_FUN: Option<InProcNotifyFn> = None;
 /// # Safety
 /// This function modifies a global without synchronization.
 /// It is designed to be called by the main thread before other threads are spawned.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn ddog_set_rc_notify_fn(notify_fn: Option<InProcNotifyFn>) {
-    IN_PROC_NOTIFY_FUN = notify_fn;
+    unsafe {
+        IN_PROC_NOTIFY_FUN = notify_fn;
+    }
 }
 
 pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CString {
@@ -92,11 +94,12 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
     target.hash(&mut hasher);
     let mut path = format!(
         "/ddrc{}-{}",
-        primary_sidecar_identifier(),
+        crate::shm_namespace(),
         BASE64_URL_SAFE_NO_PAD.encode(hasher.finish().to_ne_bytes()),
     );
-    // datadog remote config, on macos we're restricted to 31 chars
-    path.truncate(31); // should not be larger than 31 chars, but be sure.
+    if cfg!(unix) {
+        path.truncate(31);
+    }
 
     #[allow(clippy::unwrap_used)]
     CString::new(path).unwrap()
@@ -128,6 +131,18 @@ impl RemoteConfigReader {
     pub fn read(&mut self) -> (bool, &[u8]) {
         self.0.read()
     }
+
+    fn reconnect(&mut self, path: CString) {
+        if self.0.extra != path {
+            self.0.reconnect(&path);
+            self.0.extra = path;
+        }
+    }
+
+    /// See [`OneWayShmReader::take_replaced`].
+    pub fn take_replaced(&mut self) -> bool {
+        self.0.take_replaced()
+    }
 }
 
 impl RemoteConfigWriter {
@@ -138,7 +153,9 @@ impl RemoteConfigWriter {
         })
     }
 
-    pub fn write(&self, contents: &[u8]) {
+    /// Returns `false` if the segment could not be grown to hold `contents`, in which case
+    /// nothing was published and the previous payload stays current.
+    pub fn write(&self, contents: &[u8]) -> bool {
         self.writer.write(contents)
     }
 
@@ -156,6 +173,7 @@ struct TargetInfo {
 #[derive(Clone)]
 struct ConfigFileStorage<N: NotifyTarget + 'static> {
     invariants: ConfigInvariants,
+    limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     /// All writers
     writers: Arc<Mutex<HashMap<Arc<Target>, RemoteConfigWriter>>>,
     targets: Arc<Mutex<HashMap<Arc<Target>, TargetInfo>>>,
@@ -187,8 +205,19 @@ impl<N: NotifyTarget + 'static> FileStorage for ConfigFileStorage<N> {
     ) -> anyhow::Result<Arc<StoredShmFile>> {
         Ok(Arc::new(StoredShmFile {
             handle: Mutex::new(Some(store_shm(version, &path, file)?)),
-            limiter: if path.product == RemoteConfigProduct::LiveDebugger {
-                Some(SHM_LIMITER.lock_or_panic().alloc())
+            // No limiter means no rate limiting: the segment could not be created, which is
+            // already reported where it happened.
+            limiter: if path.product() == RemoteConfigProduct::LiveDebugging {
+                self.limiter.as_ref().and_then(|limiter| {
+                    let allocated = limiter.lock_or_panic().alloc();
+                    if allocated.is_none() {
+                        warn!(
+                            "No rate limiter slot available for live debugging config {path}; \
+                             not rate limited"
+                        );
+                    }
+                    allocated
+                })
             } else {
                 None
             },
@@ -212,11 +241,11 @@ fn store_shm(
     path: &RemoteConfigPath,
     file: Vec<u8>,
 ) -> anyhow::Result<NamedShmHandle> {
-    let name = format!("ddrc{}-{}", primary_sidecar_identifier(), version,);
+    let name = format!("ddrc{}-{}", crate::shm_namespace(), version,);
     // as much signal as possible to be collision free
     let hashed_path = BASE64_URL_SAFE_NO_PAD.encode(Sha224::digest(path.to_string()));
     #[cfg(target_os = "macos")]
-    let sliced_path = &hashed_path[..30 - name.len()];
+    let sliced_path = &hashed_path[..30usize.saturating_sub(name.len()).min(hashed_path.len())];
     #[cfg(not(target_os = "macos"))]
     let sliced_path = &hashed_path;
     let name = format!("/{name}-{sliced_path}");
@@ -246,12 +275,12 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
-impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeCapabilities>
     for ConfigFileStorage<N>
 {
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeHttpClient>>,
+        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeCapabilities>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -275,11 +304,17 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
         serialized.extend_from_slice(runtime_id.as_bytes());
         serialized.push(b'\n');
         for file in files.iter() {
-            #[allow(clippy::unwrap_used)]
-            // SAFETY: no concurrent unlink() on this handle.
-            serialized.extend_from_slice(unsafe {
-                file.handle.lock_or_panic().as_ref().unwrap().get_path()
-            });
+            {
+                // Scope the guard so it is released before the `ApmTracing` branch
+                // below re-locks the same handle. Edition 2024 drops the temporary at
+                // the end of the statement (before the borrowed path slice is used),
+                // so bind it here explicitly instead.
+                let handle = file.handle.lock_or_panic();
+                // SAFETY: no concurrent unlink() on this handle.
+                #[allow(clippy::unwrap_used)]
+                let path = unsafe { handle.as_ref().unwrap().get_path() };
+                serialized.extend_from_slice(path);
+            }
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());
@@ -294,7 +329,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
             );
             serialized.push(b'\n');
 
-            if file.refcount.path.product == RemoteConfigProduct::ApmTracing {
+            if file.refcount.path.product() == RemoteConfigProduct::ApmTracing {
                 let mut handle = file.handle.lock_or_panic();
                 #[allow(clippy::unwrap_used)]
                 let shm = handle.take().unwrap();
@@ -320,9 +355,9 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
                 let now_enabled =
                     dynamic_instrumentation_is_enabled(writer.dynamic_instrumentation, info);
                 if was_enabled && !now_enabled {
-                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.unforce_product(target, RemoteConfigProduct::LiveDebugging);
                 } else if !was_enabled && now_enabled {
-                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugger);
+                    fetcher.force_product(target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -411,7 +446,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
                         freshly_disabled = true;
                     }
                     if Some(false) != apm_config_dynamic_instrumentation && freshly_disabled {
-                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugger);
+                        fetcher.unforce_product(&self.target, RemoteConfigProduct::LiveDebugging);
                     }
                     remove
                 };
@@ -425,7 +460,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeHttpClient>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeCapabilities>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -443,19 +478,18 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         invariants: ConfigInvariants,
         on_dead: Box<dyn Fn() + Sync + Send>,
         interval: Duration,
+        limiter: Option<Arc<Mutex<ShmLimiterMemory<()>>>>,
     ) -> Self {
         let storage = ConfigFileStorage {
             invariants: invariants.clone(),
+            limiter,
             writers: Default::default(),
             targets: Arc::new(Mutex::new(Default::default())),
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
             _phantom: Default::default(),
         };
-        let fetcher = MultiTargetFetcher::new(
-            storage,
-            invariants,
-            NativeHttpClient::new_without_connection_pooling(),
-        );
+        let fetcher =
+            MultiTargetFetcher::new(storage, invariants, NativeCapabilities::new_periodic());
         fetcher
             .remote_config_interval
             .store(interval.as_nanos() as u64, Ordering::Relaxed);
@@ -528,7 +562,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
                 };
                 if freshly_enabled {
                     self.0
-                        .force_product(&target, RemoteConfigProduct::LiveDebugger);
+                        .force_product(&target, RemoteConfigProduct::LiveDebugging);
                 }
             }
         }
@@ -586,6 +620,8 @@ pub struct RemoteConfigManager {
     active_configs: HashMap<String, RemoteConfigPath>,
     last_read_configs: Vec<String>,
     check_configs: Vec<String>,
+    /// Reapply every config after replacement: unchanged limiter indices refer to a new arena.
+    reapply_all: bool,
     pub current_runtime_id: String,
 }
 
@@ -623,6 +659,7 @@ impl RemoteConfigManager {
             active_configs: Default::default(),
             last_read_configs: Default::default(),
             check_configs: vec![],
+            reapply_all: false,
             current_runtime_id: "".to_string(),
         }
     }
@@ -633,6 +670,23 @@ impl RemoteConfigManager {
             .as_ref()
             .map(|r| r.0.last_read_generation())
             .unwrap_or(0)
+    }
+
+    /// Rebind cached targets when reconnecting to another sidecar namespace.
+    pub fn reconnect(&mut self) {
+        for (target, (reader, _)) in &mut self.encountered_targets {
+            reader.reconnect(path_for_remote_config(&self.invariants, target));
+        }
+        if let (Some(reader), Some(target)) = (&mut self.active_reader, &self.active_target) {
+            reader.reconnect(path_for_remote_config(&self.invariants, target));
+        }
+    }
+
+    /// The active directory's name in the connected sidecar's namespace.
+    pub fn get_path(&self) -> Option<&CStr> {
+        self.active_reader
+            .as_ref()
+            .map(RemoteConfigReader::get_path)
     }
 
     /// Polls one configuration change.
@@ -683,6 +737,15 @@ impl RemoteConfigManager {
                     self.last_read_configs = configs;
                     self.check_configs = self.active_configs.keys().cloned().collect();
                 }
+                if self
+                    .active_reader
+                    .as_mut()
+                    .is_some_and(|r| r.take_replaced())
+                {
+                    debug!("The remote config directory was replaced; re-applying all configs");
+                    self.check_configs = self.active_configs.keys().cloned().collect();
+                    self.reapply_all = true;
+                }
 
                 let expiry = Instant::now().checked_sub(Duration::from_secs(3666));
                 while let Some((_, Reverse(instant))) = self.unexpired_targets.peek() {
@@ -698,25 +761,21 @@ impl RemoteConfigManager {
         }
 
         while let Some(config) = self.check_configs.pop() {
-            if !self.last_read_configs.contains(&config) {
+            if self.reapply_all || !self.last_read_configs.contains(&config) {
                 trace!("Removing remote config file {config}");
                 if let Some(path) = self.active_configs.remove(&config) {
                     return RemoteConfigUpdate::Remove(path);
                 }
             }
         }
+        self.reapply_all = false;
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
                 match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
-                        entry.insert(RemoteConfigPath {
-                            source: parsed.source,
-                            product: parsed.product,
-                            config_id: parsed.config_id.clone(),
-                            name: parsed.name.clone(),
-                        });
+                        entry.insert(parsed.path.clone());
                         return RemoteConfigUpdate::Add {
                             value: parsed,
                             limiter_index,
@@ -779,12 +838,16 @@ impl RemoteConfigManager {
         self.set_target(None);
         self.check_configs.clear();
         self.active_configs.clear();
+        self.reapply_all = false;
+        // set_target() cached the active reader; discard it too.
+        self.encountered_targets.clear();
+        self.unexpired_targets.clear();
     }
 
     /// Can be used to fast-remove configs temporarily. Will be re-applied on next fetch_update().
     pub fn unload_configs(&mut self, configs: &[RemoteConfigProduct]) {
         self.active_configs.retain(|key, path| {
-            if configs.contains(&path.product) {
+            if configs.contains(&path.product()) {
                 // self.check_configs should generally be empty here, but be safe
                 if let Some(pos) = self.check_configs.iter().position(|x| x == key) {
                     self.check_configs.swap_remove(pos);
@@ -803,32 +866,22 @@ impl RemoteConfigManager {
 mod tests {
     use super::*;
     use libdd_remote_config::config::dynamic::{
-        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
+        Configs, DynamicConfigFile, tests::dummy_dynamic_config,
     };
     use libdd_remote_config::fetch::test_server::RemoteConfigServer;
-    use libdd_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
     use std::sync::LazyLock;
 
-    static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "1234".to_string(),
-        name: "config".to_string(),
+    static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/1234/config").expect("valid path")
     });
 
-    static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::ApmTracing,
-        config_id: "9876".to_string(),
-        name: "config".to_string(),
+    static PATH_SECOND: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/APM_TRACING/9876/config").expect("valid path")
     });
 
-    static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
-        source: RemoteConfigSource::Employee,
-        product: RemoteConfigProduct::LiveDebugger,
-        config_id: "ld-1".to_string(),
-        name: "config".to_string(),
+    static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| {
+        RemoteConfigPath::parse("employee/LIVE_DEBUGGING/ld-1/config").expect("valid path")
     });
 
     static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -840,6 +893,27 @@ mod tests {
             vec![],
         ))
     });
+
+    #[test]
+    fn shm_paths_distinguish_targets_and_endpoints() {
+        let mut invariants = ConfigInvariants {
+            language: "php".into(),
+            tracer_version: "1.0".into(),
+            endpoint: libdd_common::Endpoint::from_slice("http://agent-a:8126"),
+            agentless: None,
+        };
+        let path = path_for_remote_config(&invariants, &DUMMY_TARGET);
+        let target = Arc::new(Target::new(
+            "other-service".into(),
+            "env".into(),
+            "1.3.5".into(),
+            vec![],
+            vec![],
+        ));
+        assert_ne!(path, path_for_remote_config(&invariants, &target));
+        invariants.endpoint = libdd_common::Endpoint::from_slice("http://agent-b:8126");
+        assert_ne!(path, path_for_remote_config(&invariants, &DUMMY_TARGET));
+    }
 
     #[derive(Debug, Clone)]
     struct NotifyDummy(Arc<tokio::sync::mpsc::Sender<()>>);
@@ -867,6 +941,82 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn new_client_opening_an_old_directory_is_notified_by_its_replacement() {
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+            // The file scheme disables background fetching for this registration test.
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "file:///rc-generation-{}",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let old = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        for _ in 0..3 {
+            assert!(old.write(b"old-runtime\n"));
+        }
+
+        let sidecar = ShmRemoteConfigs::new(
+            invariants.clone(),
+            Box::new(|| {}),
+            Duration::from_secs(60),
+            None,
+        );
+        let mut client = RemoteConfigManager::new(invariants.clone());
+        client.track_target(&DUMMY_TARGET);
+        assert!(matches!(client.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(client.current_runtime_id, "old-runtime");
+        let old_generation = client.current_remote_config_generation();
+
+        let new = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert!(new.write(b"new-runtime\n"));
+        sidecar
+            .0
+            .storage
+            .storage
+            .writers
+            .lock_or_panic()
+            .insert(DUMMY_TARGET.clone(), new);
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let register = |generation| {
+            sidecar.add_runtime(
+                InstanceId::new("session", "runtime"),
+                generation,
+                NotifyDummy(Arc::new(sender.clone())),
+                DUMMY_TARGET.env().to_string(),
+                DUMMY_TARGET.service().to_string(),
+                DUMMY_TARGET.app_version().to_string(),
+                vec![],
+                ProductCapabilities {
+                    products: vec![],
+                    capabilities: vec![],
+                },
+                DynamicInstrumentationConfigState::Disabled,
+                vec![],
+            )
+        };
+        let _registration = register(old_generation);
+        tokio::time::timeout(Duration::from_millis(200), receiver.recv())
+            .await
+            .expect("the old directory generation must trigger a notification")
+            .unwrap();
+        assert!(matches!(client.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(client.current_runtime_id, "new-runtime");
+        let generation = client.current_remote_config_generation();
+        assert!(generation > old_generation);
+
+        let _registration = register(generation);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), receiver.recv())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn test_shm_updates() {
         let server = RemoteConfigServer::spawn();
 
@@ -880,6 +1030,7 @@ mod tests {
                 }
             }),
             Duration::from_millis(10),
+            None,
         );
 
         let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
@@ -924,9 +1075,9 @@ mod tests {
         receiver.recv().await;
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
-            assert_eq!(value.source, PATH_FIRST.source);
-            assert_eq!(value.name, PATH_FIRST.name);
+            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+            assert_eq!(value.path.source(), PATH_FIRST.source());
+            assert_eq!(value.path.name(), PATH_FIRST.name());
             let parsed = value.data.as_ref().expect("dynamic config must parse");
             if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
                 assert!(matches!(
@@ -943,10 +1094,10 @@ mod tests {
         // just one update
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
 
-        manager.unload_configs(&[PATH_FIRST.product]);
+        manager.unload_configs(&[PATH_FIRST.product()]);
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_FIRST.config_id);
+            assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
         } else {
             unreachable!();
         }
@@ -986,17 +1137,17 @@ mod tests {
 
         // then the adds
         let was_second = if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            value.config_id == PATH_SECOND.config_id
+            value.path.config_id() == PATH_SECOND.config_id()
         } else {
             unreachable!();
         };
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(
-                &value.config_id,
+                value.path.config_id(),
                 if was_second {
-                    &PATH_FIRST.config_id
+                    PATH_FIRST.config_id()
                 } else {
-                    &PATH_SECOND.config_id
+                    PATH_SECOND.config_id()
                 }
             );
         } else {
@@ -1020,11 +1171,11 @@ mod tests {
         // If we re-track it's added again immediately
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(
-                &value.config_id,
+                value.path.config_id(),
                 if was_second {
-                    &PATH_SECOND.config_id
+                    PATH_SECOND.config_id()
                 } else {
-                    &PATH_FIRST.config_id
+                    PATH_FIRST.config_id()
                 }
             );
         } else {
@@ -1063,7 +1214,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
-        use datadog_live_debugger::LiveDebuggingData;
+        use libdd_live_debugger::LiveDebuggingData;
 
         let server = RemoteConfigServer::spawn();
 
@@ -1072,6 +1223,7 @@ mod tests {
             server.dummy_options().invariants,
             Box::new(|| {}),
             Duration::from_millis(10),
+            None,
         );
 
         let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
@@ -1113,10 +1265,10 @@ mod tests {
         receiver.recv().await;
 
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
-            assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
+            assert_eq!(value.path.config_id(), PATH_LIVE_DEBUGGER.config_id());
             assert_eq!(
-                value.product,
-                RemoteConfigProduct::LiveDebugger,
+                value.path.product(),
+                RemoteConfigProduct::LiveDebugging,
                 "must be parsed as LiveDebugger, not skipped"
             );
             let data = value.data.as_ref().expect("LiveDebugger must parse");
@@ -1130,5 +1282,167 @@ mod tests {
         } else {
             unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
         }
+    }
+
+    /// Identical config files and limiter indices still refer to a new arena after restart.
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)]
+    fn a_replaced_directory_is_reapplied_even_when_identical() {
+        const CHILD: &str = "DD_TEST_RC_MASTER_CHANGE";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "shm_remote_config::tests::a_replaced_directory_is_reapplied_even_when_identical"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+            return;
+        }
+        let invariants = ConfigInvariants {
+            language: "php".to_string(),
+            tracer_version: "1.0.0".to_string(),
+            endpoint: libdd_common::Endpoint::from_slice(&format!(
+                "http://replaced-{}.invalid",
+                std::process::id()
+            )),
+            agentless: None,
+        };
+        let publish = |writer: &RemoteConfigWriter, file: &NamedShmHandle| {
+            let mut directory = b"runtime\n".to_vec();
+            directory.extend_from_slice(unsafe { file.get_path() });
+            directory.extend_from_slice(b":8:");
+            directory.extend_from_slice(
+                BASE64_URL_SAFE_NO_PAD
+                    .encode(PATH_FIRST.to_string())
+                    .as_bytes(),
+            );
+            directory.push(b'\n');
+            assert!(writer.write(&directory));
+        };
+        let content = serde_json::to_vec(&dummy_dynamic_config(true)).unwrap();
+
+        let old_file = store_shm(1, &PATH_FIRST, content.clone()).unwrap();
+        let old_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&old_writer, &old_file);
+
+        let mut manager = RemoteConfigManager::new(invariants.clone());
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add {
+                limiter_index: 8,
+                ..
+            }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        let old_generation = manager.current_remote_config_generation();
+        assert_ne!(old_generation, 0);
+
+        // Republish identical content under the same names, then drop the old owners.
+        let new_file = store_shm(1, &PATH_FIRST, content).unwrap();
+        assert_eq!(unsafe { new_file.get_path() }, unsafe {
+            old_file.get_path()
+        });
+        let new_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert_eq!(manager.current_remote_config_generation(), old_generation);
+        publish(&new_writer, &new_file);
+        drop(old_writer);
+        drop(old_file);
+
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Remove(path) => assert_eq!(&path, &*PATH_FIRST),
+            other => panic!("expected the old config to be removed first, got {other:?}"),
+        }
+        match manager.fetch_update() {
+            RemoteConfigUpdate::Add {
+                value,
+                limiter_index,
+            } => {
+                assert_eq!(value.path.config_id(), PATH_FIRST.config_id());
+                assert_eq!(limiter_index, 8);
+            }
+            other => panic!("expected the config to be re-added, got {other:?}"),
+        }
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        assert!(manager.current_remote_config_generation() > old_generation);
+
+        // Unchanged content from the same writer needs no reapplication.
+        publish(&new_writer, &new_file);
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        // Inactive targets keep their readers and follow replacements when used again.
+        manager.reset_target();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        let newest_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&newest_writer, &new_file);
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add {
+                limiter_index: 8,
+                ..
+            }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        let old_path = manager.get_path().unwrap().to_owned();
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        manager.reconnect();
+        let promoted_file = store_shm(
+            1,
+            &PATH_FIRST,
+            serde_json::to_vec(&dummy_dynamic_config(true)).unwrap(),
+        )
+        .unwrap();
+        let promoted_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        assert_ne!(manager.get_path().unwrap(), old_path.as_c_str());
+        assert_eq!(
+            manager.get_path().unwrap(),
+            path_for_remote_config(&invariants, &DUMMY_TARGET).as_c_str()
+        );
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        publish(&promoted_writer, &promoted_file);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add { .. }
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        manager.reset_target();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+        crate::use_thread_sidecar_shm_namespace(None);
+        manager.reconnect();
+        let returned_writer = RemoteConfigWriter::new(&invariants, &DUMMY_TARGET).unwrap();
+        publish(&returned_writer, &new_file);
+        manager.track_target(&DUMMY_TARGET);
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Add { .. }
+        ));
+        assert_eq!(manager.get_path().unwrap(), old_path.as_c_str());
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+
+        manager.reset_target();
+        crate::use_thread_sidecar_shm_namespace(Some(std::process::id()));
+        manager.reconnect();
+        assert!(matches!(
+            manager.fetch_update(),
+            RemoteConfigUpdate::Remove(_)
+        ));
+        assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
     }
 }

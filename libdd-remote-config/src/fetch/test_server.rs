@@ -18,7 +18,7 @@ use base64::Engine;
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
-use libdd_common::{http_common, Endpoint};
+use libdd_common::{Endpoint, http_common};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ConfigStatus, File,
 };
@@ -93,8 +93,8 @@ impl RemoteConfigServer {
                 && applied_files.len() == states.len()
                 && states.iter().all(|s| {
                     for (p, (_, v, _)) in applied_files.iter() {
-                        if p.product.to_string() == s.product
-                            && p.config_id == s.id
+                        if p.product().to_string() == s.product
+                            && p.config_id() == s.id
                             && *v == s.version
                         {
                             return true;
@@ -226,10 +226,11 @@ impl RemoteConfigServer {
                 language: "php".to_string(),
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::ApmTracing,
-                RemoteConfigProduct::LiveDebugger,
+                RemoteConfigProduct::LiveDebugging,
             ],
             capabilities: vec![RemoteConfigCapabilities::ApmTracingCustomTags],
         }

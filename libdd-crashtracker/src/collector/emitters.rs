@@ -4,19 +4,22 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+#[cfg(target_os = "linux")]
+use crate::crash_info::{ThreadData, Ucontext};
 use crate::runtime_callback::{
-    get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
-    CallbackData,
+    CallbackData, get_registered_callback, invoke_runtime_callback_with_writer,
+    is_runtime_callback_registered,
 };
 use crate::shared::constants::*;
 use crate::{
-    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
-    StacktraceCollection,
+    CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace, StacktraceCollection,
+    translate_si_code,
 };
 use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
     io::{Read, Write},
+    time::Instant,
 };
 use thiserror::Error;
 
@@ -64,21 +67,22 @@ impl CrashKindData {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_crashreport(
-    pipe: &mut impl Write,
+    pipe: &mut (impl Write + Send),
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    message_ptr: *mut String,
+    message: Option<&str>,
     crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))] threads_deadline: Instant,
 ) -> Result<(), EmitterError> {
     // Crash-ping
     // The receiver dispatches the crash ping as soon as it sees the metadata
     // section, so try to emit message, siginfo, and kind before it to make sure
     // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
-    emit_message(pipe, message_ptr)?;
+    emit_message(pipe, message)?;
 
     match &crash {
         CrashKindData::UnixSignal { sig_info, .. } => {
@@ -102,9 +106,16 @@ pub(crate) fn emit_crashreport(
     #[cfg(target_os = "linux")]
     emit_proc_self_maps(pipe)?;
 
-    // Stack trace emission
-    match crash {
+    #[cfg(target_os = "linux")]
+    let mut crashing_context = None;
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+    let supplied_main = match crash {
         CrashKindData::UnixSignal { ucontext, .. } => {
+            #[cfg(target_os = "linux")]
+            {
+                crashing_context = Some(emit_ucontext(pipe, ucontext)?);
+            }
+            #[cfg(target_os = "macos")]
             emit_ucontext(pipe, ucontext)?;
             if config.resolve_frames() != StacktraceCollection::Disabled {
                 // SAFETY: `ucontext` comes from the signal handler and points to
@@ -116,12 +127,26 @@ pub(crate) fn emit_crashreport(
             if is_runtime_callback_registered() {
                 emit_runtime_stack(pipe)?;
             }
+            None
         }
         CrashKindData::UnhandledException { stacktrace } => {
-            // SAFETY: This branch only executes for unhandled exceptions, never
-            // from a signal handler
-            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+            emit_whole_stacktrace(pipe, &stacktrace)?;
+            Some(stacktrace)
         }
+    };
+
+    // Send the basic report first so a failed unwind cannot lose it.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        let _ = emit_threads(
+            pipe,
+            config,
+            ppid,
+            crashing_tid,
+            crashing_context.as_ref(),
+            supplied_main,
+            threads_deadline,
+        );
     }
 
     writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
@@ -202,8 +227,8 @@ unsafe fn emit_backtrace_via_libunwind(
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
     use libdd_libunwind_sys::{
-        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_FP,
-        UNW_REG_IP, UNW_REG_SP,
+        UNW_REG_FP, UNW_REG_IP, UNW_REG_SP, UnwCursor, UnwWord, unw_get_proc_name, unw_get_reg,
+        unw_init_local2, unw_step,
     };
 
     if ucontext.is_null() {
@@ -403,19 +428,151 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
     Ok(())
 }
 
-/// SAFETY:
-///    This function is not safe to call from a signal handler.
-///    Although `serde_json::to_writer` does not technically allocate memory
-///    itself, it takes in `StackTrace` which is allocated and is only intended
-///    to be used in a non-signal-handler context
-unsafe fn emit_whole_stacktrace(
-    w: &mut impl Write,
-    stacktrace: StackTrace,
-) -> Result<(), EmitterError> {
+/// Write a complete stack from the collector child, outside the crashing process's handler.
+fn emit_whole_stacktrace(w: &mut impl Write, stacktrace: &StackTrace) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
-    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    serde_json::to_writer(&mut *w, stacktrace)?;
     writeln!(w)?;
     writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// Emit each thread as it finishes so timeouts preserve completed stacks.
+///
+/// This runs only in the collector child. A scoped thread provides an ordinary stack:
+/// DWARF parsing can overflow the alternate signal stack inherited from the parent.
+#[cfg(target_os = "linux")]
+fn emit_threads<W: Write + Send>(
+    w: &mut W,
+    config: &CrashtrackerConfiguration,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+    crashing_context: Option<&SavedRegisters>,
+    supplied_main: Option<StackTrace>,
+    deadline: Instant,
+) -> Result<(), EmitterError> {
+    use crate::crash_info::{CachedElfResolvers, ErrorData};
+    use crate::ptrace_collector::{
+        crash_site_registers, parse_hex_address, stream_thread_contexts, thread_data_from_capture,
+    };
+
+    let budget = deadline.saturating_duration_since(Instant::now());
+    if budget.is_zero() {
+        return Ok(());
+    }
+
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> Result<(bool, usize), EmitterError> {
+                let crashing_context = crashing_context.map(|registers| Ucontext {
+                    arch: std::env::consts::ARCH.to_string(),
+                    registers: registers
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), format!("0x{value:016x}")))
+                        .collect(),
+                    raw: None,
+                });
+                let crash_site = crashing_context.as_ref().and_then(crash_site_registers);
+                // blazesym's types are not Send; create and retain the cache on this thread.
+                let normalizer = ErrorData::create_normalizer();
+                let src = ErrorData::create_symbolizer_source(ppid as u32);
+                let mut symbolizer = blazesym::symbolize::Symbolizer::new();
+                let mut elf_resolvers = CachedElfResolvers::new(&mut symbolizer);
+                let mut enrich_stack = |stack: &mut StackTrace| {
+                    // Failed lookups leave raw addresses and record errors on the frames.
+                    let _ =
+                        stack.normalize_ips(&normalizer, (ppid as u32).into(), &mut elf_resolvers);
+                    let _ = stack.resolve_names(&src, elf_resolvers.symbolizer());
+                };
+
+                // Preserve the runtime's exception stack independently of thread collection.
+                if let Some(mut stack) = supplied_main {
+                    enrich_stack(&mut stack);
+                    emit_whole_stacktrace(w, &stack)?;
+                }
+
+                let mut unsymbolized = 0usize;
+                let mut emit = |tid, captured| -> Result<(), EmitterError> {
+                    let mut thread =
+                        thread_data_from_capture(ppid, crashing_tid, crash_site, tid, captured);
+                    if Instant::now() < deadline {
+                        enrich_stack(&mut thread.stack);
+
+                        // Replace the primary stack only if trimming reached the faulting frame.
+                        let at_crash_site = crash_site.is_some_and(|(ip, _)| {
+                            thread
+                                .stack
+                                .frames
+                                .first()
+                                .and_then(|frame| frame.ip.as_deref())
+                                .and_then(parse_hex_address)
+                                == Some(ip)
+                        });
+                        if thread.crashed && at_crash_site {
+                            // Send enrichment before collecting later threads can time out.
+                            emit_whole_stacktrace(w, &thread.stack)?;
+                        }
+                    } else {
+                        unsymbolized += 1;
+                    }
+                    emit_thread(w, &thread)
+                };
+                let mut write_result = Ok(());
+                let incomplete = stream_thread_contexts(
+                    ppid,
+                    crashing_tid,
+                    config.max_threads(),
+                    budget,
+                    crashing_context
+                        .as_ref()
+                        .filter(|_| config.unwind_from_ucontext()),
+                    |tid, captured| {
+                        if write_result.is_ok() {
+                            write_result = emit(tid, captured);
+                        }
+                    },
+                )
+                .unwrap_or(true);
+                write_result?;
+                Ok((incomplete, unsymbolized))
+            })
+            .join()
+    });
+
+    // Keep the basic report if the collection thread panics.
+    let Ok(result) = outcome else {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+        writeln!(w, "{{\"threads_collection_failed\": 1}}")?;
+        writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+        w.flush()?;
+        return Ok(());
+    };
+    let (incomplete, unsymbolized) = result?;
+
+    // Record incomplete collection even when the basic report was delivered successfully.
+    if incomplete || unsymbolized > 0 {
+        writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
+        if incomplete {
+            writeln!(w, "{{\"threads_incomplete\": 1}}")?;
+        }
+        if unsymbolized > 0 {
+            writeln!(w, "{{\"threads_unsymbolized\": {unsymbolized}}}")?;
+        }
+        writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+        w.flush()?;
+    }
+
+    Ok(())
+}
+
+/// Complete sections allow primary-stack updates between threads.
+#[cfg(target_os = "linux")]
+fn emit_thread(w: &mut impl Write, thread: &ThreadData) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_THREADS}")?;
+    serde_json::to_writer(&mut *w, thread)?;
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_THREADS}")?;
     w.flush()?;
     Ok(())
 }
@@ -489,12 +646,11 @@ fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(),
     Ok(())
 }
 
-fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
-    if !message_ptr.is_null() {
-        let message = unsafe { &*message_ptr };
-        if !message.trim().is_empty() {
+fn emit_message(w: &mut impl Write, message: Option<&str>) -> Result<(), EmitterError> {
+    if let Some(msg) = message {
+        if !msg.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            write_sanitized_message_line(w, message)?;
+            write_sanitized_message_line(w, msg)?;
             writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
             w.flush()?;
         }
@@ -519,57 +675,84 @@ fn emit_proc_self_maps(w: &mut impl Write) -> Result<(), EmitterError> {
 }
 
 #[cfg(target_os = "linux")]
-fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), EmitterError> {
+type SavedRegisters = [(&'static str, u64); if cfg!(target_arch = "x86_64") { 17 } else { 33 }];
+
+#[cfg(target_os = "linux")]
+fn emit_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<SavedRegisters, EmitterError> {
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
     }
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     let uc = unsafe { &*ucontext };
 
     #[cfg(target_arch = "x86_64")]
-    {
+    let registers = {
         let gregs = &uc.uc_mcontext.gregs;
-        write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
-        write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
-        write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
-        write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
-        write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
-        write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
-        write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
-        write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
-        write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
-        write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
-        write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
-        write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
-        write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
-        write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
-        write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
-        write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
-        write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
-        write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
-        // Preserve the full ucontext as a raw Debug string so that FPU state,
-        // signal mask, and alternate-stack info are not lost.
-        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
-        writeln!(w, "}}")?;
-    }
+        [
+            ("rip", libc::REG_RIP),
+            ("rsp", libc::REG_RSP),
+            ("rbp", libc::REG_RBP),
+            ("rax", libc::REG_RAX),
+            ("rbx", libc::REG_RBX),
+            ("rcx", libc::REG_RCX),
+            ("rdx", libc::REG_RDX),
+            ("rsi", libc::REG_RSI),
+            ("rdi", libc::REG_RDI),
+            ("r8", libc::REG_R8),
+            ("r9", libc::REG_R9),
+            ("r10", libc::REG_R10),
+            ("r11", libc::REG_R11),
+            ("r12", libc::REG_R12),
+            ("r13", libc::REG_R13),
+            ("r14", libc::REG_R14),
+            ("r15", libc::REG_R15),
+        ]
+        .map(|(name, index)| {
+            (
+                name,
+                u64::from_ne_bytes(gregs[index as usize].to_ne_bytes()),
+            )
+        })
+    };
 
     #[cfg(target_arch = "aarch64")]
-    {
+    let registers = {
         let mc = &uc.uc_mcontext;
-        write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
-        write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
-        write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
-        for i in 0..31 {
-            write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
-        }
-        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
-        writeln!(w, "}}")?;
-    }
+        const NAMES: [&str; 33] = [
+            "pc", "sp", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11",
+            "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
+            "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+        ];
+        core::array::from_fn(|i| {
+            let value = match i {
+                0 => mc.pc,
+                1 => mc.sp,
+                _ => mc.regs[i - 2],
+            };
+            (NAMES[i], value)
+        })
+    };
 
+    // Keep the basic report allocation-free; thread collection builds its own owned context.
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    write!(
+        w,
+        "{{\"arch\": \"{}\", \"registers\": {{",
+        std::env::consts::ARCH
+    )?;
+    for (i, (name, value)) in registers.iter().enumerate() {
+        if i != 0 {
+            write!(w, ", ")?;
+        }
+        write!(w, "\"{name}\": \"0x{value:016x}\"")?;
+    }
+    writeln!(w, "}}, \"raw\": \"{uc:?}\"}}")?;
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
-    Ok(())
+    Ok(registers)
 }
 
 /// Emit runtime stack frames collected from registered runtime callback
@@ -814,7 +997,7 @@ mod tests {
         stacktrace.set_complete().unwrap();
 
         let mut buf = Vec::new();
-        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
+        emit_whole_stacktrace(&mut buf, &stacktrace).expect("to work ;-)");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains("\"ip\":\"0x4d2\""));
@@ -826,80 +1009,64 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_message_nullptr() {
+    fn test_emit_message_none() {
         let mut buf = Vec::new();
-        emit_message(&mut buf, core::ptr::null_mut()).expect("to work ;-)");
+        emit_message(&mut buf, None).expect("to work ;-)");
         assert!(buf.is_empty());
     }
 
     #[test]
     fn test_emit_message() {
         let message = "test message";
-        let message_ptr = Box::into_raw(Box::new(message.to_string()));
         let mut buf = Vec::new();
-        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        emit_message(&mut buf, Some(message)).expect("to work ;-)");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
         assert!(out.contains("BEGIN_MESSAGE"));
         assert!(out.contains("END_MESSAGE"));
         assert!(out.contains(message));
-        // Clean up the allocated String
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_empty_string() {
-        let empty_message = String::new();
-        let message_ptr = Box::into_raw(Box::new(empty_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("")).expect("to work");
 
         // Empty messages should not emit anything
         assert!(buf.is_empty());
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_whitespace_only() {
         // Whitespace-only messages should not be emitted
-        let whitespace_message = "   \n\t  ".to_string();
-        let message_ptr = Box::into_raw(Box::new(whitespace_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("   \n\t  ")).expect("to work");
 
         // Whitespace-only messages should not emit anything
         assert!(buf.is_empty());
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_with_leading_trailing_whitespace() {
         // Messages with content and whitespace should be emitted (with the whitespace)
-        let message_with_whitespace = "  error message  ".to_string();
-        let message_ptr = Box::into_raw(Box::new(message_with_whitespace.clone()));
+        let message_with_whitespace = "  error message  ";
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(message_with_whitespace)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         // Should emit markers and preserve whitespace in content
         assert!(out.contains("BEGIN_MESSAGE"));
         assert!(out.contains("END_MESSAGE"));
-        assert!(out.contains(&message_with_whitespace));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
+        assert!(out.contains(message_with_whitespace));
     }
 
     #[test]
     fn test_emit_message_with_newlines() {
-        let message_with_newlines = "line1\nline2\nline3".to_string();
-        let message_ptr = Box::into_raw(Box::new(message_with_newlines));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some("line1\nline2\nline3")).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains("line1"));
@@ -911,22 +1078,17 @@ mod tests {
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3, "BEGIN_MESSAGE, content, END_MESSAGE");
         assert!(lines[1].contains("line1\\nline2\\nline3"));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_unicode() {
-        let unicode_message = "Hello 世界 🦀 Rust!".to_string();
-        let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
+        let unicode_message = "Hello 世界 🦀 Rust!";
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(unicode_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
-        assert!(out.contains(&unicode_message));
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
+        assert!(out.contains(unicode_message));
     }
 
     #[test]
@@ -958,10 +1120,9 @@ mod tests {
             DD_CRASHTRACK_END_CONFIG,
             DD_CRASHTRACK_DONE,
         );
-        let message_ptr = Box::into_raw(Box::new(malicious));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&malicious)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         let lines: Vec<&str> = out.lines().collect();
@@ -983,17 +1144,14 @@ mod tests {
             !lines.contains(&DD_CRASHTRACK_DONE),
             "injected DONE must not appear as a wire line"
         );
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
     fn test_emit_message_content_starting_with_sentinel_prefix() {
         let sentinel_message = format!("{} extra data", DD_CRASHTRACK_END_MESSAGE);
-        let message_ptr = Box::into_raw(Box::new(sentinel_message));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&sentinel_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         let lines: Vec<&str> = out.lines().collect();
@@ -1004,8 +1162,6 @@ mod tests {
             "content line must not start with DD_CRASHTRACK_END_MESSAGE, got: {}",
             lines[1]
         );
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
@@ -1036,15 +1192,12 @@ mod tests {
     #[test]
     fn test_emit_message_very_long() {
         let long_message = "x".repeat(100000); // 100KB
-        let message_ptr = Box::into_raw(Box::new(long_message.clone()));
         let mut buf = Vec::new();
 
-        emit_message(&mut buf, message_ptr).expect("to work");
+        emit_message(&mut buf, Some(&long_message)).expect("to work");
         let out = str::from_utf8(&buf).expect("to be valid UTF8");
 
         assert!(out.contains(&long_message[..100])); // At least first 100 chars
-
-        unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     // We only test edge cases specific to this wrapper function here.
@@ -1121,7 +1274,7 @@ mod tests {
         }
 
         let mut buf = Vec::new();
-        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
+        let registers = emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
 
         let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
 
@@ -1132,7 +1285,7 @@ mod tests {
         // Check architecture is correct
         #[cfg(target_arch = "x86_64")]
         {
-            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert!(output.contains("\"x86_64\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1149,7 +1302,7 @@ mod tests {
 
         #[cfg(target_arch = "aarch64")]
         {
-            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert!(output.contains("\"aarch64\""));
             assert!(output.contains("\"registers\""));
 
             // Check specific registers are present
@@ -1176,6 +1329,9 @@ mod tests {
 
         let parsed: serde_json::Value =
             serde_json::from_str(json_part).expect("JSON between markers should be valid");
+        for (name, value) in registers {
+            assert_eq!(parsed["registers"][name], format!("0x{value:016x}"));
+        }
 
         // Verify the JSON structure
         assert!(parsed.is_object());

@@ -6,7 +6,7 @@
 //! Builds and runs FFI examples to verify they compile and work correctly.
 //! Usage: cargo ffi-test [--skip-build] [--filter <pattern>] [--keep-artifacts]
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -254,7 +254,7 @@ fn expected_failures() -> &'static HashMap<&'static str, &'static str> {
 }
 
 // Test data directories to symlink into work directory
-const TEST_DATA_PATHS: &[&str] = &["datadog-ffe-test-suite/ffe-system-test-data"];
+const TEST_DATA_PATHS: &[&str] = &["libdd-ffe-test-suite/ffe-system-test-data"];
 
 /// Run a command with output streamed to terminal
 fn run_passthrough(cmd: &mut Command, what: &str) -> Result<()> {

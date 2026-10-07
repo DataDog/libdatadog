@@ -14,9 +14,10 @@ mod native {
         StreamingBodySender,
     };
     use libdd_capabilities::maybe_send::MaybeSend;
+    use libdd_common::MutexExt;
     use libdd_common::connector::Connector;
     use libdd_common::http_common::{
-        new_client_periodic, new_default_client, Body, GenericHttpClient,
+        Body, GenericHttpClient, new_client_periodic, new_default_client,
     };
 
     use http_body_util::BodyExt;
@@ -24,7 +25,9 @@ mod native {
     #[derive(Clone)]
     pub struct NativeHttpClient {
         client: Arc<OnceLock<GenericHttpClient<Connector>>>,
-        connection_pooling: bool,
+        /// If this client is setup for periodic flushes. This mostly affects connection pooling,
+        /// see [`HttpClientCapability::new_periodic`].
+        periodic: bool,
     }
 
     pub struct NativeBodySender(libdd_common::http_common::Sender);
@@ -39,43 +42,96 @@ mod native {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("NativeHttpClient")
                 .field("initialized", &self.client.get().is_some())
-                .field("connection_pooling", &self.connection_pooling)
+                .field("periodic", &self.periodic)
                 .finish()
         }
     }
 
     impl NativeHttpClient {
-        /// Like [`HttpClientCapability::new_client`], but disables connection pooling.
-        ///
-        /// Intended for clients that issue requests on a fixed interval (e.g. remote
-        /// config polling): the agent's low keep-alive setting can close an idle
-        /// connection between polls, which turns a pooled/reused connection into
-        /// intermittent request failures.
-        pub fn new_without_connection_pooling() -> Self {
+        /// Like [`HttpClientCapability::new_client`], but sets a small lifetime on pooled
+        /// connections. See [`HttpClientCapability::new_periodic`] for rationale.
+        pub fn new_periodic() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: false,
+                periodic: true,
             }
         }
     }
 
-    /// Write `body` as a newline-terminated record to the file referenced by `uri` (which must
-    /// have a `file://` scheme), then return a synthetic 202 response.
+    /// Record `body` to the on-disk location referenced by `uri` (which must have a `file://`
+    /// scheme), then return a synthetic 202 response.
+    ///
+    /// If the location is a directory (the path ends with a separator, as the offline
+    /// telemetry writer passes `file:///dir/`), each request is written to its own
+    /// `telemetry-<seq>-<pid>-<ts>.json` file inside it — ordinal-first so a lexicographic sort
+    /// reproduces emission order. Otherwise the body is appended as a newline-terminated record to
+    /// that single file.
     fn write_to_file_endpoint(
         uri: &http::Uri,
         body: bytes::Bytes,
     ) -> Result<http::Response<bytes::Bytes>, HttpError> {
         let path = libdd_common::decode_uri_path_in_authority(uri)
             .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?;
-        let mut record = body.to_vec();
-        record.push(b'\n');
-        file.write_all(&record)
-            .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {path:?}: {e}")))?;
+
+        // Worker endpoints need constrained file opens. Directory mode also creates and renames
+        // paths without validation, so disable it when restrictions are enabled.
+        #[cfg(unix)]
+        let restricted = libdd_common::unix_utils::worker_file_outputs_restricted();
+        #[cfg(not(unix))]
+        let restricted = false;
+
+        let is_dir = path.to_string_lossy().ends_with(std::path::MAIN_SEPARATOR) || path.is_dir();
+        if is_dir {
+            if restricted {
+                return Err(HttpError::Other(anyhow::anyhow!(
+                    "directory-mode file:// telemetry output is disabled under output restriction"
+                )));
+            }
+            std::fs::create_dir_all(&path)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("creating {path:?}: {e}")))?;
+            // Process-wide sequence so successive requests get distinct, ordered filenames.
+            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let name = format!("telemetry-{seq:020}-{}-{ts}.json", std::process::id());
+            // Write to a temp file then rename, so a concurrent reader never sees a partial file.
+            let dest = path.join(name);
+            let tmp = dest.with_extension("json.tmp");
+            std::fs::write(&tmp, &body)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {tmp:?}: {e}")))?;
+            std::fs::rename(&tmp, &dest)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("renaming to {dest:?}: {e}")))?;
+        } else {
+            // Serialize writes to avoid large writes interleaving. This is a global lock,
+            // but totally acceptable for the debug-case of file://.
+            static WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = WRITE_LOCK.lock_or_panic();
+
+            #[cfg(unix)]
+            let mut file = if restricted {
+                libdd_common::unix_utils::open_regular_for_append(&path)
+                    .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
+            } else {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?
+            };
+            #[cfg(not(unix))]
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?;
+            let mut record = body.to_vec();
+            record.push(b'\n');
+            file.write_all(&record)
+                .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {path:?}: {e}")))?;
+        }
 
         http::Response::builder()
             .status(http::StatusCode::ACCEPTED)
@@ -87,8 +143,12 @@ mod native {
         fn new_client() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: true,
+                periodic: false,
             }
+        }
+
+        fn new_periodic() -> Self {
+            NativeHttpClient::new_periodic()
         }
 
         #[allow(clippy::manual_async_fn)]
@@ -97,7 +157,7 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let connection_pooling = self.connection_pooling;
+            let periodic = self.periodic;
             let client_lock = self.client.clone();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
@@ -108,10 +168,10 @@ mod native {
 
                 let client = client_lock
                     .get_or_init(|| {
-                        if connection_pooling {
-                            new_default_client()
-                        } else {
+                        if periodic {
                             new_client_periodic()
+                        } else {
+                            new_default_client()
                         }
                     })
                     .clone();

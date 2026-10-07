@@ -8,9 +8,15 @@ use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::slice;
 use core::str::Utf8Error;
-use libdd_common::error::FfiSafeErrorMessage;
-use serde::ser::Error;
-use serde::Serializer;
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+
+#[cfg(feature = "std")]
+use {libdd_common::error::FfiSafeErrorMessage, serde::Serializer, serde::ser::Error};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -18,6 +24,34 @@ pub enum SliceConversionError {
     LargeLength,
     NullPointer,
     MisalignedPointer,
+}
+
+impl SliceConversionError {
+    fn message(&self) -> &'static core::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+
+impl core::fmt::Display for SliceConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.message().to_str().unwrap_or_default())
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
+
+// Gated on `std` because `FfiSafeErrorMessage` lives in `libdd-common`, which is std-only.
+#[cfg(feature = "std")]
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
+unsafe impl FfiSafeErrorMessage for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static core::ffi::CStr {
+        self.message()
+    }
 }
 
 #[repr(C)]
@@ -33,25 +67,6 @@ pub struct Slice<'a, T: 'a> {
     len: usize,
     _marker: PhantomData<&'a [T]>,
 }
-
-/// # Safety
-/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
-unsafe impl FfiSafeErrorMessage for SliceConversionError {
-    fn as_ffi_str(&self) -> &'static core::ffi::CStr {
-        match self {
-            SliceConversionError::LargeLength => c"length was too large",
-            SliceConversionError::NullPointer => c"null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
-        }
-    }
-}
-impl Display for SliceConversionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        Display::fmt(self.as_rust_str(), f)
-    }
-}
-
-impl core::error::Error for SliceConversionError {}
 
 impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     type Target = [T];
@@ -127,7 +142,7 @@ pub trait AsBytes<'a> {
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
     unsafe fn assume_utf8(&self) -> &'a str {
-        core::str::from_utf8_unchecked(self.as_bytes())
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
     }
 }
 
@@ -184,7 +199,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// Uphold the same safety requirements as [`core::slice::from_raw_parts`].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     pub const unsafe fn from_raw_parts(ptr: *const T, len: usize) -> Self {
@@ -222,11 +237,18 @@ impl<'a, T: 'a> Slice<'a, T> {
     ///
     /// 1. Fails if `self.ptr` is null and `self.len` is not zero.
     /// 2. Fails if `self.ptr` is not null and is unaligned.
-    /// 3. Fails if `self.len` is larger than [`isize::MAX`].
+    /// 3. Fails if the total size in bytes (`self.len * size_of::<T>()`) is larger than
+    ///    [`isize::MAX`].
     pub fn try_as_slice(&self) -> Result<&'a [T], SliceConversionError> {
         let (ptr, len) = self.as_raw_parts();
         if !ptr.is_null() {
-            if len > isize::MAX as usize {
+            // `from_raw_parts` bounds the total size in *bytes*, not the element
+            // count: for a wide `T` a count within `isize::MAX` can still
+            // overflow. `checked_mul` also covers the overflow and ZST cases.
+            let too_large = len
+                .checked_mul(core::mem::size_of::<T>())
+                .is_none_or(|bytes| bytes > isize::MAX as usize);
+            if too_large {
                 Err(SliceConversionError::LargeLength)
             } else if !ptr.is_aligned() {
                 Err(SliceConversionError::MisalignedPointer)
@@ -260,6 +282,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 impl<'a, T> serde::Serialize for Slice<'a, T>
 where
     Slice<'a, T>: AsBytes<'a>,
@@ -322,8 +345,8 @@ impl<'a> CharSlice<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::ffi::c_char;
     use core::ptr;
-    use std::os::raw::c_char;
 
     #[test]
     fn slice_from_into_slice() {
@@ -474,6 +497,25 @@ mod tests {
         };
 
         let result = large_len.try_as_slice();
+        assert!(matches!(
+            result.unwrap_err(),
+            SliceConversionError::LargeLength
+        ));
+    }
+
+    #[test]
+    fn test_try_as_slice_large_byte_size() {
+        // `len` is within `isize::MAX` as an element count, but the byte size
+        // (`len * size_of::<u64>()`) exceeds it. The pointer is non-null and
+        // aligned, so the byte-size check is what must reject the slice.
+        let len = isize::MAX as usize / core::mem::size_of::<u64>() + 1;
+        let large_bytes: Slice<u64> = Slice {
+            ptr: ptr::NonNull::dangling().as_ptr(),
+            len,
+            _marker: PhantomData,
+        };
+
+        let result = large_bytes.try_as_slice();
         assert!(matches!(
             result.unwrap_err(),
             SliceConversionError::LargeLength

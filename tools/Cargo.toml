@@ -16,13 +16,13 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-cargo_metadata = "0.18"
-clap = { version = "4.0", features = ["derive"] }
-colored = "2"
-quick-xml = "0.37"
+cargo_metadata.workspace = true
+clap = { workspace = true, default-features = true, features = ["derive"] }
+colored.workspace = true
+quick-xml.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false }
-toml = "0.8"
-wait-timeout = "0.2"
+toml = { workspace = true, features = ["parse"] }
+wait-timeout.workspace = true
 
 [features]
 regex-lite = ["libdd-common/regex-lite"]

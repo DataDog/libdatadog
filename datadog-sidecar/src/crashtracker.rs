@@ -14,8 +14,6 @@
 //! boundaries, [`SeqpacketStreamReader`] concatenates the collector's datagrams back into a
 //! contiguous stream (a zero-length datagram is EOF).
 
-use datadog_ipc::AsyncConn;
-
 /// Returns the abstract socket name the Linux listener binds.
 #[cfg(target_os = "linux")]
 pub fn crashtracker_ipc_socket_path(
@@ -37,7 +35,7 @@ pub fn crashtracker_receiver_request_bytes() -> &'static [u8] {
     use crate::service::sidecar_interface::SidecarInterfaceRequest;
     static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     BYTES.get_or_init(|| {
-        datadog_ipc::codec::encode(&SidecarInterfaceRequest::EnterCrashtrackerReceiver {})
+        libdd_ipc::codec::encode(&SidecarInterfaceRequest::EnterCrashtrackerReceiver {})
     })
 }
 
@@ -82,6 +80,9 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
     if socket::connect(fd.as_raw_fd(), &addr).is_err() {
         return -1;
     }
+    if !crate::setup::server_is_acceptable(fd.as_raw_fd()) {
+        return -1;
+    }
     if socket::send(
         fd.as_raw_fd(),
         crashtracker_receiver_request_bytes(),
@@ -95,12 +96,12 @@ pub fn connect_to_sidecar_receiver(unix_socket_path: &str) -> std::os::fd::RawFd
 }
 
 mod adapter {
-    use super::*;
-    use datadog_ipc::platform::sockets::max_message_size;
+    use libdd_ipc::platform::sockets::max_message_size;
     use std::io;
     use std::os::fd::AsRawFd;
     use std::pin::Pin;
     use std::task::{Context, Poll};
+    use tokio::io::unix::AsyncFd;
     use tokio::io::{AsyncRead, ReadBuf};
 
     /// `AsyncRead` adapter that concatenates an ordered stream of SEQPACKET datagrams into a
@@ -108,16 +109,16 @@ mod adapter {
     /// `enter_crashtracker_receiver` handler runs it to completion), so there is no concurrent
     /// reader. A zero-length datagram is EOF; a datagram larger than the caller's buffer is
     /// buffered and drained on later reads, so boundaries never truncate data.
-    pub struct SeqpacketStreamReader<'a> {
-        conn: &'a AsyncConn,
+    pub struct SeqpacketStreamReader<'a, C: AsRawFd = libdd_ipc::SeqpacketConn> {
+        conn: &'a AsyncFd<C>,
         /// Scratch buffer for one `recv()`, avoiding reallocation.
         recv_buf: Vec<u8>,
         buf_pos: usize,
         eof: bool,
     }
 
-    impl<'a> SeqpacketStreamReader<'a> {
-        pub fn new(conn: &'a AsyncConn) -> Self {
+    impl<'a, C: AsRawFd> SeqpacketStreamReader<'a, C> {
+        pub fn new(conn: &'a AsyncFd<C>) -> Self {
             Self {
                 conn,
                 recv_buf: Vec::with_capacity(max_message_size()),
@@ -127,7 +128,7 @@ mod adapter {
         }
     }
 
-    impl AsyncRead for SeqpacketStreamReader<'_> {
+    impl<C: AsRawFd> AsyncRead for SeqpacketStreamReader<'_, C> {
         fn poll_read(
             self: Pin<&mut Self>,
             cx: &mut Context<'_>,
@@ -210,12 +211,17 @@ mod adapter {
 pub use adapter::SeqpacketStreamReader;
 
 /// Wrap `AsyncConn` and dispatch it to crashtracking receiver.
-pub async fn run_crashtracker_receiver(conn: &AsyncConn) {
+pub async fn run_crashtracker_receiver<C: std::os::fd::AsRawFd>(
+    conn: &tokio::io::unix::AsyncFd<C>,
+    peer_pid: u32,
+) {
+    use libdd_crashtracker::ReceiverFileAccess;
     use std::os::fd::AsRawFd;
     use tokio::io::BufReader;
 
     let reader = BufReader::new(SeqpacketStreamReader::new(conn));
-    if let Err(e) = libdd_crashtracker::async_receiver_entry_point_stream(reader).await {
+    let access = ReceiverFileAccess::Restricted { peer_pid };
+    if let Err(e) = libdd_crashtracker::async_receiver_entry_point_stream(reader, access).await {
         tracing::warn!("Got error while receiving crash report over IPC: {e}");
     }
 
@@ -329,20 +335,20 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_run_crashtracker_receiver_unblocks_next_recv() {
-        use datadog_ipc::recv_raw_async;
+        use libdd_ipc::recv_raw_async;
 
         let (collector, receiver) = dgram_pair();
         // Mirror the collector: send the report and never send/close anything else.
         send_datagrams(&collector, &[b"DD_CRASHTRACK_DONE\n"]);
 
         let async_fd = AsyncFd::new(receiver).expect("AsyncFd");
-        run_crashtracker_receiver(&async_fd).await;
+        run_crashtracker_receiver(&async_fd, std::process::id()).await;
 
         // Simulates the serve loop's next iteration: without the fix this hangs forever, so
         // bound it with a timeout that would fail the test rather than hang the suite.
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            recv_raw_async::<_, ()>(&async_fd, |_| ()),
+            recv_raw_async::<_, (), _>(&async_fd, |_| ()),
         )
         .await
         .expect("serve loop's next recv did not return promptly after the receiver finished");
@@ -358,7 +364,7 @@ mod tests {
     fn receiver_request_bytes_decode_to_variant() {
         use crate::service::sidecar_interface::SidecarInterfaceRequest;
         let bytes = crashtracker_receiver_request_bytes();
-        let decoded = datadog_ipc::codec::decode::<SidecarInterfaceRequest>(bytes)
+        let decoded = libdd_ipc::codec::decode::<SidecarInterfaceRequest>(bytes)
             .expect("request bytes must decode as a SidecarInterfaceRequest");
         assert!(matches!(
             decoded,

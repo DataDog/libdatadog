@@ -47,8 +47,8 @@ pub mod v04_span;
 
 // Re-export key types for convenience
 pub use agent_service_sampler::ServicesSampler;
-pub use datadog_sampler::{DatadogSampler, SamplingRulesCallback};
-pub use dd_sampling::{mechanism, priority, SamplingDecision, SamplingMechanism, SamplingPriority};
+pub use datadog_sampler::{DatadogSampler, OtelConsistentSampling, SamplingRulesCallback};
+pub use dd_sampling::{SamplingDecision, SamplingMechanism, SamplingPriority, mechanism, priority};
 pub use sampling_rule::SamplingRule;
 pub use sampling_rule_config::{ParsedSamplingRules, SamplingRuleConfig};
 pub use types::{

@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
   raise(SIGSEGV);
 #endif
 
-  char *bug = NULL;
+  volatile char *bug = NULL;
   *bug = 42;
 
   // The crash handler should intercept the SIGSEGV, invoke the receiver,

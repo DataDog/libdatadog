@@ -4,11 +4,11 @@
 //! Native v0.4 span encoder: `crate::span::v04::Span` → v0.4 msgpack wire.
 //! (Convention documented in [`crate::msgpack_encoder`].)
 
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use rmp::encode::{
-    write_bin, write_bool, write_f64, write_i64, write_sint, write_str, write_u32, write_u64,
-    write_u8, RmpWrite, ValueWriteError,
+    RmpWrite, ValueWriteError, write_bin, write_bool, write_f64, write_i64, write_sint, write_str,
+    write_u8, write_u32, write_u64,
 };
 use std::borrow::Borrow;
 
@@ -280,4 +280,57 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::to_vec_from_v04;
+    use crate::span::BytesData;
+    use crate::span::v04::SpanLink;
+
+    #[test]
+    fn span_link_flags_are_not_masked_on_the_native_v04_wire() {
+        // The v0.4 native msgpack wire format is the only place where the sentinel bit (bit 31)
+        // stays in the raw value. The Datadog Agent and other tracers already decode this exact
+        // bit pattern from v0.4 span links.
+        let link = SpanLink::<BytesData> {
+            trace_id: 1,
+            span_id: 2,
+            flags: 0x8000_0001,
+            ..Default::default()
+        };
+        let span = crate::span::v04::Span::<BytesData> {
+            span_id: 1,
+            span_links: vec![link],
+            ..Default::default()
+        };
+        let bytes = to_vec_from_v04(&[vec![span]]);
+        let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
+        let traces = value.as_array().expect("top-level must be an array");
+        let trace = traces[0].as_array().expect("trace must be an array");
+        let encoded_span = &trace[0];
+        let span_links = encoded_span
+            .as_map()
+            .expect("span must be a map")
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("span_links"))
+            .map(|(_, v)| v)
+            .expect("span_links must be present")
+            .as_array()
+            .expect("span_links must be an array");
+        let flags = span_links[0]
+            .as_map()
+            .expect("span link must be a map")
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("flags"))
+            .map(|(_, v)| v)
+            .expect("flags must be present")
+            .as_u64()
+            .expect("flags must be a u64");
+
+        assert_eq!(
+            flags, 0x8000_0001,
+            "v0.4's native wire format must carry flags raw, including the sentinel bit"
+        );
+    }
 }

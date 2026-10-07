@@ -4,9 +4,10 @@
 use crate::fetch::{
     ConfigApplyState, ConfigClientState, ConfigFetcher, ConfigFetcherState,
     ConfigFetcherStateStats, ConfigInvariants, ConfigProductCapabilities, FileStorage,
+    random_uuid_string,
 };
 use crate::{RemoteConfigPath, Target};
-use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::MutexExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -127,7 +128,7 @@ impl RunnersGeneration {
     }
 }
 
-pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability>
+pub struct RefcountingStorage<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -161,7 +162,8 @@ impl Add for RefcountingStorageStats {
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> Clone for RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> Clone
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -175,7 +177,7 @@ where
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -216,14 +218,17 @@ where
     }
 
     pub fn stats(&self) -> RefcountingStorageStats {
+        // Release this lock before stats takes the file-state lock.
+        let inactive_files = self.inactive.lock_or_panic().len() as u32;
         RefcountingStorageStats {
-            inactive_files: self.inactive.lock_or_panic().len() as u32,
+            inactive_files,
             fetcher: self.state.stats(),
         }
     }
 }
 
-impl<S: FileStorage + Clone, C: HttpClientCapability> FileStorage for RefcountingStorage<S, C>
+impl<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability> FileStorage
+    for RefcountingStorage<S, C>
 where
     S::StoredFile: RefcountedFile,
 {
@@ -257,7 +262,7 @@ impl SharedFetcher {
         SharedFetcher {
             target,
             runtime_id: Mutex::new(Arc::new(runtime_id)),
-            client_id: uuid::Uuid::new_v4().to_string(),
+            client_id: random_uuid_string(),
             product_capabilities: Mutex::new(Arc::new(product_capabilities)),
             cancellation: CancellationToken::new(),
             interval: AtomicU64::new(5_000_000_000),
@@ -268,7 +273,7 @@ impl SharedFetcher {
     /// On successful fetches on_fetch() is called with the new configuration.
     /// Should not be called more than once.
     #[allow(clippy::type_complexity)]
-    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability>(
+    pub async fn run<S: FileStorage + Clone, C: HttpClientCapability + SleepCapability>(
         &self,
         storage: RefcountingStorage<S, C>,
         on_fetch: Box<dyn Send + Fn(&Vec<Arc<S::StoredFile>>)>,
@@ -276,7 +281,13 @@ impl SharedFetcher {
         S::StoredFile: RefcountedFile,
     {
         let state = storage.state.clone();
-        let mut fetcher = ConfigFetcher::new(storage, state);
+        let mut fetcher = match ConfigFetcher::new(storage, state).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("failed to create the fetcher: {:?}", e);
+                return;
+            }
+        };
 
         let mut opaque_state = ConfigClientState::default();
 
@@ -299,14 +310,12 @@ impl SharedFetcher {
 
             let clean_inactive = || {
                 let run_range = first_run_id..=fetcher.file_storage.run_id.dec_runners();
+                // Match expire_file's lock order.
+                let mut files = fetcher.file_storage.state.files_lock();
                 let mut inactive = fetcher.file_storage.inactive.lock_or_panic();
                 inactive.retain(|_, v| {
                     if run_range.contains(&v.get_expiring_run_id()) && v.delref() == 1 {
-                        fetcher
-                            .file_storage
-                            .state
-                            .files_lock()
-                            .expire_file(&v.refcount().path);
+                        files.expire_file(&v.refcount().path);
                         false
                     } else {
                         true
@@ -315,7 +324,9 @@ impl SharedFetcher {
             };
 
             match fetched {
-                Ok(None) => clean_inactive(), // nothing changed
+                Ok(None) => {
+                    clean_inactive();
+                }
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
@@ -350,6 +361,17 @@ impl SharedFetcher {
                 }
             }
 
+            if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
+                // Keep the run-loop interval in sync with the server-provided value.
+                // If the interval in nanoseconds is greater than u64::MAX, pick the max
+                // representable value. This is tolerable as u64::MAX nanoseconds
+                // still represents 35584 years.
+                self.interval.store(
+                    interval.as_nanos().min(u64::MAX as u128) as u64,
+                    Ordering::Relaxed,
+                );
+            }
+
             select! {
                 _ = self.cancellation.cancelled() => { break; }
                 _ = sleep(Duration::from_nanos(self.interval.load(Ordering::Relaxed))) => {}
@@ -374,11 +396,11 @@ impl SharedFetcher {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::Target;
     use crate::fetch::fetcher::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
-    use crate::Target;
     use futures::future::join_all;
-    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_capabilities_impl::NativeCapabilities;
     use std::sync::{Arc, LazyLock};
 
     pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
@@ -431,6 +453,53 @@ pub mod tests {
     }
 
     #[tokio::test]
+    async fn stats_and_expiration_do_not_deadlock() {
+        let storage = RefcountingStorage::new(
+            RcFileStorage::default(),
+            ConfigFetcherState::with_client(
+                ConfigInvariants {
+                    language: "php".into(),
+                    tracer_version: "test".into(),
+                    endpoint: libdd_common::Endpoint::from_slice("http://localhost:8126"),
+                    agentless: None,
+                },
+                NativeCapabilities::new_periodic(),
+            ),
+        );
+        let file = storage
+            .store(1, Arc::new(PATH_FIRST.clone()), b"config".to_vec())
+            .unwrap();
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let mut threads = Vec::new();
+        for expire in [false, true] {
+            let mut storage = storage.clone();
+            let file = file.clone();
+            let start = start.clone();
+            let done = done_tx.clone();
+            threads.push(std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..if cfg!(miri) { 100 } else { 100_000 } {
+                    if expire {
+                        storage.expire_file(file.clone());
+                    } else {
+                        storage.stats();
+                    }
+                }
+                done.send(()).unwrap();
+            }));
+        }
+        for _ in 0..2 {
+            done_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("stats and expiration deadlocked");
+        }
+        for thread in threads {
+            thread.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_single_fetcher() {
         let server = RemoteConfigServer::spawn();
@@ -439,7 +508,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 
@@ -504,7 +573,7 @@ pub mod tests {
             storage.clone(),
             ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_without_connection_pooling(),
+                NativeCapabilities::new_periodic(),
             ),
         );
 

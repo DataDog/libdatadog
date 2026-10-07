@@ -5,12 +5,12 @@
 //! serializing that IR to the HTTP/protobuf and HTTP/JSON wire formats. Inputs are decoded from
 //! msgpack into borrowed `SpanSlice`s, matching the production exporter path.
 
-use criterion::{black_box, criterion_group, BatchSize, Criterion};
+use criterion::{BatchSize, Criterion, black_box, criterion_group};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::otlp_encoder::{
-    encode_otlp_json, encode_otlp_protobuf, map_traces_to_otlp, OtlpResourceInfo,
+    OtlpResourceInfo, encode_otlp_json, encode_otlp_protobuf, map_traces_to_otlp,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// A realistic OTLP-bound span: a handful of string `meta` tags and a couple of numeric
 /// `metrics`, so the per-span attribute work (the dominant cost) is exercised.
@@ -64,7 +64,8 @@ fn resource_info() -> OtlpResourceInfo {
     info.app_version = "1.2.3".to_string();
     info.language = "rust".to_string();
     info.tracer_version = "9.9.9".to_string();
-    info.runtime_id = "11111111-2222-3333-4444-555555555555".to_string();
+    info.mutable_metadata
+        .set_runtime_id("11111111-2222-3333-4444-555555555555".into());
     info
 }
 
@@ -84,13 +85,13 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
     c.bench_function(&format!("otlp/map_to_prost/{id}"), |b| {
         b.iter_batched(
             || spans.clone(),
-            |s| black_box(map_traces_to_otlp(black_box(s), &info, false)),
+            |s| black_box(map_traces_to_otlp(black_box(&s), &info, false)),
             BatchSize::SmallInput,
         )
     });
 
     // Pre-built IR for the encode-only benches (owned prost; no borrow of `bytes`).
-    let req = map_traces_to_otlp(spans.clone(), &info, false);
+    let req = map_traces_to_otlp(&spans, &info, false);
 
     // 2) prost IR -> HTTP/protobuf bytes.
     c.bench_function(&format!("otlp/encode_protobuf/{id}"), |b| {
@@ -107,7 +108,7 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         b.iter_batched(
             || spans.clone(),
             |s| {
-                let req = map_traces_to_otlp(s, &info, false);
+                let req = map_traces_to_otlp(&s, &info, false);
                 black_box(encode_otlp_protobuf(&req))
             },
             BatchSize::SmallInput,
@@ -119,7 +120,7 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         b.iter_batched(
             || spans.clone(),
             |s| {
-                let req = map_traces_to_otlp(s, &info, false);
+                let req = map_traces_to_otlp(&s, &info, false);
                 black_box(encode_otlp_json(&req).expect("json"))
             },
             BatchSize::SmallInput,

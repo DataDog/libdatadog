@@ -1,16 +1,16 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
+pub use crate::send_data::send_data_result::SendDataResult;
 use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, TraceData};
+use crate::span::{TraceData, v05};
 pub use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
-use bytes::buf::Reader;
 use bytes::Buf;
+use bytes::buf::Reader;
 use http_body_util::BodyExt;
 use libdd_common::azure_app_services;
 use libdd_trace_normalization::normalizer;
@@ -68,10 +68,14 @@ fn get_v05_strings_dict(reader: &mut Reader<impl Buf>) -> anyhow::Result<Vec<Str
     for _ in 0..dict_size {
         match read_value(reader)? {
             Value::String(s) => {
-                let parsed_string = s.into_str().ok_or_else(|| anyhow!("Error reading string dict"))?;
+                let parsed_string = s
+                    .into_str()
+                    .ok_or_else(|| anyhow!("Error reading string dict"))?;
                 dict.push(parsed_string);
             }
-            val => anyhow::bail!("Error deserializing strings dictionary. Value in string dict is not a string: {val}")
+            val => anyhow::bail!(
+                "Error deserializing strings dictionary. Value in string dict is not a string: {val}"
+            ),
         }
     }
     Ok(dict)
@@ -152,17 +156,19 @@ fn get_v05_span(reader: &mut Reader<impl Buf>, dict: &[String]) -> anyhow::Resul
         Value::Map(meta) => {
             for (k, v) in meta.iter() {
                 match k {
-                    Value::Integer(k) => {
-                        match v {
-                            Value::Integer(v) => {
-                                let key = str_from_dict(dict, *k)?;
-                                let val = str_from_dict(dict, *v)?;
-                                span.meta.insert(key, val);
-                            }
-                            _ => anyhow::bail!("Error reading span meta, value is not an integer and can't be looked up in dict: {v}")
+                    Value::Integer(k) => match v {
+                        Value::Integer(v) => {
+                            let key = str_from_dict(dict, *k)?;
+                            let val = str_from_dict(dict, *v)?;
+                            span.meta.insert(key, val);
                         }
-                    }
-                    _ => anyhow::bail!("Error reading span meta, key is not an integer and can't be looked up in dict: {k}")
+                        _ => anyhow::bail!(
+                            "Error reading span meta, value is not an integer and can't be looked up in dict: {v}"
+                        ),
+                    },
+                    _ => anyhow::bail!(
+                        "Error reading span meta, key is not an integer and can't be looked up in dict: {k}"
+                    ),
                 }
             }
         }
@@ -222,10 +228,10 @@ fn get_v05_string(
     field_name: &str,
 ) -> anyhow::Result<String> {
     match read_value(reader)? {
-        Value::Integer(s) => {
-            str_from_dict(dict, s)
-        },
-        val => anyhow::bail!("Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}")
+        Value::Integer(s) => str_from_dict(dict, s),
+        val => anyhow::bail!(
+            "Error reading {field_name}, value is not an integer and can't be looked up in dict: {val}"
+        ),
     }
 }
 
@@ -547,13 +553,11 @@ pub fn enrich_span_with_google_cloud_function_metadata(
     function: Option<String>,
 ) {
     #[allow(clippy::todo)]
-    let Some(region) = &mini_agent_metadata.gcp_region
-    else {
+    let Some(region) = &mini_agent_metadata.gcp_region else {
         todo!()
     };
     #[allow(clippy::todo)]
-    let Some(project) = &mini_agent_metadata.gcp_project_id
-    else {
+    let Some(project) = &mini_agent_metadata.gcp_project_id else {
         todo!()
     };
 
@@ -598,13 +602,13 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
 /// Returns `Err` if any span fails to convert (e.g. unsupported field value); the partial
 /// dictionary built so far is discarded.
 pub fn convert_trace_chunks_v04_to_v05<T: TraceData>(
-    traces: Vec<Vec<crate::span::v04::Span<T>>>,
+    traces: &[Vec<crate::span::v04::Span<T>>],
 ) -> anyhow::Result<TraceChunks<T>> {
     let mut shared_dict = SharedDict::default();
     let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
     for trace in traces {
         let v05_trace = trace
-            .into_iter()
+            .iter()
             .map(|span| v05::from_v04_span(span, &mut shared_dict))
             .collect::<anyhow::Result<Vec<_>>>()?;
         v05_traces.push(v05_trace);
@@ -720,7 +724,7 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{Endpoint, http_common};
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -1130,7 +1134,7 @@ mod tests {
     fn test_convert_trace_chunks_v04_to_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = convert_trace_chunks_v04_to_v05(vec![chunk]).unwrap();
+        let collection = convert_trace_chunks_v04_to_v05(&[chunk]).unwrap();
 
         let (dict, traces) = match collection {
             TraceChunks::V05(payload) => payload,

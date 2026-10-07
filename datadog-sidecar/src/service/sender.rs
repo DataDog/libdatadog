@@ -12,17 +12,18 @@
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
 use crate::service::{
+    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
-        SidecarInterfaceRequest,
+        SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
-    InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
-use datadog_ipc::platform::ShmHandle;
-use datadog_live_debugger::sender::DebuggerType;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_ipc::platform::ShmHandle;
+use libdd_live_debugger::sender::DebuggerType;
 use libdd_telemetry::metrics::MetricContext;
+use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::HashMap;
 use std::{io, time::Duration};
 use tracing::trace;
@@ -215,13 +216,15 @@ impl SidecarSender {
     /// Only suitable for requests that transfer no file descriptors (e.g. `enqueue_actions`).
     pub fn drain_and_send_raw_blocking(&mut self, data: &[u8]) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.0.send_blocking(&mut data.to_vec(), &[])
+        self.channel.0.send_blocking(data.to_vec(), &[])
     }
 
     pub fn set_session_config(
         &mut self,
         session_id: String,
-        #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
+        #[cfg(windows)] remote_config_notify_target: Option<
+            crate::service::remote_configs::RemoteConfigNotifyTarget,
+        >,
         config: SessionConfig,
         is_fork: bool,
     ) {
@@ -230,7 +233,7 @@ impl SidecarSender {
             SidecarInterfaceRequest::SetSessionConfig {
                 session_id,
                 #[cfg(windows)]
-                remote_config_notify_function,
+                remote_config_notify_target,
                 config,
                 is_fork,
             },
@@ -368,8 +371,7 @@ impl SidecarSender {
             if self.enqueue_actions_counter != 0 {
                 trace!(
                     "enqueue_actions dropped: load-shedding (buffer more than half full) - outstanding: {}/{}",
-                    outstanding,
-                    self.max_outstanding,
+                    outstanding, self.max_outstanding,
                 );
                 return;
             }
@@ -404,6 +406,48 @@ impl SidecarSender {
         }
         self.channel
             .try_send_send_trace_v04_bytes(instance_id, data, headers);
+    }
+
+    pub fn send_trace_v1_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_shm(
+            instance_id,
+            handle,
+            len,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
+    }
+
+    pub fn send_trace_v1_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        generic: TracerGenericTags,
+        lang_interpreter: String,
+        lang_vendor: String,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel.try_send_send_trace_v1_bytes(
+            instance_id,
+            data,
+            generic,
+            lang_interpreter,
+            lang_vendor,
+        );
     }
 
     pub fn send_debugger_data_shm(
@@ -468,13 +512,13 @@ impl SidecarSender {
         &mut self,
         env: String,
         version: String,
-        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
-    ) {
+        span: libdd_ipc::shm_stats::OwnedShmSpanInput,
+    ) -> bool {
         if !self.try_drain_outbox() {
-            return;
+            return false;
         }
         self.channel
-            .try_send_add_span_to_concentrator(env, version, span);
+            .try_send_add_span_to_concentrator(env, version, span)
     }
 
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
@@ -483,6 +527,23 @@ impl SidecarSender {
 
     pub fn set_write_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_write_timeout(d)
+    }
+
+    pub fn ensure_appsec_started(
+        &mut self,
+        log_file_path: Vec<u8>,
+        log_level: String,
+    ) -> Result<bool, libdd_ipc::codec::DecodeError> {
+        self.channel
+            .call_ensure_appsec_started(log_file_path, log_level)
+    }
+
+    pub fn send_appsec_message(
+        &mut self,
+        request: &SidecarInterfaceClientRequest<'_>,
+    ) -> Result<(Vec<u8>, bool), libdd_ipc::codec::DecodeError> {
+        self.drain_outbox_blocking();
+        self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
@@ -495,12 +556,12 @@ impl SidecarSender {
         self.channel.call_ping()
     }
 
-    pub fn dump(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn dump(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_dump()
     }
 
-    pub fn stats(&mut self) -> Result<String, datadog_ipc::codec::DecodeError> {
+    pub fn stats(&mut self) -> Result<String, libdd_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
         self.channel.call_stats()
     }

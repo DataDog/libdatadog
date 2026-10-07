@@ -12,8 +12,8 @@ use futures::future;
 
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
-use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_common::{Endpoint, MutexExt, tag::Tag};
+use libdd_live_debugger::sender::{DebuggerType, PayloadSender};
 use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
@@ -28,17 +28,15 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
-    debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+    debugger_config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
     dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::DogStatsDClient>>>,
     remote_config_options: Arc<Mutex<Option<ConfigOptions>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
     #[cfg(windows)]
-    pub(crate) remote_config_notify_function:
-        Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
-    #[cfg(windows)]
-    pub(crate) process_handle: Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
+    pub(crate) remote_config_notify_target:
+        Arc<Mutex<Option<crate::service::remote_configs::RemoteConfigNotifyTarget>>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,
@@ -207,13 +205,13 @@ impl SessionInfo {
         f(&mut self.get_dogstatsd());
     }
 
-    pub fn get_debugger_config(&self) -> MutexGuard<'_, datadog_live_debugger::sender::Config> {
+    pub fn get_debugger_config(&self) -> MutexGuard<'_, libdd_live_debugger::sender::Config> {
         self.debugger_config.lock_or_panic()
     }
 
     pub fn modify_debugger_config<F>(&self, mut f: F)
     where
-        F: FnMut(&mut datadog_live_debugger::sender::Config),
+        F: FnMut(&mut libdd_live_debugger::sender::Config),
     {
         f(&mut self.get_debugger_config());
     }
@@ -234,7 +232,7 @@ impl SessionInfo {
         payload: R,
     ) {
         async fn do_send(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,
@@ -243,7 +241,9 @@ impl SessionInfo {
         ) -> anyhow::Result<()> {
             async fn finish_sender(debugger_type: DebuggerType, sender: PayloadSender) {
                 match sender.finish().await {
-                    Ok(payloads) => debug!("Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"),
+                    Ok(payloads) => debug!(
+                        "Successfully sent {payloads} payloads to live debugger {debugger_type:?} endpoint"
+                    ),
                     Err(e) => error!("Error sending to live debugger endpoint: {e:?}"),
                 }
             }
@@ -280,7 +280,7 @@ impl SessionInfo {
         }
 
         async fn send<R: AsRef<[u8]> + Sync + Send>(
-            config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
+            config: Arc<Mutex<libdd_live_debugger::sender::Config>>,
             debugger_type: DebuggerType,
             new_tags: bool,
             tags: Arc<String>,
@@ -317,7 +317,10 @@ impl SessionInfo {
                     }
                 );
             } else {
-                warn!("Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data", self.session_id);
+                warn!(
+                    "Did not find queue_id {queue_id:?} for runtime id {runtime_id} of session id {} - skipping live debugger data",
+                    self.session_id
+                );
             }
         } else {
             warn!(
@@ -340,11 +343,13 @@ mod tests {
 
         // Test that a new runtime is created if it doesn't exist
         let _ = session_info.get_runtime(&runtime_id);
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id));
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id)
+        );
     }
 
     #[tokio::test]
@@ -368,15 +373,19 @@ mod tests {
         session_info.get_runtime(&runtime_id2);
 
         session_info.shutdown_runtime(&runtime_id1).await;
-        assert!(!session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id1));
-        assert!(session_info
-            .runtimes
-            .lock()
-            .unwrap()
-            .contains_key(&runtime_id2));
+        assert!(
+            !session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id1)
+        );
+        assert!(
+            session_info
+                .runtimes
+                .lock()
+                .unwrap()
+                .contains_key(&runtime_id2)
+        );
     }
 }

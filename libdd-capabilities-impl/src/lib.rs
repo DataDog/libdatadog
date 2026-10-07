@@ -18,13 +18,13 @@ use std::time::Duration;
 pub use env::NativeEnvCapability;
 pub use file::NativeFileCapability;
 pub use http::NativeHttpClient;
-use libdd_capabilities::{
-    http::{BodySender, HttpError, ResponseFuture},
-    MaybeSend,
-};
 pub use libdd_capabilities::{
     EnvCapability, EnvError, FileCapability, FileError, FileMetadata, HttpClientCapability,
     LogWriterCapability, SleepCapability,
+};
+use libdd_capabilities::{
+    MaybeSend,
+    http::{BodySender, HttpError, ResponseFuture},
 };
 pub use sleep::NativeSleepCapability;
 
@@ -65,6 +65,15 @@ impl NativeCapabilities {
 impl HttpClientCapability for NativeCapabilities {
     fn new_client() -> Self {
         Self::new()
+    }
+
+    fn new_periodic() -> Self {
+        Self {
+            http: NativeHttpClient::new_periodic(),
+            sleep: NativeSleepCapability,
+            env: NativeEnvCapability,
+            file: NativeFileCapability,
+        }
     }
 
     fn request(

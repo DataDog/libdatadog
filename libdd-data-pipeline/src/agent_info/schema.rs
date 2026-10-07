@@ -1,6 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module provides struct representing the info endpoint response
+use libdd_trace_obfuscation::{
+    obfuscation_config::{self, ObfuscationConfig},
+    replacer::ReplaceRule,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -77,50 +81,33 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
-    pub obfuscation: Option<ObfuscationConfig>,
+    pub obfuscation: Option<AgentObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct ObfuscationConfig {
-    pub elastic_search: bool,
-    pub mongo: bool,
+#[serde(default)]
+// Almost the same as libdd_trace_obfuscation::obfuscation_config::ObfuscationConfig, but what the
+// agent exposes is slightly different
+pub struct AgentObfuscationConfig {
+    // Old format from the agent, now present under sql->obfuscation_mode directly
+    pub sql_obfuscation_mode: Option<obfuscation_config::SqlObfuscationMode>,
+    pub remove_stack_traces: bool,
     pub sql_exec_plan: bool,
     pub sql_exec_plan_normalize: bool,
-    #[cfg(feature = "stats-obfuscation")]
-    // Option because it might not exist with old agents
-    pub sql_obfuscation_mode: Option<libdd_trace_obfuscation::sql::SqlObfuscationMode>,
-    pub http: HttpObfuscationConfig,
-    pub remove_stack_traces: bool,
-    pub redis: RedisObfuscationConfig,
-    pub memcached: MemcachedObfuscationConfig,
-}
+    pub mongo: bool,
+    pub elastic_search: bool,
 
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct HttpObfuscationConfig {
-    pub remove_query_string: bool,
-    pub remove_path_digits: bool,
-}
-
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct RedisObfuscationConfig {
-    // Agent sent pascal case fields here in versions <7.79.0
-    #[serde(alias = "Enabled")]
-    pub enabled: bool,
-    #[serde(alias = "RemoveAllArgs")]
-    pub remove_all_args: bool,
-}
-
-#[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-pub struct MemcachedObfuscationConfig {
-    // Agent sent pascal case fields here in versions <7.79.0
-    #[serde(alias = "Enabled")]
-    pub enabled: bool,
-    #[serde(alias = "KeepCommand")]
-    pub keep_command: bool,
+    pub sql: Option<obfuscation_config::SqlConfig>,
+    pub http: obfuscation_config::HttpConfig,
+    pub redis: obfuscation_config::RedisConfig,
+    pub valkey: obfuscation_config::RedisConfig,
+    pub credit_cards: obfuscation_config::CreditCardConfig,
+    pub memcached: obfuscation_config::MemcachedConfig,
+    pub elasticsearch: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub opensearch: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub mongodb: libdd_trace_obfuscation::json::JsonObfuscator,
+    pub tag_replace_rules: Option<Vec<ReplaceRule>>,
 }
 
 impl AgentInfo {
@@ -130,6 +117,31 @@ impl AgentInfo {
             .feature_flags
             .iter()
             .any(|flag| flag == "big_resource")
+    }
+}
+
+impl From<AgentObfuscationConfig> for ObfuscationConfig {
+    fn from(value: AgentObfuscationConfig) -> Self {
+        let sql_config = match value.sql {
+            Some(sql_config) => sql_config,
+            // Fallback for the previous /info config format
+            None => obfuscation_config::SqlConfig {
+                obfuscation_mode: value.sql_obfuscation_mode.unwrap_or_default(),
+                ..Default::default()
+            },
+        };
+        Self {
+            tag_replace_rules: value.tag_replace_rules.unwrap_or_default(),
+            http: value.http,
+            memcached: value.memcached,
+            redis: value.redis,
+            valkey: value.valkey,
+            credit_cards: value.credit_cards,
+            sql: sql_config,
+            elasticsearch: value.elasticsearch,
+            opensearch: value.opensearch,
+            mongodb: value.mongodb,
+        }
     }
 }
 
@@ -169,18 +181,55 @@ mod tests {
                     "mongo": true,
                     "sql_exec_plan": false,
                     "sql_exec_plan_normalize": false,
+                    "sql_obfuscation_mode": "",
+                    "tag_replace_rules": null,
                     "http": {
-                        "remove_query_string": false,
-                        "remove_path_digits": false
+                        "remove_query_string": true,
+                        "remove_path_digits": true
                     },
                     "remove_stack_traces": false,
                     "redis": {
+                        "enabled": true,
+                        "remove_all_args": true
+                    },
+                    "valkey": {
                         "enabled": true,
                         "remove_all_args": false
                     },
                     "memcached": {
                         "enabled": true,
                         "keep_command": false
+                    },
+                    "credit_cards": {
+                        "enabled": true,
+                        "luhn": false,
+                        "keep_values": null
+                    },
+                    "sql": {
+                        "replace_digits": false,
+                        "keep_sql_alias": false,
+                        "dollar_quoted_func": false,
+                        "keep_null": false,
+                        "keep_boolean": false,
+                        "keep_positional_parameter": false,
+                        "keep_trailing_semicolon": false,
+                        "keep_identifier_quotation": false,
+                        "replace_bind_parameter": false,
+                        "remove_space_between_parentheses": false,
+                        "keep_json_path": false,
+                        "obfuscation_mode": ""
+                    },
+                    "elasticsearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "opensearch": {
+                        "enabled": true,
+                        "keep_keys": []
+                    },
+                    "mongodb": {
+                        "enabled": true,
+                        "keep_keys": null
                     }
                 }
             }
@@ -209,7 +258,15 @@ mod tests {
     )]
     #[test]
     fn test_name() {
-        let _info: AgentInfoStruct = serde_json::from_str(input)
-            .expect("AgentInfoStruct should be parsed successfully from input");
+        let mut deserializer = serde_json::Deserializer::from_str(input);
+        let mut ignored = Vec::new();
+
+        let _info: AgentInfoStruct = serde_ignored::deserialize(&mut deserializer, |path| {
+            ignored.push(path.to_string());
+        })
+        .expect("AgentInfoStruct should be parsed successfully from input");
+
+        deserializer.end().expect("unexpected trailing input");
+        assert!(ignored.is_empty(), "Ignored fields: {ignored:#?}");
     }
 }

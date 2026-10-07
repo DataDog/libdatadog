@@ -13,15 +13,14 @@ criterion::criterion_main!(linux_bench::benches);
 
 #[cfg(target_os = "linux")]
 mod linux_bench {
-    use criterion::{criterion_group, BenchmarkId, Criterion};
+    use criterion::{BenchmarkId, Criterion, criterion_group};
     use libdd_profiling_heap_allocator::SampledAllocator;
-    use libdd_profiling_heap_sampler::{
-        dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
-        dd_tl_state_get_or_init,
-    };
+    use libdd_profiling_heap_sampler::{dd_test_set_profiler_active, dd_tl_state_get_or_init};
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::hint::black_box;
+    use std::mem::MaybeUninit;
     use std::ptr;
+    use std::time::Duration;
 
     const SIZES: &[usize] = &[16, 64, 256, 4096, 65_536];
     const ALIGN: usize = 8;
@@ -31,25 +30,44 @@ mod linux_bench {
 
     static mut NOOP_BUFFER: AlignedBuffer = AlignedBuffer([0; 128 * 1024]);
 
+    // Do not attribute time when this benchmark thread is descheduled to the sampler.
+    fn thread_cpu_time() -> Duration {
+        let mut time = MaybeUninit::<libc::timespec>::uninit();
+        let result =
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, time.as_mut_ptr()) };
+        assert_eq!(
+            result,
+            0,
+            "read thread CPU time: {}",
+            std::io::Error::last_os_error()
+        );
+        let time = unsafe { time.assume_init() };
+        Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+    }
+
+    #[inline(always)]
+    fn measure_thread_cpu_time(iterations: u64, mut routine: impl FnMut()) -> Duration {
+        let start = thread_cpu_time();
+        for _ in 0..iterations {
+            routine();
+        }
+        thread_cpu_time() - start
+    }
+
     struct NoopAllocator;
 
     unsafe impl GlobalAlloc for NoopAllocator {
         unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-            // Return a stable aligned pointer with mapped bytes before it. The sampler's free path
-            // may inspect header-sized bytes immediately before the user pointer when
-            // checking for sampled allocations.
-            //
-            // Always returns the same fixed pointer. This allocator isn't tracking real
-            // capacity or state; it exists purely to eliminate the real allocator's cost
-            // from the benchmark so it measures the sampler's own overhead.
+            // Return a stable aligned pointer with mapped bytes before it.
+            // The sampler's free path may inspect header-sized bytes
+            // immediately before the user pointer when checking for sampled
+            // allocations. Always returns the same fixed pointer - this
+            // allocator exists purely to eliminate the real allocator's cost
+            // from benchmarks.
             unsafe { ptr::addr_of_mut!(NOOP_BUFFER.0).cast::<u8>().add(4096) }
         }
 
         unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
-    }
-
-    unsafe fn noop_user_ptr() -> *mut u8 {
-        unsafe { ptr::addr_of_mut!(NOOP_BUFFER.0).cast::<u8>().add(4096) }
     }
 
     /// # Safety
@@ -95,131 +113,140 @@ mod linux_bench {
         }
     }
 
+    // ── Baseline ───────────────────────────────────────────────────────────
+    // Pure system allocator cost with no sampler in the picture.
+
     fn bench_system_alloc_free(c: &mut Criterion) {
-        let mut group = c.benchmark_group("alloc_free/system");
+        let mut group = c.benchmark_group("thread_cpu/alloc_free/system");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter(|| unsafe {
-                    let ptr = System.alloc(layout);
-                    black_box(ptr);
-                    System.dealloc(ptr, layout);
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        let ptr = System.alloc(layout);
+                        black_box(ptr);
+                        System.dealloc(ptr, layout);
+                    })
                 });
             });
         }
         group.finish();
     }
 
-    fn bench_sampled_system_alloc_free(c: &mut Criterion) {
+    // ── Profiler attached (semaphore ON) ─────────────────────────────────
+    // The primary benchmark set. Semaphore is flipped on to simulate a
+    // profiler being attached. This is the realistic production scenario.
+    //
+    // Fast-path: `remaining_bytes` is pinned far from zero so allocations
+    // are never sampled. Measures per-allocation overhead when the profiler
+    // is attached but this particular alloc isn't selected.
+    //
+    // Slow-path: `force_next_allocation_to_sample()` triggers sampling
+    // every iteration. The USDT probe fires (into a NOP since no real
+    // consumer is attached to the uprobe).
+
+    fn bench_fast_path_system(c: &mut Criterion) {
         let alloc = SampledAllocator::new(System);
-        let mut group = c.benchmark_group("alloc_free/sampled_system_fast_path");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_system");
+        unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
-                b.iter(|| unsafe {
-                    let ptr = alloc.alloc(layout);
-                    black_box(ptr);
-                    alloc.dealloc(ptr, layout);
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        let ptr = alloc.alloc(layout);
+                        black_box(ptr);
+                        alloc.dealloc(ptr, layout);
+                    })
                 });
             });
         }
         group.finish();
+        unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_noop_alloc_free(c: &mut Criterion) {
-        let alloc = NoopAllocator;
-        let mut group = c.benchmark_group("alloc_free/noop");
-        for &size in SIZES {
-            let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter(|| unsafe {
-                    let ptr = alloc.alloc(layout);
-                    black_box(ptr);
-                    alloc.dealloc(ptr, layout);
-                });
-            });
-        }
-        group.finish();
-    }
-
-    fn bench_sampled_noop_alloc_free(c: &mut Criterion) {
+    fn bench_fast_path_noop(c: &mut Criterion) {
         let alloc = SampledAllocator::new(NoopAllocator);
-        let mut group = c.benchmark_group("alloc_free/sampled_noop_fast_path");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/fast_path_noop");
+        unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
-                b.iter(|| unsafe {
-                    let ptr = alloc.alloc(layout);
-                    black_box(ptr);
-                    alloc.dealloc(ptr, layout);
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        let ptr = alloc.alloc(layout);
+                        black_box(ptr);
+                        alloc.dealloc(ptr, layout);
+                    })
                 });
             });
         }
         group.finish();
+        unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_sampler_only(c: &mut Criterion) {
-        let mut group = c.benchmark_group("sampler_only/fast_path");
-        for &size in SIZES {
-            group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-                unsafe { pin_sampler_to_fast_path() };
-                b.iter(|| unsafe {
-                    let req = dd_allocation_requested(black_box(size), black_box(ALIGN));
-                    let user = dd_allocation_created(black_box(noop_user_ptr()).cast(), req);
-                    let freed = dd_allocation_freed(user, black_box(size), black_box(ALIGN));
-                    black_box(freed);
-                });
-            });
-        }
-        group.finish();
-    }
-
-    fn bench_sampled_system_slow_path(c: &mut Criterion) {
+    fn bench_slow_path_system(c: &mut Criterion) {
         let alloc = SampledAllocator::new(System);
-        let mut group = c.benchmark_group("alloc_free/sampled_system_slow_path");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_system");
+        unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter(|| unsafe {
-                    force_next_allocation_to_sample();
-                    let ptr = alloc.alloc(layout);
-                    black_box(ptr);
-                    alloc.dealloc(ptr, layout);
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        force_next_allocation_to_sample();
+                        let ptr = alloc.alloc(layout);
+                        black_box(ptr);
+                        alloc.dealloc(ptr, layout);
+                    })
                 });
             });
         }
         group.finish();
+        unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_sampled_noop_slow_path(c: &mut Criterion) {
+    fn bench_slow_path_noop(c: &mut Criterion) {
         let alloc = SampledAllocator::new(NoopAllocator);
-        let mut group = c.benchmark_group("alloc_free/sampled_noop_slow_path");
+        let mut group = c.benchmark_group("thread_cpu/profiler_attached/slow_path_noop");
+        unsafe { dd_test_set_profiler_active(true) };
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
-                b.iter(|| unsafe {
-                    force_next_allocation_to_sample();
-                    let ptr = alloc.alloc(layout);
-                    black_box(ptr);
-                    alloc.dealloc(ptr, layout);
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        force_next_allocation_to_sample();
+                        let ptr = alloc.alloc(layout);
+                        black_box(ptr);
+                        alloc.dealloc(ptr, layout);
+                    })
                 });
             });
         }
         group.finish();
+        unsafe { dd_test_set_profiler_active(false) };
     }
 
-    fn bench_sampler_only_slow_path(c: &mut Criterion) {
-        let mut group = c.benchmark_group("sampler_only/slow_path");
+    // ── Short-circuit regression (semaphore OFF) ─────────────────────────
+    // Single benchmark with the semaphore off (no profiler attached).
+    // The no-op allocator keeps the system allocator from obscuring the
+    // semaphore check this benchmark is intended to validate.
+
+    fn bench_short_circuit(c: &mut Criterion) {
+        let alloc = SampledAllocator::new(NoopAllocator);
+        let mut group = c.benchmark_group("thread_cpu/no_profiler/short_circuit_noop");
+        // Semaphore is off by default - don't flip it on.
         for &size in SIZES {
-            group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
-                b.iter(|| unsafe {
-                    force_next_allocation_to_sample();
-                    let req = dd_allocation_requested(black_box(size), black_box(ALIGN));
-                    let user = dd_allocation_created(black_box(noop_user_ptr()).cast(), req);
-                    let freed = dd_allocation_freed(user, black_box(size), black_box(ALIGN));
-                    black_box(freed);
+            let layout = Layout::from_size_align(size, ALIGN).unwrap();
+            group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
+                b.iter_custom(|iterations| {
+                    measure_thread_cpu_time(iterations, || unsafe {
+                        let ptr = alloc.alloc(layout);
+                        black_box(ptr);
+                        alloc.dealloc(ptr, layout);
+                    })
                 });
             });
         }
@@ -229,12 +256,10 @@ mod linux_bench {
     criterion_group!(
         benches,
         bench_system_alloc_free,
-        bench_sampled_system_alloc_free,
-        bench_noop_alloc_free,
-        bench_sampled_noop_alloc_free,
-        bench_sampler_only,
-        bench_sampled_system_slow_path,
-        bench_sampled_noop_slow_path,
-        bench_sampler_only_slow_path,
+        bench_fast_path_system,
+        bench_fast_path_noop,
+        bench_slow_path_system,
+        bench_slow_path_noop,
+        bench_short_circuit,
     );
 } // mod linux_bench

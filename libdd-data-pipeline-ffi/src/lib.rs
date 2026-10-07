@@ -8,6 +8,7 @@
 
 mod error;
 mod response;
+mod structured_value;
 mod trace_exporter;
 mod tracer;
 

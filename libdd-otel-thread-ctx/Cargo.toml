@@ -3,14 +3,13 @@
 
 [package]
 name = "libdd-otel-thread-ctx"
-version = "1.0.0"
+version = "2.0.0"
 description = "OTel thread-level context publisher for Datadog profiling (OTEP #4947)"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-thread-ctx"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
 
 [lib]
 crate-type = ["lib"]
@@ -18,10 +17,18 @@ bench = false
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
-elf = { version = "0.7", optional = true }
-object = { version = "0.36", default-features = false, features = ["archive", "read_core"], optional = true }
+elf = { workspace = true, features = ["std"], optional = true }
+object = { workspace = true, features = ["archive", "read_core"], optional = true }
 
 [features]
+default = ["owned-context"]
+# Ownership modes for the thread-level context. They are mutually exclusive,
+# because the TLS slot is untyped (if both are enabled, shared-context is
+# ignored). See the crate-level documentation.
+owned-context = []
+shared-context = []
+# Autoclean contexts on thread exit. See README.
+thread-exit-autoclean = []
 sanity-check = ["dep:elf", "dep:anyhow"]
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
@@ -37,5 +44,19 @@ gen-tls-shim-bytes = ["test-utils"]
 name = "gen_tls_shim_bytes"
 required-features = ["gen-tls-shim-bytes"]
 
+[[test]]
+name = "thread_exit_autoclean"
+required-features = [
+    "owned-context",
+    "thread-exit-autoclean",
+    "test-utils",
+]
+harness = false
+
 [dev-dependencies]
-libdd-otel-thread-ctx = { path = ".", features = ["test-utils"] }
+# `default-features = false` keeps this edge from force-enabling `owned-context`, so that
+# `--no-default-features --features shared-context` also applies to the test build. Enables
+# `test-utils` for this crate's own integration tests (in particular `thread_exit_autoclean`).
+libdd-otel-thread-ctx = { path = ".", default-features = false, features = [
+    "test-utils",
+] }

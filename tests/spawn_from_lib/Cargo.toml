@@ -1,5 +1,6 @@
 [package]
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 name = "test_spawn_from_lib"
 version = "0.0.1"
 publish = false
@@ -15,8 +16,6 @@ bench = false
 prefer-dynamic = []
 
 [dependencies]
-libc.workspace = true
-anyhow = { version = "1.0" }
+anyhow = { workspace = true, default-features = true }
 spawn_worker = { path = "../../spawn_worker" }
-tempfile = { version = "3.3" }
-io-lifetimes = { workspace = true, features = ["close"] }
+tempfile.workspace = true

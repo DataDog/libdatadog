@@ -2,6 +2,79 @@
 
 
 
+## [10.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v9.0.0..libdd-trace-obfuscation-v10.0.0) - 2026-10-02
+
+### Added
+
+- Make json transforms caller-provided ([#2548](https://github.com/datadog/libdatadog/issues/2548)) - ([9eed262](https://github.com/datadog/libdatadog/commit/9eed262f4dcf85c1b65ab659070ff3430bc5a5a2))
+
+### Changed
+
+- Update workspace to Rust 2024 edition ([#2575](https://github.com/datadog/libdatadog/issues/2575)) - ([620a212](https://github.com/datadog/libdatadog/commit/620a212fc91e128234f48b29d657c71d6ad5caed))
+
+### Fixed
+
+- Revert changes that made /info un-parsable ([#2586](https://github.com/datadog/libdatadog/issues/2586)) - ([8040933](https://github.com/datadog/libdatadog/commit/804093337c593c6e9134c494470749bd8e8a1af1))
+
+
+
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v8.0.0..libdd-trace-obfuscation-v9.0.0) - 2026-09-24
+
+### Added
+
+- Refactor agent's /info obfuscation config format ([#2490](https://github.com/datadog/libdatadog/issues/2490)) - ([45009c2](https://github.com/datadog/libdatadog/commit/45009c22401ccf5821a5315fb128a37b664018f7))
+
+### Changed
+
+- Move all remaining external deps to workspace-level dependencies ([#2476](https://github.com/datadog/libdatadog/issues/2476)) - ([ea4379c](https://github.com/datadog/libdatadog/commit/ea4379c9ca0dd024c7a3ed5c497fa8e117018d6a))
+
+### Fixed
+
+- Harden agentless config setters and parse obfuscation config once ([#2474](https://github.com/datadog/libdatadog/issues/2474)) - ([c0341fa](https://github.com/datadog/libdatadog/commit/c0341fa19d061fd83fd4bb6303e7a31cc80f0b62))
+- Keep URLs whose path or fragment holds a bracket ([#2527](https://github.com/datadog/libdatadog/issues/2527)) - ([d644447](https://github.com/datadog/libdatadog/commit/d6444472d0610d7769ba9d9d50c8b35ebde19155))
+- Stop forcing serde_json/preserve_order on dependents ([#2529](https://github.com/datadog/libdatadog/issues/2529)) - ([3c2afd0](https://github.com/datadog/libdatadog/commit/3c2afd0cabe165c97c6f0eefa7a667352cec14dc))
+- Prevent crash and cap recursion in SQL/HTTP obfuscation ([#2441](https://github.com/datadog/libdatadog/issues/2441)) - ([8b0fa65](https://github.com/datadog/libdatadog/commit/8b0fa6509291f185d15ecf08d282a09655cff745))
+
+
+
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v7.0.0..libdd-trace-obfuscation-v8.0.0) - 2026-09-08
+
+### Added
+
+- Obfuscate v04 spans in agentless context ([#2418](https://github.com/datadog/libdatadog/issues/2418)) - ([0265610](https://github.com/datadog/libdatadog/commit/026561026770a138f567e6c552e5df3a88cf1c18))
+
+### Changed
+
+- Migrate HTTP & networking deps to workspace level (phase 4bis) ([#2350](https://github.com/datadog/libdatadog/issues/2350)) - ([55cdf67](https://github.com/datadog/libdatadog/commit/55cdf67b720b7df427b1febd147b0f72d486167f))
+
+### Fixed
+
+- Scan all span meta for credit-card obfuscation ([#2472](https://github.com/datadog/libdatadog/issues/2472)) - ([7d0d04f](https://github.com/datadog/libdatadog/commit/7d0d04f15b0f93aa7b66df44d24fbd19ca925a82))
+
+
+
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v6.0.0..libdd-trace-obfuscation-v7.0.0) - 2026-08-25
+
+### Changed
+
+- Bump `libdd-trace-protobuf` to a new major version (`^4.0.1` → `^5.0.0`)
+- Bump `libdd-trace-utils` to a new major version (`^10.1.0` → `^11.0.0`)
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v5.0.0..libdd-trace-obfuscation-v6.0.0) - 2026-08-17
+
+### Changed
+
+- Update nightly ([#2281](https://github.com/datadog/libdatadog/issues/2281)) - ([ddef629](https://github.com/datadog/libdatadog/commit/ddef629242c5288137987a1babfee0c588fe2533))
+- Migrate to workspace dependencies, phase 4 ([#2296](https://github.com/datadog/libdatadog/issues/2296)) - ([3c4c095](https://github.com/datadog/libdatadog/commit/3c4c0952c016b3b156d8a82ec27eeb515079d286))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- New clippy lints ([#2219](https://github.com/datadog/libdatadog/issues/2219)) - ([e026a3c](https://github.com/datadog/libdatadog/commit/e026a3c76cfdd1959e4e1e30b7d234eeffe830c6))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v4.0.0..libdd-trace-obfuscation-v5.0.0) - 2026-07-07
 
 ### Changed

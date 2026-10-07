@@ -15,7 +15,7 @@
 
 // `wrap_with_void_ffi_result!` uses `function_name!()` below.
 use function_name::named;
-use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
+use libdd_common_ffi::{VoidResult, wrap_with_void_ffi_result};
 
 // `libdd_profiling_heap_gotter` exposes the same public surface on every target.
 // On non-Linux the underlying functions are no-ops, so callers that
@@ -32,7 +32,7 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 ///
 /// On non-Linux targets this returns an error indicating that nothing
 /// could be installed; the rest of the API can still be called safely.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub extern "C" fn ddog_heap_gotter_install() -> VoidResult {
@@ -46,7 +46,7 @@ pub extern "C" fn ddog_heap_gotter_install() -> VoidResult {
 ///
 /// This is normally called automatically by the installed `dlopen` hook, but language runtimes may
 /// call it explicitly after unusual native-extension loading flows. No-op on non-Linux targets.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
@@ -60,14 +60,14 @@ pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
 /// Pass `0` to revert to the compiled-in default (512 KiB). Values below
 /// 64 KiB are clamped to 64 KiB. Call this early in process startup,
 /// before significant allocation activity begins.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ddog_heap_gotter_set_default_sampling_distance(distance_bytes: u64) {
     libdd_profiling_heap_gotter::set_default_sampling_distance(distance_bytes);
 }
 
 /// Return whether heap GOT overrides are currently installed in this process. Always `false` on
 /// non-Linux targets.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_heap_gotter_is_installed() -> bool {
     libdd_profiling_heap_gotter::heap_overrides_are_installed()
@@ -78,7 +78,7 @@ pub extern "C" fn ddog_heap_gotter_is_installed() -> bool {
 /// exercised, not just that nothing crashed. Not part of the production API
 /// surface; only compiled in with the `test-support` feature.
 #[cfg(feature = "test-support")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 pub extern "C" fn ddog_heap_gotter_test_hook_hits() -> u64 {
     libdd_profiling_heap_gotter::test_hook_hits()

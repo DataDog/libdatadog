@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened ]
 env:
-  DATADOG_AGENT_TAG: "fdc29d4428db855950228a642c43a5595e56bb09"
+  DATADOG_AGENT_TAG: "14f65ca3802739e69ea2951a60c87814c21f7161"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 jobs:
@@ -50,12 +50,16 @@ jobs:
       - name: Install ${{ steps.rust-version.outputs.version }} toolchain
         run: rustup set profile minimal && rustup install ${{ steps.rust-version.outputs.version }} && rustup default ${{ steps.rust-version.outputs.version }}
       - name: Cache [rust]
+        id: rust-cache
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - name: diff pb.rs
+          shared-key: default
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: echo "rust-cache ${{ steps.rust-cache.outputs.cache-hit == 'true' && 'HIT' || 'MISS' }}"
+      - name: diff generated protobuf files
         working-directory: libdd-trace-protobuf
         run: |
           cargo build --features generate-protobuf
-          git diff --exit-code -- src/pb.rs
+          git diff --exit-code -- src/pb.rs src/pb.idx.rs

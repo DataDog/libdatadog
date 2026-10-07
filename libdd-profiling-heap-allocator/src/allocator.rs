@@ -41,51 +41,57 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[cfg(target_os = "linux")]
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        // when sampling is disabled via
-        // DD_HEAP_SAMPLING_ENABLED, forward straight to the inner allocator
-        // so we're indistinguishable from an unwrapped allocator. realloc /
-        // alloc_zeroed are inherited from GlobalAlloc and dispatch back
-        // through alloc/dealloc, so they pass through too.
-        if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
-            return self.inner.alloc(layout);
+        unsafe {
+            // when sampling is disabled via
+            // DD_HEAP_SAMPLING_ENABLED, forward straight to the inner allocator
+            // so we're indistinguishable from an unwrapped allocator. realloc /
+            // alloc_zeroed are inherited from GlobalAlloc and dispatch back
+            // through alloc/dealloc, so they pass through too.
+            if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
+                return self.inner.alloc(layout);
+            }
+            let req = dd_allocation_requested(layout.size(), layout.align());
+            // Sampled paths may bump the size for inline flag storage;
+            // forward the returned size to the inner allocator verbatim.
+            let inner_layout = Layout::from_size_align_unchecked(req.size, layout.align());
+            let raw = self.inner.alloc(inner_layout);
+            dd_allocation_created(raw.cast(), req).cast()
         }
-        let req = dd_allocation_requested(layout.size(), layout.align());
-        // Sampled paths may bump the size for inline flag storage;
-        // forward the returned size to the inner allocator verbatim.
-        let inner_layout = Layout::from_size_align_unchecked(req.size, layout.align());
-        let raw = self.inner.alloc(inner_layout);
-        dd_allocation_created(raw.cast(), req).cast()
     }
 
     #[cfg(not(target_os = "linux"))]
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        self.inner.alloc(layout)
+        unsafe { self.inner.alloc(layout) }
     }
 
     #[cfg(target_os = "linux")]
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // Honour bypass
-        if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
-            return self.inner.dealloc(ptr, layout);
+        unsafe {
+            // Honour bypass
+            if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
+                return self.inner.dealloc(ptr, layout);
+            }
+            let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
+            // `layout.align()` is reused here rather than anything derived from
+            // `freed`: alignment never changes between the original `alloc` and
+            // this `dealloc`, so pairing `freed.size` with the caller's own
+            // alignment is exactly what `GlobalAlloc::dealloc`'s safety contract
+            // already requires (the layout passed here must match the one used
+            // for the original allocation). This isn't a guarantee `SampledAllocator`
+            // adds — it's just satisfying the contract our caller is on the hook for.
+            let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
+            self.inner.dealloc(freed.ptr.cast(), inner_layout);
         }
-        let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
-        // `layout.align()` is reused here rather than anything derived from
-        // `freed`: alignment never changes between the original `alloc` and
-        // this `dealloc`, so pairing `freed.size` with the caller's own
-        // alignment is exactly what `GlobalAlloc::dealloc`'s safety contract
-        // already requires (the layout passed here must match the one used
-        // for the original allocation). This isn't a guarantee `SampledAllocator`
-        // adds — it's just satisfying the contract our caller is on the hook for.
-        let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
-        self.inner.dealloc(freed.ptr.cast(), inner_layout);
     }
 
     #[cfg(not(target_os = "linux"))]
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        self.inner.dealloc(ptr, layout);
+        unsafe {
+            self.inner.dealloc(ptr, layout);
+        }
     }
 }
 
@@ -119,13 +125,17 @@ mod tests {
 
     unsafe impl GlobalAlloc for CountingSystem {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            self.alloc_count.fetch_add(1, Ordering::Relaxed);
-            self.last_alloc_size.store(layout.size(), Ordering::Relaxed);
-            System.alloc(layout)
+            unsafe {
+                self.alloc_count.fetch_add(1, Ordering::Relaxed);
+                self.last_alloc_size.store(layout.size(), Ordering::Relaxed);
+                System.alloc(layout)
+            }
         }
         unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            self.dealloc_count.fetch_add(1, Ordering::Relaxed);
-            System.dealloc(ptr, layout);
+            unsafe {
+                self.dealloc_count.fetch_add(1, Ordering::Relaxed);
+                System.dealloc(ptr, layout);
+            }
         }
     }
 
@@ -151,23 +161,18 @@ mod tests {
     // Touches sampler TLS internals, which only exist on Linux.
     #[cfg(target_os = "linux")]
     #[test]
-    fn lazy_init_populates_tls_on_first_alloc() {
-        // Spin a fresh thread so we start with uninitialized sampler TLS.
+    fn alloc_skips_tls_when_no_profiler_attached() {
+        // With the USDT semaphore inactive, alloc should not touch TLS.
         std::thread::spawn(|| unsafe {
-            assert!(
-                dd_tl_state_get().is_null(),
-                "fresh thread should have NULL sampler TLS"
-            );
+            assert!(dd_tl_state_get().is_null());
 
             let sampled = SampledAllocator::<System>::DEFAULT;
             let layout = Layout::from_size_align(64, 8).unwrap();
             let p = sampled.alloc(layout);
             assert!(!p.is_null());
 
-            assert!(
-                !dd_tl_state_get().is_null(),
-                "TLS should be populated after the first alloc"
-            );
+            // Semaphore inactive: TLS never initialized.
+            assert!(dd_tl_state_get().is_null());
 
             sampled.dealloc(p, layout);
         })

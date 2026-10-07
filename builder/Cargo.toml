@@ -20,11 +20,17 @@ default = [
   "ddsketch",
   "ffe",
   "shared-runtime",
+  "catch_panic",
 ]
 crashtracker = []
 profiling = []
 telemetry = []
 data-pipeline = []
+# Enable zstd compression for the agentless trace intake sender. Native builds
+# link the C implementation; WASM builds use pure-Rust zrip.
+data-pipeline-compression = ["data-pipeline"]
+# Enable client-side stats obfuscation in the data-pipeline crate.
+data-pipeline-stats-obfuscation = ["data-pipeline"]
 symbolizer = []
 library-config = []
 log = []
@@ -32,21 +38,22 @@ ddsketch = []
 ffe = []
 shared-runtime = []
 otel-thread-ctx = []
+catch_panic = []
 regex-lite = ["libdd-common/regex-lite"]
 
 [lib]
 bench = false
-test = false
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
 build_common = { path = "../build-common", features = ["cbindgen"] }
-cmake = "0.1.50"
-pico-args = "0.5.0"
-tar = "0.4.45"
+cmake.workspace = true
+pico-args.workspace = true
+# Only reads/writes tar archives; no extended-attribute handling needed.
+tar.workspace = true
 tools = { path = "../tools" }
-toml = "0.8.19"
+toml = { workspace = true, features = ["parse"] }
 serde.workspace = true
 libdd-common = { path = "../libdd-common", default-features = false }
 

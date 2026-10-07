@@ -3,11 +3,12 @@
 
 [package]
 name = "libdd-library-config"
-version = "3.0.0"
+version = "4.2.0"
 description = "Configuration management library for Datadog products."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-library-config"
-edition = "2021"
+edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [lib]
@@ -15,29 +16,40 @@ crate-type = ["lib"]
 bench = false
 
 [features]
-default = ["process-context-writer"]
+default = ["std", "process-context-writer"]
+std = [
+    "serde/std",
+    "anyhow/std",
+    "yaml_serde/std",
+    "dep:prost",
+    "dep:rand",
+    "dep:rmp-serde",
+    "dep:libdd-trace-protobuf",
+    "dep:memfd",
+    "dep:libc",
+]
 otel-thread-ctx = ["process-context-writer"]
-process-context-reader = []
-process-context-writer = []
+process-context-reader = ["std"]
+process-context-writer = ["std"]
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_yaml = "0.9.34"
-prost = "0.14.1"
+serde = { workspace = true, features = ["derive", "alloc"] }
+yaml_serde = { workspace = true }
+prost = { workspace = true, features = ["std"], optional = true }
 anyhow.workspace = true
-rand = "0.8.3"
-rmp = "0.8.14"
-rmp-serde = "1.3.0"
 
-libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
+rand = { workspace = true, default-features = true, optional = true }
+rmp-serde = { workspace = true, optional = true }
+
+libdd-trace-protobuf = { version = "5.1.0", path = "../libdd-trace-protobuf", optional = true }
 
 [dev-dependencies]
-tempfile = { version = "3.3" }
-serial_test = "3.2"
+tempfile.workspace = true
+serial_test.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-memfd = { version = "0.6" }
-libc.workspace = true
+memfd = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 
 [lints.clippy]
 std_instead_of_alloc = "warn"

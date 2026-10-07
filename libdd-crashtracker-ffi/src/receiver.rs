@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ::function_name::named;
-use libdd_common_ffi::{slice::AsBytes, wrap_with_void_ffi_result, CharSlice, VoidResult};
-#[no_mangle]
+use libdd_common_ffi::{CharSlice, VoidResult, slice::AsBytes, wrap_with_void_ffi_result};
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
@@ -20,7 +20,7 @@ pub unsafe extern "C" fn ddog_crasht_receiver_entry_point_stdin() -> VoidResult 
     wrap_with_void_ffi_result!({ libdd_crashtracker::receiver_entry_point_stdin()? })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[must_use]
 #[named]
 /// Receives data from a crash collector via a pipe on `stdin`, formats it into
