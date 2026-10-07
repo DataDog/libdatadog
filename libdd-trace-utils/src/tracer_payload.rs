@@ -302,7 +302,10 @@ fn metadata_matches_v1(
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
-        ("attributes", dest.attributes.slow_compare(&src.attributes)),
+        (
+            "attributes",
+            libdd_trace_model::value_maps_slow_eq(&dest.attributes, &src.attributes),
+        ),
     ];
 
     if fields.iter().any(|(_, eq)| !eq) {

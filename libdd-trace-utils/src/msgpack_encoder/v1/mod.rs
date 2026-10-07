@@ -96,12 +96,12 @@ pub(super) enum AnyValueKey {
 }
 
 /// Number of msgpack items written per `[type, value]` pair when typed values are flattened
-/// into a parent array (e.g. `AttributeValue::List`).
+/// into a parent array (e.g. `AttributeValue::Array`).
 pub(super) const TYPED_VALUE_STRIDE: u32 = 2;
 
 /// Number of msgpack items written per `[key, type, value]` triplet when typed attribute
 /// entries are flattened into a parent array (top-level attribute maps and
-/// `AttributeValue::KeyValue`).
+/// `AttributeValue::KeyValueList`).
 pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 
 /// Streaming string intern table.
@@ -1369,12 +1369,12 @@ mod v1_payload_tests {
         let mut attrs = VecMap::new();
         attrs.insert(
             bs("list"),
-            AttributeValue::List(vec![
+            AttributeValue::Array(vec![
                 AttributeValue::String(bs("a")),
                 AttributeValue::Bool(true),
             ]),
         );
-        attrs.insert(bs("kv"), AttributeValue::KeyValue(nested));
+        attrs.insert(bs("kv"), AttributeValue::KeyValueList(nested));
         let span = V1Span {
             service: bs("svc"),
             name: bs("op"),

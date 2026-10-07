@@ -43,7 +43,7 @@ fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
         AttributeValue::Int(i) => ProtoValue::IntValue(*i),
         AttributeValue::Float(f) => ProtoValue::DoubleValue(*f),
         AttributeValue::Bytes(b) => ProtoValue::BytesValue(b.borrow().to_vec()),
-        AttributeValue::List(items) => ProtoValue::ArrayValue(ProtoArrayValue {
+        AttributeValue::Array(items) => ProtoValue::ArrayValue(ProtoArrayValue {
             values: items
                 .iter()
                 .map(|it| ProtoAnyValue {
@@ -51,7 +51,7 @@ fn attr_value_to_proto<T: TraceData>(value: &AttributeValue<T>) -> ProtoValue {
                 })
                 .collect(),
         }),
-        AttributeValue::KeyValue(map) => ProtoValue::KvlistValue(ProtoKvList {
+        AttributeValue::KeyValueList(map) => ProtoValue::KvlistValue(ProtoKvList {
             values: map
                 .defensive_dedup()
                 .iter()
@@ -664,7 +664,7 @@ mod tests_v1 {
         let mut span = minimal_span();
         span.attributes.insert(
             bs("list"),
-            AttributeValue::List(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
+            AttributeValue::Array(vec![AttributeValue::Int(1), AttributeValue::Int(2)]),
         );
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
@@ -686,7 +686,7 @@ mod tests_v1 {
         let mut nested = crate::span::vec_map::VecMap::new();
         nested.insert(bs("nested_key"), AttributeValue::String(bs("nested_val")));
         span.attributes
-            .insert(bs("kv"), AttributeValue::KeyValue(nested));
+            .insert(bs("kv"), AttributeValue::KeyValueList(nested));
         let chunk = minimal_chunk([1; 16], span);
         let req = map_traces_to_otlp_v1(&[chunk], &OtlpResourceInfo::default(), false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];

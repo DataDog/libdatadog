@@ -429,7 +429,7 @@ fn nested_bytes_attribute_in_list_is_routed_to_meta_struct() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     attrs.insert(
         bs("items"),
-        AttributeValue::List(vec![
+        AttributeValue::Array(vec![
             AttributeValue::String(bs("first")),
             AttributeValue::Bytes(libdd_tinybytes::Bytes::from(payload)),
         ]),
@@ -483,7 +483,7 @@ fn nested_key_value_attribute_is_flattened_with_dotted_keys() {
     let mut inner: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     inner.insert(bs("b"), AttributeValue::String(bs("v")));
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-    attrs.insert(bs("a"), AttributeValue::KeyValue(inner));
+    attrs.insert(bs("a"), AttributeValue::KeyValueList(inner));
     let span = SpanBytes {
         attributes: attrs,
         ..minimal_span()
@@ -501,7 +501,7 @@ fn nested_attribute_flattening_to_a_promoted_key_does_not_override_dedicated_fie
         AttributeValue::String(bs("attacker-controlled")),
     );
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
-    attrs.insert(bs("_dd"), AttributeValue::KeyValue(inner));
+    attrs.insert(bs("_dd"), AttributeValue::KeyValueList(inner));
     let chunk = TraceChunkBytes {
         origin: bs("rum"),
         attributes: attrs,
@@ -683,7 +683,7 @@ fn span_event_list_attribute_becomes_json_array_of_scalars() {
     let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
     attrs.insert(
         bs("list"),
-        AttributeValue::List(vec![
+        AttributeValue::Array(vec![
             AttributeValue::String(bs("a")),
             AttributeValue::Int(2),
         ]),

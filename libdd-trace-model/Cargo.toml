@@ -1,0 +1,16 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-trace-model"
+version = "0.1.0"
+description = "Shared data model (attribute values and traits) for Datadog trace data"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-model"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-model"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
