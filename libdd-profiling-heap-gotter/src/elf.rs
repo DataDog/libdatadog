@@ -235,11 +235,16 @@ impl SymbolOverrides {
     ///
     /// # Safety
     ///
-    /// `dyn_info` must be valid for a currently-loaded object (see
-    /// [`Self::apply_to_library`]); `sym_index` and `r_offset` must come from
-    /// that object's own relocation table; and `guard` must belong to the
-    /// current patching pass. Dereferences `dyn_info`'s symtab/strtab and
-    /// writes process memory through `guard`.
+    /// - `dyn_info` must be valid for a currently-loaded object (see
+    /// [`Self::apply_to_library`])
+    /// - `sym_index` and `r_offset` must come from that object's own relocation table
+    /// - `guard` must be scoped to `dyn_info`:
+    ///   - if `guard` is `Some(_)`, the guard must have been initialized in the enclosing
+    ///     `iterate_libraries` callback after reading the current `dyn_info`.
+    ///     Initialization matters because it's when permissions are snapshotted.
+    ///   - `guard` must be dropped before the enclosing `iterate_libraries` callback returns.
+    ///
+    /// Dereferences `dyn_info`'s symtab/strtab and writes process memory through `guard`.
     unsafe fn process_relocation(
         overrides: &HashMap<String, OverrideInfo>,
         dyn_info: &DynamicInfo,
