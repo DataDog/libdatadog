@@ -236,7 +236,7 @@ impl SymbolOverrides {
     /// # Safety
     ///
     /// - `dyn_info` must be valid for a currently-loaded object (see
-    /// [`Self::apply_to_library`])
+    ///   [`Self::apply_to_library`])
     /// - `sym_index` and `r_offset` must come from that object's own relocation table
     /// - `guard` must be scoped to `dyn_info`:
     ///   - if `guard` is `Some(_)`, the guard must have been initialized in the enclosing
