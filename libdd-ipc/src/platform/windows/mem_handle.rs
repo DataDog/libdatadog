@@ -4,7 +4,7 @@
 use crate::platform::mem_handle::page_aligned_size;
 use crate::platform::{
     FileBackedHandle, MappedMem, MemoryHandle, NamedShmHandle, OwnedFileHandle, PlatformHandle,
-    ShmHandle, ShmPath,
+    ProcessIdentityGuard, ShmHandle, ShmPath,
 };
 use std::ffi::{CStr, CString};
 use std::io::Error;
@@ -122,6 +122,7 @@ fn section(handle: HANDLE) -> io::Result<Section> {
 }
 
 fn open_section(name: &CStr) -> io::Result<Section> {
+    let _identity = ProcessIdentityGuard::enter();
     section(unsafe { OpenFileMappingA(FILE_MAP_WRITE, 0, name.as_ptr() as PCSTR) })
 }
 
@@ -130,6 +131,8 @@ fn open_section(name: &CStr) -> io::Result<Section> {
 fn alloc_shm(name: PCSTR) -> io::Result<(Section, bool)> {
     let maximum_size = u32::try_from(MAPPING_MAX_SIZE)
         .map_err(|error| Error::new(io::ErrorKind::InvalidInput, error))?;
+    // Created as the process identity so that the sidecar can open it.
+    let _identity = ProcessIdentityGuard::enter();
     let handle = unsafe {
         CreateFileMappingA(
             INVALID_HANDLE_VALUE,
@@ -211,6 +214,7 @@ const INDEX_SIZE: usize = 0x1000;
 
 impl ShmIndex {
     fn create_or_open(name: &CStr) -> io::Result<ShmIndex> {
+        let _identity = ProcessIdentityGuard::enter();
         let handle = unsafe {
             CreateFileMappingA(
                 INVALID_HANDLE_VALUE,

@@ -373,6 +373,11 @@ pub fn start_or_connect_to_sidecar_with_entrypoint(
         libdd_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
 
+    // The pipes and the spawned daemon must belong to the process identity, not to an
+    // impersonated user.
+    #[cfg(windows)]
+    let _identity = libdd_ipc::platform::ProcessIdentityGuard::enter();
+
     let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
     // On macos only actually listening binds the sidecar socket, so there might be a race, unlike
