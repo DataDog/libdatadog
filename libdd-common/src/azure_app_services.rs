@@ -20,6 +20,7 @@ const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
 const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
+const WEBSITE_SLOT_NAME: &str = "WEBSITE_SLOT_NAME";
 pub const WEBSITE_SKU: &str = "WEBSITE_SKU";
 pub const REGION_NAME: &str = "REGION_NAME";
 
@@ -75,7 +76,9 @@ const AAS_VAR_NAMES: &[&str] = &[
     FUNCTIONS_WORKER_RUNTIME_VERSION,
     FUNCTIONS_EXTENSION_VERSION,
     DD_AZURE_RESOURCE_GROUP,
+    WEBSITE_SLOT_NAME,
     WEBSITE_SKU,
+    REGION_NAME,
 ];
 
 #[cfg(target_os = "linux")]
@@ -159,6 +162,7 @@ pub struct AzureMetadata {
     subscription_id: Option<String>,
     site_name: Option<String>,
     resource_group: Option<String>,
+    region: Option<String>,
     extension_version: Option<String>,
     operating_system: String,
     instance_name: Option<String>,
@@ -200,20 +204,30 @@ impl AzureMetadata {
         })
     }
 
-    /*
-     * Computation of the resource id follow the same way the .NET tracer is doing:
-     * https://github.com/DataDog/dd-trace-dotnet/blob/834a4b05b4ed91a819eb78761bf1ddb805969f65/tracer/src/Datadog.Trace/PlatformHelpers/AzureAppServices.cs#L215
-     */
+    // The base resource ID matches the .NET tracer implementation. A
+    // non-production deployment slot is a distinct Azure resource, so append
+    // its `/slots/{slot}` ARM path before canonicalizing the ID.
+    // https://github.com/DataDog/dd-trace-dotnet/blob/834a4b05b4ed91a819eb78761bf1ddb805969f65/tracer/src/Datadog.Trace/PlatformHelpers/AzureAppServices.cs#L215
     fn build_resource_id(
         subscription_id: Option<&String>,
         site_name: Option<&String>,
         resource_group: Option<&String>,
+        slot_name: Option<&String>,
     ) -> Option<String> {
         match (subscription_id, site_name, resource_group) {
-            (Some(id_sub), Some(sitename), Some(res_grp)) => Some(
-                format!("/subscriptions/{id_sub}/resourcegroups/{res_grp}/providers/microsoft.web/sites/{sitename}")
-                .to_lowercase(),
-            ),
+            (Some(id_sub), Some(sitename), Some(res_grp)) => {
+                let mut resource_id = format!(
+                    "/subscriptions/{id_sub}/resourcegroups/{res_grp}/providers/microsoft.web/sites/{sitename}"
+                );
+                if let Some(slot) = slot_name
+                    .map(|slot| slot.trim())
+                    .filter(|slot| !slot.is_empty() && !slot.eq_ignore_ascii_case("production"))
+                {
+                    resource_id.push_str("/slots/");
+                    resource_id.push_str(slot);
+                }
+                Some(resource_id.to_lowercase())
+            }
             _ => None,
         }
     }
@@ -229,6 +243,8 @@ impl AzureMetadata {
         };
 
         let website_sku = query.get_var(WEBSITE_SKU);
+        let region = query.get_var(REGION_NAME);
+        let slot_name = query.get_var(WEBSITE_SLOT_NAME);
 
         let resource_group = query
             .get_var(DD_AZURE_RESOURCE_GROUP)
@@ -249,6 +265,7 @@ impl AzureMetadata {
             subscription_id.as_ref(),
             site_name.as_ref(),
             resource_group.as_ref(),
+            slot_name.as_ref(),
         );
         let extension_version = query.get_var(SITE_EXTENSION_VERSION);
         let operating_system = query
@@ -275,6 +292,7 @@ impl AzureMetadata {
             subscription_id,
             site_name,
             resource_group,
+            region,
             extension_version,
             operating_system,
             instance_name,
@@ -324,6 +342,10 @@ impl AzureMetadata {
 
     pub fn get_resource_group(&self) -> &str {
         get_value_or_unknown!(self.resource_group)
+    }
+
+    pub fn get_region(&self) -> &str {
+        get_value_or_unknown!(self.region)
     }
 
     pub fn get_extension_version(&self) -> &str {
@@ -731,6 +753,51 @@ mod tests {
             metadata.get_resource_id(),
             "/subscriptions/foo/resourcegroups/resource_group/providers/microsoft.web/sites/my_website"
         )
+    }
+
+    #[test]
+    fn test_build_resource_id_with_deployment_slot() {
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_OWNER_NAME, "foo"),
+            (WEBSITE_SITE_NAME, "my_website"),
+            (WEBSITE_RESOURCE_GROUP, "resource_group"),
+            (WEBSITE_SLOT_NAME, " Staging "),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        assert_eq!(
+            metadata.get_resource_id(),
+            "/subscriptions/foo/resourcegroups/resource_group/providers/microsoft.web/sites/my_website/slots/staging"
+        );
+    }
+
+    #[test]
+    fn test_build_resource_id_omits_production_slot() {
+        let mocked_env = MockEnv::new(&[
+            (WEBSITE_OWNER_NAME, "foo"),
+            (WEBSITE_SITE_NAME, "my_website"),
+            (WEBSITE_RESOURCE_GROUP, "resource_group"),
+            (WEBSITE_SLOT_NAME, " Production "),
+            (SERVICE_CONTEXT, "1"),
+        ]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        assert_eq!(
+            metadata.get_resource_id(),
+            "/subscriptions/foo/resourcegroups/resource_group/providers/microsoft.web/sites/my_website"
+        );
+    }
+
+    #[test]
+    fn test_region() {
+        let mocked_env = MockEnv::new(&[(REGION_NAME, "eastus2"), (SERVICE_CONTEXT, "1")]);
+
+        let metadata = AzureMetadata::new(mocked_env).unwrap();
+
+        assert_eq!(metadata.get_region(), "eastus2");
     }
 
     #[test]
