@@ -55,6 +55,8 @@ impl Drop for Page {
 
 #[test]
 fn skips_pages_missing_from_the_snapshot() {
+    use std::time::Instant;
+
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
     let mut guard = PageProtGuard::new();
 
@@ -62,20 +64,44 @@ fn skips_pages_missing_from_the_snapshot() {
     // the snapshot can land on an address that was mapped at snapshot time
     // Scanning the snapshot for a gap and using MAP_FIXED avoids this.
     let mut gap = 0x10000; // above typical vm.mmap_min_addr
-    while guard.original_prot(gap).is_some() {
+    // If for some reason the platform doesn't allow finding a suitable address, let's not randomly
+    // scan the whole addressable 64bit space and fail the test with a timeout instead.
+    let start_time = Instant::now();
+    const MAX_SCAN_TIMEOUT_MS: u128 = 2000;
+
+    let ptr = loop {
+        if guard.original_prot(gap).is_some() {
+            gap += page_size;
+            continue;
+        }
+
+        let ptr = unsafe {
+            libc::mmap(
+                gap as *mut libc::c_void,
+                page_size,
+                PROT_READ | PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE,
+                -1,
+                0,
+            )
+        };
+
+        // If the kernel didn't hand us `gap` but still provided an address that wasn't in the
+        // snapshot (can happen on old kernels that don't support `MAP_FIXED_NO_REPLACE`), that's
+        // good enough.
+        if ptr != libc::MAP_FAILED && guard.original_prot(ptr as usize).is_none() {
+            break ptr;
+        }
+
         gap += page_size;
-    }
-    let ptr = unsafe {
-        libc::mmap(
-            gap as *mut libc::c_void,
-            page_size,
-            PROT_READ | PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
-            -1,
-            0,
-        )
+
+        if start_time.elapsed().as_millis() > MAX_SCAN_TIMEOUT_MS {
+            panic!(
+                "Timeout elapsed ({MAX_SCAN_TIMEOUT_MS} ms): couldn't find a suitable page address candidate that wasn't in the original snapshot in reasonable time"
+            );
+        }
     };
-    assert_ne!(ptr, libc::MAP_FAILED);
+
     unsafe { ptr.cast::<usize>().write(42) };
 
     assert_eq!(guard.original_prot(ptr as usize), None);
