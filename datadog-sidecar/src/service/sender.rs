@@ -238,12 +238,16 @@ impl SidecarSender {
         if status != FfeSubmissionStatus::PayloadTooLarge {
             return status;
         }
-        if let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut request
-            && let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice()
-            && let [event] = batch.flag_evaluations.as_mut_slice()
-            && !event.is_degraded
-            && (event.targeting_key.is_some() || event.context.is_some())
-        {
+        let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut request else {
+            return status;
+        };
+        let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice() else {
+            return status;
+        };
+        let [event] = batch.flag_evaluations.as_mut_slice() else {
+            return status;
+        };
+        if !event.is_degraded && (event.targeting_key.is_some() || event.context.is_some()) {
             // Match the final EVP size fallback. Move straight to the reduced
             // send: no second admission, load-shed decision, or retained copy.
             event.targeting_key = None;
