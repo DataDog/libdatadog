@@ -295,60 +295,70 @@ fn ffe_shedding_advances_only_once_per_submission_and_never_bypasses_cap() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn ffe_pending_configuration_is_not_bypassed_on_congestion() {
+fn ffe_pending_configuration_recovers_or_reports_macos_connection_closure() {
     let (mut sender, peer) = pair();
     full_socket(&sender, &peer);
     sender.set_session_default_service_name(Some("configured".into()));
     let status = sender.try_submit_ffe(|| panic!("priority before copy"));
-    // Depending on the kernel refusal, macOS can close the connection rather
-    // than retain it. FFE must not bypass pending state or reconnect itself.
-    #[cfg(target_os = "macos")]
-    if status == Status::Unavailable {
-        assert!(sender.channel.0.is_closed());
-        assert_eq!(sender.check_ffe_submission(), Status::Unavailable);
-        assert_eq!(
-            sender.try_submit_ffe(|| panic!("closed before copy")),
-            Status::Unavailable
-        );
-        return;
+    match status {
+        Status::PriorityPending => {
+            // Recoverable congestion: verify priority ordering after draining.
+            let mut buf = vec![0; libdd_ipc::max_message_size()];
+            while peer.try_recv_raw(&mut buf).is_ok() {}
+            assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
+            assert!(
+                matches!(receive(&peer), SidecarInterfaceRequest::SetSessionDefaultServiceName { name: Some(name) } if name == "configured")
+            );
+            assert!(matches!(
+                receive(&peer),
+                SidecarInterfaceRequest::EnqueueActions { .. }
+            ));
+        }
+        #[cfg(target_os = "macos")]
+        Status::Unavailable => {
+            // ENOBUFS can close macOS's datagram transport. This branch verifies
+            // rejection before capture, not ordering or lifecycle recovery.
+            assert!(sender.channel.0.is_closed());
+            assert_eq!(sender.check_ffe_submission(), Status::Unavailable);
+            assert_eq!(
+                sender.try_submit_ffe(|| panic!("closed before copy")),
+                Status::Unavailable
+            );
+        }
+        other => panic!("unexpected pending-configuration congestion outcome: {other:?}"),
     }
-    assert_eq!(status, Status::PriorityPending);
-    let mut buf = vec![0; libdd_ipc::max_message_size()];
-    while peer.try_recv_raw(&mut buf).is_ok() {}
-    assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
-    assert!(
-        matches!(receive(&peer), SidecarInterfaceRequest::SetSessionDefaultServiceName { name: Some(name) } if name == "configured")
-    );
-    assert!(matches!(
-        receive(&peer),
-        SidecarInterfaceRequest::EnqueueActions { .. }
-    ));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn ffe_post_check_congestion_follows_transport_policy() {
+fn ffe_post_check_congestion_recovers_or_reports_macos_connection_closure() {
     let (mut sender, peer) = pair();
     assert_eq!(sender.check_ffe_submission(), Status::Ready);
     full_socket(&sender, &peer);
     let status = sender.try_submit_ffe(|| Ok(request()));
     assert_eq!(sender.channel.0.outstanding(), 0);
-    #[cfg(target_os = "macos")]
-    if status == Status::Unavailable {
-        assert!(sender.channel.0.is_closed());
-        assert_eq!(sender.check_ffe_submission(), Status::Unavailable);
-        assert_eq!(
-            sender.try_submit_ffe(|| panic!("closed before copy")),
-            Status::Unavailable
-        );
-        return;
+    match status {
+        Status::WouldBlock => {
+            // Recoverable congestion: a later observation can use this socket.
+            assert!(!sender.channel.0.is_closed());
+            let mut buf = vec![0; libdd_ipc::max_message_size()];
+            while peer.try_recv_raw(&mut buf).is_ok() {}
+            assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
+            receive(&peer);
+        }
+        #[cfg(target_os = "macos")]
+        Status::Unavailable => {
+            // Closed transport: FFE must not capture again or reconnect here.
+            // Successful recovery via the PHP lifecycle is a separate check.
+            assert!(sender.channel.0.is_closed());
+            assert_eq!(sender.check_ffe_submission(), Status::Unavailable);
+            assert_eq!(
+                sender.try_submit_ffe(|| panic!("closed before copy")),
+                Status::Unavailable
+            );
+        }
+        other => panic!("unexpected post-check congestion outcome: {other:?}"),
     }
-    assert_eq!(status, Status::WouldBlock);
-    assert!(!sender.channel.0.is_closed());
-    let mut buf = vec![0; libdd_ipc::max_message_size()];
-    while peer.try_recv_raw(&mut buf).is_ok() {}
-    assert_eq!(sender.try_submit_ffe(|| Ok(request())), Status::Accepted);
-    receive(&peer);
 }
 
 #[test]
