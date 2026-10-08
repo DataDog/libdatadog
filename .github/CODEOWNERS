@@ -52,7 +52,7 @@ libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-gotter/                        @DataDog/libdatadog @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
-libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
+libdd-library-config*/               @DataDog/apm-sdk-capabilities
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
 libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
@@ -112,10 +112,10 @@ bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
 tools/cc_utils/                      @DataDog/libdatadog-php
 tools/sidecar_mockgen/               @DataDog/libdatadog-php
-libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
-libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
-libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
-libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust @DataDog/apm-common-components-core
+libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
+libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
+libdd-data-pipeline/tests/test_trace_exporter_otlp_grpc.rs @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
+libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities @DataDog/apm-common-components-core
 datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
 .github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core
@@ -162,9 +162,9 @@ libdd-trace-stats/CHANGELOG.md               @DataDog/apm-common-components-core
 libdd-trace-stats/Cargo.toml                 @DataDog/apm-common-components-core @DataDog/libdatadog-release
 tools/Cargo.toml                             @DataDog/apm-common-components-core @DataDog/libdatadog-release
 
-libdd-library-config-ffi/Cargo.toml          @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
-libdd-library-config/CHANGELOG.md            @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
-libdd-library-config/Cargo.toml              @DataDog/apm-sdk-capabilities-rust @DataDog/libdatadog-release
+libdd-library-config-ffi/Cargo.toml          @DataDog/apm-sdk-capabilities @DataDog/libdatadog-release
+libdd-library-config/CHANGELOG.md            @DataDog/apm-sdk-capabilities @DataDog/libdatadog-release
+libdd-library-config/Cargo.toml              @DataDog/apm-sdk-capabilities @DataDog/libdatadog-release
 
 libdd-ffe-ffi/Cargo.toml                     @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
 libdd-ffe-test-suite/Cargo.toml              @DataDog/feature-flagging-and-experimentation-sdk @DataDog/libdatadog-release
