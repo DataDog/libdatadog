@@ -105,7 +105,11 @@ fn late_load_preserves_data_and_relro_permissions() {
         // This test relies on the double walk to land the `dlopen` after the lookup bet before the
         // patch. It's an implementation detail that could change in the future. In this case, the
         // test needs to be updated.
-        assert_eq!(WALKS.with(Cell::get), 2, "expected lookup walk + patch walk");
+        assert_eq!(
+            WALKS.with(Cell::get),
+            2,
+            "expected lookup walk + patch walk"
+        );
         let library = Library(handle);
         assert!(result.entries_patched > 0);
         assert_eq!(result.entries_failed, 0);
