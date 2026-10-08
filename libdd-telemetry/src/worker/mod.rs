@@ -235,8 +235,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     ///
     /// Discards inherited pending telemetry state and dedupe history without sending anything, and
     /// drains the mailbox so that actions queued before the fork are not processed by the
-    /// child.
+    /// child. The child's sequence starts at one; the host must install its new identity
+    /// before restarting the worker.
     fn reset(&mut self) {
+        self.seq_id.store(1, Ordering::Relaxed);
         let mut start_pending = matches!(
             self.next_action,
             Some(TelemetryActions::Lifecycle(LifecycleAction::Start))
@@ -2072,6 +2074,91 @@ mod tests {
                     is_crash: false,
                 },
             )
+        }
+
+        #[cfg_attr(miri, ignore)]
+        #[test]
+        fn fork_child_starts_a_new_sequence_without_resetting_the_parent() {
+            use crate::config::TelemetryEndpoint;
+            use httpmock::prelude::*;
+            use libdd_common::mutable_metadata::InstrumentationSession;
+            use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
+
+            let server = MockServer::start();
+            let runtime = ForkSafeRuntime::new().unwrap();
+            let metadata = MutableMetadataHandle::default();
+            metadata.set_identity(
+                "parent".into(),
+                InstrumentationSession {
+                    id: "parent".into(),
+                    ..Default::default()
+                },
+            );
+            let mut builder = TelemetryWorkerBuilder::new(
+                "host".into(),
+                "service".into(),
+                "ruby".into(),
+                "1".into(),
+                "1".into(),
+            );
+            builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
+            builder.mutable_metadata = Some(metadata.clone());
+            builder.config.telemetry_heartbeat_interval = Duration::from_secs(3600);
+            builder
+                .config
+                .set_endpoint(TelemetryEndpoint {
+                    url: Some(server.url("/")),
+                    ..Default::default()
+                })
+                .unwrap();
+            let (handle, worker) = builder.build_worker::<NativeCapabilities>(None);
+            let _worker = runtime.spawn_worker(worker, true).unwrap();
+            handle.send_start().unwrap();
+
+            let mut log_id = 0;
+            let mut flush = |id: &str, seq: u64| {
+                let mock = server.mock(|when, then| {
+                    when.method(POST)
+                        .header("dd-session-id", id)
+                        .body_includes(format!(r#""runtime_id":"{id}""#))
+                        .body_includes(format!(r#""seq_id":{seq},"#));
+                    then.status(202);
+                });
+                log_id += 1;
+                handle
+                    .try_send_msg(TelemetryActions::AddLog(make_log(log_id, "observation")))
+                    .unwrap();
+                handle
+                    .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                    .unwrap();
+                runtime.block_on(handle.stats().unwrap()).unwrap().unwrap();
+                assert_eq!(mock.calls(), 1, "runtime {id}, sequence {seq}");
+            };
+
+            flush("parent", 1);
+            flush("parent", 2);
+            // Successful and failed forks both use the parent-resume path.
+            for seq in [3, 4] {
+                runtime.before_fork();
+                runtime.after_fork_parent().unwrap();
+                flush("parent", seq);
+            }
+
+            for (id, parent) in [("child", "parent"), ("grandchild", "child")] {
+                runtime.before_fork();
+                metadata.set_identity(
+                    id.into(),
+                    InstrumentationSession {
+                        id: id.into(),
+                        root_id: "parent".into(),
+                        parent_id: parent.into(),
+                    },
+                );
+                runtime.after_fork_child().unwrap();
+                flush(id, 1);
+                flush(id, 2);
+            }
+            runtime.shutdown(None).unwrap();
         }
 
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
