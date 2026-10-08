@@ -11,6 +11,7 @@
 //!
 //! `SidecarSender` takes `&mut self`; the caller is responsible for exclusive access.
 
+use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::{
     EvpTransportConfigWithIdentity, InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig,
     SidecarAction,
@@ -28,6 +29,9 @@ use libdd_trace_utils::trace_utils::TracerGenericTags;
 use std::collections::{BTreeMap, HashMap};
 use std::{io, time::Duration};
 use tracing::trace;
+
+#[cfg(all(test, unix))]
+mod ffe_submission_tests;
 
 /// Priority outbox for state-change (coalesced) messages.
 ///
@@ -179,6 +183,170 @@ pub struct SidecarSender {
 }
 
 impl SidecarSender {
+    /// Advisory FFE admission check. Drains available ACKs but never waits,
+    /// reconnects, advances shedding, or reserves a slot.
+    pub fn check_ffe_submission(&mut self) -> FfeSubmissionStatus {
+        if self.channel.0.is_closed() {
+            return FfeSubmissionStatus::Unavailable;
+        }
+        if self.channel.0.outstanding() >= self.max_outstanding / 2 {
+            self.channel.0.drain_acks();
+        }
+        if self.channel.0.is_closed() {
+            FfeSubmissionStatus::Unavailable
+        } else if self.channel.0.outstanding() >= self.max_outstanding {
+            FfeSubmissionStatus::QueueFull
+        } else {
+            FfeSubmissionStatus::Ready
+        }
+    }
+
+    /// Submit one FFE observation without waiting or reconnecting. `build` runs
+    /// only after admission; it must bound and normalize borrowed input before
+    /// ownership. No request is retained when submission is rejected.
+    /// A size rejection gets one retry without targeting key or event context.
+    /// Both full and degraded observations return `Accepted` on success.
+    /// Retains the existing transport policy: macOS `ENOBUFS` can close the
+    /// connection, unlike `WouldBlock`. Further observations are skipped until
+    /// an ordinary transport/lifecycle operation reconnects outside evaluation.
+    pub fn try_submit_ffe<F>(&mut self, build: F) -> FfeSubmissionStatus
+    where
+        F: FnOnce() -> Result<SidecarInterfaceRequest, FfeSubmissionStatus>,
+    {
+        let status = self.check_ffe_submission();
+        if status != FfeSubmissionStatus::Ready {
+            return status;
+        }
+        if let Err(status) = self.try_drain_ffe_outbox() {
+            return status;
+        }
+        let status = self.check_ffe_submission();
+        if status != FfeSubmissionStatus::Ready {
+            return status;
+        }
+        if self.channel.0.outstanding() > self.max_outstanding / 2 {
+            self.enqueue_actions_counter = self.enqueue_actions_counter.wrapping_add(1) % 10;
+            if self.enqueue_actions_counter != 0 {
+                return FfeSubmissionStatus::LoadShed;
+            }
+        }
+        let mut request = match build() {
+            Ok(request) => request,
+            Err(status) => return status,
+        };
+        if !matches!(&request, SidecarInterfaceRequest::EnqueueActions { actions, .. }
+            if matches!(actions.as_slice(), [SidecarAction::FfeFlagEvaluationBatch(batch)]
+                if batch.flag_evaluations.len() == 1))
+        {
+            return FfeSubmissionStatus::InvalidInput;
+        }
+        let status = Self::try_send_ffe_request(&mut self.channel, &request);
+        if status != FfeSubmissionStatus::PayloadTooLarge {
+            return status;
+        }
+        let SidecarInterfaceRequest::EnqueueActions { actions, .. } = &mut request else {
+            return status;
+        };
+        let [SidecarAction::FfeFlagEvaluationBatch(batch)] = actions.as_mut_slice() else {
+            return status;
+        };
+        let [event] = batch.flag_evaluations.as_mut_slice() else {
+            return status;
+        };
+        if !event.is_degraded && (event.targeting_key.is_some() || event.context.is_some()) {
+            // Match the final EVP size fallback. Move straight to the reduced
+            // send: no second admission, load-shed decision, or retained copy.
+            event.targeting_key = None;
+            event.context = None;
+            event.is_degraded = true;
+            return Self::try_send_ffe_request(&mut self.channel, &request);
+        }
+        status
+    }
+
+    /// FFE also sends pending configuration, which can fail serialization (for
+    /// example, a non-UTF-8 log path). Keep that failure out of the C boundary and
+    /// leave the failed slot, and all later slots, queued for lifecycle recovery.
+    fn try_drain_ffe_outbox(&mut self) -> Result<(), FfeSubmissionStatus> {
+        // Match the ordinary sender's order: session, per-target EVP policies,
+        // then the remaining state. An observation must not overtake its route
+        // or producer identity, including after a partial drain or reconnect.
+        if let Some(request) = &self.outbox.set_session_config {
+            Self::try_send_ffe_priority(&mut self.channel, self.max_outstanding, request)?;
+            self.outbox.set_session_config = None;
+        }
+        while let Some(entry) = self.outbox.set_session_evp_transports.first_entry() {
+            Self::try_send_ffe_priority(&mut self.channel, self.max_outstanding, entry.get())?;
+            entry.remove();
+        }
+        for slot in self.outbox.remaining_slots_mut() {
+            if let Some(request) = slot {
+                Self::try_send_ffe_priority(&mut self.channel, self.max_outstanding, request)?;
+                *slot = None;
+            }
+        }
+        Ok(())
+    }
+
+    fn try_send_ffe_priority(
+        channel: &mut SidecarInterfaceChannel,
+        max_outstanding: u64,
+        request: &SidecarInterfaceRequest,
+    ) -> Result<(), FfeSubmissionStatus> {
+        if channel.0.outstanding() >= max_outstanding {
+            return Err(FfeSubmissionStatus::PriorityPending);
+        }
+        match Self::try_send_ffe_request(channel, request) {
+            FfeSubmissionStatus::Accepted => Ok(()),
+            FfeSubmissionStatus::WouldBlock => Err(FfeSubmissionStatus::PriorityPending),
+            status => Err(status),
+        }
+    }
+
+    /// Fallible send for an observation or the configuration that precedes it.
+    /// Other producers retain their existing generated send path.
+    fn try_send_ffe_request(
+        channel: &mut SidecarInterfaceChannel,
+        request: &SidecarInterfaceRequest,
+    ) -> FfeSubmissionStatus {
+        let size = match bincode::serialized_size(&request) {
+            Ok(size) => size,
+            Err(_) => return FfeSubmissionStatus::EncodingError,
+        };
+        let Ok(size) = usize::try_from(size) else {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        };
+        if size > libdd_ipc::max_message_size() {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        }
+        let Some(capacity) = size.checked_add(libdd_ipc::platform::HANDLE_SUFFIX_SIZE) else {
+            return FfeSubmissionStatus::PayloadTooLarge;
+        };
+        let mut data = Vec::with_capacity(capacity);
+        if bincode::serialize_into(&mut data, &request).is_err() {
+            return FfeSubmissionStatus::EncodingError;
+        }
+        // Configuration can transfer handles on Windows. Preserve those and the
+        // request's ACK policy, just like the ordinary generated send method.
+        let mut sink = libdd_ipc::handles::FdSink::new();
+        let Ok(()) = libdd_ipc::handles::TransferHandles::copy_handles(request, &mut sink);
+        let handles = sink.into_fds();
+        let result = if request.expects_response() {
+            channel.0.try_send_with_rejection(data, &handles)
+        } else {
+            channel.0.conn.try_send_raw(data, &handles)
+        };
+        match result {
+            Ok(()) => FfeSubmissionStatus::Accepted,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => FfeSubmissionStatus::WouldBlock,
+            #[cfg(unix)]
+            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                FfeSubmissionStatus::PayloadTooLarge
+            }
+            Err(_) => FfeSubmissionStatus::Unavailable,
+        }
+    }
+
     pub fn new(channel: SidecarInterfaceChannel) -> Self {
         Self {
             channel,

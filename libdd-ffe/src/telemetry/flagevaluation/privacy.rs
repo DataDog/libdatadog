@@ -13,10 +13,12 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, strum_macros::EnumIter, strum_macros::EnumCount)]
 #[repr(usize)]
 pub enum ContextTruncationReason {
+    /// Top-level context width or the shared retained-leaf budget was exceeded.
     MaxContextFields,
     MaxKeyLength,
     MaxValueLength,
     MaxListElements,
+    /// A nested object's property limit was exceeded.
     MaxStructureProperties,
     MaxSnapshotDepth,
     MaxVisitedNodes,
@@ -145,8 +147,11 @@ impl<'a> Snapshot<'a> {
     ) -> Map<String, Value> {
         let mut result = Map::new();
         if len > MAX_CONTEXT_FIELDS {
-            self.omissions
-                .record_context(ContextTruncationReason::MaxStructureProperties);
+            self.omissions.record_context(if depth == 1 {
+                ContextTruncationReason::MaxContextFields
+            } else {
+                ContextTruncationReason::MaxStructureProperties
+            });
         }
         // Map/BTreeMap already have stable iteration; never collect/sort an
         // unbounded set of keys or search past the inspected prefix for a fit.
@@ -274,6 +279,35 @@ mod tests {
             assert_eq!(context_json(raw, &mut omissions), None);
             assert!(omissions.contains_context(ContextTruncationReason::SnapshotError));
             assert!(!format!("{omissions:?}").contains("private-canary"));
+        }
+    }
+
+    #[test]
+    fn root_and_nested_object_widths_report_distinct_reasons() {
+        let attrs: Map<String, Value> = (0..257)
+            .map(|i| (format!("field{i:03}"), json!("kept")))
+            .collect();
+        for nested in [false, true] {
+            let raw = if nested {
+                json!({"nested": attrs})
+            } else {
+                json!(attrs)
+            };
+            let mut omissions = FieldOmissions::default();
+            let retained = context_value(&raw.to_string(), &mut omissions).unwrap();
+            let fields = if nested {
+                &retained["nested"]
+            } else {
+                &retained
+            };
+            assert_eq!(fields.as_object().unwrap().len(), 256);
+            let mut expected = FieldOmissions::default();
+            expected.record_context(if nested {
+                ContextTruncationReason::MaxStructureProperties
+            } else {
+                ContextTruncationReason::MaxContextFields
+            });
+            assert_eq!(omissions, expected);
         }
     }
 

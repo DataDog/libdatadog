@@ -5,8 +5,11 @@ use super::{
     DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
+use crate::service::ffe_submission::FfeSubmissionStatus;
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
+use crate::service::sidecar_interface::{
+    SidecarInterfaceChannel, SidecarInterfaceClientRequest, SidecarInterfaceRequest,
+};
 use libdd_common::MutexExt;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
@@ -19,7 +22,7 @@ use libdd_telemetry::metrics::MetricContext;
 use libdd_trace_utils::trace_utils::TracerGenericTags;
 use serde::Serialize;
 use std::cell::Cell;
-use std::sync::Mutex;
+use std::sync::{Mutex, TryLockError};
 use std::{
     io,
     time::{Duration, Instant},
@@ -29,7 +32,8 @@ use tracing::warn;
 /// `SidecarTransport` wraps a [`SidecarSender`] with transparent reconnection support.
 ///
 /// This transport is used for communication between different parts of the sidecar service.
-/// It is a blocking transport (all operations block the current thread).
+/// Most operations block; the FFE check/try-submit functions explicitly do not
+/// wait for the sender lock, capacity, or reconnection.
 pub struct SidecarTransport {
     pub inner: Mutex<SidecarSender>,
     /// If provided, whenever a connection error is encountered, the connection will be
@@ -215,6 +219,28 @@ impl From<SeqpacketConn> for SidecarTransport {
             inner: Mutex::new(SidecarSender::new(SidecarInterfaceChannel::new(conn))),
             reconnect_fn: None,
         }
+    }
+}
+
+/// Advisory FFE readiness check. Never waits for the mutex or reconnects.
+pub fn check_ffe_submission(transport: &SidecarTransport) -> FfeSubmissionStatus {
+    match transport.inner.try_lock() {
+        Ok(mut sender) => sender.check_ffe_submission(),
+        Err(TryLockError::WouldBlock) => FfeSubmissionStatus::Busy,
+        Err(TryLockError::Poisoned(_)) => FfeSubmissionStatus::Unavailable,
+    }
+}
+
+/// Best-effort, non-reconnecting FFE submission. Snapshot construction belongs
+/// in `build`, which is never called when local admission already rejects it.
+pub fn try_submit_ffe<F>(transport: &SidecarTransport, build: F) -> FfeSubmissionStatus
+where
+    F: FnOnce() -> Result<SidecarInterfaceRequest, FfeSubmissionStatus>,
+{
+    match transport.inner.try_lock() {
+        Ok(mut sender) => sender.try_submit_ffe(build),
+        Err(TryLockError::WouldBlock) => FfeSubmissionStatus::Busy,
+        Err(TryLockError::Poisoned(_)) => FfeSubmissionStatus::Unavailable,
     }
 }
 
@@ -637,7 +663,9 @@ pub fn ping(transport: &mut SidecarTransport) -> io::Result<Duration> {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests {
+    use super::{check_ffe_submission, try_submit_ffe};
     use crate::service::blocking::{SidecarTransport, add_span_to_concentrator};
+    use crate::service::ffe_submission::FfeSubmissionStatus;
     use crate::service::sidecar_interface::SidecarInterfaceRequest;
     use crate::service::{EvpProducerIdentity, EvpTransportConfig, EvpTransportConfigWithIdentity};
     use libdd_common::Endpoint;
@@ -779,6 +807,39 @@ mod tests {
             }
             assert_eq!(receive_packet(&peer), b"DATA");
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn ffe_busy_rejects_before_build() {
+        let (conn, _peer) = SeqpacketConn::socketpair().unwrap();
+        let transport = SidecarTransport::from(conn);
+        let _guard = transport.inner.lock().unwrap();
+        assert_eq!(check_ffe_submission(&transport), FfeSubmissionStatus::Busy);
+        assert_eq!(
+            try_submit_ffe(&transport, || panic!("must not copy")),
+            FfeSubmissionStatus::Busy
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn ffe_poisoned_transport_does_not_reconnect_or_build() {
+        let (conn, _peer) = SeqpacketConn::socketpair().unwrap();
+        let mut transport = SidecarTransport::from(conn);
+        transport.reconnect_fn = Some(Box::new(|| panic!("must not reconnect")));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = transport.inner.lock().unwrap();
+            panic!("poison test mutex");
+        }));
+        assert_eq!(
+            check_ffe_submission(&transport),
+            FfeSubmissionStatus::Unavailable
+        );
+        assert_eq!(
+            try_submit_ffe(&transport, || panic!("must not copy")),
+            FfeSubmissionStatus::Unavailable
+        );
     }
 
     #[test]

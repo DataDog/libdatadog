@@ -32,6 +32,55 @@ pub struct IpcClientConn {
     closed: bool,
 }
 
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn recoverable_packet_rejection_preserves_accounting_and_legacy_policy() {
+        for recoverable in [false, true] {
+            let (conn, peer) = SeqpacketConn::socketpair().unwrap();
+            let bytes: libc::c_int = 4096;
+            // SAFETY: valid socket and pointer/length for a live integer.
+            assert_eq!(
+                unsafe {
+                    libc::setsockopt(
+                        conn.as_raw_fd(),
+                        libc::SOL_SOCKET,
+                        libc::SO_SNDBUF,
+                        (&bytes as *const libc::c_int).cast(),
+                        std::mem::size_of_val(&bytes).try_into().unwrap(),
+                    )
+                },
+                0
+            );
+            let mut client = IpcClientConn::new(conn);
+            if recoverable {
+                let err = client
+                    .try_send_with_rejection(vec![0; 16 * 1024], &[])
+                    .unwrap_err();
+                assert_eq!(err.raw_os_error(), Some(libc::EMSGSIZE));
+            } else {
+                assert!(!client.try_send(vec![0; 16 * 1024], &[]));
+            }
+            assert_eq!(client.outstanding(), 0);
+            assert_eq!(client.is_closed(), !recoverable);
+            if recoverable {
+                client.try_send_with_rejection(vec![7], &[]).unwrap();
+                assert_eq!(client.outstanding(), 1);
+                let mut buf = [0; 1];
+                assert_eq!(peer.try_recv_raw(&mut buf).unwrap().0, 1);
+                assert_eq!(buf, [7]);
+                peer.try_send_raw(vec![0], &[]).unwrap();
+                client.drain_acks();
+                assert_eq!(client.outstanding(), 0);
+                assert!(!client.is_closed());
+            }
+        }
+    }
+}
+
 impl IpcClientConn {
     pub fn new(conn: SeqpacketConn) -> Self {
         Self {
@@ -92,6 +141,29 @@ impl IpcClientConn {
                 // Fatal error (e.g. EPIPE): mark connection as closed.
                 self.closed = true;
                 false
+            }
+        }
+    }
+
+    /// Attempt a non-blocking send with recoverable packet rejection.
+    ///
+    /// Like [`Self::try_send`], but returns the I/O error and leaves the connection
+    /// open on Unix `EMSGSIZE`: the packet was rejected, not the connection.
+    /// This lets callers drop oversized observations without reconnecting.
+    /// `WouldBlock` is also nonfatal. Only accepted sends advance ACK accounting;
+    /// `data` is consumed even when rejected. Existing `try_send` policy is unchanged.
+    pub fn try_send_with_rejection(&mut self, data: Vec<u8>, fds: &[RawFd]) -> io::Result<()> {
+        match self.conn.try_send_raw(data, fds) {
+            Ok(()) => {
+                self.send_count += 1;
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
+            #[cfg(unix)]
+            Err(e) if e.raw_os_error() == Some(libc::EMSGSIZE) => Err(e),
+            Err(e) => {
+                self.closed = true;
+                Err(e)
             }
         }
     }
