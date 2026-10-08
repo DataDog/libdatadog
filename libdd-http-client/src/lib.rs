@@ -16,7 +16,7 @@
 //! # FIPS TLS
 //!
 //! When compiled with the `fips` feature (instead of `https`), TLS is enabled
-//! via rustls without a default crypto provider. Call [`init_fips_crypto`]
+//! via rustls without a default crypto provider. Call `init_fips_crypto`
 //! once during startup before constructing any `HttpClient`:
 //!
 //! ```rust,ignore

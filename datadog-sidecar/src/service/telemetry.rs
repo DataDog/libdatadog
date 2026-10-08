@@ -406,7 +406,7 @@ pub struct TelemetryCachedEntry {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
-    pub shm_writer: OneWayShmWriter<NamedShmHandle>,
+    pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -468,8 +468,15 @@ impl TelemetryCachedClient {
         let client = Self {
             worker: handle,
             shm_writer: {
-                #[allow(clippy::unwrap_used)]
-                OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
+                let path = path_for_telemetry(service, env);
+                OneWayShmWriter::<NamedShmHandle>::new(path.clone())
+                    .inspect_err(|e| {
+                        warn!(
+                            "Could not create the telemetry cache at {}: {e}. Continuing without it.",
+                            path.to_string_lossy()
+                        )
+                    })
+                    .ok()
             },
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
@@ -481,8 +488,11 @@ impl TelemetryCachedClient {
     }
 
     pub fn write_shm_file(&self) {
+        let Some(shm_writer) = &self.shm_writer else {
+            return;
+        };
         if let Ok(buf) = bincode::serialize(&self.shared) {
-            self.shm_writer.write(&buf);
+            shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");
         }
@@ -632,7 +642,9 @@ impl TelemetryCachedClient {
 
 impl Drop for TelemetryCachedClient {
     fn drop(&mut self) {
-        self.shm_writer.write(&[]);
+        if let Some(shm_writer) = &self.shm_writer {
+            shm_writer.write(&[]);
+        }
     }
 }
 

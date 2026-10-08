@@ -6,7 +6,7 @@ use libdd_common::MutexExt;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::io;
-use std::os::windows::io::RawHandle;
+use std::os::windows::io::{OwnedHandle, RawHandle};
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Condvar, Mutex};
 use windows_sys::Win32::Foundation::{
@@ -103,7 +103,7 @@ impl PipeWriter {
         }
 
         let mut wire = data;
-        let transfers = append_handle_suffix(&mut wire, handles, peer_pid)?;
+        let transfers = append_handle_suffix(&mut wire, handles, peer_pid, &mut state.peer)?;
         let len = u32::try_from(wire.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "IPC message is too large"))?;
         let completion = Arc::new(Completion::default());
@@ -220,6 +220,7 @@ impl WriteContext {
 #[derive(Default)]
 struct WriteState {
     pending: Option<Box<PendingWrite>>,
+    peer: Option<Arc<OwnedHandle>>,
     error: Option<u32>,
     closing: bool,
 }
