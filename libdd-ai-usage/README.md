@@ -76,7 +76,7 @@ summed exactly as they are added, and Histogram samples are kept. At a flush the
 caller encodes the batch and starts a new one; the batch is a plain value the
 caller owns.
 
-- **OTLP** (feature `otlp`): `MetricBatch::encode_otlp` returns an
+- **OTLP** (feature `otlp`, on by default): `MetricBatch::encode_otlp` returns an
   `ExportMetricsServiceRequest` in protobuf for an OTLP/HTTP metrics endpoint.
   There is one scope per profile, carrying the attribute `trajectory.profile`. Counters are monotonic
   delta sums, and Histograms are delta explicit-bucket histograms using the
@@ -95,7 +95,7 @@ Sending the bytes or lines is the caller's job.
 The rules are those of the Open Trajectory portable metric profiles. This crate
 is a port of their Rust reference implementation. `tests/data` holds the shared
 conformance cases, the metric registry, and the Datadog binding cases;
-`cargo nextest run -p libdd-ai-usage --features otlp` runs every case and checks
+`cargo nextest run -p libdd-ai-usage` runs every case and checks
 every projected point against the registry.
 
 `examples/vector_driver.rs` is a driver for the conformance tool:

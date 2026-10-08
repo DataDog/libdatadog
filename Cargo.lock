@@ -2728,6 +2728,7 @@ dependencies = [
 name = "libdd-ai-usage"
 version = "0.1.0"
 dependencies = [
+ "opentelemetry-proto",
  "prost",
  "serde",
  "serde_json",
@@ -4260,8 +4261,12 @@ version = "0.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb39533d9d1c912123efd7d41d7e0c29d16917b60ce15b4c8d87cb1af7f67520"
 dependencies = [
+ "futures-channel",
+ "futures-executor",
+ "futures-util",
  "opentelemetry",
  "portable-atomic",
+ "thiserror 2.0.17",
 ]
 
 [[package]]

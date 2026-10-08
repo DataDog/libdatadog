@@ -19,7 +19,12 @@ prost = { workspace = true, features = ["derive", "std"], optional = true }
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true, features = ["std"] }
 
+[dev-dependencies]
+# Decodes the encoder's output with the upstream OTLP message definitions.
+opentelemetry-proto = { workspace = true, features = ["gen-tonic-messages", "metrics"] }
+prost = { workspace = true, features = ["derive", "std"] }
+
 [features]
-default = []
+default = ["otlp"]
 # Encode a MetricBatch as an OTLP ExportMetricsServiceRequest.
 otlp = ["dep:prost"]
