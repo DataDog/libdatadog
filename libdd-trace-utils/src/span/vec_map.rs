@@ -101,23 +101,6 @@ impl<K, V> VecMap<K, V> {
         self.dirty();
     }
 
-    /// Set `key` to `value`, overwriting the entry [Self::get] would return in place, or appending
-    /// a new entry if the key is absent.
-    ///
-    /// Unlike [Self::insert], this never introduces a duplicate key, so it preserves the `deduped`
-    /// flag and a later [Self::dedup] stays a no-op on an already-deduped map.
-    #[inline]
-    pub fn insert_or_replace(&mut self, key: K, value: V)
-    where
-        K: PartialEq,
-    {
-        if let Some((_, v)) = self.data.iter_mut().rev().find(|(k, _)| *k == key) {
-            *v = value;
-        } else {
-            self.data.push((key, value));
-        }
-    }
-
     #[inline]
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
@@ -521,41 +504,6 @@ mod tests {
     fn is_deduped_false_after_collect() {
         let m: VecMap<&str, i32> = vec![("a", 1)].into_iter().collect();
         assert!(!m.is_deduped());
-    }
-
-    #[test]
-    fn insert_or_replace_appends_absent_key_without_dirtying() {
-        let mut m = VecMap::new();
-        m.insert("a", 1);
-        m.dedup();
-        m.insert_or_replace("b", 2);
-        assert!(m.is_deduped());
-        assert_eq!(m.len(), 2);
-        assert_eq!(m.get("b"), Some(&2));
-    }
-
-    #[test]
-    fn insert_or_replace_overwrites_existing_key_in_place() {
-        let mut m = VecMap::new();
-        m.insert("a", 1);
-        m.insert("b", 2);
-        m.dedup();
-        m.insert_or_replace("a", 3);
-        assert!(m.is_deduped());
-        assert_eq!(m.len(), 2);
-        assert_eq!(m.get("a"), Some(&3));
-    }
-
-    #[test]
-    fn insert_or_replace_overwrites_last_duplicate() {
-        let mut m = VecMap::new();
-        m.insert("a", 1);
-        m.insert("a", 2);
-        m.insert_or_replace("a", 3);
-        assert!(!m.is_deduped());
-        m.dedup();
-        assert_eq!(m.len(), 1);
-        assert_eq!(m.get("a"), Some(&3));
     }
 
     #[test]
