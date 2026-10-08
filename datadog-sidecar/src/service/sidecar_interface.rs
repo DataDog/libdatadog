@@ -344,7 +344,11 @@ pub trait SidecarInterface {
     /// The connection must right after that start emitting crashtracker messages.
     async fn enter_crashtracker_receiver();
 
-    /// Sets the explicit EVP transport for this session.
+    /// Sets the explicit EVP transport for one intake target in this session.
+    ///
+    /// This is separate from `SessionConfig` so consumers can opt in or update
+    /// their target without replacing the session's other transports. Repeated
+    /// identical configuration preserves routing and deduplication state.
     ///
     /// Keep this method last: request variants cross the bincode IPC boundary,
     /// so appending preserves the ordinals of all existing messages.

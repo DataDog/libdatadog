@@ -165,6 +165,8 @@ pub enum EvpTransportMode {
     /// Preserve the historical fixed Agent EVP v2 route.
     AgentOnly,
     /// Prefer a compatible local EVP route, then fall back to direct intake.
+    /// Direct routing stays selected until the configuration is replaced.
+    /// Only an unavailable route without direct credentials is re-probed.
     PreferLocalThenDirect,
 }
 
@@ -560,6 +562,9 @@ impl EvpTransport {
             DeliveryFailure::Status(status) => AGENT_ROUTE_REJECTION_STATUSES.contains(status),
             DeliveryFailure::Ambiguous(_) => false,
         };
+        // Other 4xx responses (for example 400 or 413) do not establish that
+        // the local route is unavailable. Keep it selected without replaying
+        // a batch that changing routes may not repair.
         let switch_future = replay
             || matches!(&failure, DeliveryFailure::Ambiguous(_))
             || matches!(
@@ -589,6 +594,9 @@ impl EvpTransport {
         let mut state = self.state.lock().await;
         match *state {
             RouteState::Local(version) => return Some(Route::Local(version)),
+            // Direct is a terminal choice for this configuration, even after
+            // a transient discovery miss. Cooldown recovery is only for the
+            // unavailable state, which otherwise has no delivery path.
             RouteState::Direct => return Some(Route::Direct),
             RouteState::Unavailable { retry_at } if (self.clock)() < retry_at => return None,
             RouteState::Unavailable { .. } => {}
@@ -1134,9 +1142,14 @@ mod tests {
             response(202, ""),
             response(202, ""),
         ]);
-        let transport = agentless(Some("first-key"));
+        let current = Arc::new(Mutex::new(Instant::now()));
+        let clock_state = current.clone();
+        let cooldown = Duration::from_secs(30);
+        let transport = agentless(Some("first-key"))
+            .with_clock(Arc::new(move || *clock_state.lock().unwrap()), cooldown);
 
         assert!(send(&transport, &client, "/api/v2/exposures").await);
+        *current.lock().unwrap() += cooldown;
         assert!(send(&transport, &client, "/api/v2/flagevaluation").await);
 
         let requests = client.requests();

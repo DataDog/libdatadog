@@ -20,8 +20,8 @@ use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
-    AllocationKey, ContextDD, ContextTruncationReason, DynamicInstrumentationConfigState, EvalError,
-    EvpProducerIdentity as SidecarEvpProducerIdentity, EvpTransportConfig,
+    AllocationKey, ContextDD, ContextTruncationReason, DynamicInstrumentationConfigState,
+    EvalError, EvpProducerIdentity as SidecarEvpProducerIdentity, EvpTransportConfig,
     EvpTransportConfigWithIdentity, EvpTransportMode as SidecarEvpTransportMode,
     FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
     FfeExposureBatch as SidecarFfeExposureBatch,
@@ -1321,10 +1321,15 @@ pub struct EvpProducerIdentity<'a> {
     pub version: CharSlice<'a>,
 }
 
-/// Configure the shared EVP network path for the current sidecar session.
+/// Configure one shared EVP intake target in the current sidecar session.
 /// `AgentOnly` preserves the historical fixed EVP v2 route.
 /// `PreferLocalThenDirect` explicitly opts the client into local discovery and
 /// authenticated direct fallback.
+///
+/// Call after setting the session configuration. Other intake targets are
+/// unaffected. Identical configuration preserves routing and deduplication
+/// state; changed configuration replaces this target's transport. The client
+/// retains the latest configuration per target across sidecar reconnects.
 ///
 /// # Safety
 /// `direct_endpoint` must be null or point to a valid `Endpoint`, and all
@@ -1332,32 +1337,6 @@ pub struct EvpProducerIdentity<'a> {
 #[unsafe(no_mangle)]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_evp_transport(
-    transport: &mut Box<SidecarTransport>,
-    mode: EvpTransportMode,
-    agent_endpoint: &Endpoint,
-    direct_endpoint: *const Endpoint,
-    intake_subdomain: CharSlice<'_>,
-    producer: &EvpProducerIdentity<'_>,
-) -> MaybeError {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        ddog_sidecar_session_set_evp_transport_impl(
-            transport,
-            mode,
-            agent_endpoint,
-            direct_endpoint,
-            intake_subdomain,
-            producer,
-        )
-    }))
-    .unwrap_or_else(|panic| {
-        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
-            panic,
-            "ddog_sidecar_session_set_evp_transport",
-        ))
-    })
-}
-
-fn ddog_sidecar_session_set_evp_transport_impl(
     transport: &mut Box<SidecarTransport>,
     mode: EvpTransportMode,
     agent_endpoint: &Endpoint,

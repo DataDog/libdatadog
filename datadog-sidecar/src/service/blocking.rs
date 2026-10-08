@@ -315,7 +315,11 @@ pub fn set_session_config(
     Ok(())
 }
 
-/// Sets the explicit EVP transport for this session.
+/// Sets the explicit EVP transport for one intake target in this session.
+///
+/// Call after setting the session configuration. Updates replace only this
+/// target; identical configuration preserves its route and deduplication state.
+/// The transport retains the latest configuration per target across reconnects.
 pub fn set_session_evp_transport(
     transport: &mut SidecarTransport,
     config: crate::service::EvpTransportConfigWithIdentity,

@@ -200,17 +200,20 @@ impl SessionInfo {
         }
 
         if endpoint.api_key.is_none() {
-            if let Ok(transport) = EvpTransport::agent_only(endpoint, intake_subdomain) {
-                if state
-                    .transports
-                    .get(intake_subdomain)
-                    .is_some_and(|current| current.has_same_configuration(&transport))
-                {
-                    return;
+            match EvpTransport::agent_only(endpoint, intake_subdomain) {
+                Ok(transport) => {
+                    if state
+                        .transports
+                        .get(intake_subdomain)
+                        .is_some_and(|current| current.has_same_configuration(&transport))
+                    {
+                        return;
+                    }
+                    state
+                        .transports
+                        .insert(intake_subdomain.to_owned(), transport);
                 }
-                state
-                    .transports
-                    .insert(intake_subdomain.to_owned(), transport);
+                Err(error) => warn!("Failed to configure Agent-only EVP transport: {error}"),
             }
         } else {
             state.transports.remove(intake_subdomain);
@@ -463,6 +466,52 @@ mod tests {
                 .unwrap()
                 .contains_key(&runtime_id2)
         );
+    }
+
+    #[test]
+    #[cfg(feature = "tracing")]
+    fn invalid_legacy_evp_configuration_is_logged_without_endpoint_details() {
+        #[derive(Clone)]
+        struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for LogBuffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output = LogBuffer(Arc::default());
+        let writer = output.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let session = SessionInfo::default();
+        session.set_default_evp_transport(
+            Endpoint {
+                url: "http://agent.internal:8126/private-endpoint-canary"
+                    .parse()
+                    .unwrap(),
+                ..Endpoint::default()
+            },
+            "invalid.target-canary",
+        );
+
+        let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("Failed to configure Agent-only EVP transport"));
+        assert!(logs.contains("EVP intake subdomain must be one canonical DNS label"));
+        assert!(!logs.contains("agent.internal"));
+        assert!(!logs.contains("private-endpoint-canary"));
+        assert!(!logs.contains("invalid.target-canary"));
+        assert!(session.get_evp_transport("invalid.target-canary").is_none());
     }
 
     #[test]
