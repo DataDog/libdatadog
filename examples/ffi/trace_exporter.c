@@ -171,6 +171,13 @@ int verify_mutable_identity(void) {
         ddog_trace_exporter_config_free(config);
         return 1;
     }
+    // Metadata ownership must not depend on Agent polling or connection timeouts.
+    err = ddog_trace_exporter_config_set_output_to_log(config, 0);
+    if (err != NULL) {
+        handle_error(err);
+        ddog_trace_exporter_config_free(config);
+        return 1;
+    }
     ddog_TraceExporter *exporter = NULL;
     err = ddog_trace_exporter_new(&exporter, config);
     ddog_trace_exporter_config_free(config);
