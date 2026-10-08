@@ -6,6 +6,8 @@ tab_width = 2
 header = """// Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+typedef struct ddog_TracerPayloadBytes ddog_TracerPayloadBytes;
+typedef struct ddog_TraceChunkBytes ddog_TraceChunkBytes;
 typedef struct ddog_SpanBytes ddog_SpanBytes;
 typedef struct ddog_SpanLinkBytes ddog_SpanLinkBytes;
 typedef struct ddog_SpanEventBytes ddog_SpanEventBytes;

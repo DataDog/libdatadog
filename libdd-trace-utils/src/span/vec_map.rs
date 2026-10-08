@@ -8,9 +8,10 @@
 //! map. However, since meta and metrics are expected to be typically small (20ish elements or
 //! less), linear scan is usually still competitive with hashmap's `get`.
 
+use rustc_hash::FxHashSet;
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -176,6 +177,13 @@ impl<K, V> VecMap<K, V> {
         self.data.iter_mut()
     }
 
+    /// Iterate mutably over the values, including duplicate entries. Unlike [Self::iter_mut], this
+    /// keeps the `deduped` flag: keys can't change, so no duplicate can appear.
+    #[inline]
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.data.iter_mut().map(|(_, v)| v)
+    }
+
     /// Return the length of the underlying vector, thus including duplicate entries.
     #[inline]
     pub fn len(&self) -> usize {
@@ -287,7 +295,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
         // the future, the unsafe one-pass approach can be implemented.
         let keep: Vec<bool> = {
-            let mut seen = HashSet::with_capacity(self.len());
+            let mut seen = FxHashSet::with_capacity_and_hasher(self.len(), Default::default());
             self.data.iter().map(|(k, _)| seen.insert(k)).collect()
         };
 
@@ -584,6 +592,16 @@ mod tests {
 
         m.extend(vec![("b", 2)]);
         assert!(!m.is_deduped());
+    }
+
+    #[test]
+    fn values_mut_keeps_dedup_flag() {
+        let mut m = VecMap::new();
+        m.insert("a", 1);
+        m.dedup();
+        m.values_mut().for_each(|v| *v += 1);
+        assert!(m.is_deduped());
+        assert_eq!(m.get("a"), Some(&2));
     }
 
     #[test]

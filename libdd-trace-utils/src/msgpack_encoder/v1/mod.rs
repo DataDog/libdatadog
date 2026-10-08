@@ -13,8 +13,8 @@ use rmp::encode::{
     ByteBuf, RmpWrite, ValueWriteError, write_array_len, write_bin, write_map_len, write_sint,
     write_str, write_uint, write_uint8,
 };
+use rustc_hash::FxHashMap;
 use std::borrow::Borrow;
-use std::collections::HashMap;
 
 /// Integer keys for the top-level V1 trace payload map.
 mod trace_key {
@@ -113,14 +113,19 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// The string table is scoped per payload: each `to_vec_from_v04` / `to_vec_from_v1` (and
 /// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
-pub(crate) struct StringTable {
-    seen: HashMap<String, u32>,
+pub(crate) struct StringTable<'a> {
+    /// Keys borrow from the payload being encoded, so recording a string doesn't allocate.
+    seen: FxHashMap<&'a str, u32>,
 }
 
-impl StringTable {
+impl<'a> StringTable<'a> {
+    /// Room for the distinct strings of a typical payload, so small payloads never rehash.
+    const INITIAL_CAPACITY: usize = 64;
+
     fn new() -> Self {
-        let mut seen = HashMap::new();
-        seen.insert(String::new(), 0);
+        let mut seen =
+            FxHashMap::with_capacity_and_hasher(Self::INITIAL_CAPACITY, Default::default());
+        seen.insert("", 0);
         Self { seen }
     }
 
@@ -128,17 +133,16 @@ impl StringTable {
     ///
     /// - First occurrence of `s` → msgpack `str`, ID recorded for future references
     /// - Subsequent occurrence → msgpack `uint` carrying the previously assigned ID
-    pub(crate) fn write_interned<W: RmpWrite, S: AsRef<str>>(
+    pub(crate) fn write_interned<W: RmpWrite>(
         &mut self,
         writer: &mut W,
-        s: S,
+        s: &'a str,
     ) -> Result<(), ValueWriteError<W::Error>> {
-        let s = s.as_ref();
         if let Some(&id) = self.seen.get(s) {
             write_uint(writer, id as u64)?;
         } else {
             let id = self.seen.len() as u32;
-            self.seen.insert(s.to_string(), id);
+            self.seen.insert(s, id);
             write_str(writer, s)?;
         }
         Ok(())
@@ -421,10 +425,10 @@ fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ///   chunk_key::SPANS              (4) → Array[Span, ...]
 /// }
 /// ```
-fn encode_chunk_from_v04<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v04<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    spans: &[Span<T>],
-    table: &mut StringTable,
+    spans: &'a [Span<T>],
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let attrs = extract_chunk_attrs(spans);
 
@@ -588,10 +592,10 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 }
 
 /// Encodes one V1 chunk (a group of spans sharing a trace ID).
-fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v1<'a, W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    chunk: &crate::span::v1::TraceChunk<T>,
-    table: &mut StringTable,
+    chunk: &'a crate::span::v1::TraceChunk<T>,
+    table: &mut StringTable<'a>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let origin = <T::Text as Borrow<str>>::borrow(&chunk.origin);
     let has_attributes = !chunk.attributes.is_empty();
@@ -1288,20 +1292,23 @@ mod v1_payload_tests {
     }
 
     #[test]
-    fn span_kind_is_always_emitted_as_uint() {
-        // Default SpanKind (Internal=1) must be emitted. The encoded payload contains
-        // `kind_key (0x10) | uint 1 (0x01)`.
-        let chunk = make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16]);
-        let payload = TracerPayloadBytes {
-            chunks: vec![chunk],
-            ..Default::default()
+    fn span_kind_unspecified_is_omitted_and_internal_is_emitted() {
+        // Unspecified (0, the default) is left off the wire; an explicit Internal is written as
+        // `kind_key (0x10) | uint 1 (0x01)`, exactly those 2 extra bytes.
+        let encode = |kind: SpanKind| {
+            let span = V1Span {
+                span_kind: kind,
+                ..make_span("svc", "op", 1)
+            };
+            to_vec_from_v1(&TracerPayloadBytes {
+                chunks: vec![make_chunk(vec![span], [0u8; 16])],
+                ..Default::default()
+            })
         };
-        let encoded = to_vec_from_v1(&payload);
-        let pat = [0x10u8, 0x01u8];
-        assert!(
-            encoded.windows(2).any(|w| w == pat),
-            "Kind (key=16) Internal (=1) must be emitted"
-        );
+        let unspecified = encode(SpanKind::Unspecified);
+        let internal = encode(SpanKind::Internal);
+        assert_eq!(internal.len(), unspecified.len() + 2);
+        assert!(internal.windows(2).any(|w| w == [0x10u8, 0x01u8]));
     }
 
     #[test]
@@ -1586,6 +1593,77 @@ mod v1_payload_tests {
         assert!(
             two.len() < 2 * one.len(),
             "interning should reduce repeated payload size"
+        );
+    }
+
+    // Regression: the FFI v1 builder inserts attributes without maintaining the VecMap deduped
+    // invariant, so before `TracerPayload::dedup` the encoder had to dedup on the fly (and warn)
+    // on every encode. `dedup` (called by the sidecar-ffi send path) must leave the
+    // invariant set at every level while keeping last-write-wins, so the encode is warning-free
+    // and only the winning values reach the wire.
+    #[test]
+    fn dedup_sets_invariant_and_encodes_last_write_wins() {
+        use libdd_tinybytes::Bytes;
+
+        let mut attributes: VecMap<BytesString, AttributeValue<crate::span::BytesData>> =
+            VecMap::new();
+        // Duplicate string key: last write ("POST") must win.
+        attributes.insert(bs("http.method"), AttributeValue::String(bs("GET")));
+        attributes.insert(bs("http.method"), AttributeValue::String(bs("POST")));
+        // A numeric attribute (v0.4 metric).
+        attributes.insert(bs("rows"), AttributeValue::Int(42));
+        // A meta_struct bytes attribute (msgpack blob), duplicated: last write ("NEW") must win.
+        attributes.insert(
+            bs("_dd.appsec.json"),
+            AttributeValue::Bytes(Bytes::from_underlying(b"OLD".to_vec())),
+        );
+        attributes.insert(
+            bs("_dd.appsec.json"),
+            AttributeValue::Bytes(Bytes::from_underlying(b"NEW".to_vec())),
+        );
+        assert!(!attributes.is_deduped());
+
+        let span = V1Span {
+            attributes,
+            ..make_span("svc", "op", 1)
+        };
+        let mut payload = TracerPayloadBytes {
+            chunks: vec![make_chunk(vec![span], [0u8; 16])],
+            ..Default::default()
+        };
+
+        // Before finalize the map carries duplicates and would trigger the encoder's defensive
+        // dedup (and its warning).
+        assert!(!payload.chunks[0].spans[0].attributes.is_deduped());
+
+        payload.dedup();
+
+        let attrs = &payload.chunks[0].spans[0].attributes;
+        // The deduped invariant is set, so the encoder's `defensive_dedup` takes the no-warn
+        // borrowed branch.
+        assert!(attrs.is_deduped());
+        // Duplicates collapsed: http.method, rows, _dd.appsec.json.
+        assert_eq!(attrs.len(), 3);
+
+        let encoded = to_vec_from_v1(&payload);
+        assert!(!encoded.is_empty());
+        // The winning meta_struct bytes are on the wire; the shadowed duplicate is not.
+        assert!(
+            encoded.windows(3).any(|w| w == b"NEW"),
+            "winning meta_struct bytes must be encoded"
+        );
+        assert!(
+            !encoded.windows(3).any(|w| w == b"OLD"),
+            "shadowed meta_struct duplicate must not be encoded"
+        );
+        // Winning string value on the wire; shadowed value gone.
+        assert!(
+            encoded.windows(4).any(|w| w == b"POST"),
+            "last-write-wins string value must be encoded"
+        );
+        assert!(
+            !encoded.windows(3).any(|w| w == b"GET"),
+            "shadowed string duplicate must not be encoded"
         );
     }
 }
