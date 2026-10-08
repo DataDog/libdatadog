@@ -36,10 +36,59 @@ pub use telemetry::*;
 pub use ucontext::*;
 pub use unknown_value::*;
 
+use alloc::fmt;
 use anyhow::Context;
+use core::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
+
+/// Outcome of the dual upload (telemetry + errors intake)
+pub struct UploadResult {
+    pub telemetry: Result<(), anyhow::Error>,
+    pub errors_intake: Result<(), anyhow::Error>,
+}
+
+impl fmt::Debug for UploadResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UploadResult")
+            .field(
+                "telemetry",
+                &self
+                    .telemetry
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+            )
+            .field(
+                "errors_intake",
+                &self
+                    .errors_intake
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+            )
+            .finish()
+    }
+}
+
+/// Maximum number of retry attempts for crash report uploads.
+pub(crate) const UPLOAD_MAX_RETRIES: u32 = 3;
+
+/// Base delay between retry attempts (doubles each attempt: 100ms, 200ms, 400ms).
+pub(crate) const UPLOAD_RETRY_BASE_DELAY_MS: u64 = 100;
+
+/// Computes the exponential-backoff delay for a given attempt (1-indexed).
+pub(crate) fn retry_delay(attempt: u32) -> Duration {
+    let multiplier = 1u64 << attempt.saturating_sub(1).min(10);
+    Duration::from_millis(UPLOAD_RETRY_BASE_DELAY_MS.saturating_mul(multiplier))
+}
+
+/// Returns `true` when the HTTP status code indicates the request should be
+/// retried (server errors and rate limiting).
+pub(crate) fn is_retryable_status(status: http::StatusCode) -> bool {
+    status.is_server_error() || status == http::StatusCode::TOO_MANY_REQUESTS
+}
 
 /// Parses a `key:value` tag iterator into named local `Option<&str>` variables.
 /// Each arm supports one or more literal keys (separated by `|`) mapping to a
@@ -183,7 +232,7 @@ impl CrashInfo {
         Ok(())
     }
 
-    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
+    pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<UploadResult> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -194,7 +243,7 @@ impl CrashInfo {
     pub async fn async_upload_to_endpoint(
         &self,
         endpoint: &Option<Endpoint>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<UploadResult> {
         // If we're debugging to a file, dump the actual crashinfo into a json
         if let Some(endpoint) = endpoint {
             if Some("file") == endpoint.url.scheme_str() {
@@ -206,9 +255,12 @@ impl CrashInfo {
 
         let telemetry_future = self.upload_to_telemetry(endpoint);
         let errors_intake_future = self.upload_to_errors_intake(endpoint);
-        let (_telemetry_result, _errors_intake_result) =
+        let (telemetry_result, errors_intake_result) =
             tokio::join!(telemetry_future, errors_intake_future);
-        Ok(())
+        Ok(UploadResult {
+            telemetry: telemetry_result,
+            errors_intake: errors_intake_result,
+        })
     }
 
     async fn upload_to_telemetry(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {

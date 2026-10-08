@@ -342,26 +342,12 @@ impl TelemetryCrashUploader {
     }
 
     /// Helper to perform actual HTTP submission via the native HTTP capability.
+    /// Retries on server errors and rate limiting with exponential backoff.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = NativeCapabilities::new_client();
-        let req = request_builder(&self.cfg)?
-            .method(http::Method::POST)
-            .header(
-                http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_JSON,
-            )
-            .header(
-                libdd_telemetry::worker::http_client::header::API_VERSION,
-                libdd_telemetry::data::ApiVersion::V2.to_str(),
-            )
-            .header(
-                libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
-                "logs",
-            )
-            .body(libdd_capabilities::Bytes::from(serde_json::to_vec(
-                &payload,
-            )?))?;
+        use super::{UPLOAD_MAX_RETRIES, is_retryable_status, retry_delay};
 
+        let client = NativeCapabilities::new_client();
+        let body = libdd_capabilities::Bytes::from(serde_json::to_vec(&payload)?);
         let timeout = core::time::Duration::from_millis({
             if let Some(endp) = self.cfg.endpoint() {
                 endp.timeout_ms
@@ -369,11 +355,54 @@ impl TelemetryCrashUploader {
                 Endpoint::DEFAULT_TIMEOUT
             }
         });
-        tokio::time::timeout(timeout, client.request(req))
-            .await
-            .map_err(|_| anyhow::anyhow!("Telemetry crash report timed out"))??;
 
-        Ok(())
+        let mut last_err = None;
+        for attempt in 1..=UPLOAD_MAX_RETRIES {
+            let req = request_builder(&self.cfg)?
+                .method(http::Method::POST)
+                .header(
+                    http::header::CONTENT_TYPE,
+                    libdd_common::header::APPLICATION_JSON,
+                )
+                .header(
+                    libdd_telemetry::worker::http_client::header::API_VERSION,
+                    libdd_telemetry::data::ApiVersion::V2.to_str(),
+                )
+                .header(
+                    libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
+                    "logs",
+                )
+                .body(body.clone())?;
+
+            match tokio::time::timeout(timeout, client.request(req)).await {
+                Ok(Ok(resp)) => {
+                    let status = resp.status();
+                    if status.is_success() {
+                        return Ok(());
+                    }
+                    if !is_retryable_status(status) {
+                        return Err(anyhow::anyhow!(
+                            "Telemetry upload rejected with status {status}"
+                        ));
+                    }
+                    last_err = Some(anyhow::anyhow!(
+                        "Telemetry upload failed with status {status}"
+                    ));
+                }
+                Ok(Err(e)) => {
+                    last_err = Some(anyhow::anyhow!("Telemetry upload request error: {e}"));
+                }
+                Err(_) => {
+                    last_err = Some(anyhow::anyhow!("Telemetry upload timed out"));
+                }
+            }
+
+            if attempt < UPLOAD_MAX_RETRIES {
+                tokio::time::sleep(retry_delay(attempt)).await;
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Telemetry upload failed")))
     }
 
     fn build_crash_ping_tags(&self, crash_uuid: &str, sig_info: Option<&SigInfo>) -> String {
