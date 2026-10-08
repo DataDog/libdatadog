@@ -78,6 +78,10 @@ fn attributes(values: &[KeyValue]) -> BTreeMap<String, String> {
 type Key = (Option<String>, String, String, BTreeMap<String, String>);
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "projects every case; the encoder's own tests cover these paths under Miri"
+)]
 fn the_export_decodes_with_the_upstream_definitions_and_carries_every_point() {
     let batch = batch();
     let request = ExportMetricsServiceRequest::decode(batch.encode_otlp(SCOPE, WINDOW).as_slice())
